@@ -1,0 +1,125 @@
+<Page
+    x:Class="WHPO_UI.Views.Pages.ConfiguracionPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <ScrollViewer Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <Grid Margin="32,28,32,40" HorizontalAlignment="Stretch">
+                <StackPanel HorizontalAlignment="Stretch" Spacing="12">
+                    <StackPanel Spacing="4" Margin="0,0,0,8">
+                        <TextBlock Text="Configuración" FontSize="28" FontWeight="SemiBold"/>
+                        <TextBlock Text="Personaliza el comportamiento de WHPO. Los cambios se guardan automáticamente."
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <TextBlock Text="Apariencia" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0"/>
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Tema de la aplicación" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="Elige entre el tema del sistema, oscuro o claro."
+                                           FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ComboBox x:Name="ThemeComboBox" Grid.Column="1" MinWidth="150" SelectionChanged="ThemeComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Usar sistema" Tag="SystemDefault"/>
+                                <ComboBoxItem Content="Oscuro" Tag="Dark"/>
+                                <ComboBoxItem Content="Claro" Tag="Light"/>
+                            </ComboBox>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="Aplicación" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,0"/>
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Minimizar a la bandeja" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="Al minimizar la ventana, WHPO seguirá ejecutándose desde el área de notificación."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ToggleSwitch
+                                x:Name="MinimizeToTrayToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="True"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Métricas en la bandeja" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="Muestra el uso de CPU, memoria y temperatura en el texto emergente del icono."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ToggleSwitch
+                                x:Name="ShowTrayMetricsToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="False"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Iniciar con Windows" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="Abre WHPO automáticamente cuando inicias sesión en este equipo."
+                                           FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="LaunchAtStartupToggle" Grid.Column="1" Style="{StaticResource CompactToggleSwitchStyle}"
+                                          HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Iniciar minimizado" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="Si WHPO se inicia automáticamente, se abrirá directamente en la bandeja del sistema."
+                                           FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="StartMinimizedToggle" Grid.Column="1" Style="{StaticResource CompactToggleSwitchStyle}"
+                                          HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </Grid>
+</Page>

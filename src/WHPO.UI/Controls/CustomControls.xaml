@@ -1,0 +1,332 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    xmlns:controls="using:WHPO_UI.Controls">
+
+    <!-- Loading Spinner -->
+    <Style x:Key="LoadingSpinnerStyle" TargetType="ProgressRing">
+        <Setter Property="Width" Value="32"/>
+        <Setter Property="Height" Value="32"/>
+        <Setter Property="IsActive" Value="True"/>
+    </Style>
+
+    <!-- Small Loading Spinner -->
+    <Style x:Key="SmallLoadingSpinnerStyle" TargetType="ProgressRing" BasedOn="{StaticResource LoadingSpinnerStyle}">
+        <Setter Property="Width" Value="20"/>
+        <Setter Property="Height" Value="20"/>
+    </Style>
+
+    <!-- Large Loading Spinner -->
+    <Style x:Key="LargeLoadingSpinnerStyle" TargetType="ProgressRing" BasedOn="{StaticResource LoadingSpinnerStyle}">
+        <Setter Property="Width" Value="48"/>
+        <Setter Property="Height" Value="48"/>
+    </Style>
+
+    <!-- Progress Bar Styles -->
+    <Style x:Key="DefaultProgressBarStyle" TargetType="ProgressBar">
+        <Setter Property="Height" Value="4"/>
+        <Setter Property="CornerRadius" Value="2"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemAccentColorBrush}"/>
+        <Setter Property="Background" Value="{ThemeResource ProgressBarBackground}"/>
+    </Style>
+
+    <!-- Indeterminate Progress Bar -->
+    <Style x:Key="IndeterminateProgressBarStyle" TargetType="ProgressBar" BasedOn="{StaticResource DefaultProgressBarStyle}">
+        <Setter Property="IsIndeterminate" Value="True"/>
+    </Style>
+
+    <!-- Card Control Template -->
+    <ControlTemplate x:Key="CardTemplate" TargetType="ContentControl">
+        <Border Style="{StaticResource CardStyle}">
+            <ContentPresenter/>
+        </Border>
+    </ControlTemplate>
+
+    <!-- Elevated Card Control Template -->
+    <ControlTemplate x:Key="ElevatedCardTemplate" TargetType="ContentControl">
+        <Border Style="{StaticResource ElevatedCardStyle}">
+            <ContentPresenter/>
+        </Border>
+    </ControlTemplate>
+
+    <!-- Metric Card Template -->
+    <DataTemplate x:Key="MetricCardTemplate">
+        <Border Style="{StaticResource MetricCardStyle}">
+            <StackPanel Spacing="8">
+                <TextBlock Text="{Binding Label}" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <TextBlock Text="{Binding Value}" Style="{ThemeResource DisplayTextBlockStyle}" FontWeight="Bold"/>
+                <TextBlock Text="{Binding Unit}" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <TextBlock Text="{Binding Trend}" Style="{ThemeResource CaptionTextBlockStyle}" 
+                           Foreground="{Binding TrendColor, FallbackValue={ThemeResource TextFillColorSecondaryBrush}}"
+                           Visibility="{Binding Trend, Converter={StaticResource StringToVisibilityConverter}}"/>
+            </StackPanel>
+        </Border>
+    </DataTemplate>
+
+    <!-- Status Indicator -->
+    <Style x:Key="StatusIndicatorStyle" TargetType="Border">
+        <Setter Property="Width" Value="12"/>
+        <Setter Property="Height" Value="12"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <!-- Status Indicator Online -->
+    <Style x:Key="OnlineStatusStyle" TargetType="Border" BasedOn="{StaticResource StatusIndicatorStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorSuccessBrush}"/>
+    </Style>
+
+    <!-- Status Indicator Offline -->
+    <Style x:Key="OfflineStatusStyle" TargetType="Border" BasedOn="{StaticResource StatusIndicatorStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorCriticalBrush}"/>
+    </Style>
+
+    <!-- Status Indicator Warning -->
+    <Style x:Key="WarningStatusStyle" TargetType="Border" BasedOn="{StaticResource StatusIndicatorStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorCautionBrush}"/>
+    </Style>
+
+    <!-- Status Indicator Unknown -->
+    <Style x:Key="UnknownStatusStyle" TargetType="Border" BasedOn="{StaticResource StatusIndicatorStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorNeutralBrush}"/>
+    </Style>
+
+    <!-- Icon Badge -->
+    <Style x:Key="IconBadgeStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SystemAccentColorBrush}"/>
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="MinWidth" Value="20"/>
+        <Setter Property="MinHeight" Value="20"/>
+        <Setter Property="Padding" Value="4,0"/>
+        <Setter Property="HorizontalAlignment" Value="Right"/>
+        <Setter Property="VerticalAlignment" Value="Top"/>
+    </Style>
+
+    <!-- Badge Text Style -->
+    <Style x:Key="BadgeTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemAccentColorForegroundBrush}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <!-- Separator Style -->
+    <Style x:Key="DefaultSeparatorStyle" TargetType="Rectangle">
+        <Setter Property="Height" Value="1"/>
+        <Setter Property="Fill" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="Margin" Value="0,8"/>
+    </Style>
+
+    <!-- Vertical Separator Style -->
+    <Style x:Key="VerticalSeparatorStyle" TargetType="Rectangle">
+        <Setter Property="Width" Value="1"/>
+        <Setter Property="Fill" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="Margin" Value="8,0"/>
+    </Style>
+
+    <!-- Tooltip Style -->
+    <Style x:Key="DefaultToolTipStyle" TargetType="ToolTip">
+        <Setter Property="Background" Value="{ThemeResource ToolTipBackground}"/>
+        <Setter Property="Foreground" Value="{ThemeResource ToolTipForeground}"/>
+        <Setter Property="CornerRadius" Value="4"/>
+        <Setter Property="Padding" Value="8,4"/>
+        <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <!-- Avatar/Profile Picture Placeholder -->
+    <Style x:Key="AvatarStyle" TargetType="Border">
+        <Setter Property="Width" Value="40"/>
+        <Setter Property="Height" Value="40"/>
+        <Setter Property="CornerRadius" Value="20"/>
+        <Setter Property="Background" Value="{ThemeResource SystemAccentColorBrush}"/>
+    </Style>
+
+    <Style x:Key="LargeAvatarStyle" TargetType="Border" BasedOn="{StaticResource AvatarStyle}">
+        <Setter Property="Width" Value="80"/>
+        <Setter Property="Height" Value="80"/>
+        <Setter Property="CornerRadius" Value="40"/>
+    </Style>
+
+    <Style x:Key="SmallAvatarStyle" TargetType="Border" BasedOn="{StaticResource AvatarStyle}">
+        <Setter Property="Width" Value="28"/>
+        <Setter Property="Height" Value="28"/>
+        <Setter Property="CornerRadius" Value="14"/>
+    </Style>
+
+    <!-- Avatar Text Style -->
+    <Style x:Key="AvatarTextStyle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemAccentColorForegroundBrush}"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="LargeAvatarTextStyle" TargetType="TextBlock" BasedOn="{StaticResource AvatarTextStyle}">
+        <Setter Property="FontSize" Value="28"/>
+    </Style>
+
+    <Style x:Key="SmallAvatarTextStyle" TargetType="TextBlock" BasedOn="{StaticResource AvatarTextStyle}">
+        <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <!-- Chip/Tag Style -->
+    <Style x:Key="ChipStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource ChipBackground}"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="8,2"/>
+        <Setter Property="MinHeight" Value="24"/>
+    </Style>
+
+    <Style x:Key="ChipTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="Foreground" Value="{ThemeResource ChipForeground}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <!-- Removable Chip -->
+    <Style x:Key="RemovableChipStyle" TargetType="Border" BasedOn="{StaticResource ChipStyle}">
+        <Setter Property="Padding" Value="8,2,4,2"/>
+    </Style>
+
+    <!-- DataGrid/Table Styles - Requires Community Toolkit
+    <Style x:Key="DataGridStyle" TargetType="muxc:DataGrid">
+        <Setter Property="Background" Value="{ThemeResource LayerFillColorDefaultBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="AlternatingRowBackground" Value="{ThemeResource DataGridAlternatingRowBackground}"/>
+        <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+        <Setter Property="HorizontalGridLinesBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="VerticalGridLinesBrush" Value="Transparent"/>
+        <Setter Property="RowHeight" Value="40"/>
+        <Setter Property="ColumnHeaderHeight" Value="40"/>
+    </Style>
+
+    <Style x:Key="DataGridColumnHeaderStyle" TargetType="muxc:DataGridColumnHeader">
+        <Setter Property="Background" Value="{ThemeResource LayerFillColorDefaultBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="BorderThickness" Value="0,0,0,1"/>
+    </Style>
+
+    <Style x:Key="DataGridRowStyle" TargetType="muxc:DataGridRow">
+        <Setter Property="MinHeight" Value="40"/>
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <Style x:Key="DataGridCellStyle" TargetType="muxc:DataGridCell">
+        <Setter Property="Padding" Value="12,0"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="FocusVisualMargin" Value="0"/>
+    </Style>
+    -->
+
+    <!-- TreeView Styles -->
+    <Style x:Key="TreeViewStyle" TargetType="muxc:TreeView">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+
+    <Style x:Key="TreeViewItemStyle" TargetType="muxc:TreeViewItem">
+        <Setter Property="MinHeight" Value="32"/>
+        <Setter Property="Padding" Value="8,0"/>
+    </Style>
+
+    <!-- Expander Style -->
+    <Style x:Key="DefaultExpanderStyle" TargetType="muxc:Expander">
+        <Setter Property="Background" Value="{ThemeResource LayerFillColorDefaultBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="HeaderTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold"/>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Pivot Style -->
+    <Style x:Key="DefaultPivotStyle" TargetType="muxc:Pivot">
+        <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <Style x:Key="DefaultPivotItemStyle" TargetType="muxc:PivotItem">
+        <Setter Property="Margin" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+    </Style>
+
+    <!-- PivotHeaderItem Style commented out - not available in WinUI 3
+    <Style x:Key="DefaultPivotHeaderStyle" TargetType="muxc:PivotHeaderItem">
+        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontWeight" Value="Medium"/>
+        <Setter Property="Padding" Value="16,8"/>
+        <Setter Property="Margin" Value="0"/>
+    </Style>
+    -->
+
+    <!-- NavigationViewItem Style for Custom Icons - IconTemplate not available in WinUI 3
+    <Style x:Key="NavigationViewItemWithIconStyle" TargetType="muxc:NavigationViewItem">
+        <Setter Property="IconTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <ContentControl Content="{Binding}" Width="20" Height="20"/>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    -->
+
+    <!-- SplitView Styles -->
+    <Style x:Key="CompactSplitViewStyle" TargetType="SplitView">
+        <Setter Property="CompactPaneLength" Value="48"/>
+        <Setter Property="OpenPaneLength" Value="280"/>
+        <Setter Property="DisplayMode" Value="CompactInline"/>
+    </Style>
+
+    <!-- Settings Card Template (for settings pages) -->
+    <DataTemplate x:Key="SettingsCardTemplate">
+        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,8">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+                <ContentControl Content="{Binding Icon}" Width="24" Height="24" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Title}" Style="{ThemeResource BodyTextBlockStyle}"/>
+                    <TextBlock Text="{Binding Description}" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="{Binding Description, Converter={StaticResource StringToVisibilityConverter}}"/>
+                </StackPanel>
+                <ContentControl Grid.Column="2" Content="{Binding Control}" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+    </DataTemplate>
+
+    <!-- Section Header Style -->
+    <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+        <Setter Property="Style" Value="{ThemeResource TitleLargeTextBlockStyle}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Margin" Value="0,24,0,12"/>
+    </Style>
+
+    <!-- Subsection Header Style -->
+    <Style x:Key="SubsectionHeaderStyle" TargetType="TextBlock">
+        <Setter Property="Style" Value="{ThemeResource SubtitleTextBlockStyle}"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Margin" Value="0,16,0,8"/>
+    </Style>
+
+    <!-- Description Text Style -->
+    <Style x:Key="DescriptionTextStyle" TargetType="TextBlock">
+        <Setter Property="Style" Value="{ThemeResource BodyTextBlockStyle}"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}"/>
+        <Setter Property="Margin" Value="0,0,0,16"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+</ResourceDictionary>

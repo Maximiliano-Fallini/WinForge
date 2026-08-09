@@ -1,0 +1,54 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio
+.vs/
+*.vscode/
+
+# NuGet
+packages/
+*.nuget.exe
+
+# Build results
+*.exe
+*.exe.config
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.pch
+*.ncb
+*.opb
+*.opensdf
+*.sdf
+*.cache
+*.log
+
+# Windows App SDK / WinUI
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+
+# Instalador (WiX)
+.tools/
+installer/publish/
+installer/*.msi
+installer/*.wixpdb
+
+# Dependencias de terceros
+node_modules/
+
+# Carpetas de trabajo de Freebuff / proyectos de prueba (no son parte de la app)
+.freebuff/
+
+# Archivos grandes / temporales
+*.rar
+*.db
+*.db-wal
+*.dmp

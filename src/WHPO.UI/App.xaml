@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="WHPO_UI.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:WHPO_UI">
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- Pinceles semánticos por tema (claro/oscuro): el resto de la app usa estos
+                 recursos para que el modo claro se vea coherente y legible. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <!-- Paleta: el NAVBAR es negro en oscuro / blanco en claro, y el fondo del
+                     contenido es GRIS (más claro que el negro, más oscuro que el blanco) para
+                     que el sidebar siempre se diferencie de las vistas. Las cards se separan
+                     del fondo por color + borde. -->
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF1F2125"/>
+                    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF262A31"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF343A45"/>
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF8A94A6"/>
+                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF000000"/>
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF1F2125"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFE8EAEE"/>
+                    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFD8DDE3"/>
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF5C6470"/>
+                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- Reusable Controls - Phase 4 -->
+                <ResourceDictionary Source="Controls/Buttons.xaml"/>
+                <ResourceDictionary Source="Controls/Cards.xaml"/>
+                <ResourceDictionary Source="Controls/Toggles.xaml"/>
+                <ResourceDictionary Source="Controls/Dialogs.xaml"/>
+                <ResourceDictionary Source="Controls/Notifications.xaml"/>
+                <ResourceDictionary Source="Controls/CustomControls.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+            <!-- Colores compartidos de la app (antes duplicados en cada página) -->
+            <SolidColorBrush x:Key="AccentBrush" Color="#8AB4F8"/>
+            <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
+            <SolidColorBrush x:Key="DarkCardBrush" Color="#1C1C1C"/>
+            <!-- Other app resources here -->
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

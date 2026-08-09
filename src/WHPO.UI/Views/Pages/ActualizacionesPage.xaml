@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="WHPO_UI.Views.Pages.ActualizacionesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
+        <StackPanel Spacing="16" Margin="24">
+            <InfoBar x:Name="ResultBar" IsOpen="False" IsClosable="True" />
+
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Configuración actual" FontWeight="SemiBold" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="CurrentModeText" Text="Comprobando..." FontWeight="SemiBold" FontSize="20" />
+                    <TextBlock x:Name="CurrentDescriptionText" Text="" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="Perfiles disponibles" FontSize="18" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <TextBlock Text="Tocá una card para seleccionar el perfil y luego aplicálo con el botón de abajo."
+                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
+
+            <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                <!-- Predeterminado -->
+                <Border x:Name="DefaultCard" Tag="Default" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
+                        BorderBrush="Transparent" BorderThickness="1" Tapped="ProfileCard_Tapped">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE777;" FontSize="20" Foreground="#FF60CDFF" VerticalAlignment="Center" />
+                                <TextBlock Text="Predeterminado de Windows" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <FontIcon x:Name="DefaultCardCheck" Grid.Column="1" Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Text="Restaura el comportamiento normal de Windows Update: actualizaciones, controladores y reinicios según los valores predeterminados de Windows."
+                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="13" />
+                    </StackPanel>
+                </Border>
+                <!-- Recomendado -->
+                <Border Grid.Column="1" x:Name="RecommendedCard" Tag="Recommended" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
+                        BorderBrush="Transparent" BorderThickness="1" Tapped="ProfileCard_Tapped">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE73E;" FontSize="20" Foreground="#FF81C784" VerticalAlignment="Center" />
+                                <TextBlock Text="Recomendado" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <FontIcon x:Name="RecommendedCardCheck" Grid.Column="1" Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Text="Mantiene las actualizaciones de seguridad, evita reinicios automáticos, aplaza las de calidad 4 días y las de versión 365. Los controladores dejan de llegar por Windows Update."
+                                   TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="13" />
+                    </StackPanel>
+                </Border>
+                <!-- Desactivar -->
+                <Border Grid.Column="2" x:Name="DisabledCard" Tag="Disabled" Background="#FF30221F" BorderBrush="#FFE57373" BorderThickness="1" CornerRadius="12" Padding="16"
+                        Tapped="ProfileCard_Tapped">
+                    <StackPanel Spacing="8">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE7BA;" FontSize="20" Foreground="#FFE57373" VerticalAlignment="Center" />
+                                <TextBlock Text="Desactivar actualizaciones" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#FFE8EAED" />
+                            </StackPanel>
+                            <FontIcon x:Name="DisabledCardCheck" Grid.Column="1" Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
+                        </Grid>
+                        <TextBlock Text="Detiene los servicios y tareas de Windows Update, bloquea las automáticas y borra su caché. Sin actualizaciones de seguridad hasta restaurar otro perfil."
+                                   TextWrapping="Wrap" Foreground="#FFFFCCBC" FontSize="13" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Button x:Name="ApplyProfileButton" Content="Aplicar perfil seleccionado"
+                    Background="#FF8AB4F8" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold"
+                    CornerRadius="8" Padding="16,10" HorizontalAlignment="Stretch"
+                    IsEnabled="False" Click="ApplyProfileButton_Click" Margin="0,4,0,0" />
+
+            <TextBlock Text="Los cambios afectan a todo el sistema y requieren permisos de administrador. Se recomienda reiniciar después de aplicar un perfil."
+                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,12" />
+        </StackPanel>
+    </ScrollViewer>
+</Page>

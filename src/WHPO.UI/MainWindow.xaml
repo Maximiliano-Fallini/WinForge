@@ -1,0 +1,74 @@
+<Window
+    x:Class="WHPO_UI.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    Title="WinForge">
+
+    <muxc:NavigationView
+        x:Name="NavigationViewControl"
+        PaneDisplayMode="Left"
+        CompactPaneLength="48"
+        OpenPaneLength="256"
+        IsBackButtonVisible="Collapsed"
+        IsSettingsVisible="False"
+        Margin="0,0,0,0"
+        Padding="0,0,0,0"
+        Background="{ThemeResource AppBackgroundBrush}">
+
+        <muxc:NavigationView.MenuItems>
+            <muxc:NavigationViewItem Content="Sistema" Tag="sistema">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="AllApps" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Red" Tag="red">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Globe" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Memoria" Tag="memoria">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Library" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Resolución del Temporizador" Tag="temporizador">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Clock" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Núcleos y Plan de energía" Tag="nucleos">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE950;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Optimizaciones" Tag="optimizaciones">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Repair" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Reparación" Tag="reparacion">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Refresh" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Windows Update" Tag="actualizaciones">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Download" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+        </muxc:NavigationView.MenuItems>
+
+        <muxc:NavigationView.FooterMenuItems>
+            <muxc:NavigationViewItem Content="Configuración" Tag="configuracion">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Setting" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+        </muxc:NavigationView.FooterMenuItems>
+
+        <muxc:NavigationView.Content>
+            <muxc:Frame x:Name="ContentFrame" Margin="0,0,0,0" />
+        </muxc:NavigationView.Content>
+    </muxc:NavigationView>
+</Window>

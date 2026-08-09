@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- ProductCode fijo: los rebuilds con el mismo contenido conservan el mismo codigo de producto
+       (evita duplicados al reinstalar y permite upgrades limpios via MajorUpgrade) -->
+  <Package Name="WinForge"
+           Manufacturer="WinForge"
+           Version="1.0.0"
+           ProductCode="{9C5CDFA0-40CE-4FEF-B353-3D3C9F32FA52}"
+           UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
+           Language="3082"
+           Scope="perMachine"
+           InstallerVersion="500">
+
+    <!-- Actualizaciones: reemplaza la versión anterior sin dejar restos -->
+    <MajorUpgrade DowngradeErrorMessage="Ya existe una versión más reciente de WinForge instalada." />
+
+    <!-- Todo comprimido dentro del .msi (un solo archivo) -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Icono para accesos directos y el panel de Programas -->
+    <Icon Id="WinForgeIco" SourceFile="publish\Assets\WinForge.ico" />
+    <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
+    <Property Id="ARPPUBLISHER" Value="WinForge" />
+    <Property Id="ARPCONTACT" Value="WinForge" />
+    <Property Id="ARPCOMMENTS" Value="WinForge - optimizador y monitor del sistema" />
+
+    <!-- Cierra WinForge antes de desinstalar/actualizar para que los archivos no queden en uso -->
+    <CustomAction Id="KillWinForge"
+                  Directory="System64Folder"
+                  ExeCommand="taskkill.exe /IM WinForge.exe /F"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="KillWinForge" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <!-- Acceso directo en el escritorio -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="Cmp_DesktopShortcut" Guid="{249C137C-68B4-456B-AC14-3B87FE545357}">
+        <Shortcut Id="DesktopShortcut"
+                  Name="WinForge"
+                  Target="[INSTALLFOLDER]WinForge.exe"
+                  Icon="WinForgeIco"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <!-- KeyPath HKCU: ICE43 lo exige para accesos directos no anunciados (estandar MSI) -->
+        <RegistryValue Root="HKCU" Key="Software\WinForge" Name="desktopShortcut" Value="1" Type="integer" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- Menú Inicio: lanzar + desinstalar -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuWinForge" Name="WinForge">
+        <Component Id="Cmp_StartMenuShortcuts" Guid="{D603F0F3-3959-4235-8F15-9C4C5DE87874}">
+          <Shortcut Id="StartMenuShortcut"
+                    Name="WinForge"
+                    Target="[INSTALLFOLDER]WinForge.exe"
+                    Icon="WinForgeIco"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <Shortcut Id="UninstallShortcut"
+                    Name="Desinstalar WinForge"
+                    Target="[System64Folder]msiexec.exe"
+                    Arguments="/x [ProductCode]" />
+          <RemoveFolder Id="RemoveStartMenuWinForge" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\WinForge" Name="startMenuShortcuts" Value="1" Type="integer" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="WinForge" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="Cmp_DesktopShortcut" />
+      <ComponentRef Id="Cmp_StartMenuShortcuts" />
+    </Feature>
+  </Package>
+</Wix>

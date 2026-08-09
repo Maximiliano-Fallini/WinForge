@@ -1,0 +1,73 @@
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace WHPO.Core.Services.Interfaces;
+
+/// <summary>
+/// Servicio para el módulo Red: adaptadores, DNS, flush DNS, benchmark y TCP/IP.
+/// </summary>
+public interface INetworkService
+{
+    /// <summary>
+    /// Obtiene los servidores DNS configurados en los adaptadores activos.
+    /// </summary>
+    List<DnsServerInfo> GetDnsServers();
+
+    /// <summary>
+    /// Ejecuta el flush de la caché DNS (ipconfig /flushdns).
+    /// </summary>
+    Task<CommandResult> FlushDnsAsync();
+
+    /// <summary>
+    /// Ejecuta un benchmark de red: latencia (ping) y velocidad aproximada.
+    /// </summary>
+    Task<NetworkBenchmarkResult> RunBenchmarkAsync();
+
+    /// <summary>
+    /// Obtiene información de configuración TCP/IP (IP, máscara, gateway, DHCP).
+    /// </summary>
+    List<TcpIpInfo> GetTcpIpInfo();
+}
+
+/// <summary>
+/// Información de un servidor DNS.
+/// </summary>
+public record DnsServerInfo(
+    string AdapterName,
+    string ServerAddress,
+    bool IsPrimary
+);
+
+/// <summary>
+/// Resultado de un comando del sistema.
+/// </summary>
+public record CommandResult(
+    bool Success,
+    string Output
+);
+
+/// <summary>
+/// Resultado del benchmark de red.
+/// </summary>
+public record NetworkBenchmarkResult(
+    double AverageLatencyMs,
+    double MinLatencyMs,
+    double MaxLatencyMs,
+    int PacketsSent,
+    int PacketsReceived,
+    int PacketsLost,
+    double PacketLossPercent,
+    string TargetHost
+);
+
+/// <summary>
+/// Información de configuración TCP/IP de un adaptador.
+/// </summary>
+public record TcpIpInfo(
+    string AdapterName,
+    string IpAddress,
+    string SubnetMask,
+    string Gateway,
+    bool DhcpEnabled,
+    string DhcpServer
+);

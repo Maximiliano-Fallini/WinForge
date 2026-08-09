@@ -1,0 +1,120 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
+
+    <!-- InfoBar Styles for Notifications -->
+    <Style x:Key="DefaultInfoBarStyle" TargetType="InfoBar">
+        <Setter Property="IsClosable" Value="True"/>
+        <Setter Property="IsOpen" Value="False"/>
+        <Setter Property="Severity" Value="Informational"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Margin" Value="12"/>
+        <Setter Property="Padding" Value="12,8"/>
+    </Style>
+
+    <!-- Info Notification -->
+    <Style x:Key="InfoNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Severity" Value="Informational"/>
+        <Setter Property="Title" Value="Información"/>
+    </Style>
+
+    <!-- Success Notification -->
+    <Style x:Key="SuccessNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Severity" Value="Success"/>
+        <Setter Property="Title" Value="Éxito"/>
+    </Style>
+
+    <!-- Warning Notification -->
+    <Style x:Key="WarningNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Severity" Value="Warning"/>
+        <Setter Property="Title" Value="Advertencia"/>
+    </Style>
+
+    <!-- Error Notification -->
+    <Style x:Key="ErrorNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Severity" Value="Error"/>
+        <Setter Property="Title" Value="Error"/>
+        <Setter Property="IsClosable" Value="True"/>
+    </Style>
+
+    <!-- Persistent Error Notification (not closable) -->
+    <Style x:Key="PersistentErrorNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Severity" Value="Error"/>
+        <Setter Property="Title" Value="Error"/>
+        <Setter Property="IsClosable" Value="False"/>
+    </Style>
+
+    <!-- Toast Notification Style (using TeachingTip) -->
+    <Style x:Key="ToastNotificationStyle" TargetType="muxc:TeachingTip">
+        <Setter Property="PreferredPlacement" Value="Bottom"/>
+        <Setter Property="IsLightDismissEnabled" Value="True"/>
+        <Setter Property="TailVisibility" Value="Visible"/>
+        <Setter Property="Subtitle" Value=""/>
+    </Style>
+
+    <!-- Info Toast -->
+    <Style x:Key="InfoToastStyle" TargetType="muxc:TeachingTip" BasedOn="{StaticResource ToastNotificationStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorSuccessBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorSuccessForegroundBrush}"/>
+    </Style>
+
+    <!-- Success Toast -->
+    <Style x:Key="SuccessToastStyle" TargetType="muxc:TeachingTip" BasedOn="{StaticResource ToastNotificationStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorSuccessBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorSuccessForegroundBrush}"/>
+    </Style>
+
+    <!-- Warning Toast -->
+    <Style x:Key="WarningToastStyle" TargetType="muxc:TeachingTip" BasedOn="{StaticResource ToastNotificationStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorCautionBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCautionForegroundBrush}"/>
+    </Style>
+
+    <!-- Error Toast -->
+    <Style x:Key="ErrorToastStyle" TargetType="muxc:TeachingTip" BasedOn="{StaticResource ToastNotificationStyle}">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorCriticalBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalForegroundBrush}"/>
+    </Style>
+
+    <!-- Progress Notification -->
+    <Style x:Key="ProgressNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Severity" Value="Informational"/>
+        <Setter Property="IsClosable" Value="False"/>
+    </Style>
+
+    <!-- Notification with Action Button -->
+    <DataTemplate x:Key="NotificationWithActionTemplate">
+        <InfoBar 
+            Severity="{Binding Severity}"
+            Title="{Binding Title}"
+            Message="{Binding Message}"
+            IsOpen="{Binding IsOpen, Mode=TwoWay}"
+            IsClosable="{Binding IsClosable}"
+            ActionButton="{Binding ActionButton}"
+            Style="{StaticResource DefaultInfoBarStyle}"/>
+    </DataTemplate>
+
+    <!-- Inline Notification (for forms) -->
+    <Style x:Key="InlineNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Margin" Value="0,8"/>
+        <Setter Property="Padding" Value="12,6"/>
+        <Setter Property="CornerRadius" Value="4"/>
+    </Style>
+
+    <!-- Banner Notification (full width) -->
+    <Style x:Key="BannerNotificationStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Margin" Value="0"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    </Style>
+
+    <!-- Snackbar Style (using InfoBar at bottom) -->
+    <Style x:Key="SnackbarStyle" TargetType="InfoBar" BasedOn="{StaticResource DefaultInfoBarStyle}">
+        <Setter Property="Margin" Value="0"/>
+        <Setter Property="CornerRadius" Value="0"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        <Setter Property="VerticalAlignment" Value="Bottom"/>
+    </Style>
+
+</ResourceDictionary>

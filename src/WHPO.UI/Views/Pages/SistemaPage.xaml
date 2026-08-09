@@ -1,0 +1,224 @@
+<Page
+    x:Class="WHPO_UI.Views.Pages.SistemaPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
+        <StackPanel Spacing="16" Margin="24">
+            <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
+
+            <!-- ====== RESUMEN: tarjetas unificadas (2 columnas, logo a la izquierda) ====== -->
+            <TextBlock Text="Resumen del sistema" FontWeight="SemiBold" FontSize="18" Margin="0,8,0,0"/>
+            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12" RowSpacing="12">
+                <!-- CPU -->
+                <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="150" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid x:Name="CpuContent" ColumnDefinitions="80,*" ColumnSpacing="16" Visibility="Collapsed">
+                            <Image x:Name="CpuLogoImage" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock Text="CPU" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="CpuNameText" Text="" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2"/>
+                                <ProgressBar x:Name="CpuUsageBar" Value="0" Height="6"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock x:Name="CpuUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
+                                    <TextBlock x:Name="CpuTempText" Text="" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Bottom" Margin="0,0,0,3"/>
+                                </StackPanel>
+                                <TextBlock x:Name="CpuDetailsText" Text="--" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="CpuSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="48" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="26" Width="240" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="6" RadiusX="3" RadiusY="3" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Height="26" Width="130" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="170" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="150" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <!-- GPU -->
+                <Border Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="150" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid x:Name="GpuContent" ColumnDefinitions="80,*" ColumnSpacing="16" Visibility="Collapsed">
+                            <Image x:Name="GpuLogoImage" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock Text="GPU" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="GpuNameText" Text="" FontWeight="SemiBold" TextWrapping="Wrap" MaxLines="2"/>
+                                <ProgressBar x:Name="GpuUsageBar" Value="0" Height="6"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock x:Name="GpuUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
+                                    <TextBlock x:Name="GpuTempText" Text="" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Bottom" Margin="0,0,0,3"/>
+                                </StackPanel>
+                                <TextBlock x:Name="GpuVramText" Text="" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="GpuSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="48" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="26" Width="220" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="6" RadiusX="3" RadiusY="3" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Height="26" Width="130" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="170" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <!-- RAM -->
+                <Border Grid.Row="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="150" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid x:Name="RamContent" ColumnDefinitions="80,*" ColumnSpacing="16" Visibility="Collapsed">
+                            <!-- Base de datos (cilindro) en el color accent de la app -->
+                            <Path Data="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4zM4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4zm0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4z"
+                                  Fill="{StaticResource AccentBrush}" Stretch="Uniform" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock Text="RAM" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="RamTotalText" Text="" FontWeight="SemiBold"/>
+                                <ProgressBar x:Name="RamUsageBar" Value="0" Height="6"/>
+                                <TextBlock x:Name="RamUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
+                                <TextBlock x:Name="RamDetailsText" Text="--" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="RamSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="48" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="24" Width="160" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="6" RadiusX="3" RadiusY="3" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Height="26" Width="120" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="180" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <!-- Almacenamiento (disco duro) -->
+                <Border Grid.Row="1" Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="150" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid x:Name="StorageContent" ColumnDefinitions="80,*" ColumnSpacing="16" Visibility="Collapsed">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xEDA2;" FontSize="72" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="6">
+                                <TextBlock Text="Almacenamiento" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="StorageTotalText" Text="" FontWeight="SemiBold"/>
+                                <ProgressBar x:Name="StorageUsageBar" Value="0" Height="6"/>
+                                <TextBlock x:Name="StorageUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
+                                <TextBlock x:Name="StorageFreeText" Text="Libre: --" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </StackPanel>
+                        </Grid>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="StorageSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="120" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="24" Width="200" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="6" RadiusX="3" RadiusY="3" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Height="26" Width="120" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="170" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <!-- Sistema Operativo (ancho completo, logo de Windows) -->
+                <Border Grid.Row="2" Grid.ColumnSpan="2" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="120" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid x:Name="OsContent" ColumnDefinitions="80,*" ColumnSpacing="16" Visibility="Collapsed">
+                            <Path Data="M0 93.7l183.6-25.3v177.4H0V93.7zm0 324.6l183.6 25.3V268.4H0v149.9zm203.8 28L448 480V268.4H203.8v177.9zm0-380.6v180.1H448V32L203.8 65.7z"
+                                  Fill="{StaticResource AccentBrush}" Stretch="Uniform" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Sistema Operativo" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="OsNameText" Text="--" FontWeight="SemiBold" FontSize="16"/>
+                                <TextBlock x:Name="OsDetailsText" Text="--" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Grid>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="OsSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="130" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="22" Width="280" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="320" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+
+
+
+            <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
+
+            <!-- ====== SECCIÓN 4: INSTRUCCIONES DEL PROCESADOR ====== -->
+            <TextBlock Text="Instrucciones del Procesador" FontWeight="SemiBold" FontSize="18" Margin="0,4,0,0"/>
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                <Grid x:Name="InstructionsContent" Visibility="Collapsed">
+                    <ItemsControl x:Name="InstructionsPanel">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <ItemsWrapGrid Orientation="Horizontal" ItemWidth="160" ItemHeight="32"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <TextBlock Text="Detectando..." FontSize="14" VerticalAlignment="Center"/>
+                    </ItemsControl>
+                    <!-- Skeleton de carga -->
+                    <StackPanel x:Name="InstructionsSkeleton" Orientation="Horizontal" Spacing="8" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                        <Rectangle Width="110" Height="26" RadiusX="13" RadiusY="13" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="80" Height="26" RadiusX="13" RadiusY="13" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="100" Height="26" RadiusX="13" RadiusY="13" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="70" Height="26" RadiusX="13" RadiusY="13" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="90" Height="26" RadiusX="13" RadiusY="13" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
+
+            <!-- ====== SECCIÓN 6: SISTEMA (Motherboard / BIOS / SO) ====== -->
+            <TextBlock Text="Placa Base y BIOS" FontWeight="SemiBold" FontSize="18" Margin="0,4,0,0"/>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowSpacing="12">
+                <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <StackPanel x:Name="BoardContent" Spacing="6" Visibility="Collapsed">
+                            <TextBlock Text="Placa Base" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Fabricante" FontSize="13"/>
+                                <TextBlock x:Name="BoardManufacturerText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Producto" FontSize="13"/>
+                                <TextBlock x:Name="BoardProductText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Versión" FontSize="13"/>
+                                <TextBlock x:Name="BoardVersionText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                            </Grid>
+                        </StackPanel>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="BoardSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="110" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="200" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="180" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="160" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Border Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <StackPanel x:Name="BiosContent" Spacing="6" Visibility="Collapsed">
+                            <TextBlock Text="BIOS" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Fabricante" FontSize="13"/>
+                                <TextBlock x:Name="BiosManufacturerText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Versión SMBIOS" FontSize="13"/>
+                                <TextBlock x:Name="BiosVersionText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="Fecha" FontSize="13"/>
+                                <TextBlock x:Name="BiosDateText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                            </Grid>
+                        </StackPanel>
+                        <!-- Skeleton de carga -->
+                        <StackPanel x:Name="BiosSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
+                            <Rectangle Height="12" Width="90" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="180" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="160" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="12" Width="140" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+
+        </StackPanel>
+    </ScrollViewer>
+</Page>
