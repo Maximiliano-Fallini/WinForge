@@ -24,6 +24,11 @@ public sealed partial class RedPage : Page
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush MutedTextBrush = new(Windows.UI.Color.FromArgb(255, 180, 180, 180));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush LatencyErrorBrush = new(Windows.UI.Color.FromArgb(255, 255, 100, 100));
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 106, 200, 133));
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 255, 193, 7));
+
+    // Color del anillo de tiempo del packet loss test (azul)
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush TimeRingBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
 
     // Lista de proveedores DNS preestablecidos
     private static readonly List<DnsPreset> DnsPresets = new()
@@ -74,10 +79,13 @@ public sealed partial class RedPage : Page
     private RingGauge? _sentGauge;
     private RingGauge? _timeGauge;
     private RingGauge? _receivedGauge;
-    private int _packetLossDurationSeconds = 15;
+    private int _packetLossDurationSeconds = 10;
+    private int _packetLossRatePps = 10;
     private int _latePacketThresholdMs = 200;
     private DateTime _testStartTime;
     private System.Threading.Timer? _timerTicker;
+    private int _liveSent;
+    private int _liveReceived;
 
     public RedPage()
     {
@@ -204,13 +212,24 @@ public sealed partial class RedPage : Page
                 PacketLossDurationSlider.Minimum = 5;
                 PacketLossDurationSlider.Maximum = 60;
                 PacketLossDurationSlider.StepFrequency = 5;
-                PacketLossDurationSlider.Value = 15;
-                _packetLossDurationSeconds = 15;
-                PacketLossDurationText.Text = "15 segundos";
+                PacketLossDurationSlider.Value = 10;
+                _packetLossDurationSeconds = 10;
+                PacketLossDurationText.Text = "10 segundos";
+            }
+
+            // Configurar slider de paquetes por segundo
+            if (PacketLossRateSlider != null)
+            {
+                PacketLossRateSlider.Minimum = 1;
+                PacketLossRateSlider.Maximum = 100;
+                PacketLossRateSlider.StepFrequency = 1;
+                PacketLossRateSlider.Value = 10;
+                _packetLossRatePps = 10;
+                PacketLossRateText.Text = "10 pps";
             }
 
             _sentGauge = new RingGauge { Label = "Enviados" };
-            _timeGauge = new RingGauge { Label = "Tiempo" };
+            _timeGauge = new RingGauge { Label = "Tiempo", ProgressBrush = TimeRingBrush };
             _receivedGauge = new RingGauge { Label = "Recibidos" };
 
             if (SentRingHost != null)
@@ -258,6 +277,22 @@ public sealed partial class RedPage : Page
         }
     }
 
+    private void PacketLossRateSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        try
+        {
+            _packetLossRatePps = (int)e.NewValue;
+            if (PacketLossRateText != null)
+            {
+                PacketLossRateText.Text = $"{_packetLossRatePps} pps";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService?.LogError($"Error en PacketLossRateSlider_ValueChanged: {ex.Message}", ex);
+        }
+    }
+
     private async void PacketLossStartButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -277,47 +312,80 @@ public sealed partial class RedPage : Page
             _packetLossRunning = true;
             _packetLossCts = new System.Threading.CancellationTokenSource();
             var cts = _packetLossCts;
+            _liveSent = 0;
+            _liveReceived = 0;
             PacketLossStartButton.Content = "Detener test";
             PacketLossStatusText.Text = $"Probando {server.Name} ({server.Host})...";
+            PacketLossStatusText.Foreground = MutedTextBrush;
             
             if (PacketLossResultsPanel != null)
                 PacketLossResultsPanel.Visibility = Visibility.Collapsed;
             if (PacketLossDetailText != null)
                 PacketLossDetailText.Visibility = Visibility.Collapsed;
 
-            // Resetear gauges
-            if (_sentGauge != null)
+            // Calibración: medir la latencia real con un ping rápido para calcular cuántos
+            // paquetes por segundo se pueden enviar de verdad (un ping secuencial tarda
+            // ~RTT). Con eso el anillo de casillas se arma con una cantidad alcanzable
+            // y se completa al terminar el test.
+            int effectivePps = _packetLossRatePps;
+            try
             {
-                _sentGauge.Value = "0";
-                _sentGauge.Progress = 0;
+                using var calibPing = new System.Net.NetworkInformation.Ping();
+                var calibReply = await calibPing.SendPingAsync(server.Host, 2000);
+                if (calibReply.Status == System.Net.NetworkInformation.IPStatus.Success && calibReply.RoundtripTime > 0)
+                {
+                    // Margen de 15ms sobre el RTT medido para absorber jitter y overhead
+                    int maxPps = Math.Max(1, (int)(1000.0 / (calibReply.RoundtripTime + 15)));
+                    effectivePps = Math.Min(_packetLossRatePps, maxPps);
+                }
             }
+            catch
+            {
+                // Si falla la calibración, se usa la tasa pedida
+            }
+
+            int intervalMs = 1000 / Math.Max(1, effectivePps);
+
+            // Total de casillas planificadas = duración × tasa efectiva. Como cada paquete
+            // se agenda en t = k × intervalMs (ver loop), el número de pings que entran en
+            // la duración es exactamente este valor y el anillo se completa al final.
+            int expectedPackets = (int)Math.Ceiling(_packetLossDurationSeconds * 1000.0 / intervalMs);
+
+            // Resetear gauges: casillas (1 por paquete, tamaño fijo) y valores
             if (_timeGauge != null)
             {
                 _timeGauge.Value = "0s";
                 _timeGauge.Progress = 0;
             }
+            if (_sentGauge != null)
+            {
+                _sentGauge.ConfigureCells(expectedPackets);
+                _sentGauge.Value = "0";
+            }
             if (_receivedGauge != null)
             {
+                _receivedGauge.ConfigureCells(expectedPackets);
                 _receivedGauge.Value = "0";
-                _receivedGauge.Progress = 0;
             }
 
             _testStartTime = DateTime.UtcNow;
 
-            // Ticker para actualizar el cronómetro y anillos (250ms)
+            // Ticker para actualizar el cronómetro, anillo de tiempo y estado en vivo (100ms)
             _timerTicker = new System.Threading.Timer(_ =>
             {
                 var elapsed = (DateTime.UtcNow - _testStartTime).TotalSeconds;
                 var progress = Math.Clamp(elapsed / _packetLossDurationSeconds, 0.0, 1.0);
+                var liveLost = Math.Max(0, _liveSent - _liveReceived);
                 DispatcherQueue.TryEnqueue(() =>
                 {
                     if (_packetLossRunning)
                     {
                         _timeGauge!.Value = $"{elapsed:F1}s";
                         _timeGauge.Progress = progress;
+                        PacketLossStatusText.Text = $"Enviados: {_liveSent} | Recibidos: {_liveReceived} | Perdidos: {liveLost}  ·  {elapsed:F1}s / {_packetLossDurationSeconds}s";
                     }
                 });
-            }, null, 0, 250);
+            }, null, 0, 100);
 
             const int timeoutMs = 2000;
             int sent = 0, received = 0, late = 0, highLatency = 0;
@@ -325,12 +393,36 @@ public sealed partial class RedPage : Page
             long maxLatency = 0;
 
             using var ping = new System.Net.NetworkInformation.Ping();
+            double nextStartMs = 0;
 
-            // Enviar pings continuos durante la duración configurada
+            // Enviar pings continuos durante la duración configurada, respetando la tasa PPS
             while (!cts.IsCancellationRequested &&
                    (DateTime.UtcNow - _testStartTime).TotalSeconds < _packetLossDurationSeconds)
             {
+                // Agendamiento absoluto: el paquete k se envía en t = k × intervalMs desde
+                // el inicio, sin acumular desvíos por la duración de cada ping. Así el
+                // conteo enviado coincide exactamente con las casillas planificadas.
+                var targetStart = _testStartTime.AddMilliseconds(nextStartMs);
+                double waitMs = (targetStart - DateTime.UtcNow).TotalMilliseconds;
+                if (waitMs > 0)
+                {
+                    try { await Task.Delay(TimeSpan.FromMilliseconds(waitMs), cts.Token); }
+                    catch (TaskCanceledException) { break; }
+                }
+                nextStartMs += intervalMs;
+
                 sent++;
+                int packetIndex = sent - 1;
+
+                // Anillo de enviados: la casilla se enciende en verde apenas se envía y
+                // queda así (el envío fue correcto); el resultado del paquete se refleja
+                // en el anillo de recibidos, para que ninguna casilla cambie de verde a rojo.
+                if (_sentGauge != null)
+                {
+                    _sentGauge.SetPacketState(packetIndex, RingGauge.PacketCellState.Sent);
+                    _sentGauge.Value = $"{sent}";
+                }
+
                 try
                 {
                     var reply = await ping.SendPingAsync(server.Host, timeoutMs);
@@ -351,27 +443,33 @@ public sealed partial class RedPage : Page
                         {
                             highLatency++;
                         }
-                    }
 
-                    // Actualizar gauges en cada ping
-                    DispatcherQueue.TryEnqueue(() =>
+                        // Estado final del paquete en el anillo de recibidos:
+                        // verde si llegó bien, rojo si vino tarde o se perdió
+                        var cellState = (reply.RoundtripTime > _latePacketThresholdMs || reply.RoundtripTime > 100)
+                            ? RingGauge.PacketCellState.Slow
+                            : RingGauge.PacketCellState.Ok;
+                        _receivedGauge?.SetPacketState(packetIndex, cellState);
+                    }
+                    else
                     {
-                        if (_sentGauge != null)
-                        {
-                            _sentGauge.Value = $"{sent}";
-                            _sentGauge.Progress = Math.Clamp(sent / 100.0, 0.0, 1.0);
-                        }
-                        if (_receivedGauge != null)
-                        {
-                            _receivedGauge.Value = $"{received}";
-                            _receivedGauge.Progress = Math.Clamp(received / 100.0, 0.0, 1.0);
-                        }
-                    });
+                        // Timeout / destino inalcanzable: paquete perdido (rojo)
+                        _receivedGauge?.SetPacketState(packetIndex, RingGauge.PacketCellState.Lost);
+                    }
                 }
                 catch
                 {
                     // Perdido (timeout)
+                    _receivedGauge?.SetPacketState(packetIndex, RingGauge.PacketCellState.Lost);
                 }
+
+                _liveSent = sent;
+                _liveReceived = received;
+                if (_receivedGauge != null)
+                {
+                    _receivedGauge.Value = $"{received}";
+                }
+
             }
 
             _timerTicker?.Dispose();
@@ -383,27 +481,34 @@ public sealed partial class RedPage : Page
             double latePacketsPercent = sent > 0 ? (double)late / sent * 100 : 0;
             double avgLatency = received > 0 ? totalLatency / (double)received : 0;
 
-            // NOTA: Con un test de ping ICMP puro, NO se puede determinar upload vs download packet loss.
-            // Esas métricas requieren test HTTP/TCP.
-            // Mostramos métricas que SÍ se pueden medir:
-            // - Total Packet Loss: paquetes que no llegan (timeout)
-            // - Late Packets: paquetes que llegan pero con latencia > al umbral configurado
-            // - High Latency: paquetes con latencia > 100ms (indicador de congestión)
-            double uploadLossPercent = packetLossPercent; // Paquetes perdidos (no llegan)
-            double highLatencyPercent = highLatency > 0 ? (double)highLatency / sent * 100 : 0;
-
-            // Actualizar textos de resultados
-            PacketLossUploadText.Text = $"{uploadLossPercent:F1}%";
+            // Con un test de ping ICMP puro no se puede separar la pérdida de carga vs descarga:
+            // el ping mide la ida y vuelta completa. Por eso carga y descarga muestran el mismo
+            // valor que la pérdida total (round-trip) y la nota final lo aclara.
+            PacketLossUploadText.Text = $"{packetLossPercent:F1}%";
             PacketLossTotalText.Text = $"{packetLossPercent:F1}%";
-            PacketLossDownloadText.Text = "N/D"; // No se puede determinar con ping ICMP
+            PacketLossDownloadText.Text = $"{packetLossPercent:F1}%";
             PacketLossLateText.Text = $"{late} ({latePacketsPercent:F1}%)";
 
             PacketLossResultsPanel.Visibility = Visibility.Visible;
-            PacketLossDetailText.Text = $"Servidor: {server.Name} ({server.Host}) | Enviados: {sent} | Recibidos: {received} | Perdidos: {lost} | Late: {late} (> {_latePacketThresholdMs}ms) | Alta latencia (>100ms): {highLatency} | Avg: {avgLatency:F1} ms | Max: {maxLatency} ms";
+            PacketLossDetailText.Text =
+                $"Servidor: {server.Name} ({server.Host}) | Enviados: {sent} | Recibidos: {received} | Perdidos: {lost} ({packetLossPercent:F1}%) | " +
+                $"Tasa: {_packetLossRatePps} pps pedidos / {effectivePps} pps efectivos | Late (> {_latePacketThresholdMs} ms): {late} | Alta latencia (> 100 ms): {highLatency} | " +
+                $"Avg: {avgLatency:F1} ms | Max: {maxLatency} ms\n" +
+                "Nota: el ping ICMP mide la ida y vuelta completa; la pérdida de carga y de descarga no se puede separar, por eso ambas muestran la pérdida total.";
             PacketLossDetailText.Visibility = Visibility.Visible;
-            PacketLossStatusText.Text = cts.IsCancellationRequested
-                ? $"Test detenido por el usuario. Resultados parciales ({sent} pings)."
-                : "Test de pérdida de paquetes completado.";
+
+            if (cts.IsCancellationRequested)
+            {
+                PacketLossStatusText.Text = $"Test detenido por el usuario. Resultados parciales: {lost} de {sent} paquetes perdidos ({packetLossPercent:F1}%).";
+                PacketLossStatusText.Foreground = MutedTextBrush;
+            }
+            else
+            {
+                PacketLossStatusText.Text = $"Test completado: {packetLossPercent:F1}% de pérdida ({lost} de {sent} paquetes perdidos).";
+                PacketLossStatusText.Foreground = packetLossPercent < 1
+                    ? SuccessBrush
+                    : packetLossPercent < 5 ? WarningBrush : LatencyErrorBrush;
+            }
         }
         catch (Exception ex)
         {
@@ -564,7 +669,7 @@ public sealed partial class RedPage : Page
         catch (Exception ex)
         {
             _loggingService.LogError("Error abriendo ncpa.cpl", ex);
-            ApplyDnsResultText.Text = "No se pudo abrir conexiones de red. Ejecute 'ncpa.cpl' manualmente (Win+R → ncpa.cpl).";
+            SetDnsResultText(ApplyDnsResultText, "No se pudo abrir conexiones de red. Ejecute 'ncpa.cpl' manualmente (Win+R → ncpa.cpl).");
         }
     }
 
@@ -572,6 +677,19 @@ public sealed partial class RedPage : Page
     {
         // Solo permitir números y puntos
         args.Cancel = args.NewText.Any(c => c != '.' && !char.IsDigit(c));
+    }
+
+    // Muestra un resultado de DNS; con texto vacío colapsa el elemento para no dejar
+    // espacio muerto entre los botones y el separador / borde de la card.
+    private void SetDnsResultText(TextBlock tb, string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            tb.Visibility = Visibility.Collapsed;
+            return;
+        }
+        tb.Visibility = Visibility.Visible;
+        tb.Text = text;
     }
 
     private async void ApplyDnsButton_Click(object sender, RoutedEventArgs e)
@@ -583,64 +701,70 @@ public sealed partial class RedPage : Page
 
             if (string.IsNullOrEmpty(primaryDns))
             {
-                ApplyDnsResultText.Text = "Seleccione o ingrese un DNS válido antes de aplicar.";
+                SetDnsResultText(ApplyDnsResultText, "Seleccione o ingrese un DNS válido antes de aplicar.");
                 return;
             }
 
             ApplyDnsButton.IsEnabled = false;
-            ApplyDnsResultText.Text = "Buscando adaptador de red...";
+            SetDnsResultText(ApplyDnsResultText, "Buscando adaptador de red...");
 
-            // Usar GetActiveNetworkAdapter que ya maneja la detección correcta del adaptador
-            var adapterName = GetActiveNetworkAdapter();
-            _loggingService.LogInfo($"GetActiveNetworkAdapter devolvió: {adapterName ?? "null"}");
-            
-            if (string.IsNullOrEmpty(adapterName))
-            {
-                // Si no encuentra por gateway, buscar cualquier interfaz Up
-                var allInterfaces = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
-                _loggingService.LogInfo($"Interfaces totales detectadas: {allInterfaces.Length}");
-                foreach (var ni in allInterfaces)
-                {
-                    _loggingService.LogInfo($"  - {ni.Name}: {ni.OperationalStatus}, {ni.NetworkInterfaceType}");
-                }
-                
-                var anyUp = allInterfaces.FirstOrDefault(ni => 
-                    ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up &&
-                    ni.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback
-                );
-                
-                if (anyUp != null)
-                {
-                    adapterName = anyUp.Name;
-                    _loggingService.LogWarning($"Usando interfaz alternativa: {anyUp.Name}");
-                }
-            }
-
-            if (string.IsNullOrEmpty(adapterName))
-            {
-                ApplyDnsResultText.Text = "No se encontró ningún adaptador de red activo. Se abrirá la configuración de red.";
-                _loggingService.LogError("No se pudo encontrar ningún adaptador de red activo.");
-                FallbackToNcpaCpl();
-                return;
-            }
-
-            ApplyDnsResultText.Text = $"Configurando DNS en {adapterName}...";
-
-            var result = await _networkService.SetDnsServersAsync(adapterName, primaryDns, secondaryDns);
-
-            ApplyDnsResultText.Text = result.Success
-                ? "Servidores DNS configurados correctamente."
-                : $"Error al configurar DNS: {result.Output}";
+            var (success, message) = await ApplyDnsToActiveAdapterAsync(primaryDns, secondaryDns);
+            SetDnsResultText(ApplyDnsResultText, message);
         }
         catch (Exception ex)
         {
-            ApplyDnsResultText.Text = $"Error: {ex.Message}";
+            SetDnsResultText(ApplyDnsResultText, $"Error: {ex.Message}");
             _loggingService.LogError("Error en ApplyDnsButton_Click", ex);
         }
         finally
         {
             ApplyDnsButton.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// Detecta el adaptador de red activo y aplica los servidores DNS indicados.
+    /// Devuelve (éxito, mensaje) para mostrar al usuario.
+    /// </summary>
+    private async Task<(bool Success, string Message)> ApplyDnsToActiveAdapterAsync(string primaryDns, string secondaryDns)
+    {
+        // Usar GetActiveNetworkAdapter que ya maneja la detección correcta del adaptador
+        var adapterName = GetActiveNetworkAdapter();
+        _loggingService.LogInfo($"GetActiveNetworkAdapter devolvió: {adapterName ?? "null"}");
+
+        if (string.IsNullOrEmpty(adapterName))
+        {
+            // Si no encuentra por gateway, buscar cualquier interfaz Up
+            var allInterfaces = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces();
+            _loggingService.LogInfo($"Interfaces totales detectadas: {allInterfaces.Length}");
+            foreach (var ni in allInterfaces)
+            {
+                _loggingService.LogInfo($"  - {ni.Name}: {ni.OperationalStatus}, {ni.NetworkInterfaceType}");
+            }
+
+            var anyUp = allInterfaces.FirstOrDefault(ni =>
+                ni.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up &&
+                ni.NetworkInterfaceType != System.Net.NetworkInformation.NetworkInterfaceType.Loopback
+            );
+
+            if (anyUp != null)
+            {
+                adapterName = anyUp.Name;
+                _loggingService.LogWarning($"Usando interfaz alternativa: {anyUp.Name}");
+            }
+        }
+
+        if (string.IsNullOrEmpty(adapterName))
+        {
+            _loggingService.LogError("No se pudo encontrar ningún adaptador de red activo.");
+            FallbackToNcpaCpl();
+            return (false, "No se encontró ningún adaptador de red activo. Se abrirá la configuración de red.");
+        }
+
+        var result = await _networkService.SetDnsServersAsync(adapterName, primaryDns, secondaryDns);
+        return (result.Success, result.Success
+            ? "Servidores DNS configurados correctamente."
+            : $"Error al configurar DNS: {result.Output}");
     }
 
 
@@ -690,7 +814,6 @@ public sealed partial class RedPage : Page
         try
         {
             RunDnsTestButton.IsEnabled = false;
-            ClearDnsResultsButton.IsEnabled = false;
             CloseDnsResultsButton.IsEnabled = false;
 
             // Mostrar la pestaña de resultados y arrancar vacía
@@ -758,7 +881,6 @@ public sealed partial class RedPage : Page
         finally
         {
             RunDnsTestButton.IsEnabled = true;
-            ClearDnsResultsButton.IsEnabled = true;
             CloseDnsResultsButton.IsEnabled = true;
             // Evitar que el foco salte a los campos al deshabilitar el botón
             RunDnsTestButton.Focus(FocusState.Programmatic);
@@ -767,20 +889,13 @@ public sealed partial class RedPage : Page
 
     /// <summary>
     /// Agrega una card de resultado en tiempo real (apenas termina de probar cada DNS),
-    /// insertándola en la posición que le corresponde por latencia (mejores primero) y
-    /// hace auto-scroll al resultado más reciente dentro de la pestaña.
+    /// insertándola en la posición que le corresponde por latencia (mejores primero).
+    /// No se fuerza ningún scroll: el usuario mantiene el control de la posición.
     /// </summary>
     private void AddDnsResultCard(string name, string primary, string secondary, double primaryLatency, double secondaryLatency)
     {
         var card = BuildLatencyCard(name, primary, secondary, primaryLatency, secondaryLatency);
         InsertDnsResultSorted(card, BestDnsLatency(primaryLatency, secondaryLatency));
-
-        // Después del layout, scrollear al último resultado agregado
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (DnsResultsScroll != null)
-                DnsResultsScroll.ChangeView(null, DnsResultsScroll.ScrollableHeight, null);
-        });
     }
 
     /// <summary>
@@ -816,12 +931,6 @@ public sealed partial class RedPage : Page
         DnsTestResultsPanel.Children.Insert(index, card);
     }
 
-    private void ClearDnsResultsButton_Click(object sender, RoutedEventArgs e)
-    {
-        DnsTestResultsPanel.Children.Clear();
-        DnsTestStatusText.Text = "Resultados limpiados. Ejecutá el test para volver a medir.";
-    }
-
     private void CloseDnsResultsButton_Click(object sender, RoutedEventArgs e)
     {
         DnsResultsTab.Visibility = Visibility.Collapsed;
@@ -837,6 +946,10 @@ public sealed partial class RedPage : Page
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(12)
         };
+
+        var cardGrid = new Grid();
+        cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var panel = new StackPanel { Spacing = 6 };
         var header = new TextBlock { Text = name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 14, Foreground = LightTextBrush };
@@ -864,7 +977,51 @@ public sealed partial class RedPage : Page
             panel.Children.Add(secondaryPanel);
         }
 
-        border.Child = panel;
+        Grid.SetColumn(panel, 0);
+        cardGrid.Children.Add(panel);
+
+        // Botón "Aplicar": aplica este DNS al sistema directamente
+        var applyButton = new Button
+        {
+            Content = "Aplicar",
+            FontSize = 12,
+            Padding = new Thickness(10, 4, 10, 4),
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0)
+        };
+        applyButton.Click += async (s, e) =>
+        {
+            if (string.IsNullOrEmpty(primary))
+            {
+                SetDnsResultText(ApplyDnsResultText, $"\"{name}\" no tiene DNS primario para aplicar.");
+                return;
+            }
+
+            applyButton.IsEnabled = false;
+            applyButton.Content = "Aplicando...";
+            try
+            {
+                var (success, message) = await ApplyDnsToActiveAdapterAsync(primary, secondary);
+                SetDnsResultText(ApplyDnsResultText, $"{name}: {message}");
+                applyButton.Content = success ? "✓ Aplicado" : "Error";
+            }
+            catch (Exception ex)
+            {
+                SetDnsResultText(ApplyDnsResultText, $"{name}: error al aplicar: {ex.Message}");
+                _loggingService.LogError($"Error aplicando DNS desde resultado ({name})", ex);
+                applyButton.Content = "Error";
+            }
+            finally
+            {
+                applyButton.IsEnabled = true;
+            }
+        };
+
+        Grid.SetColumn(applyButton, 1);
+        cardGrid.Children.Add(applyButton);
+
+        border.Child = cardGrid;
         return border;
     }
 
@@ -873,15 +1030,15 @@ public sealed partial class RedPage : Page
         try
         {
             FlushDnsButton.IsEnabled = false;
-            FlushDnsResultText.Text = "Ejecutando flush DNS...";
+            SetDnsResultText(FlushDnsResultText, "Ejecutando flush DNS...");
             var result = await _networkService.FlushDnsAsync();
-            FlushDnsResultText.Text = result.Success
+            SetDnsResultText(FlushDnsResultText, result.Success
                 ? "Caché DNS vaciada correctamente."
-                : $"Error al vaciar la caché DNS: {result.Output}";
+                : $"Error al vaciar la caché DNS: {result.Output}");
         }
         catch (Exception ex)
         {
-            FlushDnsResultText.Text = $"Error: {ex.Message}";
+            SetDnsResultText(FlushDnsResultText, $"Error: {ex.Message}");
             _loggingService.LogError("Error en FlushDnsButton_Click", ex);
         }
         finally

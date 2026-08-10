@@ -14,12 +14,15 @@
                      que el sidebar siempre se diferencie de las vistas. Las cards se separan
                      del fondo por color + borde. -->
                 <ResourceDictionary x:Key="Dark">
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF1F2125"/>
+                    <!-- Fondo de las vistas: NEGRO puro #000000. El navbar es un gris-azulado
+                         oscuro #1F242C, un poco más claro para acercarse a las cards sin
+                         igualarlas. -->
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF000000"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF262A31"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF343A45"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF8A94A6"/>
-                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF000000"/>
-                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF1F2125"/>
+                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1F242C"/>
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF000000"/>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFE8EAEE"/>

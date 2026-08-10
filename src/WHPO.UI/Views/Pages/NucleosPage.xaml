@@ -7,237 +7,503 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Background="{ThemeResource AppBackgroundBrush}">
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="16" Margin="20,16,20,24">
+    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
-                <!-- ============ GRÁFICO DE TEMPERATURA DEL CPU (estilo Administrador de tareas) ============ -->
-                <Border Background="{ThemeResource CardBackgroundBrush}"
-                        CornerRadius="12"
-                        Padding="16"
-                        BorderBrush="{ThemeResource CardBorderBrush}"
-                        BorderThickness="1">
-                    <Grid RowDefinitions="Auto,*" RowSpacing="12">
-                        <!-- Cabecera del gráfico -->
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                <FontIcon Glyph="&#xE950;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
-                                <TextBlock Text="Temperatura del CPU" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            </StackPanel>
+        <!-- ====== NAVBAR INTERNO: Núcleos / Gestionar / Comparar ====== -->
+        <SelectorBar x:Name="PlanTabs"
+                     Grid.Row="0"
+                     Margin="20,14,20,4"
+                     Background="Transparent"
+                     SelectionChanged="PlanTabs_SelectionChanged">
+            <SelectorBarItem Text="Núcleos" IsSelected="True"/>
+            <SelectorBarItem Text="Gestionar planes de energía"/>
+            <SelectorBarItem Text="Comparar planes de energía"/>
+        </SelectorBar>
 
-                            <!-- Leyenda de umbrales térmicos -->
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Ellipse Width="10" Height="10" Fill="#FF4CC257" VerticalAlignment="Center"/>
-                                    <TextBlock Text="&lt; 85°C" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Ellipse Width="10" Height="10" Fill="#FFFFC93C" VerticalAlignment="Center"/>
-                                    <TextBlock Text="85 – 90°C" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Ellipse Width="10" Height="10" Fill="#FFF0616D" VerticalAlignment="Center"/>
-                                    <TextBlock Text="≥ 90°C" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Grid>
+        <Grid Grid.Row="1">
 
-                        <!-- Gráfico + eje Y -->
-                        <Grid Grid.Row="1" ColumnDefinitions="40,*" ColumnSpacing="10">
-                            <!-- Eje Y (temperaturas): fondo oscuro en ambos temas para que la
-                                 zona del gráfico se lea como una "pantalla" única (el plot también
-                                 es oscuro) y las etiquetas mantengan buen contraste en modo claro. -->
-                            <Canvas x:Name="YAxisCanvas" Width="40" Height="248" VerticalAlignment="Top" Background="#FF0D141E"/>
-
-                            <!-- Gráfico con scroll horizontal -->
-                            <Grid Grid.Column="1">
-                                <ScrollViewer x:Name="ChartScroll"
-                                              HorizontalScrollBarVisibility="Auto"
-                                              VerticalScrollBarVisibility="Disabled"
-                                              HorizontalScrollMode="Enabled"
-                                              VerticalScrollMode="Disabled"
-                                              ZoomMode="Disabled">
-                                    <Grid x:Name="ChartInner" Width="1200" Height="248">
-                                        <Canvas x:Name="ChartCanvas" Width="1200" Height="248" Background="#FF0D141E"/>
-                                        <!-- Capa de hover: cruz + etiqueta con temperatura exacta y hora -->
-                                        <Canvas x:Name="HoverCanvas" Width="1200" Height="248" IsHitTestVisible="False"/>
-                                    </Grid>
-                                </ScrollViewer>
-
-                                <!-- Aviso térmico (a la derecha del gráfico) -->
-                                <Border x:Name="ThermalWarningBadge"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Top"
-                                        CornerRadius="8"
-                                        Padding="12,8"
-                                        Margin="0,10,10,0"
-                                        BorderThickness="1"
-                                        Visibility="Collapsed">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon x:Name="ThermalWarningIcon" Glyph="&#xE7BA;" FontSize="14" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="ThermalWarningText" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                    </StackPanel>
-                                </Border>
-                            </Grid>
-                        </Grid>
-                    </Grid>
+            <!-- ====== SKELETON DE CARGA (mismo estilo que Sistema) ====== -->
+            <StackPanel x:Name="PageSkeleton" Spacing="16" Margin="20,12,20,24" IsHitTestVisible="False">
+                <!-- Card: gráfico de temperatura -->
+                <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
+                        BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <StackPanel Spacing="14">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Rectangle Width="16" Height="16" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                            <Rectangle Width="170" Height="16" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Rectangle Height="248" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
                 </Border>
 
-                <!-- ============ CARDS DE MÉTRICAS (actual + mínimo + máximo) ============ -->
-                <!-- OJO: cada card necesita su Grid.Column; sin él todas caen en la columna 0
-                     y se superponen (solo se veía la última, la de frecuencia). -->
-                <Grid x:Name="MetricsGrid" ColumnDefinitions="*,*,*" ColumnSpacing="12">
-                    <!-- Uso del procesador -->
-                    <Border x:Name="CardUsageBorder" Grid.Column="0" Background="{ThemeResource CardBackgroundBrush}"
-                            CornerRadius="10"
-                            Padding="16"
-                            BorderBrush="{ThemeResource CardBorderBrush}"
-                            BorderThickness="1">
-                        <StackPanel Spacing="10">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE950;" FontSize="14" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
-                                <TextBlock Text="Uso del procesador" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                            </StackPanel>
-                            <TextBlock x:Name="CpuUsageValueText" Text="--%" FontSize="30" FontWeight="Bold" Foreground="#FF4CC2C9"/>
-                            <ProgressBar x:Name="CpuUsageBar" Height="4" Maximum="100" Value="0"/>
-                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="24">
-                                <StackPanel>
-                                    <TextBlock Text="Mín" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                    <TextBlock x:Name="CpuUsageMinText" Text="--%" FontSize="13" FontWeight="SemiBold"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1">
-                                    <TextBlock Text="Máx" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                    <TextBlock x:Name="CpuUsageMaxText" Text="--%" FontSize="13" FontWeight="SemiBold"/>
-                                </StackPanel>
-                            </Grid>
+                <!-- Cards de métricas (uso / temperatura / clock) -->
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                    <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="12">
+                            <Rectangle Width="130" Height="13" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Width="90" Height="30" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="4" RadiusX="2" RadiusY="2" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="80" Height="13" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
                         </StackPanel>
                     </Border>
-
-                    <!-- Temperatura -->
-                    <Border x:Name="CardTempBorder" Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}"
-                            CornerRadius="10"
-                            Padding="16"
-                            BorderBrush="{ThemeResource CardBorderBrush}"
-                            BorderThickness="1">
-                        <StackPanel Spacing="10">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE7F4;" FontSize="14" Foreground="#FFF0616D" VerticalAlignment="Center"/>
-                                <TextBlock Text="Temperatura" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                            </StackPanel>
-                            <TextBlock x:Name="CpuTempValueText" Text="--°C" FontSize="30" FontWeight="Bold" Foreground="#FF4CC257"/>
-                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="24">
-                                <StackPanel>
-                                    <TextBlock Text="Mín" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                    <TextBlock x:Name="CpuTempMinText" Text="--°C" FontSize="13" FontWeight="SemiBold"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1">
-                                    <TextBlock Text="Máx" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                    <TextBlock x:Name="CpuTempMaxText" Text="--°C" FontSize="13" FontWeight="SemiBold"/>
-                                </StackPanel>
-                            </Grid>
+                    <Border Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="12">
+                            <Rectangle Width="130" Height="13" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Width="90" Height="30" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="4" RadiusX="2" RadiusY="2" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="80" Height="13" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
                         </StackPanel>
                     </Border>
-
-                    <!-- Frecuencia (Clock) -->
-                    <Border x:Name="CardClockBorder" Grid.Column="2" Background="{ThemeResource CardBackgroundBrush}"
-                            CornerRadius="10"
-                            Padding="16"
-                            BorderBrush="{ThemeResource CardBorderBrush}"
-                            BorderThickness="1">
-                        <StackPanel Spacing="10">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE8F0;" FontSize="14" Foreground="#FF4CC257" VerticalAlignment="Center"/>
-                                <TextBlock Text="Frecuencia (Clock)" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                            </StackPanel>
-                            <TextBlock x:Name="CpuClockValueText" Text="--" FontSize="30" FontWeight="Bold" Foreground="#FF4CC257"/>
-                            <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="24">
-                                <StackPanel>
-                                    <TextBlock Text="Mín" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                    <TextBlock x:Name="CpuClockMinText" Text="--" FontSize="13" FontWeight="SemiBold"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="1">
-                                    <TextBlock Text="Máx" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                    <TextBlock x:Name="CpuClockMaxText" Text="--" FontSize="13" FontWeight="SemiBold"/>
-                                </StackPanel>
-                            </Grid>
+                    <Border Grid.Column="2" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="12">
+                            <Rectangle Width="130" Height="13" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Width="90" Height="30" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
+                            <Rectangle Height="4" RadiusX="2" RadiusY="2" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="80" Height="13" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
                         </StackPanel>
                     </Border>
                 </Grid>
 
-                <!-- ============ NÚCLEOS DEL PROCESADOR ============ -->
-                <Border Background="{ThemeResource CardBackgroundBrush}"
-                        CornerRadius="12"
-                        Padding="16"
-                        BorderBrush="{ThemeResource CardBorderBrush}"
-                        BorderThickness="1">
+                <!-- Card: núcleos del procesador -->
+                <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
+                        BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                     <StackPanel Spacing="14">
-                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                <FontIcon Glyph="&#xE950;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
-                                <TextBlock Text="Núcleos del procesador" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            </StackPanel>
-
-                            <!-- Leyenda -->
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Border Width="14" Height="14" CornerRadius="3" Background="#FF4CC257"/>
-                                    <TextBlock Text="Activo" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Border Width="14" Height="14" CornerRadius="3" Background="#FFF0616D"/>
-                                    <TextBlock Text="Estacionado" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Grid>
-
-                        <!-- Barras por núcleo (se crean desde código) -->
-                        <ItemsControl x:Name="CoresHost">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="0"/>
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Rectangle Width="16" Height="16" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                            <Rectangle Width="180" Height="16" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Width="150" Height="64" RadiusX="8" RadiusY="8" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- ============ PLAN DE ENERGÍA ============ -->
-                <Border Background="{ThemeResource CardBackgroundBrush}"
-                        CornerRadius="12"
-                        Padding="16"
-                        BorderBrush="{ThemeResource CardBorderBrush}"
-                        BorderThickness="1">
+                <!-- Card: plan de energía -->
+                <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
+                        BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <FontIcon Glyph="&#xE7E8;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
-                            <TextBlock Text="Plan de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <Rectangle Width="16" Height="16" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center"/>
+                            <Rectangle Width="140" Height="16" RadiusX="8" RadiusY="8"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}" VerticalAlignment="Center"/>
                         </StackPanel>
-                        <TextBlock Text="Elegí el plan de energía activo de Windows. No requiere permisos de administrador."
-                                   FontSize="12"
-                                   Foreground="{ThemeResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap"/>
+                        <Rectangle Width="320" Height="12" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                            <ComboBox x:Name="PowerPlanCombo"
-                                      HorizontalAlignment="Stretch"
-                                      VerticalAlignment="Center"
-                                      PlaceholderText="Cargando planes..."
-                                      SelectionChanged="PowerPlanCombo_SelectionChanged"/>
-                            <Button x:Name="ApplyPowerPlanButton"
-                                    Grid.Column="1"
-                                    Content="Aplicar plan"
-                                    Click="ApplyPowerPlanButton_Click"
-                                    CornerRadius="6"
-                                    Padding="16,8"
-                                    FontWeight="SemiBold"
-                                    MinWidth="120"
-                                    IsEnabled="False"/>
+                            <Rectangle Height="32" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                            <Rectangle Grid.Column="1" Width="120" Height="32" RadiusX="6" RadiusY="6"
+                                       Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
                         </Grid>
-                        <TextBlock x:Name="PowerPlanStatusText" Text="" FontSize="12"
-                                   Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
-
             </StackPanel>
-        </ScrollViewer>
+
+            <!-- ==================== PESTAÑA 1: NÚCLEOS (contenido existente) ==================== -->
+            <ScrollViewer x:Name="PageContent" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="16" Margin="20,12,20,24">
+
+                    <!-- ============ GRÁFICO DE TEMPERATURA DEL CPU (estilo Administrador de tareas) ============ -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}"
+                            BorderThickness="1">
+                        <Grid RowDefinitions="Auto,*" RowSpacing="12">
+                            <!-- Cabecera del gráfico -->
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE950;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Temperatura del CPU" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <!-- Leyenda de umbrales térmicos -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Ellipse Width="10" Height="10" Fill="#FF4CC257" VerticalAlignment="Center"/>
+                                        <TextBlock Text="&lt; 85°C" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Ellipse Width="10" Height="10" Fill="#FFFFC93C" VerticalAlignment="Center"/>
+                                        <TextBlock Text="85 – 90°C" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Ellipse Width="10" Height="10" Fill="#FFF0616D" VerticalAlignment="Center"/>
+                                        <TextBlock Text="≥ 90°C" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Gráfico + eje Y -->
+                            <Grid Grid.Row="1" ColumnDefinitions="40,*" ColumnSpacing="10">
+                                <!-- Eje Y (temperaturas): fondo oscuro en ambos temas para que la
+                                     zona del gráfico se lea como una "pantalla" única (el plot también
+                                     es oscuro) y las etiquetas mantengan buen contraste en modo claro. -->
+                                <Canvas x:Name="YAxisCanvas" Width="40" Height="248" VerticalAlignment="Top" Background="#FF0D141E"/>
+
+                                <!-- Gráfico con scroll horizontal -->
+                                <Grid Grid.Column="1">
+                                    <ScrollViewer x:Name="ChartScroll"
+                                                  HorizontalScrollBarVisibility="Auto"
+                                                  VerticalScrollBarVisibility="Disabled"
+                                                  HorizontalScrollMode="Enabled"
+                                                  VerticalScrollMode="Disabled"
+                                                  ZoomMode="Disabled">
+                                        <Grid x:Name="ChartInner" Width="1200" Height="248">
+                                            <Canvas x:Name="ChartCanvas" Width="1200" Height="248" Background="#FF0D141E"/>
+                                            <!-- Capa de hover: cruz + etiqueta con temperatura exacta y hora -->
+                                            <Canvas x:Name="HoverCanvas" Width="1200" Height="248" IsHitTestVisible="False"/>
+                                        </Grid>
+                                    </ScrollViewer>
+
+                                    <!-- Aviso térmico (a la derecha del gráfico) -->
+                                    <Border x:Name="ThermalWarningBadge"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Top"
+                                            CornerRadius="8"
+                                            Padding="12,8"
+                                            Margin="0,10,10,0"
+                                            BorderThickness="1"
+                                            Visibility="Collapsed">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon x:Name="ThermalWarningIcon" Glyph="&#xE7BA;" FontSize="14" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="ThermalWarningText" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- ============ CARDS DE MÉTRICAS (actual + mínimo + máximo) ============ -->
+                    <!-- OJO: cada card necesita su Grid.Column; sin él todas caen en la columna 0
+                         y se superponen (solo se veía la última, la de frecuencia). -->
+                    <Grid x:Name="MetricsGrid" ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                        <!-- Uso del procesador -->
+                        <Border x:Name="CardUsageBorder" Grid.Column="0" Background="{ThemeResource CardBackgroundBrush}"
+                                CornerRadius="10"
+                                Padding="16"
+                                BorderBrush="{ThemeResource CardBorderBrush}"
+                                BorderThickness="1">
+                            <StackPanel Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE950;" FontSize="14" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Uso del procesador" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                </StackPanel>
+                                <TextBlock x:Name="CpuUsageValueText" Text="--%" FontSize="30" FontWeight="Bold" Foreground="#FF4CC2C9"/>
+                                <ProgressBar x:Name="CpuUsageBar" Height="4" Maximum="100" Value="0"/>
+                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="24">
+                                    <StackPanel>
+                                        <TextBlock Text="Mín" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="CpuUsageMinText" Text="--%" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Máx" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="CpuUsageMaxText" Text="--%" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Temperatura -->
+                        <Border x:Name="CardTempBorder" Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}"
+                                CornerRadius="10"
+                                Padding="16"
+                                BorderBrush="{ThemeResource CardBorderBrush}"
+                                BorderThickness="1">
+                            <StackPanel Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE7F4;" FontSize="14" Foreground="#FFF0616D" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Temperatura" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                </StackPanel>
+                                <TextBlock x:Name="CpuTempValueText" Text="--°C" FontSize="30" FontWeight="Bold" Foreground="#FF4CC257"/>
+                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="24">
+                                    <StackPanel>
+                                        <TextBlock Text="Mín" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="CpuTempMinText" Text="--°C" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Máx" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="CpuTempMaxText" Text="--°C" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Frecuencia (Clock) -->
+                        <Border x:Name="CardClockBorder" Grid.Column="2" Background="{ThemeResource CardBackgroundBrush}"
+                                CornerRadius="10"
+                                Padding="16"
+                                BorderBrush="{ThemeResource CardBorderBrush}"
+                                BorderThickness="1">
+                            <StackPanel Spacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE8F0;" FontSize="14" Foreground="#FF4CC257" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Frecuencia (Clock)" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                </StackPanel>
+                                <TextBlock x:Name="CpuClockValueText" Text="--" FontSize="30" FontWeight="Bold" Foreground="#FF4CC257"/>
+                                <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="24">
+                                    <StackPanel>
+                                        <TextBlock Text="Mín" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="CpuClockMinText" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Máx" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="CpuClockMaxText" Text="--" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- ============ NÚCLEOS DEL PROCESADOR ============ -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}"
+                            BorderThickness="1">
+                        <StackPanel Spacing="14">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE950;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Núcleos del procesador" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <!-- Leyenda -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Border Width="14" Height="14" CornerRadius="3" Background="#FF4CC257"/>
+                                        <TextBlock Text="Activo" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <Border Width="14" Height="14" CornerRadius="3" Background="#FFF0616D"/>
+                                        <TextBlock Text="Estacionado" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Barras por núcleo (se crean desde código) -->
+                            <ItemsControl x:Name="CoresHost">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="0"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ============ PLAN DE ENERGÍA (selector, se mantiene) ============ -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}"
+                            BorderThickness="1">
+                        <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xE9EA;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                            <TextBlock Text="Plan de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                            <TextBlock Text="Elegí el plan de energía activo de Windows. No requiere permisos de administrador."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <ComboBox x:Name="PowerPlanCombo"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Center"
+                                          PlaceholderText="Cargando planes..."
+                                          SelectionChanged="PowerPlanCombo_SelectionChanged"/>
+                                <Button x:Name="ApplyPowerPlanButton"
+                                        Grid.Column="1"
+                                        Content="Aplicar plan"
+                                        Click="ApplyPowerPlanButton_Click"
+                                        CornerRadius="6"
+                                        Padding="16,8"
+                                        FontWeight="SemiBold"
+                                        MinWidth="120"
+                                        IsEnabled="False"/>
+                            </Grid>
+                            <TextBlock x:Name="PowerPlanStatusText" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ==================== PESTAÑA 2: GESTIONAR PLANES DE ENERGÍA ==================== -->
+            <ScrollViewer x:Name="GestionarTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="16" Margin="20,12,20,24">
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}"
+                            BorderThickness="1">
+                        <StackPanel Spacing="10">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE9EA;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                <TextBlock Text="Gestionar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Seleccioná un plan para renombrarlo, activarlo o borrarlo."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+
+                            <!-- Cabecera de columnas -->
+                            <Grid ColumnDefinitions="2*,1.1*,3*,0.7*" ColumnSpacing="12" Padding="4,0,4,4">
+                                <TextBlock Text="Nombre" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="1" Text="ID" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="2" Text="Descripción" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="3" Text="Activo" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                            </Grid>
+
+                            <ListView x:Name="PlansList"
+                                      MaxHeight="320"
+                                      SelectionMode="Single"
+                                      SelectionChanged="PlansList_SelectionChanged"/>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button x:Name="RenamePlanButton" Content="Renombrar" IsEnabled="False"
+                                            Click="RenamePlanButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+                                    <Button x:Name="ActivatePlanButton" Content="Activar" IsEnabled="False"
+                                            Click="ActivatePlanButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+                                    <Button x:Name="DeletePlanButton" Content="Borrar" IsEnabled="False"
+                                            Click="DeletePlanButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="OpenPowerOptionsButton"
+                                        Click="OpenPowerOptionsButton_Click"
+                                        CornerRadius="6"
+                                        Padding="14,8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE9EA;" FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Abrir planes de energía de Windows" FontSize="13" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <TextBlock x:Name="ManagePlanStatusText" Text="" FontSize="12"
+                                       Visibility="Collapsed"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ==================== PESTAÑA 3: COMPARAR PLANES DE ENERGÍA ==================== -->
+            <ScrollViewer x:Name="CompararTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="16" Margin="20,12,20,24">
+
+                    <!-- Configuración de la comparación -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16"
+                            BorderBrush="{ThemeResource CardBorderBrush}"
+                            BorderThickness="1">
+                        <StackPanel Spacing="12">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE8F0;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                <TextBlock Text="Comparar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Elegí dos planes distintos y el color con el que se van a marcar las diferencias en cada cuadrícula. Se muestran todos los ajustes de energía: los que el plan define muestran su valor, y los que no, el valor predeterminado de Windows para ese tipo de plan."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+
+                            <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="12" RowSpacing="8">
+                                <ComboBox x:Name="ComparePlanACombo"
+                                          Header="Plan A"
+                                          PlaceholderText="Seleccioná un plan"
+                                          HorizontalAlignment="Stretch"
+                                          SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                <Button x:Name="ColorAButton"
+                                        Grid.Column="1"
+                                        VerticalAlignment="Bottom"
+                                        CornerRadius="6"
+                                        Padding="12,8"
+                                        MinWidth="104"
+                                        Click="ColorAButton_Click"/>
+                                <ComboBox x:Name="ComparePlanBCombo"
+                                          Grid.Column="2"
+                                          Header="Plan B"
+                                          PlaceholderText="Seleccioná un plan"
+                                          HorizontalAlignment="Stretch"
+                                          SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                <Button x:Name="ColorBButton"
+                                        Grid.Column="3"
+                                        VerticalAlignment="Bottom"
+                                        CornerRadius="6"
+                                        Padding="12,8"
+                                        MinWidth="104"
+                                        Click="ColorBButton_Click"/>
+                            </Grid>
+
+                            <Button x:Name="CompareButton"
+                                    Content="Comparar"
+                                    IsEnabled="False"
+                                    Click="CompareButton_Click"
+                                    CornerRadius="6"
+                                    Padding="20,9"
+                                    FontWeight="SemiBold"
+                                    HorizontalAlignment="Left"
+                                    MinWidth="130"/>
+
+                            <TextBlock x:Name="CompareStatusText" Text="" FontSize="12"
+                                       Visibility="Collapsed"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Resultado: dos cuadrículas lado a lado dentro del MISMO scroll.
+                         OJO: el scroll queda deshabilitado en el interno a propósito:
+                         si está activo, se traga la rueda del mouse sobre las cuadrículas
+                         y la página no scrollea. El vertical lo maneja el ScrollViewer de
+                         la pestaña (mismo scroll para ambas) y NO hay scroll lateral:
+                         las columnas se adaptan al ancho disponible (app responsiva). -->
+                    <ScrollViewer x:Name="CompareScroll"
+                                  Visibility="Collapsed"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  VerticalScrollMode="Disabled"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  HorizontalScrollMode="Disabled"
+                                  ZoomMode="Disabled">
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+                            <StackPanel x:Name="ComparePlanAContainer" Spacing="0"/>
+                            <StackPanel Grid.Column="1" x:Name="ComparePlanBContainer" Spacing="0"/>
+                        </Grid>
+                    </ScrollViewer>
+                </StackPanel>
+            </ScrollViewer>
+
+        </Grid>
     </Grid>
 </Page>

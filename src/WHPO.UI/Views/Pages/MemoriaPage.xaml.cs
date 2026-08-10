@@ -107,10 +107,26 @@ public sealed partial class MemoriaPage : Page
         // Cargar configuración de limpieza automática
         var stats = _memoryService.GetMemoryStats();
         var totalRamMB = Math.Max(8192, (int)Math.Round((double)stats.TotalPhysicalMB, MidpointRounding.AwayFromZero));
-        var minStandby = _settingsService.Get("memory.minStandbyMB", 1024.0);
-        var maxFree = _settingsService.Get("memory.maxFreeMB", GetRecommendedMaxFreeMb(totalRamMB));
+        var (defaultMinStandby, defaultMaxFree) = GetRecommendedValues(totalRamMB);
+        var minStandby = _settingsService.Get("memory.minStandbyMB", defaultMinStandby);
+        var maxFree = _settingsService.Get("memory.maxFreeMB", defaultMaxFree);
         MinStandbyTextBox.Text = $"{minStandby:F0}";
         MaxFreeTextBox.Text = $"{maxFree:F0}";
+
+        // Restaurar la frecuencia de comprobación guardada
+        int savedPollMs = _settingsService.Get("memory.pollIntervalMs", 1000);
+        int pollIndex = PollIntervalCombo.Items.IndexOf($"{savedPollMs} ms");
+        if (pollIndex >= 0)
+            PollIntervalCombo.SelectedIndex = pollIndex;
+
+        // Si la limpieza quedó iniciada en la sesión anterior, reflejarlo en la UI
+        // (MainWindow ya la reinició al arrancar la app).
+        if (_settingsService.Get("memory.autoStart", false))
+        {
+            _autoCleanupActive = true;
+            AutoCleanupButton.Content = "Detener";
+            AutoCleanupStatusText.Text = $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)";
+        }
     }
 
     private async Task RefreshMemoryStatsAsync()
@@ -173,24 +189,37 @@ public sealed partial class MemoriaPage : Page
         args.Cancel = args.NewText.Any(c => c != '.' && !char.IsDigit(c));
     }
 
+    // Muestra el resultado de la limpieza; con texto vacío colapsa el elemento para
+    // no dejar espacio muerto entre el botón y el separador.
+    private void SetResultText(TextBlock tb, string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            tb.Visibility = Visibility.Collapsed;
+            return;
+        }
+        tb.Visibility = Visibility.Visible;
+        tb.Text = text;
+    }
+
     private async void CleanStandbyButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
             CleanStandbyButton.IsEnabled = false;
-            CleanStandbyResultText.Text = "Liberando memoria disponible...";
+            SetResultText(CleanStandbyResultText, "Liberando memoria disponible...");
 
             var result = await _memoryService.CleanStandbyListAsync();
 
-            CleanStandbyResultText.Text = result.Success
+            SetResultText(CleanStandbyResultText, result.Success
                 ? result.Output
-                : $"Error: {result.Output}";
+                : $"Error: {result.Output}");
 
             await RefreshMemoryStatsAsync();
         }
         catch (Exception ex)
         {
-            CleanStandbyResultText.Text = $"Error: {ex.Message}";
+            SetResultText(CleanStandbyResultText, $"Error: {ex.Message}");
             _loggingService.LogError("Error en CleanStandbyButton_Click", ex);
         }
         finally
@@ -209,18 +238,13 @@ public sealed partial class MemoriaPage : Page
         {
             var stats = _memoryService.GetMemoryStats();
             var totalRamMB = (int)Math.Round((double)stats.TotalPhysicalMB, MidpointRounding.AwayFromZero);
-            var standbyMB = (int)Math.Round((double)stats.StandbyMB, MidpointRounding.AwayFromZero);
-            var freeMB = (int)Math.Round((double)stats.FreeMB, MidpointRounding.AwayFromZero);
-            var availableMB = (int)Math.Round((double)stats.AvailableMB, MidpointRounding.AwayFromZero);
 
-            var recommendedMinStandby = 1024;
-            var recommendedMaxFree = (int)Math.Round(GetRecommendedMaxFreeMb(totalRamMB), MidpointRounding.AwayFromZero);
+            var (recommendedMinStandby, recommendedMaxFree) = GetRecommendedValues(totalRamMB);
 
-            MinStandbyTextBox.Text = recommendedMinStandby.ToString();
-            MaxFreeTextBox.Text = recommendedMaxFree.ToString();
+            MinStandbyTextBox.Text = $"{recommendedMinStandby:F0}";
+            MaxFreeTextBox.Text = $"{recommendedMaxFree:F0}";
 
-            AutoCleanupStatusText.Text = $"Autoajuste listo: caché {recommendedMinStandby} MB, RAM libre {recommendedMaxFree} MB."
-            ;
+            AutoCleanupStatusText.Text = $"Autoajuste listo: caché {recommendedMinStandby:F0} MB, RAM libre {recommendedMaxFree:F0} MB.";
         }
         catch (Exception ex)
         {
@@ -229,11 +253,24 @@ public sealed partial class MemoriaPage : Page
         }
     }
 
-    private static double GetRecommendedMaxFreeMb(double totalRamMB)
+    // Valores recomendados por tamaño de RAM (Autoajustar): caché mínima a partir de
+    // la cual limpiar y RAM libre máxima por debajo de la cual limpiar.
+    private static readonly (int RamMB, double MinStandby, double MaxFree)[] RecommendedTiers =
     {
-        var ramGb = totalRamMB / 1024.0;
-        var tier = Math.Max(0, (int)Math.Round(Math.Log(ramGb / 8.0, 2), MidpointRounding.AwayFromZero));
-        return Math.Max(1024, 4096 * Math.Pow(2, tier));
+        (4 * 1024, 512, 512),
+        (8 * 1024, 1024, 1024),
+        (16 * 1024, 1024, 2048),
+        (32 * 1024, 2048, 4096),
+        (64 * 1024, 4096, 8192)
+    };
+
+    private static (double MinStandby, double MaxFree) GetRecommendedValues(double totalRamMB)
+    {
+        // Se usa el escalón más grande que no supere la RAM instalada
+        // (mínimo el de 4 GB; por encima de 64 GB se usa el de 64 GB).
+        var tier = RecommendedTiers.LastOrDefault(t => t.RamMB <= totalRamMB);
+        if (tier.RamMB == 0) tier = RecommendedTiers[0];
+        return (tier.MinStandby, tier.MaxFree);
     }
 
     private void AutoCleanupButton_Click(object sender, RoutedEventArgs e)
@@ -247,6 +284,8 @@ public sealed partial class MemoriaPage : Page
                 _autoCleanupActive = false;
                 AutoCleanupButton.Content = "Iniciar";
                 AutoCleanupStatusText.Text = "Detenido";
+                _settingsService.Set("memory.autoStart", false);
+                _settingsService.Save();
                 return;
             }
 
@@ -269,9 +308,11 @@ public sealed partial class MemoriaPage : Page
                 pollIntervalMs = int.Parse(selected.Replace(" ms", ""));
             }
 
-            // Guardar configuración
+            // Guardar configuración y recordar que se arrancó: se reaplica al abrir la app.
             _settingsService.Set("memory.minStandbyMB", minStandby);
             _settingsService.Set("memory.maxFreeMB", maxFree);
+            _settingsService.Set("memory.pollIntervalMs", pollIntervalMs);
+            _settingsService.Set("memory.autoStart", true);
             _settingsService.Save();
 
             // Iniciar

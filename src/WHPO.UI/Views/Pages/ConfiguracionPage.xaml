@@ -118,6 +118,28 @@
                         </Grid>
                     </Border>
 
+                    <!-- ============ MENÚ DE NAVEGACIÓN (desplegable) ============ -->
+                    <Border Style="{StaticResource CardStyle}" Padding="0" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Expander x:Name="NavMenuExpander"
+                                  IsExpanded="False"
+                                  HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
+                                  Background="Transparent"
+                                  BorderThickness="0"
+                                  CornerRadius="12"
+                                  Padding="0">
+                            <Expander.Header>
+                                <StackPanel Spacing="2" Padding="16,12">
+                                    <TextBlock Text="Menú de navegación" FontSize="16" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="NavMenuSummaryText" Text=""
+                                               FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </StackPanel>
+                            </Expander.Header>
+                            <StackPanel x:Name="NavItemsPanel" Spacing="2" Padding="20,10,20,16"/>
+                        </Expander>
+                    </Border>
+
                 </StackPanel>
             </Grid>
         </ScrollViewer>

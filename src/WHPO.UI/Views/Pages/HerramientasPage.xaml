@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Page
-    x:Class="WHPO_UI.Views.Pages.ReparacionPage"
+    x:Class="WHPO_UI.Views.Pages.HerramientasPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
-        <StackPanel Spacing="16" Margin="24">
+        <StackPanel Spacing="12" Margin="16">
 
-            <!-- Panel de notificaciones -->
-            <StackPanel x:Name="NotificationPanel" Spacing="8"/>
+            <!-- ====== FUNCIONES (Features) ====== -->
+            <StackPanel x:Name="FeaturesPanel" Spacing="8"/>
 
-            <!-- Lista de herramientas de reparación -->
-            <StackPanel x:Name="ToolsPanel" Spacing="12"/>
+            <!-- ====== FIXES ====== -->
+            <StackPanel x:Name="FixesPanel" Spacing="8"/>
 
-            <!-- Consola en vivo para herramientas que transmiten su progreso (ej: Reparar Windows Store) -->
+            <!-- ====== CONSOLA DE EJECUCIÓN ====== -->
             <Border x:Name="ConsolePanel" CornerRadius="10" Padding="12,10"
                     Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                     Visibility="Collapsed">
@@ -37,7 +37,7 @@
                                     Click="ClearConsoleButton_Click"/>
                         </StackPanel>
                     </Grid>
-                    <ScrollViewer x:Name="ConsoleScroll" MaxHeight="260" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+                    <ScrollViewer x:Name="ConsoleScroll" MaxHeight="280" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
                         <TextBlock x:Name="ConsoleText"
                                    FontFamily="Consolas" FontSize="12"
                                    TextWrapping="Wrap" IsTextSelectionEnabled="True" LineHeight="18"/>

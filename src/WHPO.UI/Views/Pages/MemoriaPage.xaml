@@ -13,7 +13,7 @@
                 <TextBlock Text="Standby List Cleaner" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
-                <StackPanel Spacing="16">
+                <StackPanel Spacing="12">
                     <!-- Estadísticas de memoria: fila 1 -->
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
@@ -62,9 +62,9 @@
                         <Button x:Name="CleanStandbyButton" Content="Liberar memoria ahora" Click="CleanStandbyButton_Click" HorizontalAlignment="Left" MinWidth="180"
                                 Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                     </StackPanel>
-                    <TextBlock x:Name="CleanStandbyResultText" Text="" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="CleanStandbyResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 
-                    <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
+                    <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,2"/>
 
                     <!-- Configuración de limpieza automática -->
                     <TextBlock Text="Limpieza automática" FontSize="14" FontWeight="SemiBold"/>

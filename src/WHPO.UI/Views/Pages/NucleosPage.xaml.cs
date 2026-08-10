@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
@@ -28,11 +29,18 @@ public sealed partial class NucleosPage : Page
 {
     private readonly ISystemInfoService _systemInfoService;
     private readonly ICpuPowerService _cpuPowerService;
+    private readonly IWinUtilService _winUtilService;
     private readonly ILoggingService _loggingService;
 
     private DispatcherQueueTimer? _samplingTimer;
     private bool _sampling;
     private bool _started;
+    private bool _contentShown;
+
+    // ---- Navbar interno (Núcleos / Gestionar / Comparar) ----
+    private int _selectedTabIndex;
+    private bool _manageLoaded;
+    private bool _compareLoaded;
 
     // ---- Gráfico de temperatura ----
     private const int ChartMaxSamples = 1200;        // ~20 min a 1 muestra/seg
@@ -60,6 +68,14 @@ public sealed partial class NucleosPage : Page
     // ---- Min/Max (solo mientras la pestaña está abierta) ----
     private bool _haveStats;
     private double _usageMin, _usageMax, _tempMin, _tempMax, _clockMin, _clockMax;
+
+    // ---- Texto secundario según el tema (claro/oscuro) ----
+    private static readonly Dictionary<ElementTheme, SolidColorBrush> SecondaryBrushes = new()
+    {
+        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x9A, 0xA0, 0xA6)),
+        [ElementTheme.Light] = new(Color.FromArgb(255, 0x5D, 0x63, 0x6B))
+    };
+    private SolidColorBrush SecondaryBrush => SecondaryBrushes[ActualTheme == ElementTheme.Light ? ElementTheme.Light : ElementTheme.Dark];
 
     // ---- Paleta ----
     private static readonly Color CGreen = Color.FromArgb(255, 0x4C, 0xC2, 0x57);
@@ -106,6 +122,7 @@ public sealed partial class NucleosPage : Page
         InitializeComponent();
         _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
         _cpuPowerService = App.Services.GetRequiredService<ICpuPowerService>();
+        _winUtilService = App.Services.GetRequiredService<IWinUtilService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
 
         ChartScroll.ViewChanged += ChartScroll_ViewChanged;
@@ -140,7 +157,9 @@ public sealed partial class NucleosPage : Page
         base.OnNavigatedTo(e);
         // Cada vez que se abre la pestaña: estadísticas desde cero
         ResetStats();
+        ShowSkeleton();
         StartSampling();
+        _ = ForceShowContentAfterTimeoutAsync();
 
         // Planes de energía (powercfg, no requiere admin)
         _ = LoadPowerPlansAsync();
@@ -190,6 +209,73 @@ public sealed partial class NucleosPage : Page
         _samplingTimer?.Stop();
     }
 
+    // ===================== Skeleton de carga =====================
+
+    private void ShowSkeleton()
+    {
+        _contentShown = false;
+        if (PageSkeleton == null || PageContent == null || GestionarTab == null || CompararTab == null) return;
+        PageSkeleton.Visibility = Visibility.Visible;
+        PageContent.Visibility = Visibility.Collapsed;
+        GestionarTab.Visibility = Visibility.Collapsed;
+        CompararTab.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowContent()
+    {
+        if (_contentShown) return;
+        _contentShown = true;
+        if (PageSkeleton == null) return;
+        PageSkeleton.Visibility = Visibility.Collapsed;
+        ApplyTabVisibility();
+        LazyLoadTab(_selectedTabIndex);
+    }
+
+    // Seguridad: si el primer sample tarda más de 4s (sensor lento), el skeleton
+    // se reemplaza igual para no dejar la página en "cargando" para siempre.
+    private async Task ForceShowContentAfterTimeoutAsync()
+    {
+        await Task.Delay(TimeSpan.FromSeconds(4));
+        if (!_contentShown)
+            DispatcherQueue.TryEnqueue(ShowContent);
+    }
+
+    // ===================== Navbar interno =====================
+
+    private void PlanTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (PlanTabs == null || PlanTabs.Items.Count == 0) return;
+        int idx = PlanTabs.SelectedItem != null ? PlanTabs.Items.IndexOf(PlanTabs.SelectedItem) : 0;
+        _selectedTabIndex = idx < 0 ? 0 : idx;
+
+        // Mientras el skeleton está visible no se revela contenido de ninguna pestaña.
+        if (!_contentShown) return;
+        ApplyTabVisibility();
+        LazyLoadTab(_selectedTabIndex);
+    }
+
+    private void ApplyTabVisibility()
+    {
+        if (PageContent == null || GestionarTab == null || CompararTab == null) return;
+        PageContent.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        GestionarTab.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+        CompararTab.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void LazyLoadTab(int index)
+    {
+        if (index == 1 && !_manageLoaded)
+        {
+            _manageLoaded = true;
+            _ = LoadManagePlansAsync();
+        }
+        if (index == 2 && !_compareLoaded)
+        {
+            _compareLoaded = true;
+            LoadCompareCombos();
+        }
+    }
+
     private void OnSamplingTick(DispatcherQueueTimer sender, object args)
     {
         if (_sampling) return;
@@ -233,6 +319,7 @@ public sealed partial class NucleosPage : Page
     {
         try
         {
+            ShowContent();
             _lastUsages = usages;
             _lastCoreTemps = coreTemps;
             _lastParked = parked;
@@ -457,19 +544,19 @@ public sealed partial class NucleosPage : Page
             ChartCanvas.Children.Add(threshold);
         }
 
-        // Líneas verticales cada minuto
-        int? lastMinute = null;
+        // Líneas verticales cada 5 segundos
+        int? lastFive = null;
         for (int i = 0; i < _history.Count; i++)
         {
-            int minute = _history[i].Time.Minute;
-            if (lastMinute != minute)
+            int five = _history[i].Time.Second / 5;
+            if (lastFive != five)
             {
                 double x = XOf(i);
                 var vl = new Rectangle { Width = 1, Height = PlotBottom - PlotTop, Fill = BGrid };
                 Canvas.SetLeft(vl, x);
                 Canvas.SetTop(vl, PlotTop);
                 ChartCanvas.Children.Add(vl);
-                lastMinute = minute;
+                lastFive = five;
             }
         }
     }
@@ -514,31 +601,37 @@ public sealed partial class NucleosPage : Page
 
     private void DrawTimeLabels()
     {
-        int? lastMinute = null;
+        if (_history.Count == 0) return;
+
+        // Etiqueta cada 5 segundos, sin superponerse: se dibuja la marca de 5 s
+        // solo si hay suficiente espacio desde la etiqueta anterior (y sin pisar
+        // el marcador "ahora" del extremo derecho).
+        // OJO: lastFive arranca en el bucket de la PRIMERA muestra para que la
+        // etiqueta aparezca recién en el primer cambio de bucket (x>0), no en
+        // x=0 cortada contra el borde izquierdo.
+        int? lastFive = _history[0].Time.Second / 5;
+        double lastLabelX = double.NegativeInfinity;
         for (int i = 0; i < _history.Count; i++)
         {
             var t = _history[i].Time;
-            int minute = t.Minute;
-            if (lastMinute != minute)
+            int five = t.Second / 5;
+            if (lastFive == five) continue;
+            lastFive = five;
+            double x = XOf(i);
+            if (x < 28) continue;
+            if (x > _chartWidth - 80) continue;
+            if (x - lastLabelX < 55) continue;
+            lastLabelX = x;
+
+            var tb = new TextBlock
             {
-                lastMinute = minute;
-                double x = XOf(i);
-
-                // No dibujar la etiqueta de minuto si se superpone con el marcador
-                // "ahora" del extremo derecho (en el arranque de cada minuto coinciden
-                // y el tiempo se veía "bugueado" por la superposición).
-                if (x > _chartWidth - 80) continue;
-
-                var tb = new TextBlock
-                {
-                    Text = t.ToString("HH:mm:ss"),
-                    FontSize = 10,
-                    Foreground = BTimeLabel
-                };
-                Canvas.SetLeft(tb, Math.Max(0, x - 24));
-                Canvas.SetTop(tb, PlotBottom + 8);
-                ChartCanvas.Children.Add(tb);
-            }
+                Text = t.ToString("HH:mm:ss"),
+                FontSize = 10,
+                Foreground = BTimeLabel
+            };
+            Canvas.SetLeft(tb, Math.Max(0, x - 24));
+            Canvas.SetTop(tb, PlotBottom + 8);
+            ChartCanvas.Children.Add(tb);
         }
 
         // Hora actual en el extremo inferior derecho (marcador "ahora")
@@ -869,13 +962,22 @@ public sealed partial class NucleosPage : Page
             ApplyPowerPlanButton.IsEnabled = PowerPlanCombo.SelectedIndex >= 0;
             // No pisar el mensaje de confirmación/error cuando la carga es exitosa.
             if (plans.Count == 0)
-                PowerPlanStatusText.Text = "No se detectaron planes de energía.";
+                SetPowerPlanStatus("No se detectaron planes de energía.");
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"NucleosPage: error cargando planes de energía: {ex.Message}");
-            PowerPlanStatusText.Text = "No se pudieron cargar los planes de energía.";
+            SetPowerPlanStatus("No se pudieron cargar los planes de energía.");
         }
+    }
+
+    // Muestra el estado del selector de plan de energía; con texto vacío colapsa el
+    // elemento para no dejar espacio muerto entre el desplegable y el borde de la card.
+    private void SetPowerPlanStatus(string text, SolidColorBrush? brush = null)
+    {
+        PowerPlanStatusText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
+        if (brush != null) PowerPlanStatusText.Foreground = brush;
+        PowerPlanStatusText.Text = text;
     }
 
     private void PowerPlanCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -892,7 +994,7 @@ public sealed partial class NucleosPage : Page
         var planName = (PowerPlanCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? planGuid;
 
         ApplyPowerPlanButton.IsEnabled = false;
-        PowerPlanStatusText.Text = "Aplicando plan...";
+        SetPowerPlanStatus("Aplicando plan...");
         try
         {
             var result = await _cpuPowerService.SetActivePowerPlanAsync(planGuid);
@@ -902,21 +1004,607 @@ public sealed partial class NucleosPage : Page
             if (result.Success)
                 await LoadPowerPlansAsync();
 
-            PowerPlanStatusText.Foreground = result.Success ? BGreen : BRed;
-            PowerPlanStatusText.Text = result.Success
+            SetPowerPlanStatus(result.Success
                 ? $"✓ Plan de energía establecido: {planName}"
-                : $"✗ {result.Output}";
+                : $"✗ {result.Output}",
+                result.Success ? BGreen : BRed);
         }
         catch (Exception ex)
         {
-            PowerPlanStatusText.Foreground = BRed;
-            PowerPlanStatusText.Text = $"✗ {ex.Message}";
+            SetPowerPlanStatus($"✗ {ex.Message}", BRed);
             _loggingService.LogWarning($"NucleosPage: error aplicando plan de energía: {ex.Message}");
         }
         finally
         {
             ApplyPowerPlanButton.IsEnabled = PowerPlanCombo.SelectedIndex >= 0;
         }
+    }
+
+    // ===================== Gestionar planes de energía =====================
+
+    private sealed class PlanListItem
+    {
+        public string Guid { get; }
+        public string Name { get; }
+        public string Description { get; }
+        public bool IsActive { get; }
+
+        public PlanListItem(string guid, string name, string description, bool isActive)
+        {
+            Guid = guid;
+            Name = name;
+            Description = description;
+            IsActive = isActive;
+        }
+    }
+
+    private async Task LoadManagePlansAsync()
+    {
+        try
+        {
+            var plans = await Task.Run(() => _cpuPowerService.GetPowerPlans());
+
+            var items = new List<PlanListItem>();
+            foreach (var plan in plans)
+            {
+                var desc = await Task.Run(() => _cpuPowerService.GetPowerPlanDescription(plan.Guid));
+                items.Add(new PlanListItem(plan.Guid, plan.Name, desc, plan.IsActive));
+            }
+
+            PlansList.Items.Clear();
+            foreach (var item in items)
+                PlansList.Items.Add(BuildManageRow(item));
+
+            if (items.Count == 0)
+            {
+                ManagePlanStatusText.Visibility = Visibility.Visible;
+                ManagePlanStatusText.Text = "No se detectaron planes de energía.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"NucleosPage: error cargando gestión de planes: {ex.Message}");
+            ManagePlanStatusText.Visibility = Visibility.Visible;
+            ManagePlanStatusText.Text = "No se pudieron cargar los planes de energía.";
+        }
+    }
+
+    private static ListViewItem BuildManageRow(PlanListItem item)
+    {
+        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+
+        row.Children.Add(new TextBlock
+        {
+            Text = item.Name,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+
+        var guid = new TextBlock
+        {
+            Text = item.Guid,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        Grid.SetColumn(guid, 1);
+        row.Children.Add(guid);
+
+        var desc = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(item.Description) ? "—" : item.Description,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        Grid.SetColumn(desc, 2);
+        row.Children.Add(desc);
+
+        var active = new TextBlock
+        {
+            Text = item.IsActive ? "✓ Activo" : "",
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = item.IsActive ? BGreen : BTimeLabel
+        };
+        Grid.SetColumn(active, 3);
+        row.Children.Add(active);
+
+        return new ListViewItem { Content = row, Tag = item, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+    }
+
+    private void PlansList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
+        bool has = item != null;
+        RenamePlanButton.IsEnabled = has;
+        ActivatePlanButton.IsEnabled = has && !item!.IsActive;
+        DeletePlanButton.IsEnabled = has && !item!.IsActive;
+    }
+
+    private void SetManageStatus(bool success, string message)
+    {
+        ManagePlanStatusText.Visibility = Visibility.Visible;
+        ManagePlanStatusText.Foreground = success ? BGreen : BRed;
+        ManagePlanStatusText.Text = success ? $"✓ {message}" : $"✗ {message}";
+    }
+
+    private async void RenamePlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
+        if (item == null || XamlRoot == null) return;
+
+        var nameBox = new TextBox
+        {
+            Text = item.Name,
+            Header = "Nuevo nombre",
+            MaxLength = 255
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Renombrar plan",
+            Content = nameBox,
+            PrimaryButtonText = "Renombrar",
+            CloseButtonText = "Cancelar",
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var newName = nameBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            SetManageStatus(false, "El nombre no puede estar vacío.");
+            return;
+        }
+
+        var result = await _cpuPowerService.RenamePowerPlanAsync(item.Guid, newName);
+        SetManageStatus(result.Success, result.Output);
+        if (result.Success)
+        {
+            await LoadManagePlansAsync();
+            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
+        }
+    }
+
+    private async void ActivatePlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
+        if (item == null) return;
+
+        ActivatePlanButton.IsEnabled = false;
+        ManagePlanStatusText.Text = "Activando plan...";
+        var result = await _cpuPowerService.SetActivePowerPlanAsync(item.Guid);
+        SetManageStatus(result.Success, result.Output);
+        if (result.Success)
+        {
+            await LoadManagePlansAsync();
+            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
+        }
+    }
+
+    private async void OpenPowerOptionsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var result = await _winUtilService.LaunchPanelAsync("power");
+            if (!result.Success) SetManageStatus(false, result.Output);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"NucleosPage: error abriendo planes de energía: {ex.Message}");
+            SetManageStatus(false, ex.Message);
+        }
+    }
+
+    private async void DeletePlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
+        if (item == null || XamlRoot == null) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Borrar plan de energía",
+            Content = $"¿Seguro que querés borrar \"{item.Name}\"? Esta acción no se puede deshacer.",
+            PrimaryButtonText = "Borrar",
+            CloseButtonText = "Cancelar",
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        DeletePlanButton.IsEnabled = false;
+        var result = await _cpuPowerService.DeletePowerPlanAsync(item.Guid);
+        SetManageStatus(result.Success, result.Output);
+        if (result.Success)
+        {
+            await LoadManagePlansAsync();
+            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
+        }
+    }
+
+    // ===================== Comparar planes de energía =====================
+
+    private static readonly Color DefaultColorA = Color.FromArgb(255, 0x4C, 0xC2, 0x57); // verde
+    private static readonly Color DefaultColorB = Color.FromArgb(255, 0xFF, 0xC9, 0x3C); // ámbar
+
+    private Color _colorA = DefaultColorA;
+    private Color _colorB = DefaultColorB;
+    private PowerPlanDetail? _detailA;
+    private PowerPlanDetail? _detailB;
+
+    private void LoadCompareCombos()
+    {
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var plans = _cpuPowerService.GetPowerPlans();
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    foreach (var plan in plans)
+                    {
+                        ComparePlanACombo.Items.Add(new ComboBoxItem { Content = plan.Name, Tag = plan.Guid });
+                        ComparePlanBCombo.Items.Add(new ComboBoxItem { Content = plan.Name, Tag = plan.Guid });
+                    }
+                    UpdateColorButtons();
+                });
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"NucleosPage: error cargando planes para comparar: {ex.Message}");
+            }
+        });
+    }
+
+    private static string? SelectedPlanGuid(ComboBox combo)
+        => (combo.SelectedItem as ComboBoxItem)?.Tag as string;
+
+    // Muestra el estado de la comparación; con texto vacío colapsa el elemento para
+    // no dejar espacio muerto entre el botón y el borde de la card.
+    private void SetCompareStatus(string? text, SolidColorBrush? brush = null)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            CompareStatusText.Visibility = Visibility.Collapsed;
+            return;
+        }
+        CompareStatusText.Visibility = Visibility.Visible;
+        if (brush != null) CompareStatusText.Foreground = brush;
+        CompareStatusText.Text = text;
+    }
+
+    private void ComparePlanCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var guidA = SelectedPlanGuid(ComparePlanACombo);
+        var guidB = SelectedPlanGuid(ComparePlanBCombo);
+
+        if (guidA != null && guidB != null && guidA == guidB)
+        {
+            // No permitir el mismo plan en ambos desplegables
+            if (ReferenceEquals(sender, ComparePlanACombo)) ComparePlanACombo.SelectedItem = null;
+            else ComparePlanBCombo.SelectedItem = null;
+            SetCompareStatus("Los dos planes deben ser diferentes.", BYellow);
+        }
+        else
+        {
+            SetCompareStatus(null);
+        }
+
+        CompareButton.IsEnabled = guidA != null && guidB != null && guidA != guidB;
+    }
+
+    private void ColorAButton_Click(object sender, RoutedEventArgs e) => ShowColorPickerFor(planA: true);
+
+    private void ColorBButton_Click(object sender, RoutedEventArgs e) => ShowColorPickerFor(planA: false);
+
+    private void ShowColorPickerFor(bool planA)
+    {
+        if (XamlRoot == null) return;
+        var target = planA ? ColorAButton : ColorBButton;
+        var picker = new ColorPicker
+        {
+            Color = planA ? _colorA : _colorB,
+            IsAlphaEnabled = false,
+            IsMoreButtonVisible = false,
+            IsColorSpectrumVisible = true,
+            IsColorSliderVisible = true,
+            IsHexInputVisible = true,
+            Width = 300
+        };
+        var flyout = new Flyout { Content = picker, Placement = FlyoutPlacementMode.Bottom };
+        flyout.Closed += (_, _) =>
+        {
+            var c = picker.Color;
+            if (planA) _colorA = c; else _colorB = c;
+            UpdateColorButtons();
+            if (CompareScroll.Visibility == Visibility.Visible)
+                BuildComparison();
+        };
+        flyout.ShowAt(target);
+    }
+
+    private void UpdateColorButtons()
+    {
+        SetColorButtonContent(ColorAButton, _colorA, "Color A");
+        SetColorButtonContent(ColorBButton, _colorB, "Color B");
+    }
+
+    private static void SetColorButtonContent(Button button, Color color, string label)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        content.Children.Add(new Border
+        {
+            Width = 14,
+            Height = 14,
+            CornerRadius = new CornerRadius(4),
+            Background = new SolidColorBrush(color),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        content.Children.Add(new TextBlock { Text = label, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        button.Content = content;
+    }
+
+    private async void CompareButton_Click(object sender, RoutedEventArgs e)
+    {
+        var guidA = SelectedPlanGuid(ComparePlanACombo);
+        var guidB = SelectedPlanGuid(ComparePlanBCombo);
+        if (guidA == null || guidB == null || guidA == guidB) return;
+
+        CompareButton.IsEnabled = false;
+        SetCompareStatus("Comparando planes...", BTimeLabel);
+
+        try
+        {
+            var (da, db) = await Task.Run(() => (_cpuPowerService.GetPowerPlanDetails(guidA), _cpuPowerService.GetPowerPlanDetails(guidB)));
+            if (da == null || db == null)
+            {
+                SetCompareStatus("No se pudo leer el detalle de uno de los planes.", BRed);
+                return;
+            }
+
+            _detailA = da;
+            _detailB = db;
+            BuildComparison();
+
+            // Sin feedback de "comparación lista": la cuadrícula ya muestra las diferencias.
+            SetCompareStatus(null);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"NucleosPage: error comparando planes: {ex.Message}");
+            SetCompareStatus($"Error al comparar: {ex.Message}", BRed);
+        }
+        finally
+        {
+            CompareButton.IsEnabled = SelectedPlanGuid(ComparePlanACombo) != null && SelectedPlanGuid(ComparePlanBCombo) != null;
+        }
+    }
+
+    private void BuildComparison()
+    {
+        if (_detailA == null || _detailB == null) return;
+
+        ComparePlanAContainer.Children.Clear();
+        ComparePlanBContainer.Children.Clear();
+
+        ComparePlanAContainer.Children.Add(BuildPlanHeader(_detailA.Name, _colorA));
+        ComparePlanBContainer.Children.Add(BuildPlanHeader(_detailB.Name, _colorB));
+
+        int n = Math.Max(_detailA.Subgroups.Count, _detailB.Subgroups.Count);
+        for (int i = 0; i < n; i++)
+        {
+            var sgA = i < _detailA.Subgroups.Count ? _detailA.Subgroups[i] : null;
+            var sgB = i < _detailB.Subgroups.Count ? _detailB.Subgroups[i] : null;
+
+            var expA = sgA != null ? BuildSubgroupExpander(sgA, _detailB, _colorA, isPlanA: true) : null;
+            var expB = sgB != null ? BuildSubgroupExpander(sgB, _detailA, _colorB, isPlanA: false) : null;
+
+            // Sincronizar el estado de colapso: si se abre/cierra uno, el otro lo sigue,
+            // así las filas quedan alineadas entre las dos cuadrículas.
+            if (expA != null && expB != null)
+            {
+                expA.Expanding += (_, _) => expB.IsExpanded = true;
+                expA.Collapsed += (_, _) => expB.IsExpanded = false;
+            }
+
+            if (expA != null) ComparePlanAContainer.Children.Add(expA);
+            if (expB != null) ComparePlanBContainer.Children.Add(expB);
+        }
+
+        CompareScroll.Visibility = Visibility.Visible;
+    }
+
+    private static Border BuildPlanHeader(string name, Color color)
+    {
+        var stack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        stack.Children.Add(new Border
+        {
+            Width = 12,
+            Height = 12,
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(color),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        var planName = new TextBlock
+        {
+            Text = name,
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTipService.SetToolTip(planName, name);
+        stack.Children.Add(planName);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(0x18, color.R, color.G, color.B)),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12, 10, 12, 10),
+            Margin = new Thickness(0, 0, 0, 12),
+            Child = stack
+        };
+    }
+
+    private Expander BuildSubgroupExpander(PowerSubgroupInfo sg, PowerPlanDetail? other, Color color, bool isPlanA)
+    {
+        int diffCount = 0;
+        var body = new StackPanel { Spacing = 0 };
+        body.Children.Add(BuildSettingHeaderRow());
+
+        foreach (var setting in sg.Settings)
+        {
+            var otherSetting = FindSetting(other, sg.Guid, setting.Guid);
+            bool acDiff = otherSetting != null && !string.Equals(setting.AcValue, otherSetting.AcValue, StringComparison.OrdinalIgnoreCase);
+            bool dcDiff = otherSetting != null && !string.Equals(setting.DcValue, otherSetting.DcValue, StringComparison.OrdinalIgnoreCase);
+            if (acDiff || dcDiff) diffCount++;
+            body.Children.Add(BuildSettingRow(setting, acDiff, dcDiff, color));
+        }
+
+        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var subgroupName = new TextBlock
+        {
+            Text = sg.Name,
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTipService.SetToolTip(subgroupName, sg.Name);
+        header.Children.Add(subgroupName);
+        if (diffCount > 0)
+        {
+            header.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8, 2, 8, 2),
+                Background = new SolidColorBrush(Color.FromArgb(0x28, color.R, color.G, color.B)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = $"{diffCount} diff",
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(color),
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            });
+        }
+
+        return new Expander
+        {
+            Header = header,
+            Content = body,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            IsExpanded = true
+        };
+    }
+
+    private static PowerSettingInfo? FindSetting(PowerPlanDetail? other, string subgroupGuid, string settingGuid)
+    {
+        if (other == null) return null;
+        var sg = other.Subgroups.FirstOrDefault(x => string.Equals(x.Guid, subgroupGuid, StringComparison.OrdinalIgnoreCase));
+        return sg?.Settings.FirstOrDefault(x => string.Equals(x.Guid, settingGuid, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static Grid BuildSettingHeaderRow()
+    {
+        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
+        AddSettingColumns(grid);
+
+        grid.Children.Add(new TextBlock { Text = "ID de configuración", FontSize = 11, FontWeight = FontWeights.SemiBold });
+        var nombre = new TextBlock { Text = "Nombre", FontSize = 11, FontWeight = FontWeights.SemiBold };
+        Grid.SetColumn(nombre, 1);
+        grid.Children.Add(nombre);
+        var ac = new TextBlock { Text = "Valor AC", FontSize = 11, FontWeight = FontWeights.SemiBold };
+        Grid.SetColumn(ac, 2);
+        grid.Children.Add(ac);
+        var dc = new TextBlock { Text = "Valor DC", FontSize = 11, FontWeight = FontWeights.SemiBold };
+        Grid.SetColumn(dc, 3);
+        grid.Children.Add(dc);
+        return grid;
+    }
+
+    private static void AddSettingColumns(Grid grid)
+    {
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+    }
+
+    private Border BuildSettingRow(PowerSettingInfo setting, bool acDiff, bool dcDiff, Color color)
+    {
+        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 5, 4, 5) };
+        AddSettingColumns(row);
+
+        if (acDiff || dcDiff)
+            row.Background = new SolidColorBrush(Color.FromArgb(0x24, color.R, color.G, color.B));
+
+        var highlight = new SolidColorBrush(color);
+        var normal = SecondaryBrush;
+
+        var guidTb = new TextBlock
+        {
+            Text = setting.Guid,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 10.5,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        ToolTipService.SetToolTip(guidTb, setting.Guid);
+        row.Children.Add(guidTb);
+
+        var nombre = new TextBlock
+        {
+            Text = setting.Name,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.NoWrap
+        };
+        ToolTipService.SetToolTip(nombre, setting.Name);
+        Grid.SetColumn(nombre, 1);
+        row.Children.Add(nombre);
+
+        var ac = new TextBlock
+        {
+            Text = FormatDisplayValue(setting.AcValue),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = acDiff ? FontWeights.SemiBold : FontWeights.Normal,
+            Foreground = acDiff ? highlight : normal
+        };
+        ToolTipService.SetToolTip(ac, ac.Text);
+        Grid.SetColumn(ac, 2);
+        row.Children.Add(ac);
+
+        var dc = new TextBlock
+        {
+            Text = FormatDisplayValue(setting.DcValue),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            FontWeight = dcDiff ? FontWeights.SemiBold : FontWeights.Normal,
+            Foreground = dcDiff ? highlight : normal
+        };
+        ToolTipService.SetToolTip(dc, dc.Text);
+        Grid.SetColumn(dc, 3);
+        row.Children.Add(dc);
+
+        return new Border { Child = row };
+    }
+
+    private static string FormatDisplayValue(string value)
+    {
+        // Los valores ya llegan traducidos por el servicio (nombre localizado,
+        // porcentaje, tiempo legible o decimal); solo se rellena el vacío.
+        return string.IsNullOrEmpty(value) ? "--" : value;
     }
 
     // ===================== Helpers =====================

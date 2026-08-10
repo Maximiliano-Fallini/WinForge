@@ -40,6 +40,8 @@ public static class ServiceConfiguration
         services.AddSingleton<IRepairService, RepairService>();
         services.AddSingleton<IWindowsUpdateService, WindowsUpdateService>();
         services.AddSingleton<IStartupService, StartupService>();
+        services.AddSingleton<IWinUtilService, WinUtilService>();
+        services.AddSingleton<IStabilityService, StabilityService>();
 
         return services;
     }

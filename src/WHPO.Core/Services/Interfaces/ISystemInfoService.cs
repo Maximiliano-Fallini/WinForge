@@ -68,6 +68,20 @@ public interface ISystemInfoService
     double GetCpuTemperature();
 
     /// <summary>
+    /// Obtiene el consumo actual de la CPU en watts (sensor de potencia de
+    /// LibreHardwareMonitor, con caché interna de 5 s). Devuelve 0 si el hardware
+    /// no expone sensor de potencia.
+    /// </summary>
+    double GetCpuPower();
+
+    /// <summary>
+    /// Obtiene el conjunto de instrucciones detectado del procesador (SSE, SSE2,
+    /// AVX, AVX2, FMA, AVX-512, ...). Resultado cacheado: la primera llamada
+    /// ejecuta la detección y las siguientes devuelven el mismo string.
+    /// </summary>
+    string GetCpuInstructionSet();
+
+    /// <summary>
     /// Obtiene el porcentaje de uso actual de cada procesador lógico (por núcleo).
     /// El índice de la matriz corresponde a cada procesador lógico.
     /// </summary>

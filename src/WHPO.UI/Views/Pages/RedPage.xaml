@@ -24,12 +24,12 @@
                                 Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                         <Button x:Name="OpenNetworkAdapterPropertiesButton" Content="Conexiones de red" Click="OpenNetworkAdapterPropertiesButton_Click" ToolTipService.ToolTip="Abrir conexiones de red para configurar IPv4 manualmente" Padding="16,8"/>
                     </StackPanel>
-                    <TextBlock x:Name="ApplyDnsResultText" Text="" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="ApplyDnsResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 
                     <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
                     <Button x:Name="FlushDnsButton" Content="Vaciar caché DNS" Click="FlushDnsButton_Click" HorizontalAlignment="Left"
                             Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
-                    <TextBlock x:Name="FlushDnsResultText" Text="" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="FlushDnsResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 
@@ -49,16 +49,15 @@
                     <Button x:Name="RunDnsTestButton" Content="Ejecutar test de DNS" Click="RunDnsTestButton_Click" HorizontalAlignment="Left"
                             Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
 
-                    <!-- Pestaña de resultados: cerrable/limpiable, con scroll propio para no alargar la página -->
+                    <!-- Pestaña de resultados: cerrable, con scroll propio para no alargar la página -->
                     <Border x:Name="DnsResultsTab" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" Visibility="Collapsed">
                         <StackPanel>
-                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" Padding="12,8,8,8">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Padding="12,8,8,8">
                                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                     <FontIcon Glyph="&#xE9D2;" FontSize="14" Foreground="{StaticResource AccentBrush}"/>
                                     <TextBlock x:Name="DnsTestStatusText" Text="Resultados del test" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
-                                <Button Grid.Column="1" x:Name="ClearDnsResultsButton" Content="Limpiar" Click="ClearDnsResultsButton_Click" Padding="10,4" FontSize="12" CornerRadius="4" Margin="0,0,2,0"/>
-                                <Button Grid.Column="2" x:Name="CloseDnsResultsButton" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" Click="CloseDnsResultsButton_Click" Width="28" Height="28" Padding="0" FontSize="12" CornerRadius="4" ToolTipService.ToolTip="Cerrar"/>
+                                <Button Grid.Column="1" x:Name="CloseDnsResultsButton" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" Click="CloseDnsResultsButton_Click" Width="28" Height="28" Padding="0" FontSize="12" CornerRadius="4" ToolTipService.ToolTip="Cerrar"/>
                             </Grid>
                             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}"/>
                             <ScrollViewer x:Name="DnsResultsScroll" MaxHeight="340" VerticalScrollBarVisibility="Auto" VerticalScrollMode="Enabled">
@@ -84,7 +83,7 @@
                         <StackPanel Spacing="4">
                             <TextBlock Text="Duración del test" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <Slider x:Name="PacketLossDurationSlider" ValueChanged="PacketLossDurationSlider_ValueChanged"/>
-                            <TextBlock x:Name="PacketLossDurationText" Text="15 segundos" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Name="PacketLossDurationText" Text="10 segundos" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="4">
                             <ComboBox x:Name="PacketLossServerCombo" Header="Servidor" HorizontalAlignment="Stretch"/>
@@ -93,8 +92,13 @@
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="16" Margin="0,4,0,0">
                         <StackPanel Spacing="4">
                             <TextBlock Text="Retraso aceptable (Late Packet Threshold)" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <Slider x:Name="LatePacketThresholdSlider" ValueChanged="LatePacketThresholdSlider_ValueChanged" Minimum="50" Maximum="500" StepFrequency="10" Value="200"/>
+                            <Slider x:Name="LatePacketThresholdSlider" ValueChanged="LatePacketThresholdSlider_ValueChanged" Minimum="10" Maximum="500" StepFrequency="10" Value="200"/>
                             <TextBlock x:Name="LatePacketThresholdText" Text="200 ms" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="4">
+                            <TextBlock Text="Paquetes por segundo (PPS)" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <Slider x:Name="PacketLossRateSlider" ValueChanged="PacketLossRateSlider_ValueChanged"/>
+                            <TextBlock x:Name="PacketLossRateText" Text="10 pps" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
                     </Grid>
 
@@ -113,25 +117,25 @@
                     <Grid x:Name="PacketLossResultsPanel" ColumnDefinitions="*,*,*,*" ColumnSpacing="8" RowSpacing="8" Visibility="Collapsed">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" Padding="12">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Upload Packet Loss" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Carga · Pérdida de paquetes" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="PacketLossUploadText" Text="--" FontWeight="SemiBold" FontSize="18"/>
                             </StackPanel>
                         </Border>
                         <Border Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" Padding="12">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Total Packet Loss" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Pérdida total de paquetes" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="PacketLossTotalText" Text="--" FontWeight="SemiBold" FontSize="18"/>
                             </StackPanel>
                         </Border>
                         <Border Grid.Column="2" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" Padding="12">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Download Packet Loss" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Descarga · Pérdida de paquetes" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="PacketLossDownloadText" Text="--" FontWeight="SemiBold" FontSize="18"/>
                             </StackPanel>
                         </Border>
                         <Border Grid.Column="3" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" Padding="12">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Late Packets" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Paquetes tardíos" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="PacketLossLateText" Text="--" FontWeight="SemiBold" FontSize="18"/>
                             </StackPanel>
                         </Border>

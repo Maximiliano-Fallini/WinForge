@@ -6,6 +6,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI;
 using System.Diagnostics;
 using System.Drawing;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WHPO.Core.Services;
@@ -31,7 +32,7 @@ public sealed partial class MainWindow : Window
     private PerformanceCounter? _cpuCounter;
     private PerformanceCounter? _gpuCounter;
     private bool _isMinimizingToTray = false;
-    private bool _windowSized;
+    private bool _centeredOnFirstActivation;
 
     /// <summary>
     /// Indica si la ventana principal está visible (no oculta en bandeja).
@@ -71,11 +72,17 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("memoria", typeof(MemoriaPage));
             ns.RegisterPage("temporizador", typeof(TemporizadorPage));
             ns.RegisterPage("nucleos", typeof(NucleosPage));
+            ns.RegisterPage("estabilidad", typeof(EstabilidadPage));
             ns.RegisterPage("optimizaciones", typeof(OptimizacionesPage));
+            ns.RegisterPage("herramientas", typeof(HerramientasPage));
+            ns.RegisterPage("panelwindows", typeof(PanelWindowsPage));
             ns.RegisterPage("reparacion", typeof(ReparacionPage));
             ns.RegisterPage("actualizaciones", typeof(ActualizacionesPage));
             ns.RegisterPage("configuracion", typeof(ConfiguracionPage));
         }
+
+        // Aplicar la visibilidad de apartados según la configuración (claves "nav.*").
+        ApplyNavigationVisibility();
 
         // Navegar directamente a la página de Sistema (sin título de cabecera)
         _navigationService.NavigateTo("sistema");
@@ -86,6 +93,18 @@ public sealed partial class MainWindow : Window
 
         // Interceptar botón cerrar (X) para minimizar a bandeja si está activado
         this.AppWindow.Closing += AppWindow_Closing;
+
+        // Garantizar la restauración/centrado en la primera activación: aplicar la
+        // posición antes de Activate() puede ser ignorado por Windows, y con el
+        // evento queda seguro. (Misma posición que la del constructor: no salta.)
+        this.Activated += (_, args) =>
+        {
+            if (!_centeredOnFirstActivation && args.WindowActivationState != WindowActivationState.Deactivated)
+            {
+                _centeredOnFirstActivation = true;
+                RestoreOrCenterWindow();
+            }
+        };
 
         // Barra de título acorde al tema (negra en oscuro, blanca en claro) + icono de WinForge
         try
@@ -100,6 +119,14 @@ public sealed partial class MainWindow : Window
                 var winForgeIconPath = GetWinForgeIcoPath();
                 if (winForgeIconPath != null)
                     appWindow.SetIcon(winForgeIconPath);
+
+                // Guardar posición/tamaño al mover o redimensionar (debounced).
+                InitWindowPositionTracking();
+
+                // OJO: el tamaño/posición se aplica SOLO en el evento Activated (arriba).
+                // Aplicarlo aquí (antes de Activate) es el camino poco confiable de
+                // MoveAndResize de WinAppSDK y puede dejar la ventana en un tamaño
+                // mínimo espurio (el "cuadradito chiquito" al abrir).
             }
         }
         catch { }
@@ -110,6 +137,10 @@ public sealed partial class MainWindow : Window
         {
             // SetupTrayIcon ya invoca UpdateTrayMetricsState internamente.
             SetupTrayIcon();
+
+            // Reaplicar lo que el usuario dejó iniciado en la sesión anterior
+            // (resolución del temporizador y limpieza automática de memoria).
+            _ = ApplyAutoStartFeaturesAsync();
 
             // Pre-calentar el sensor de temperatura (carga el driver de LHM en segundo
             // plano) para que la pestaña Núcleos muestre la temperatura enseguida.
@@ -278,11 +309,11 @@ public sealed partial class MainWindow : Window
             var cpuTempPart = cpuTemp > 0 ? $" · {cpuTemp:F0}°C" : "";
             var gpuTempPart = gpuTemp > 0 ? $" · {gpuTemp:F0}°C" : "";
 
-            var tooltip = $"CPU  : {cpuUsage:F0}%{cpuTempPart}\r\n" +
-                $"GPU  : {gpuUsage:F0}%{gpuTempPart}\r\n" +
-                $"RAM  : {memStats.UsedPercent:F0}% ({memStats.UsedMB:F0} MB)\r\n" +
+            var tooltip = $"CPU: {cpuUsage:F0}%{cpuTempPart}\r\n" +
+                $"GPU: {gpuUsage:F0}%{gpuTempPart}\r\n" +
+                $"RAM: {memStats.UsedPercent:F0}% ({memStats.UsedMB:F0} MB)\r\n" +
                 $"Cache: {cacheMB:F0} MB\r\n" +
-                $"TR   : {trMs:F2} ms";
+                $"TR: {trMs:F2} ms";
 
             _notifyIcon.Text = tooltip;
             _loggingService.LogInfo($"Tooltip actualizado: CPU={cpuUsage:F0}%, RAM={memStats.UsedPercent:F0}%");
@@ -353,13 +384,9 @@ public sealed partial class MainWindow : Window
         if (appWindow != null)
         {
             appWindow.Show();
-            // Tamaño inicial solo la primera vez: no resetear la posición del
-            // usuario cada vez que vuelve de la bandeja.
-            if (!_windowSized)
-            {
-                appWindow.MoveAndResize(new Windows.Graphics.RectInt32(100, 100, 1200, 800));
-                _windowSized = true;
-            }
+            // Cada vez que se abre (incluido al volver de la bandeja) se restaura
+            // la última posición/tamaño (o se centra si aún no hay guardados).
+            RestoreOrCenterWindow();
         }
         _isMinimizingToTray = false;
 
@@ -424,11 +451,193 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Restaura la posición/tamaño guardados de la ventana; si no hay posición
+    /// guardada (primer uso) o quedó fuera de pantalla (cambió el monitor), la
+    /// centra en el área de trabajo con el tamaño por defecto (1400x800).
+    /// Se llama al arrancar y en cada apertura desde la bandeja.
+    /// </summary>
+    private void RestoreOrCenterWindow()
+    {
+        try
+        {
+            var appWindow = GetAppWindow();
+            if (appWindow == null) return;
+
+            var area = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest);
+            var wa = area.WorkArea;
+
+            int w = _settingsService.Get("window.width", 1400);
+            int h = _settingsService.Get("window.height", 800);
+            int x = _settingsService.Get("window.x", int.MinValue);
+            int y = _settingsService.Get("window.y", int.MinValue);
+
+            // Limitar el tamaño al área de trabajo (monitores chicos).
+            w = Math.Clamp(w, 800, Math.Max(800, wa.Width));
+            h = Math.Clamp(h, 500, Math.Max(500, wa.Height));
+
+            // La posición guardada solo se usa si una parte razonable de la ventana
+            // sigue dentro del área visible; si no, se vuelve a centrar.
+            bool visible = x != int.MinValue && y != int.MinValue &&
+                x + 80 <= wa.X + wa.Width && x + w - 80 >= wa.X &&
+                y + 40 <= wa.Y + wa.Height && y + h - 40 >= wa.Y;
+
+            if (visible)
+            {
+                appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, w, h));
+            }
+            else
+            {
+                int cx = wa.X + Math.Max(0, (wa.Width - w) / 2);
+                int cy = wa.Y + Math.Max(0, (wa.Height - h) / 2);
+                appWindow.MoveAndResize(new Windows.Graphics.RectInt32(cx, cy, w, h));
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo restaurar la posición de la ventana: {ex.Message}");
+        }
+    }
+
+    // ===== Guardado de posición/tamaño de la ventana (con debounce) =====
+    private DispatcherQueueTimer? _windowPosSaveTimer;
+
+    private void InitWindowPositionTracking()
+    {
+        try
+        {
+            var appWindow = GetAppWindow();
+            if (appWindow == null) return;
+            appWindow.Changed += (_, args) =>
+            {
+                if (args.DidPositionChange || args.DidSizeChange)
+                    ScheduleWindowPositionSave();
+            };
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo iniciar el guardado de posición: {ex.Message}");
+        }
+    }
+
+    private void ScheduleWindowPositionSave()
+    {
+        if (_windowPosSaveTimer == null)
+        {
+            _windowPosSaveTimer = DispatcherQueue.CreateTimer();
+            _windowPosSaveTimer.Interval = TimeSpan.FromMilliseconds(800);
+            _windowPosSaveTimer.Tick += (_, _) =>
+            {
+                _windowPosSaveTimer.Stop();
+                SaveWindowPosition();
+            };
+        }
+        _windowPosSaveTimer.Stop();
+        _windowPosSaveTimer.Start();
+    }
+
+    private void SaveWindowPosition()
+    {
+        try
+        {
+            var appWindow = GetAppWindow();
+            if (appWindow == null) return;
+            var pos = appWindow.Position;
+            var size = appWindow.Size;
+
+            // No guardar estados transitorios inválidos: tamaños espurios (ventana aún
+            // sin dimensionar en el arranque) o la posición de una ventana minimizada
+            // (-32000, -32000). Guardarlos haría que la app abra como un "cuadradito".
+            if (size.Width < 400 || size.Height < 300) return;
+            if (pos.X < -10000 || pos.Y < -10000) return;
+
+            _settingsService.Set("window.x", pos.X);
+            _settingsService.Set("window.y", pos.Y);
+            _settingsService.Set("window.width", size.Width);
+            _settingsService.Set("window.height", size.Height);
+            _settingsService.Save();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo guardar la posición de la ventana: {ex.Message}");
+        }
+    }
+
     private AppWindow? GetAppWindow()
     {
         var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
         return AppWindow.GetFromWindowId(windowId);
+    }
+
+    // ===== Reaplicación al iniciar (resolución del temporizador / limpieza automática) =====
+
+    /// <summary>
+    /// Si el usuario dejó activadas la resolución del temporizador o la limpieza
+    /// automática de memoria, las reaplica al arrancar la app. Ambas viven en este
+    /// proceso: al cerrarlo, Windows revierte la resolución y la limpieza se detiene.
+    /// </summary>
+    private async Task ApplyAutoStartFeaturesAsync()
+    {
+        try
+        {
+            if (_settingsService.Get("timer.autoStart", false))
+            {
+                double desiredMs = _settingsService.Get("memory.desiredResolutionMs", 0.5);
+                int resolution100ns = (int)(desiredMs * 10000);
+                var result = await _memoryService.SetTimerResolutionAsync(resolution100ns);
+                if (result.Success)
+                    _loggingService.LogInfo("Resolución del temporizador reaplicada al iniciar");
+                else
+                    _loggingService.LogWarning($"No se pudo reaplicar la resolución al iniciar: {result.Output}");
+            }
+
+            if (_settingsService.Get("memory.autoStart", false))
+            {
+                double minStandby = _settingsService.Get("memory.minStandbyMB", 1024.0);
+                double maxFree = _settingsService.Get("memory.maxFreeMB", 4096.0);
+                int pollIntervalMs = _settingsService.Get("memory.pollIntervalMs", 1000);
+                _memoryService.StartAutoCleanup(minStandby, maxFree, pollIntervalMs);
+                _loggingService.LogInfo("Limpieza automática de memoria reiniciada al iniciar");
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error reaplicando funciones automáticas al iniciar: {ex.Message}");
+        }
+    }
+
+    // ===== Visibilidad de apartados del menú lateral =====
+
+    /// <summary>
+    /// Aplica la visibilidad de los apartados del menú según la configuración
+    /// (claves "nav.&lt;tag&gt;"; por defecto todas las pestañas son visibles).
+    /// </summary>
+    internal void ApplyNavigationVisibility()
+    {
+        try
+        {
+            foreach (var item in NavigationViewControl.MenuItems.OfType<NavigationViewItem>())
+                ApplyNavItemVisibility(item);
+            foreach (var item in NavigationViewControl.FooterMenuItems.OfType<NavigationViewItem>())
+                ApplyNavItemVisibility(item);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error aplicando visibilidad del menú: {ex.Message}");
+        }
+    }
+
+    private void ApplyNavItemVisibility(NavigationViewItem item)
+    {
+        if (item.Tag is not string tag) return;
+        // La pestaña Configuración no se puede ocultar: siempre visible.
+        if (tag == "configuracion")
+        {
+            item.Visibility = Visibility.Visible;
+            return;
+        }
+        item.Visibility = _settingsService.Get("nav." + tag, true) ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void NavigationViewControl_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)

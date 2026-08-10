@@ -76,6 +76,14 @@ public sealed partial class TemporizadorPage : Page
         };
         _refreshTimer.Start();
 
+        // Si la resolución quedó iniciada en la sesión anterior, reflejarlo en la UI
+        // (MainWindow ya la reaplicó al arrancar la app).
+        if (_settingsService.Get("timer.autoStart", false))
+        {
+            _timerResolutionActive = true;
+            TimerResolutionButton.Content = "Detener";
+        }
+
         _loggingService.LogInfo("TemporizadorPage: datos cargados");
     }
 
@@ -100,6 +108,19 @@ public sealed partial class TemporizadorPage : Page
         args.Cancel = args.NewText.Any(c => c != '.' && !char.IsDigit(c));
     }
 
+    // Muestra el resultado de la resolución; con texto vacío colapsa el elemento para
+    // no dejar espacio muerto entre los botones y el borde de la card.
+    private void SetResultText(TextBlock tb, string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            tb.Visibility = Visibility.Collapsed;
+            return;
+        }
+        tb.Visibility = Visibility.Visible;
+        tb.Text = text;
+    }
+
     private async void TimerResolutionButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -110,9 +131,11 @@ public sealed partial class TemporizadorPage : Page
                 var result = await _memoryService.ResetTimerResolutionAsync();
                 _timerResolutionActive = false;
                 TimerResolutionButton.Content = "Iniciar";
-                TimerResolutionResultText.Text = result.Success
+                _settingsService.Set("timer.autoStart", false);
+                _settingsService.Save();
+                SetResultText(TimerResolutionResultText, result.Success
                     ? result.Output
-                    : $"Error: {result.Output}";
+                    : $"Error: {result.Output}");
 
                 // Actualizar resolución actual después de detener
                 var currentRes = _memoryService.GetCurrentTimerResolution();
@@ -123,7 +146,7 @@ public sealed partial class TemporizadorPage : Page
             // Validar resolución deseada (usar InvariantCulture para soportar punto decimal)
             if (!double.TryParse(DesiredResolutionTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double desiredMs) || desiredMs <= 0)
             {
-                TimerResolutionResultText.Text = "Ingrese una resolución válida en ms.";
+                SetResultText(TimerResolutionResultText, "Ingrese una resolución válida en ms.");
                 return;
             }
 
@@ -134,7 +157,7 @@ public sealed partial class TemporizadorPage : Page
             var maxRes = _memoryService.GetMaximumTimerResolution();
             if (resolution100ns < maxRes)
             {
-                TimerResolutionResultText.Text = $"La resolución deseada no puede ser menor que la máxima ({maxRes / 10000.0:F3} ms).";
+                SetResultText(TimerResolutionResultText, $"La resolución deseada no puede ser menor que la máxima ({maxRes / 10000.0:F3} ms).");
                 return;
             }
 
@@ -148,11 +171,14 @@ public sealed partial class TemporizadorPage : Page
             {
                 _timerResolutionActive = true;
                 TimerResolutionButton.Content = "Detener";
+                // Recordar que se arrancó: se reaplica al abrir la app la próxima vez.
+                _settingsService.Set("timer.autoStart", true);
+                _settingsService.Save();
             }
 
-            TimerResolutionResultText.Text = setResult.Success
+            SetResultText(TimerResolutionResultText, setResult.Success
                 ? setResult.Output
-                : $"Error: {setResult.Output}";
+                : $"Error: {setResult.Output}");
 
             // Actualizar resolución actual
             var current = _memoryService.GetCurrentTimerResolution();
@@ -160,7 +186,7 @@ public sealed partial class TemporizadorPage : Page
         }
         catch (Exception ex)
         {
-            TimerResolutionResultText.Text = $"Error: {ex.Message}";
+            SetResultText(TimerResolutionResultText, $"Error: {ex.Message}");
             _loggingService.LogError("Error en TimerResolutionButton_Click", ex);
         }
     }
@@ -170,16 +196,18 @@ public sealed partial class TemporizadorPage : Page
         try
         {
             ResetTimerResolutionButton.IsEnabled = false;
-            TimerResolutionResultText.Text = "Restableciendo resolución del temporizador...";
+            SetResultText(TimerResolutionResultText, "Restableciendo resolución del temporizador...");
 
             var result = await _memoryService.ResetTimerResolutionAsync();
 
             _timerResolutionActive = false;
             TimerResolutionButton.Content = "Iniciar";
+            _settingsService.Set("timer.autoStart", false);
+            _settingsService.Save();
 
-            TimerResolutionResultText.Text = result.Success
+            SetResultText(TimerResolutionResultText, result.Success
                 ? result.Output
-                : $"Error: {result.Output}";
+                : $"Error: {result.Output}");
 
             // Actualizar resolución actual
             var current = _memoryService.GetCurrentTimerResolution();
@@ -187,7 +215,7 @@ public sealed partial class TemporizadorPage : Page
         }
         catch (Exception ex)
         {
-            TimerResolutionResultText.Text = $"Error: {ex.Message}";
+            SetResultText(TimerResolutionResultText, $"Error: {ex.Message}");
             _loggingService.LogError("Error en ResetTimerResolutionButton_Click", ex);
         }
         finally

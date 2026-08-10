@@ -52,7 +52,7 @@ public interface IRepairService
     /// <summary>
     /// Repara la tienda de Windows y sus aplicaciones.
     /// </summary>
-    Task<RepairResult> RepairStoreAsync();
+    Task<RepairResult> RepairStoreAsync(IProgress<string>? progress = null);
 
     /// <summary>
     /// Repara el perfil de usuario actual.

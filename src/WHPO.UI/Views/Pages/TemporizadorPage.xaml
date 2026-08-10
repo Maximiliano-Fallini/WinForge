@@ -6,13 +6,16 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
         <StackPanel Spacing="16" Margin="24">
 
-            <!-- ====== SECCIÓN: ESTADO DEL TEMPORIZADOR ====== -->
+            <!-- ====== TEMPORIZADOR: estado actual + ajuste de resolución en una sola card ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <FontIcon Glyph="&#xE823;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
-                <TextBlock Text="Estado del temporizador" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+                <TextBlock Text="Temporizador" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
-                <StackPanel Spacing="12">
+                <StackPanel Spacing="14">
+
+                    <!-- Estado actual -->
+                    <TextBlock Text="Estado actual" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                             <StackPanel Spacing="2">
@@ -39,18 +42,11 @@
                             <TextBlock x:Name="PerformanceTimerText" Text="--" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
-                </StackPanel>
-            </Border>
 
-            <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
+                    <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}"/>
 
-            <!-- ====== SECCIÓN: AJUSTAR RESOLUCIÓN ====== -->
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
-                <TextBlock Text="Ajustar resolución" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
-            </StackPanel>
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
-                <StackPanel Spacing="12">
+                    <!-- Ajustar resolución -->
+                    <TextBlock Text="Ajustar resolución" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <StackPanel Spacing="6" MaxWidth="280" HorizontalAlignment="Left">
                         <TextBlock Text="Resolución deseada (ms)" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         <TextBox x:Name="DesiredResolutionTextBox" Text="0.5" BeforeTextChanging="NumericTextBox_BeforeTextChanging"/>
@@ -62,7 +58,8 @@
                                 Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                         <Button x:Name="ResetTimerResolutionButton" Content="Restablecer" Click="ResetTimerResolutionButton_Click" MinWidth="140" Padding="16,8"/>
                     </StackPanel>
-                    <TextBlock x:Name="TimerResolutionResultText" Text="" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="TimerResolutionResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+
                 </StackPanel>
             </Border>
         </StackPanel>

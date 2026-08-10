@@ -101,11 +101,11 @@ public sealed partial class SistemaPage : Page
         CpuDetailsText.Text = $"{FormatFrequency(cpuInfo.CurrentFrequencyMHz)} · {_cpuCoresText}";
 
         // Instrucciones del procesador en chips estilo CPU-Z
-        InstructionsPanel.Items.Clear();
+        InstructionsPanel.Children.Clear();
         var instructions = cpuInfo.InstructionSet.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (instructions.Length == 0)
         {
-            InstructionsPanel.Items.Add(new TextBlock { Text = cpuInfo.Architecture == "x64" ? "x86-64" : "x86", FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+            InstructionsPanel.Children.Add(new TextBlock { Text = cpuInfo.Architecture == "x64" ? "x86-64" : "x86", FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
         }
         else
         {
@@ -122,12 +122,12 @@ public sealed partial class SistemaPage : Page
                         Text = instr.Trim(),
                         FontSize = 12,
                         FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-                        TextAlignment = TextAlignment.Center,
+                        TextTrimming = TextTrimming.None,
                         VerticalAlignment = VerticalAlignment.Center,
                         Foreground = ChipTextBrush
                     }
                 };
-                InstructionsPanel.Items.Add(chip);
+                InstructionsPanel.Children.Add(chip);
             }
         }
 
@@ -151,8 +151,15 @@ public sealed partial class SistemaPage : Page
         _loggingService.LogInfo($"SistemaPage: GPUs obtenidas: {gpus.Count}");
         if (gpus.Count > 0)
         {
-            var primaryGpu = gpus.FirstOrDefault(g => !g.Name.Contains("Radeon(TM)", StringComparison.OrdinalIgnoreCase) && !g.Name.Contains("Intel", StringComparison.OrdinalIgnoreCase))
-                            ?? gpus[0];
+            // Preferir la GPU dedicada: primero la que tenga más VRAM dedicada (las
+            // iGPU reportan 0 bytes), después la que no sea iGPU por nombre, y por
+            // último la primera de la lista. Así un portátil con NVIDIA + iGPU AMD
+            // muestra la NVIDIA, y un desktop con solo dGPU la muestra directo.
+            var primaryGpu = gpus
+                    .OrderByDescending(g => g.DedicatedMemoryBytes)
+                    .FirstOrDefault(g => g.DedicatedMemoryBytes > 0)
+                ?? gpus.FirstOrDefault(g => !g.Name.Contains("Radeon(TM)", StringComparison.OrdinalIgnoreCase) && !g.Name.Contains("Intel", StringComparison.OrdinalIgnoreCase))
+                ?? gpus[0];
 
             GpuNameText.Text = primaryGpu.Name.Trim();
             SetGpuLogo(primaryGpu.Name);

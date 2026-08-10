@@ -353,6 +353,24 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return new CpuInfo("Unknown", 0, 0, 0, 0, 0, 0, 0, 0, false, "Unknown", false, "Unknown", 0, 0, 0, "", "", "", "");
     }
 
+    private string? _cachedInstructionSet;
+
+    /// <summary>
+    /// Conjunto de instrucciones detectado (SSE, SSE2, AVX, AVX2, FMA, AVX-512, ...).
+    /// Resultado cacheado para que la UI pueda consultarlo livianamente.
+    /// </summary>
+    public string GetCpuInstructionSet()
+    {
+        if (_cachedInstructionSet != null) return _cachedInstructionSet;
+        try { _cachedInstructionSet = DetectCpuInstructionFlags(); }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error detectando instrucciones: {ex.Message}");
+            _cachedInstructionSet = "Desconocido";
+        }
+        return _cachedInstructionSet;
+    }
+
     /// <summary>
     /// Detecta el conjunto de instrucciones del procesador mediante un enfoque multi-capa:
     /// 1. CPUID vía hardware intrinsics (System.Runtime.Intrinsics.X86) - el más completo.
@@ -851,6 +869,11 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     private readonly object _cpuTempLock = new();
     private bool _cpuTempWmiFailed;
 
+    // ===== Potencia CPU (watts): sensor de potencia de LibreHardwareMonitor =====
+    private readonly Dictionary<string, (double Power, DateTime Checked)> _cpuPowerCache = new();
+    private readonly object _cpuPowerLock = new();
+    private bool _cpuPowerReadErrorLogged;
+
     // ===== LibreHardwareMonitor (acceso serializado: no es thread-safe) =====
     private Computer? _computer;
     private readonly object _lhmLock = new();
@@ -861,14 +884,14 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     private void EnsureLhmInitialized()
     {
         // Si el driver no pudo cargar (ej. en ese momento no estaba listo o hubo un
-        // conflicto transitorio), se reintenta cada 30 s en vez de rendirse para
+        // conflicto transitorio), se reintenta cada 10 s en vez de rendirse para
         // siempre: en PCs variadas el servicio del driver puede tardar en iniciar.
         if (_computer != null) return;
-        if (_lhmFailed && (DateTime.Now - _lastLhmAttempt).TotalSeconds < 30) return;
+        if (_lhmFailed && (DateTime.Now - _lastLhmAttempt).TotalSeconds < 10) return;
         lock (_lhmLock)
         {
             if (_computer != null) return;
-            if (_lhmFailed && (DateTime.Now - _lastLhmAttempt).TotalSeconds < 30) return;
+            if (_lhmFailed && (DateTime.Now - _lastLhmAttempt).TotalSeconds < 10) return;
             _lastLhmAttempt = DateTime.Now;
             try
             {
@@ -892,6 +915,72 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 _loggingService.LogWarning($"LibreHardwareMonitor no disponible: {ex.Message}");
             }
         }
+    }
+
+    public double GetCpuPower()
+    {
+        lock (_cpuPowerLock)
+        {
+            if (_cpuPowerCache.TryGetValue("cpu", out var cached) &&
+                (DateTime.Now - cached.Checked).TotalSeconds < 5)
+                return cached.Power;
+        }
+
+        double power = GetCpuPowerViaLhm();
+
+        lock (_cpuPowerLock)
+            _cpuPowerCache["cpu"] = (power, DateTime.Now);
+
+        return power;
+    }
+
+    private double GetCpuPowerViaLhm()
+    {
+        EnsureLhmInitialized();
+        if (_computer == null) return 0;
+        try
+        {
+            lock (_lhmLock)
+            {
+                foreach (var hardware in _computer.Hardware)
+                {
+                    if (hardware.HardwareType != HardwareType.Cpu) continue;
+                    hardware.Update();
+
+                    // Preferir el sensor de potencia que mejor representa el consumo
+                    // total del CPU: "CPU Package Power" > "Package Power" > "CPU Power".
+                    var sensors = hardware.Sensors
+                        .Where(s => s.SensorType == SensorType.Power)
+                        .OrderByDescending(s => ScoreCpuPowerSensor(s.Name))
+                        .ToList();
+
+                    foreach (var sensor in sensors)
+                    {
+                        if (sensor.Value is float f && f > 0 && f < 2000)
+                            return f;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_cpuPowerReadErrorLogged)
+            {
+                _cpuPowerReadErrorLogged = true;
+                _loggingService.LogWarning($"Error leyendo potencia CPU via LibreHardwareMonitor: {ex.Message}");
+            }
+        }
+        return 0;
+    }
+
+    private static int ScoreCpuPowerSensor(string sensorName)
+    {
+        var n = sensorName.ToLowerInvariant();
+        if (n.Contains("package") && n.Contains("power")) return 100;  // CPU Package Power
+        if (n.Contains("package")) return 80;                            // Package
+        if (n.Contains("power") && n.Contains("cpu")) return 70;        // CPU Power
+        if (n.Contains("power")) return 60;                              // Core Power / SMU
+        return 0;
     }
 
     public double GetCpuTemperature()
@@ -932,14 +1021,20 @@ public class SystemInfoService : ISystemInfoService, IDisposable
 
                     // Preferir el sensor que mejor representa la temperatura real:
                     // AMD: "Core (Tctl/Tdie)" > "Core (Tdie)" > "Core (Tctl)";
-                    // Intel: "CPU Package" > "Core (Tjmax)" > "Core Average".
-                    var sensor = hardware.Sensors
+                    // Intel: "CPU Package" > "CPU Die" > "Core Max" > "Core (Tjmax)".
+                    // Se recorren EN ORDEN de prioridad y se toma el primero con valor
+                    // válido: en algunos CPUs el sensor mejor puntuado viene vacío y el
+                    // segundo (p. ej. "CPU Package") sí tiene lectura.
+                    var sensors = hardware.Sensors
                         .Where(s => s.SensorType == SensorType.Temperature)
                         .OrderByDescending(s => ScoreCpuTempSensor(s.Name))
-                        .FirstOrDefault();
+                        .ToList();
 
-                    if (sensor?.Value is float f && f > 0 && f < 120)
-                        return f;
+                    foreach (var sensor in sensors)
+                    {
+                        if (sensor.Value is float f && f > 0 && f < 120)
+                            return f;
+                    }
                 }
             }
         }
@@ -957,12 +1052,13 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     private static int ScoreCpuTempSensor(string sensorName)
     {
         var n = sensorName.ToLowerInvariant();
-        if (n.Contains("tctl") && n.Contains("tdie")) return 100; // AMD Zen: Tctl/Tdie
-        if (n.Contains("package")) return 90;                     // Intel
-        if (n.Contains("tdie")) return 80;                        // AMD Zen: die real
-        if (n.Contains("tctl")) return 70;                        // AMD Zen: Tctl
-        if (n.Contains("average")) return 60;
-        if (n.Contains("tjmax")) return 50;
+        if (n.Contains("tctl") && n.Contains("tdie")) return 100;   // AMD Zen: Tctl/Tdie
+        if (n.Contains("package")) return 90;                        // Intel: CPU Package
+        if (n.Contains("tdie") || n.Contains("die")) return 80;     // AMD die real / Intel "CPU Die"
+        if (n.Contains("tctl")) return 70;                           // AMD Zen: Tctl
+        if (n.Contains("core max")) return 65;                       // Intel moderno (Alder Lake+)
+        if (n.Contains("average")) return 60;                        // Core Average
+        if (n.Contains("tjmax")) return 50;                          // Intel viejo
         return 0;
     }
 
@@ -1311,13 +1407,37 @@ public class SystemInfoService : ISystemInfoService, IDisposable
 
                     // Preferir el sensor "GPU Core" (el que muestra el Administrador
                     // de tareas); Hot Spot y Memory Junction quedan como respaldo.
-                    var sensor = hardware.Sensors
+                    // Se recorren en orden de prioridad tomando el primero con valor válido.
+                    var sensors = hardware.Sensors
                         .Where(s => s.SensorType == SensorType.Temperature)
                         .OrderByDescending(s => ScoreGpuTempSensor(s.Name))
-                        .FirstOrDefault();
+                        .ToList();
 
-                    if (sensor?.Value is float f && f > 0 && f < 120)
-                        return f;
+                    foreach (var sensor in sensors)
+                    {
+                        if (sensor.Value is float f && f > 0 && f < 120)
+                            return f;
+                    }
+                }
+
+                // Si el nombre de la GPU de WMI no coincide con el de LHM (p. ej. lo
+                // reporta distinto), usar la única GPU disponible como último recurso
+                // dentro de LHM. Solo si hay exactamente una, para no mezclar GPUs.
+                var gpus = _computer.Hardware
+                    .Where(h => h.HardwareType == HardwareType.GpuNvidia ||
+                                h.HardwareType == HardwareType.GpuAmd ||
+                                h.HardwareType == HardwareType.GpuIntel)
+                    .ToList();
+                if (gpus.Count == 1)
+                {
+                    gpus[0].Update();
+                    foreach (var sensor in gpus[0].Sensors
+                                 .Where(s => s.SensorType == SensorType.Temperature)
+                                 .OrderByDescending(s => ScoreGpuTempSensor(s.Name)))
+                    {
+                        if (sensor.Value is float f && f > 0 && f < 120)
+                            return f;
+                    }
                 }
             }
         }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -13,6 +14,24 @@ public sealed partial class ConfiguracionPage : Page
     private readonly IThemeService _themeService;
     private readonly IStartupService _startupService;
     private bool _isLoading;
+
+    // ---- Menú de navegación: pestañas del menú lateral y su clave de configuración ----
+    private static readonly (string Tag, string Label)[] NavTabs =
+    {
+        ("sistema", "Sistema"),
+        ("red", "Red"),
+        ("memoria", "Memoria"),
+        ("temporizador", "Resolución del Temporizador"),
+        ("nucleos", "Núcleos y Plan de energía"),
+        ("estabilidad", "Test de estabilidad"),
+        ("optimizaciones", "Optimizaciones"),
+        ("herramientas", "Herramientas y funciones"),
+        ("panelwindows", "Panel de Windows"),
+        ("reparacion", "Reparación"),
+        ("actualizaciones", "Windows Update")
+    };
+
+    private readonly Dictionary<string, CheckBox> _navCheckBoxes = new();
 
     public ConfiguracionPage()
     {
@@ -38,6 +57,7 @@ public sealed partial class ConfiguracionPage : Page
             ShowTrayMetricsToggle.IsOn = _settingsService.Get("tray.showMetrics", false);
             LaunchAtStartupToggle.IsOn = _startupService.IsEnabled();
             StartMinimizedToggle.IsOn = _settingsService.Get("window.startMinimized", false);
+            BuildNavMenu();
             SelectTheme(_themeService.CurrentTheme);
             App.MainWindowInstance?.UpdateTrayMetricsState();
         }
@@ -108,5 +128,53 @@ public sealed partial class ConfiguracionPage : Page
 
         _settingsService.Set("window.startMinimized", StartMinimizedToggle.IsOn);
         _settingsService.Save();
+    }
+
+    // ===================== Menú de navegación =====================
+
+    private void BuildNavMenu()
+    {
+        _navCheckBoxes.Clear();
+        NavItemsPanel.Children.Clear();
+
+        foreach (var (tag, label) in NavTabs)
+        {
+            var cb = new CheckBox
+            {
+                Content = label,
+                Tag = tag,
+                IsChecked = _settingsService.Get("nav." + tag, true),
+                MinHeight = 34
+            };
+            cb.Checked += OnNavCheckChanged;
+            cb.Unchecked += OnNavCheckChanged;
+            _navCheckBoxes[tag] = cb;
+            NavItemsPanel.Children.Add(cb);
+        }
+
+        UpdateNavMenuSummary();
+    }
+
+    private void OnNavCheckChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        SaveNavVisibility();
+    }
+
+    private void SaveNavVisibility()
+    {
+        foreach (var (tag, _) in NavTabs)
+            _settingsService.Set("nav." + tag, _navCheckBoxes.TryGetValue(tag, out var cb) && cb.IsChecked == true);
+        _settingsService.Save();
+        App.MainWindowInstance?.ApplyNavigationVisibility();
+        UpdateNavMenuSummary();
+    }
+
+    private void UpdateNavMenuSummary()
+    {
+        int visible = NavTabs.Count(t => _navCheckBoxes.TryGetValue(t.Tag, out var cb) && cb.IsChecked == true);
+        NavMenuSummaryText.Text = visible == NavTabs.Length
+            ? "Todas las pestañas son visibles"
+            : $"{visible} de {NavTabs.Length} pestañas visibles";
     }
 }

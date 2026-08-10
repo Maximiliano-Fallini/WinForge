@@ -5,6 +5,10 @@
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
     Title="WinForge">
 
+    <!-- El fondo del navbar (panel) se fuerza a negro (oscuro) / blanco (claro) con
+         recursos a nivel del propio NavigationView: el key NavigationViewDefaultPaneBackground
+         también lo define WinUI y, si se define solo a nivel de app, el override no gana
+         y el panel queda con el gris por defecto. -->
     <muxc:NavigationView
         x:Name="NavigationViewControl"
         PaneDisplayMode="Left"
@@ -14,7 +18,20 @@
         IsSettingsVisible="False"
         Margin="0,0,0,0"
         Padding="0,0,0,0"
-        Background="{ThemeResource AppBackgroundBrush}">
+        Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+
+        <muxc:NavigationView.Resources>
+            <ResourceDictionary>
+                <ResourceDictionary.ThemeDictionaries>
+                    <ResourceDictionary x:Key="Dark">
+                        <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1F242C"/>
+                    </ResourceDictionary>
+                    <ResourceDictionary x:Key="Light">
+                        <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
+                    </ResourceDictionary>
+                </ResourceDictionary.ThemeDictionaries>
+            </ResourceDictionary>
+        </muxc:NavigationView.Resources>
 
         <muxc:NavigationView.MenuItems>
             <muxc:NavigationViewItem Content="Sistema" Tag="sistema">
@@ -42,9 +59,24 @@
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE950;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Test de estabilidad" Tag="estabilidad">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE9D2;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Optimizaciones" Tag="optimizaciones">
                 <muxc:NavigationViewItem.Icon>
                     <muxc:SymbolIcon Symbol="Repair" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Herramientas y funciones" Tag="herramientas">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="Manage" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Panel de Windows" Tag="panelwindows">
+                <muxc:NavigationViewItem.Icon>
+                    <muxc:SymbolIcon Symbol="NewWindow" />
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Reparación" Tag="reparacion">

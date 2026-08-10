@@ -6,7 +6,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.Extensions.DependencyInjection;
+using Windows.ApplicationModel.DataTransfer;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 
@@ -25,6 +27,8 @@ public sealed partial class ReparacionPage : Page
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 255, 193, 7));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush MutedBrush = new(Windows.UI.Color.FromArgb(255, 150, 150, 150));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xAF, 0x50));
+    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush ErrorBrush = new(Windows.UI.Color.FromArgb(255, 0xF0, 0x61, 0x6D));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush AccentForegroundBrush = new(Windows.UI.Color.FromArgb(255, 16, 20, 24));
 
     public ReparacionPage()
@@ -266,14 +270,32 @@ public sealed partial class ReparacionPage : Page
             button.IsEnabled = false;
             button.Content = "Ejecutando...";
 
+            // Reparar Windows Store transmite su progreso en vivo a la consola embebida.
+            if (tool.Id == "repair_store")
+            {
+                ConsolePanel.Visibility = Visibility.Visible;
+                AppendConsole($"▶ Ejecutando {tool.Name}...", ConsoleStatus.Running);
+            }
+
             RepairResult result = tool.Id switch
             {
-                "repair_store" => await _repairService.RepairStoreAsync(),
+                "repair_store" => await _repairService.RepairStoreAsync(new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral))),
                 "repair_profile" => await _repairService.RepairUserProfileAsync(),
                 _ => new RepairResult(false, "Herramienta no reconocida")
             };
 
-            if (result.Success)
+            if (tool.Id == "repair_store")
+            {
+                AppendConsole(result.Success ? $"✓ {tool.Name} completado." : $"✗ {tool.Name}: {result.Message}", result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+            }
+
+            // Estas herramientas no abren consola: muestran el detalle en un diálogo
+            // para que el resultado sea visible (antes el aviso de 3s pasaba desapercibido).
+            if (tool.Id is "repair_store" or "repair_profile")
+            {
+                await ShowResultDialogAsync(tool.Name, result);
+            }
+            else if (result.Success)
             {
                 ShowNotification($"{tool.Name} - Operación exitosa", "success");
             }
@@ -293,6 +315,122 @@ public sealed partial class ReparacionPage : Page
         {
             button.IsEnabled = true;
             button.Content = "Ejecutar";
+        }
+    }
+
+    /// <summary>
+    /// Muestra el resultado de una herramienta en un diálogo con el detalle completo.
+    /// </summary>
+    private async Task ShowResultDialogAsync(string toolName, RepairResult result)
+    {
+        if (XamlRoot == null) return;
+
+        var panel = new StackPanel { Spacing = 12, MaxWidth = 560 };
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = result.Message,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 14,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush((result.Success ? SuccessBrush : ErrorBrush).Color)
+        });
+
+        if (!string.IsNullOrWhiteSpace(result.Details))
+        {
+            var detailsText = new TextBlock
+            {
+                Text = result.Details,
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+                FontSize = 11.5,
+                LineHeight = 17,
+                TextWrapping = TextWrapping.Wrap,
+                IsTextSelectionEnabled = true,
+                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(MutedBrush.Color)
+            };
+            panel.Children.Add(new ScrollViewer
+            {
+                MaxHeight = 320,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollMode = ScrollMode.Disabled,
+                Content = detailsText
+            });
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = toolName,
+            Content = panel,
+            CloseButtonText = "Cerrar"
+        };
+        await dialog.ShowAsync();
+    }
+
+    // ====== CONSOLA EN VIVO ======
+
+    private enum ConsoleStatus
+    {
+        Running,
+        Applied,
+        Error,
+        Neutral
+    }
+
+    private void AppendConsole(string message, ConsoleStatus status)
+    {
+        if (ConsolePanel == null || ConsoleText == null || ConsoleScroll == null) return;
+
+        ConsolePanel.Visibility = Visibility.Visible;
+
+        var (prefix, color) = status switch
+        {
+            ConsoleStatus.Running => ("▶", AccentBrush),
+            ConsoleStatus.Applied => ("✓", SuccessBrush),
+            ConsoleStatus.Error => ("✗", ErrorBrush),
+            _ => ("·", MutedBrush)
+        };
+
+        if (ConsoleText.Inlines.Count > 0)
+            ConsoleText.Inlines.Add(new Run { Text = Environment.NewLine });
+        ConsoleText.Inlines.Add(new Run { Text = $"{prefix} {message}", Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(color.Color) });
+
+        // Limitar el crecimiento para no degradar el rendimiento tras muchas líneas.
+        const int maxInlineCount = 1200;
+        while (ConsoleText.Inlines.Count > maxInlineCount)
+        {
+            ConsoleText.Inlines.RemoveAt(0);
+            if (ConsoleText.Inlines.Count > 0)
+                ConsoleText.Inlines.RemoveAt(0);
+        }
+
+        ConsoleScroll.UpdateLayout();
+        ConsoleScroll.ChangeView(null, double.MaxValue, null, true);
+    }
+
+    private void ClearConsoleButton_Click(object sender, RoutedEventArgs e)
+    {
+        ConsoleText?.Inlines.Clear();
+    }
+
+    private async void CopyConsoleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ConsoleText == null) return;
+        var sb = new System.Text.StringBuilder();
+        foreach (var inline in ConsoleText.Inlines)
+        {
+            if (inline is Run run)
+                sb.Append(run.Text);
+        }
+        try
+        {
+            var data = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            data.SetText(sb.ToString());
+            Clipboard.SetContent(data);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error copiando consola", ex);
         }
     }
 
