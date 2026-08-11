@@ -18,15 +18,13 @@ namespace WHPO.Core.Services;
 public class WinUtilService : IWinUtilService
 {
     private readonly ILoggingService _loggingService;
-    private readonly IRepairService _repairService;
     private readonly List<WinFeatureInfo> _features;
     private readonly List<WinFixInfo> _fixes;
     private readonly List<WindowsPanelInfo> _panels;
 
-    public WinUtilService(ILoggingService loggingService, IRepairService repairService)
+    public WinUtilService(ILoggingService loggingService)
     {
         _loggingService = loggingService;
-        _repairService = repairService;
         _features = BuildFeatures();
         _fixes = BuildFixes();
         _panels = BuildPanels();
@@ -265,18 +263,10 @@ public class WinUtilService : IWinUtilService
     private static List<WinFixInfo> BuildFixes() => new()
     {
         new WinFixInfo("ntp", "Servidor NTP - Activar",
-            "Reemplaza el servidor horario predeterminado de Windows (time.windows.com) por pool.ntp.org para una sincronización más precisa y confiable."),
+            "Reemplaza el servidor horario predeterminado de Windows (time.windows.com) por pool.ntp.org para una sincronización más precisa y confiable.",
+            SupportsRevert: true),
         new WinFixInfo("autologon", "AutoLogon - Configurar",
             "Configura el inicio de sesión automático de Windows. Pide usuario y contraseña, y los guarda en el registro (Winlogon)."),
-        new WinFixInfo("wureset", "Windows Update - Restablecer",
-            "Detiene los servicios de actualización, renombra las carpetas SoftwareDistribution y catroot2 (caché) y los vuelve a iniciar. Útil cuando las actualizaciones fallan.",
-            IsLongRunning: true),
-        new WinFixInfo("network", "Red - Restablecer",
-            "Restablece winsock y la pila TCP/IP a los valores predeterminados. Se recomienda reiniciar el equipo al terminar.",
-            RequiresRestart: true),
-        new WinFixInfo("dism", "Escaneo de corrupción del sistema - Ejecutar",
-            "Ejecuta DISM /RestoreHealth para reparar la imagen de Windows cuando SFC no puede solucionar el problema. Descarga archivos correctos desde Windows Update si es necesario.",
-            IsLongRunning: true),
         new WinFixInfo("winget", "WinGet - Reinstalar",
             "Desinstala y reinstala el Instalador de aplicaciones (App Installer / WinGet) desde la última versión oficial del repositorio winget-cli.",
             IsLongRunning: true)
@@ -292,24 +282,6 @@ public class WinUtilService : IWinUtilService
             case "autologon":
                 return new CommandResult(false, "AutoLogon se configura desde su formulario (usuario y contraseña).");
 
-            case "wureset":
-                return await RunWindowsUpdateResetAsync(progress, cancellationToken);
-
-            case "network":
-            {
-                progress?.Report("Restableciendo winsock y la pila TCP/IP...");
-                var result = await _repairService.ResetNetworkAsync();
-                progress?.Report(result.Success ? "✓ Red restablecida (reiniciá para completar)." : $"✗ {result.Message}");
-                return new CommandResult(result.Success, result.Message);
-            }
-
-            case "dism":
-            {
-                progress?.Report("Ejecutando DISM /RestoreHealth... puede tardar varios minutos.");
-                var result = await _repairService.RunDISMAsync(progress, cancellationToken);
-                return new CommandResult(result.Success, result.Message);
-            }
-
             case "winget":
                 return await RunWingetReinstallAsync(progress, cancellationToken);
 
@@ -318,34 +290,39 @@ public class WinUtilService : IWinUtilService
         }
     }
 
-    private async Task<CommandResult> RunNtpFixAsync(IProgress<string>? progress, CancellationToken ct)
+    public async Task<CommandResult> RevertFixAsync(string fixId, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
-        // Un solo script: w32tm no entiende "&&" (es del shell), así que configurar,
-        // reiniciar el servicio y resincronizar se hacen en PowerShell.
-        const string script =
-            "Write-Output 'Configurando pool.ntp.org como servidor horario...';" +
-            "w32tm /config /manualpeerlist:\"pool.ntp.org,0x1\" /syncfromflags:manual /reliable:YES /update;" +
+        switch (fixId)
+        {
+            case "ntp":
+                return await RevertNtpFixAsync(progress, cancellationToken);
+
+            default:
+                return new CommandResult(false, $"El fix {fixId} no se puede revertir.");
+        }
+    }
+
+    private async Task<CommandResult> RunNtpFixAsync(IProgress<string>? progress, CancellationToken ct)
+        => await RunNtpScriptAsync("pool.ntp.org", reliable: true, "Configurando pool.ntp.org como servidor horario...", "Servidor horario configurado en pool.ntp.org", progress, ct);
+
+    private async Task<CommandResult> RevertNtpFixAsync(IProgress<string>? progress, CancellationToken ct)
+        => await RunNtpScriptAsync("time.windows.com", reliable: false, "Restaurando time.windows.com como servidor horario...", "Servidor horario restaurado a time.windows.com", progress, ct);
+
+    /// <summary>
+    /// Un solo script: w32tm no entiende "&&" (es del shell), así que configurar,
+    /// reiniciar el servicio y resincronizar se hacen en PowerShell.
+    /// </summary>
+    private async Task<CommandResult> RunNtpScriptAsync(string server, bool reliable, string startMsg, string endMsg, IProgress<string>? progress, CancellationToken ct)
+    {
+        var reliableFlag = reliable ? "/reliable:YES" : "/reliable:NO";
+        var script =
+            $"Write-Output '{startMsg}';" +
+            $"w32tm /config /manualpeerlist:\"{server},0x1\" /syncfromflags:manual {reliableFlag} /update;" +
             "Write-Output 'Reiniciando el servicio de hora (w32time)...';" +
             "Restart-Service w32time -Force -ErrorAction SilentlyContinue;" +
             "Write-Output 'Resincronizando hora...';" +
             "w32tm /resync;" +
-            "Write-Output 'Servidor horario configurado en pool.ntp.org'";
-        return await RunPowerShellAsync(script, progress, ct);
-    }
-
-    private async Task<CommandResult> RunWindowsUpdateResetAsync(IProgress<string>? progress, CancellationToken ct)
-    {
-        const string script =
-            "Write-Output 'Deteniendo servicios de actualización...';" +
-            "Stop-Service -Name wuauserv,bits,cryptsvc -Force -ErrorAction SilentlyContinue;" +
-            "Write-Output 'Renombrando caché (SoftwareDistribution / catroot2)...';" +
-            "Rename-Item 'C:\\Windows\\SoftwareDistribution' 'C:\\Windows\\SoftwareDistribution.old' -Force -ErrorAction SilentlyContinue;" +
-            "Rename-Item 'C:\\Windows\\System32\\catroot2' 'C:\\Windows\\System32\\catroot2.old' -Force -ErrorAction SilentlyContinue;" +
-            "Write-Output 'Reiniciando servicios...';" +
-            "Start-Service -Name wuauserv,bits,cryptsvc -ErrorAction SilentlyContinue;" +
-            "Write-Output 'Disparando una revisión de actualizaciones (UsoClient)...';" +
-            "UsoClient StartScan 2>$null;" +
-            "Write-Output 'Windows Update restablecido'";
+            $"Write-Output '{endMsg}'";
         return await RunPowerShellAsync(script, progress, ct);
     }
 

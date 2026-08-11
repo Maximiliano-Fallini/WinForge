@@ -18,8 +18,10 @@ public class MemoryService : IMemoryService
     private double _maxFreeMB = 4096;
     private int _pollIntervalMs = 1000;
     private int _currentTimerResolution = 156250; // 15.625ms por defecto en Windows
-    private int _minTimerResolution = 5000; // 0.5ms
-    private int _maxTimerResolution = 156250; // 15.625ms
+    // OJO con la nomenclatura de NtQueryTimerResolution: MinimumResolution es la MÁS
+    // GRUESA (15.625ms) y MaximumResolution la MÁS FINA (0.5ms).
+    private int _minTimerResolution = 156250; // 15.625ms (la más gruesa)
+    private int _maxTimerResolution = 5000; // 0.5ms (la más fina)
     private bool _timerResolutionQueried = false;
     private System.Diagnostics.PerformanceCounter? _standbyCounter;
     private bool _standbyCounterInitialized = false;
@@ -153,7 +155,9 @@ public class MemoryService : IMemoryService
 
             double standbyMB = GetStandbyListSizeMB();
             double cachedMB = standbyMB; // La lista standby es la mayor parte de la caché
-            double freeMB = availableMB;
+            // Libre REAL (sin caché): la disponible (ullAvailPhys) incluye la lista standby,
+            // y para la condición de limpieza interesa el libre real, no el disponible.
+            double freeMB = Math.Max(0, (double)availableMB - standbyMB);
 
             var stats = new MemoryStats(totalMB, availableMB, usedMB, usedPercent, standbyMB, cachedMB, freeMB);
             lock (_statsCacheLock)
@@ -411,9 +415,16 @@ public class MemoryService : IMemoryService
                 }
 
                 _currentTimerResolution = current;
-                double ms = current / 10000.0;
-                _loggingService.LogInfo($"Resolución del temporizador establecida a {ms:F3} ms");
-                return new CommandResult(true, $"Resolución del temporizador establecida a {ms:F3} ms.");
+                double effectiveMs = current / 10000.0;
+                double requestedMs = resolution100ns / 10000.0;
+                // Windows aplica siempre la solicitud MÁS FINA de todos los procesos: si otra
+                // aplicación pide una resolución más fina que la nuestra, la efectiva queda
+                // en esa y la nuestra queda registrada hasta que esa solicitud termine.
+                string message = Math.Abs(current - resolution100ns) > 1
+                    ? $"Solicitud registrada: {requestedMs:F3} ms. La resolución efectiva quedó en {effectiveMs:F3} ms porque otra aplicación pide una más fina; se aplicará cuando esa solicitud termine."
+                    : $"Resolución del temporizador establecida a {effectiveMs:F3} ms.";
+                _loggingService.LogInfo(message);
+                return new CommandResult(true, message);
             }
             catch (Exception ex)
             {

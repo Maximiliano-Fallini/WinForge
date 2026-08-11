@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Dispatching;
 using Microsoft.Extensions.DependencyInjection;
@@ -108,8 +109,10 @@ public sealed partial class MemoriaPage : Page
         var stats = _memoryService.GetMemoryStats();
         var totalRamMB = Math.Max(8192, (int)Math.Round((double)stats.TotalPhysicalMB, MidpointRounding.AwayFromZero));
         var (defaultMinStandby, defaultMaxFree) = GetRecommendedValues(totalRamMB);
-        var minStandby = _settingsService.Get("memory.minStandbyMB", defaultMinStandby);
-        var maxFree = _settingsService.Get("memory.maxFreeMB", defaultMaxFree);
+        // Mínimo 300 MB en ambos umbrales: valores guardados más chicos (ej. 0)
+        // se suben al mínimo para no arrancar la limpieza con umbrales inválidos.
+        var minStandby = Math.Max(300, _settingsService.Get("memory.minStandbyMB", defaultMinStandby));
+        var maxFree = Math.Max(300, _settingsService.Get("memory.maxFreeMB", defaultMaxFree));
         MinStandbyTextBox.Text = $"{minStandby:F0}";
         MaxFreeTextBox.Text = $"{maxFree:F0}";
 
@@ -124,9 +127,10 @@ public sealed partial class MemoriaPage : Page
         if (_settingsService.Get("memory.autoStart", false))
         {
             _autoCleanupActive = true;
-            AutoCleanupButton.Content = "Detener";
-            AutoCleanupStatusText.Text = $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)";
+            SetAutoCleanupButtonState(true);
+            Feedback.Success(AutoCleanupStatusText, $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)", persistent: true);
         }
+        UpdateInputsEnabled();
     }
 
     private async Task RefreshMemoryStatsAsync()
@@ -141,6 +145,20 @@ public sealed partial class MemoriaPage : Page
             PageFileText.Text = $"{pageFile.UsedPageFileMB:F0} / {pageFile.TotalPageFileMB:F0} MB";
             FreeMemoryText.Text = $"{stats.FreeMB:F0} MB";
             AvailableMemoryText.Text = $"{stats.AvailableMB:F0} MB";
+
+            // Con la limpieza activa, mostrar en vivo por qué (no) limpia: caché y libre
+            // actuales contra los umbrales. Verde cuando ambas condiciones se cumplen.
+            if (_autoCleanupActive &&
+                double.TryParse(MinStandbyTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double minStandby) &&
+                double.TryParse(MaxFreeTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double maxFree))
+            {
+                bool cacheOk = stats.StandbyMB >= minStandby;
+                bool freeOk = stats.FreeMB <= maxFree;
+                Feedback.Set(AutoCleanupStatusText,
+                    $"Activo · caché {stats.StandbyMB:F0} MB (≥ {minStandby:F0} {(cacheOk ? "✓" : "✗")}) · libre {stats.FreeMB:F0} MB (≤ {maxFree:F0} {(freeOk ? "✓" : "✗")})",
+                    cacheOk && freeOk ? Feedback.SuccessBrush : Feedback.MutedBrush,
+                    persistent: true);
+            }
         }
         catch (Exception ex)
         {
@@ -189,17 +207,19 @@ public sealed partial class MemoriaPage : Page
         args.Cancel = args.NewText.Any(c => c != '.' && !char.IsDigit(c));
     }
 
-    // Muestra el resultado de la limpieza; con texto vacío colapsa el elemento para
-    // no dejar espacio muerto entre el botón y el separador.
-    private void SetResultText(TextBlock tb, string? text)
+    // Mínimo 300 MB en los umbrales de la limpieza automática: no se arranca con un
+    // valor menor y se avisa cuáles son los mínimos (300 y 300 MB).
+    private const double MinThresholdMB = 300;
+
+    // Los parámetros de la limpieza automática (umbrales, frecuencia y Autoajustar)
+    // no se pueden modificar mientras está iniciada.
+    private void UpdateInputsEnabled()
     {
-        if (string.IsNullOrEmpty(text))
-        {
-            tb.Visibility = Visibility.Collapsed;
-            return;
-        }
-        tb.Visibility = Visibility.Visible;
-        tb.Text = text;
+        bool editable = !_autoCleanupActive;
+        MinStandbyTextBox.IsEnabled = editable;
+        MaxFreeTextBox.IsEnabled = editable;
+        PollIntervalCombo.IsEnabled = editable;
+        AutoConfigureButton.IsEnabled = editable;
     }
 
     private async void CleanStandbyButton_Click(object sender, RoutedEventArgs e)
@@ -207,19 +227,20 @@ public sealed partial class MemoriaPage : Page
         try
         {
             CleanStandbyButton.IsEnabled = false;
-            SetResultText(CleanStandbyResultText, "Liberando memoria disponible...");
+            Feedback.Running(CleanStandbyResultText, "Liberando memoria disponible...");
 
             var result = await _memoryService.CleanStandbyListAsync();
 
-            SetResultText(CleanStandbyResultText, result.Success
-                ? result.Output
-                : $"Error: {result.Output}");
+            if (result.Success)
+                Feedback.Success(CleanStandbyResultText, result.Output);
+            else
+                Feedback.Error(CleanStandbyResultText, result.Output);
 
             await RefreshMemoryStatsAsync();
         }
         catch (Exception ex)
         {
-            SetResultText(CleanStandbyResultText, $"Error: {ex.Message}");
+            Feedback.Error(CleanStandbyResultText, ex.Message);
             _loggingService.LogError("Error en CleanStandbyButton_Click", ex);
         }
         finally
@@ -244,11 +265,11 @@ public sealed partial class MemoriaPage : Page
             MinStandbyTextBox.Text = $"{recommendedMinStandby:F0}";
             MaxFreeTextBox.Text = $"{recommendedMaxFree:F0}";
 
-            AutoCleanupStatusText.Text = $"Autoajuste listo: caché {recommendedMinStandby:F0} MB, RAM libre {recommendedMaxFree:F0} MB.";
+            Feedback.Success(AutoCleanupStatusText, $"Autoajuste listo: caché {recommendedMinStandby:F0} MB, RAM libre {recommendedMaxFree:F0} MB.");
         }
         catch (Exception ex)
         {
-            AutoCleanupStatusText.Text = $"Error al autoajustar: {ex.Message}";
+            Feedback.Error(AutoCleanupStatusText, $"Autoajuste falló: {ex.Message}");
             _loggingService.LogError("Error en AutoConfigureButton_Click", ex);
         }
     }
@@ -273,6 +294,24 @@ public sealed partial class MemoriaPage : Page
         return (tier.MinStandby, tier.MaxFree);
     }
 
+    // Estado del botón Iniciar/Detener de la limpieza automática: Detener usa rojo
+    // (igual que "Detener test" en Estabilidad) para que la acción de parar se vea
+    // igual en toda la app; Iniciar vuelve al estilo por defecto.
+    private void SetAutoCleanupButtonState(bool running)
+    {
+        AutoCleanupButton.Content = running ? "Detener" : "Iniciar";
+        if (running)
+        {
+            AutoCleanupButton.Background = Feedback.ErrorBrush;
+            AutoCleanupButton.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+        }
+        else
+        {
+            AutoCleanupButton.ClearValue(Button.BackgroundProperty);
+            AutoCleanupButton.ClearValue(Button.ForegroundProperty);
+        }
+    }
+
     private void AutoCleanupButton_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -282,22 +321,24 @@ public sealed partial class MemoriaPage : Page
                 // Detener
                 _memoryService.StopAutoCleanup();
                 _autoCleanupActive = false;
-                AutoCleanupButton.Content = "Iniciar";
-                AutoCleanupStatusText.Text = "Detenido";
+                SetAutoCleanupButtonState(false);
+                Feedback.Set(AutoCleanupStatusText, "Detenido", Feedback.MutedBrush, persistent: true);
+                UpdateInputsEnabled();
                 _settingsService.Set("memory.autoStart", false);
                 _settingsService.Save();
                 return;
             }
 
-            // Validar valores
-            if (!double.TryParse(MinStandbyTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double minStandby) || minStandby < 0)
+            // Validar valores: mínimo 300 MB en cada umbral. Si alguno no llega,
+            // no se arranca y se avisan los mínimos (300 y 300 MB).
+            if (!double.TryParse(MinStandbyTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double minStandby) || minStandby < MinThresholdMB)
             {
-                AutoCleanupStatusText.Text = "Ingrese un valor válido para la lista en espera mínima.";
+                Feedback.Error(AutoCleanupStatusText, $"No se pudo iniciar: los valores mínimos son {MinThresholdMB:F0} MB (lista en espera) y {MinThresholdMB:F0} MB (RAM libre).");
                 return;
             }
-            if (!double.TryParse(MaxFreeTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double maxFree) || maxFree < 0)
+            if (!double.TryParse(MaxFreeTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double maxFree) || maxFree < MinThresholdMB)
             {
-                AutoCleanupStatusText.Text = "Ingrese un valor válido para la RAM libre máxima.";
+                Feedback.Error(AutoCleanupStatusText, $"No se pudo iniciar: los valores mínimos son {MinThresholdMB:F0} MB (lista en espera) y {MinThresholdMB:F0} MB (RAM libre).");
                 return;
             }
 
@@ -318,12 +359,13 @@ public sealed partial class MemoriaPage : Page
             // Iniciar
             _memoryService.StartAutoCleanup(minStandby, maxFree, pollIntervalMs);
             _autoCleanupActive = true;
-            AutoCleanupButton.Content = "Detener";
-            AutoCleanupStatusText.Text = $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)";
+            SetAutoCleanupButtonState(true);
+            UpdateInputsEnabled();
+            Feedback.Success(AutoCleanupStatusText, $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)", persistent: true);
         }
         catch (Exception ex)
         {
-            AutoCleanupStatusText.Text = $"Error: {ex.Message}";
+            Feedback.Error(AutoCleanupStatusText, ex.Message);
             _loggingService.LogError("Error en AutoCleanupButton_Click", ex);
         }
     }

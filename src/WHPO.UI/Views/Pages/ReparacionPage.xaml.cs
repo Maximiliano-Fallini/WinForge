@@ -381,7 +381,13 @@ public sealed partial class ReparacionPage : Page
     {
         if (ConsolePanel == null || ConsoleText == null || ConsoleScroll == null) return;
 
+        var wasCollapsed = ConsolePanel.Visibility == Visibility.Collapsed;
         ConsolePanel.Visibility = Visibility.Visible;
+
+        // La consola vive al final del ScrollViewer: al aparecer la primera vez, scrollear
+        // hasta ella para que el usuario vea el feedback de la reparación que ejecutó.
+        if (wasCollapsed)
+            ConsolePanel.StartBringIntoView();
 
         var (prefix, color) = status switch
         {

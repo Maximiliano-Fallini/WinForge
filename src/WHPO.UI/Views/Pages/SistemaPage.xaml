@@ -68,14 +68,16 @@
                 <Border Grid.Row="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="150" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                     <Grid>
                         <Grid x:Name="RamContent" ColumnDefinitions="80,*" ColumnSpacing="16" Visibility="Collapsed">
-                            <!-- Base de datos (cilindro) en el color accent de la app -->
-                            <Path Data="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4zM4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4zm0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4z"
-                                  Fill="{StaticResource AccentBrush}" Stretch="Uniform" Width="72" Height="72" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <!-- RAM literal (mismo glyph que el navbar: EEA0) -->
+                            <FontIcon FontFamily="Segoe Fluent Icons" Glyph="&#xEEA0;" FontSize="72" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             <StackPanel Grid.Column="1" Spacing="6">
                                 <TextBlock Text="RAM" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock x:Name="RamTotalText" Text="" FontWeight="SemiBold"/>
                                 <ProgressBar x:Name="RamUsageBar" Value="0" Height="6"/>
-                                <TextBlock x:Name="RamUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock x:Name="RamUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
+                                    <TextBlock x:Name="RamUsedText" Text="" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Bottom" Margin="0,0,0,3"/>
+                                </StackPanel>
                                 <TextBlock x:Name="RamDetailsText" Text="--" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>
                         </Grid>
@@ -176,10 +178,6 @@
                                 <TextBlock Text="Producto" FontSize="13"/>
                                 <TextBlock x:Name="BoardProductText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
                             </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Versión" FontSize="13"/>
-                                <TextBlock x:Name="BoardVersionText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
-                            </Grid>
                         </StackPanel>
                         <!-- Skeleton de carga -->
                         <StackPanel x:Name="BoardSkeleton" Spacing="10" IsHitTestVisible="False" Background="{ThemeResource CardBackgroundBrush}">
@@ -201,10 +199,6 @@
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Text="Versión SMBIOS" FontSize="13"/>
                                 <TextBlock x:Name="BiosVersionText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
-                            </Grid>
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="Fecha" FontSize="13"/>
-                                <TextBlock x:Name="BiosDateText" Grid.Column="1" Text="--" FontSize="13" FontWeight="SemiBold"/>
                             </Grid>
                         </StackPanel>
                         <!-- Skeleton de carga -->

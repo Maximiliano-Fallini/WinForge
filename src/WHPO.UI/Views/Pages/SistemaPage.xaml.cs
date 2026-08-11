@@ -142,7 +142,11 @@ public sealed partial class SistemaPage : Page
         RamTotalText.Text = FormatBytes(memInfo.TotalBytes);
         RamUsageText.Text = $"{memInfo.UsagePercent:F1}%";
         RamUsageBar.Value = Math.Max(0, Math.Min(100, memInfo.UsagePercent));
-        RamDetailsText.Text = $"{FormatBytes(memInfo.UsedBytes)} usados · {FormatBytes(memInfo.AvailableBytes)} libre";
+        RamUsedText.Text = $"· {FormatBytes(memInfo.UsedBytes)} usados";
+        var moduleInfo = await Task.Run(() => _systemInfoService.GetMemoryModuleInfo());
+        RamDetailsText.Text = moduleInfo.SpeedMHz > 0
+            ? $"{moduleInfo.ChannelMode} · {moduleInfo.SpeedMHz} MHz"
+            : moduleInfo.ChannelMode;
         await RevealCardAsync(RamSkeleton, RamContent);
 
         // GPU (preferir dedicada)
@@ -191,7 +195,6 @@ public sealed partial class SistemaPage : Page
         var boardInfo = await Task.Run(() => _systemInfoService.GetBoardInfo());
         BoardManufacturerText.Text = boardInfo.Manufacturer;
         BoardProductText.Text = boardInfo.Product;
-        BoardVersionText.Text = boardInfo.Version;
         await RevealCardAsync(BoardSkeleton, BoardContent);
 
         // BIOS
@@ -199,7 +202,6 @@ public sealed partial class SistemaPage : Page
         var biosInfo = await Task.Run(() => _systemInfoService.GetBiosInfo());
         BiosManufacturerText.Text = biosInfo.Manufacturer;
         BiosVersionText.Text = biosInfo.SMBIOSBIOSVersion;
-        BiosDateText.Text = biosInfo.ReleaseDate;
         await RevealCardAsync(BiosSkeleton, BiosContent);
 
         // Sistema Operativo
@@ -355,13 +357,10 @@ public sealed partial class SistemaPage : Page
                 ? $"· {metrics.CpuTemperatureCelsius:F0}°C"
                 : "";
 
-            // RAM: uso + usado/disponible
+            // RAM: uso + usados (al lado del %) — el canal y MHz son estáticos, ya cargados
             RamUsageText.Text = $"{metrics.MemoryUsagePercent:F1}%";
             RamUsageBar.Value = Math.Max(0, Math.Min(100, metrics.MemoryUsagePercent));
-            var totalMem = metrics.MemoryUsagePercent > 0
-                ? (long)(metrics.MemoryUsedBytes / (metrics.MemoryUsagePercent / 100.0))
-                : metrics.MemoryUsedBytes;
-            RamDetailsText.Text = $"{FormatBytes(metrics.MemoryUsedBytes)} usados · {FormatBytes(Math.Max(0, totalMem - metrics.MemoryUsedBytes))} libre";
+            RamUsedText.Text = $"· {FormatBytes(metrics.MemoryUsedBytes)} usados";
 
             // GPU: uso + temperatura (como el Administrador de tareas)
             if (metrics.Gpu != null)

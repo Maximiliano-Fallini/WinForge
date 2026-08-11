@@ -33,6 +33,7 @@ public static class ServiceConfiguration
         services.AddSingleton<IThemeService, ThemeService>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ISystemInfoService, SystemInfoService>();
+        services.AddSingleton<ISensorService, SensorService>();
         services.AddSingleton<ICpuPowerService, CpuPowerService>();
         services.AddSingleton<INetworkService, NetworkService>();
         services.AddSingleton<IMemoryService, MemoryService>();
@@ -42,6 +43,8 @@ public static class ServiceConfiguration
         services.AddSingleton<IStartupService, StartupService>();
         services.AddSingleton<IWinUtilService, WinUtilService>();
         services.AddSingleton<IStabilityService, StabilityService>();
+        services.AddSingleton<IKeyboardService, KeyboardService>();
+        services.AddSingleton<IAutoClickerService, AutoClickerService>();
 
         return services;
     }

@@ -8,7 +8,7 @@
 
             <!-- ====== TEMPORIZADOR: estado actual + ajuste de resolución en una sola card ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <FontIcon Glyph="&#xE823;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
+                <FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Temporizador" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
@@ -56,7 +56,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button x:Name="TimerResolutionButton" Content="Iniciar" Click="TimerResolutionButton_Click" MinWidth="140"
                                 Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
-                        <Button x:Name="ResetTimerResolutionButton" Content="Restablecer" Click="ResetTimerResolutionButton_Click" MinWidth="140" Padding="16,8"/>
+                        <Button x:Name="AutoajustarTimerButton" Content="Autoajustar" Click="AutoajustarTimerButton_Click" MinWidth="140" Padding="16,8"/>
                     </StackPanel>
                     <TextBlock x:Name="TimerResolutionResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 

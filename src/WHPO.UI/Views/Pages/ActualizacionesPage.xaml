@@ -27,7 +27,7 @@
                     <StackPanel Spacing="8">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE777;" FontSize="20" Foreground="#FF60CDFF" VerticalAlignment="Center" />
+                                <FontIcon Glyph="&#xE777;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="Predeterminado de Windows" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
                             </StackPanel>
                             <FontIcon x:Name="DefaultCardCheck" Grid.Column="1" Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
@@ -42,7 +42,7 @@
                     <StackPanel Spacing="8">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE73E;" FontSize="20" Foreground="#FF81C784" VerticalAlignment="Center" />
+                                <FontIcon Glyph="&#xE73E;" FontSize="20" Foreground="{StaticResource SuccessBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="Recomendado" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
                             </StackPanel>
                             <FontIcon x:Name="RecommendedCardCheck" Grid.Column="1" Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
@@ -52,12 +52,12 @@
                     </StackPanel>
                 </Border>
                 <!-- Desactivar -->
-                <Border Grid.Column="2" x:Name="DisabledCard" Tag="Disabled" Background="#FF30221F" BorderBrush="#FFE57373" BorderThickness="1" CornerRadius="12" Padding="16"
+                <Border Grid.Column="2" x:Name="DisabledCard" Tag="Disabled" Background="#FF30221F" BorderBrush="{StaticResource ErrorBrush}" BorderThickness="1" CornerRadius="12" Padding="16"
                         Tapped="ProfileCard_Tapped">
                     <StackPanel Spacing="8">
                         <Grid ColumnDefinitions="*,Auto">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE7BA;" FontSize="20" Foreground="#FFE57373" VerticalAlignment="Center" />
+                                <FontIcon Glyph="&#xE7BA;" FontSize="20" Foreground="{StaticResource ErrorBrush}" VerticalAlignment="Center" />
                                 <TextBlock Text="Desactivar actualizaciones" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#FFE8EAED" />
                             </StackPanel>
                             <FontIcon x:Name="DisabledCardCheck" Grid.Column="1" Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed" VerticalAlignment="Center" />

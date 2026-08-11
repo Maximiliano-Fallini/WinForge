@@ -33,6 +33,10 @@ public sealed partial class MainWindow : Window
     private PerformanceCounter? _gpuCounter;
     private bool _isMinimizingToTray = false;
     private bool _centeredOnFirstActivation;
+    // Últimos valores logueados del tooltip para no escribir en cada tick (2-5 s).
+    private double _lastLoggedCpu = double.NaN;
+    private double _lastLoggedRam = double.NaN;
+    private DateTime _lastTooltipLog = DateTime.MinValue;
 
     /// <summary>
     /// Indica si la ventana principal está visible (no oculta en bandeja).
@@ -72,7 +76,10 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("memoria", typeof(MemoriaPage));
             ns.RegisterPage("temporizador", typeof(TemporizadorPage));
             ns.RegisterPage("nucleos", typeof(NucleosPage));
+            ns.RegisterPage("teclado", typeof(TecladoPage));
+            ns.RegisterPage("autoclicker", typeof(AutoclickerPage));
             ns.RegisterPage("estabilidad", typeof(EstabilidadPage));
+            ns.RegisterPage("sensores", typeof(SensoresPage));
             ns.RegisterPage("optimizaciones", typeof(OptimizacionesPage));
             ns.RegisterPage("herramientas", typeof(HerramientasPage));
             ns.RegisterPage("panelwindows", typeof(PanelWindowsPage));
@@ -135,7 +142,7 @@ public sealed partial class MainWindow : Window
         // para que la ventana aparezca al instante: su creación es costosa la primera vez.
         DispatcherQueue.TryEnqueue(() =>
         {
-            // SetupTrayIcon ya invoca UpdateTrayMetricsState internamente.
+            // SetupTrayIcon ya invoca UpdateTrayStatus internamente.
             SetupTrayIcon();
 
             // Reaplicar lo que el usuario dejó iniciado en la sesión anterior
@@ -163,8 +170,8 @@ public sealed partial class MainWindow : Window
 
             _notifyIcon.DoubleClick += (s, e) => ShowWindow();
 
-            // Actualizar tooltip según configuración inicial
-            UpdateTrayMetricsState();
+            // Tooltip estático: las métricas en bandeja se reemplazaron por "Optimizar Rendimiento".
+            UpdateTrayStatus();
 
             // Menú contextual visualmente más limpio: renderer oscuro propio (el color
             // table del sistema usa el tema claro → hover blanco + texto blanco ilegible)
@@ -242,94 +249,10 @@ public sealed partial class MainWindow : Window
             contextMenu.Items.Add(exitItem);
 
             _notifyIcon.ContextMenuStrip = contextMenu;
-
-            // Timer para actualizar tooltip (se inicia en UpdateTrayMetricsState)
-            if (_trayTooltipTimer == null)
-            {
-                _trayTooltipTimer = DispatcherQueue.CreateTimer();
-                _trayTooltipTimer.Interval = TimeSpan.FromSeconds(2);
-                _trayTooltipTimer.Tick += async (s, e) => await UpdateTrayTooltipAsync();
-            }
-
         }
         catch (Exception ex)
         {
             _loggingService.LogError("Error configurando tray icon", ex);
-        }
-    }
-
-    private void InitializePerformanceCounters()
-    {
-        // CPU - siempre disponible
-        try
-        {
-            _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
-            _cpuCounter.NextValue(); // Primera llamada para inicializar
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogError("Error inicializando contador CPU", ex);
-            _cpuCounter = null;
-        }
-
-        // GPU - puede no estar disponible
-        try
-        {
-            _gpuCounter = new PerformanceCounter("GPU Engine", "Utilization Percentage", "_Total");
-            _gpuCounter.NextValue();
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogInfo("Contador GPU no disponible: " + ex.Message);
-            _gpuCounter = null;
-        }
-
-    }
-
-    private async Task UpdateTrayTooltipAsync()
-    {
-        if (_notifyIcon == null) return;
-
-        try
-        {
-            // Obtener estadísticas - usar 0 si el contador no está disponible
-            var cpuUsage = _cpuCounter != null ? _cpuCounter.NextValue() : 0;
-            var gpuUsage = _gpuCounter != null ? _gpuCounter.NextValue() : 0;
-
-            // Temperaturas al lado del uso (LHM + fallbacks; fuera del hilo de UI por si WMI tarda)
-            var cpuTemp = await Task.Run(() => _systemInfoService.GetCpuTemperature());
-            var gpuTemp = await Task.Run(() => _systemInfoService.GetGpuTemperature());
-
-            var memStats = _memoryService.GetMemoryStats();
-            var cacheMB = memStats.StandbyMB;
-            
-            var currentTR = _memoryService.GetCurrentTimerResolution();
-            var trMs = currentTR / 10000.0;
-
-            var cpuTempPart = cpuTemp > 0 ? $" · {cpuTemp:F0}°C" : "";
-            var gpuTempPart = gpuTemp > 0 ? $" · {gpuTemp:F0}°C" : "";
-
-            var tooltip = $"CPU: {cpuUsage:F0}%{cpuTempPart}\r\n" +
-                $"GPU: {gpuUsage:F0}%{gpuTempPart}\r\n" +
-                $"RAM: {memStats.UsedPercent:F0}% ({memStats.UsedMB:F0} MB)\r\n" +
-                $"Cache: {cacheMB:F0} MB\r\n" +
-                $"TR: {trMs:F2} ms";
-
-            _notifyIcon.Text = tooltip;
-            _loggingService.LogInfo($"Tooltip actualizado: CPU={cpuUsage:F0}%, RAM={memStats.UsedPercent:F0}%");
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogError("Error actualizando tooltip de tray", ex);
-            // Fallback: mostrar al menos info básica
-            try
-            {
-                var memStats = _memoryService.GetMemoryStats();
-                var currentTR = _memoryService.GetCurrentTimerResolution();
-                var trMs = currentTR / 10000.0;
-                _notifyIcon.Text = $"WinForge\nRAM: {memStats.UsedMB:F0}/{memStats.TotalPhysicalMB:F0} MB\nTR: {trMs:F3} ms";
-            }
-            catch { }
         }
     }
 
@@ -349,6 +272,18 @@ public sealed partial class MainWindow : Window
         _notifyIcon?.Dispose();
         _cpuCounter?.Dispose();
         _gpuCounter?.Dispose();
+
+        // Detener el autoclicker y liberar la hotkey global al cerrar la app.
+        try
+        {
+            var clicker = App.Services.GetService<WHPO.Core.Services.Interfaces.IAutoClickerService>();
+            clicker?.Stop();
+            clicker?.UnregisterHotKey();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: error limpiando autoclicker: {ex.Message}");
+        }
     }
 
     private void HideWindow()
@@ -366,7 +301,7 @@ public sealed partial class MainWindow : Window
         _systemInfoService.StopMonitoring();
         _loggingService.LogInfo("Monitoreo de sistema detenido (ventana oculta)");
 
-        UpdateTrayMetricsState();
+        UpdateTrayStatus();
     }
 
     /// <summary>
@@ -397,57 +332,179 @@ public sealed partial class MainWindow : Window
             _loggingService.LogInfo("Monitoreo de sistema reanudado (ventana visible, página Sistema)");
         }
 
-        UpdateTrayMetricsState();
+        UpdateTrayStatus();
     }
 
-    internal void UpdateTrayMetricsState()
+    /// <summary>
+    /// Estado del icono de bandeja. Con "Optimizar Rendimiento" activo: sin métricas
+    /// y huella mínima (tooltip estático + liberar memoria al ocultar la ventana).
+    /// Con la opción apagada: muestra el uso de CPU, memoria y temperatura en el
+    /// tooltip, como el comportamiento original.
+    /// </summary>
+    internal void UpdateTrayStatus()
     {
-        var showMetrics = _settingsService.Get("tray.showMetrics", false);
+        if (_notifyIcon == null) return;
 
-        // Con la ventana oculta en bandeja, espaciar las consultas de métricas
-        // (WMI/LHM) para ahorrar CPU en segundo plano.
-        var pollInterval = IsWindowVisible ? TimeSpan.FromSeconds(2) : TimeSpan.FromSeconds(5);
+        var optimize = _settingsService.Get("tray.optimizePerformance", false);
 
-        if (showMetrics)
+        if (optimize)
         {
-            if (_trayTooltipTimer == null)
-            {
-                _trayTooltipTimer = DispatcherQueue.CreateTimer();
-                _trayTooltipTimer.Interval = pollInterval;
-                _trayTooltipTimer.Tick += async (s, e) => await UpdateTrayTooltipAsync();
-            }
-            else
-            {
-                _trayTooltipTimer.Interval = pollInterval;
-            }
-
-            if (_cpuCounter == null && _memoryService != null)
-            {
-                InitializePerformanceCounters();
-            }
-
-            if (!_trayTooltipTimer.IsRunning)
-            {
-                _trayTooltipTimer.Start();
-            }
-
-            _ = UpdateTrayTooltipAsync();
+            StopTrayMetrics();
+            _notifyIcon.Text = IsWindowVisible ? "WinForge" : "WinForge — Optimizando rendimiento";
+            if (!IsWindowVisible)
+                TrimProcessMemory();
         }
         else
         {
-            // Ocultar métricas: detener timer y liberar contadores
-            _trayTooltipTimer?.Stop();
-            if (_cpuCounter != null || _gpuCounter != null)
+            _notifyIcon.Text = "WinForge";
+            StartTrayMetrics();
+        }
+    }
+
+    private void StartTrayMetrics()
+    {
+        if (_trayTooltipTimer == null)
+        {
+            _trayTooltipTimer = DispatcherQueue.CreateTimer();
+            _trayTooltipTimer.Tick += async (s, e) => await UpdateTrayTooltipAsync();
+        }
+
+        // Con la ventana oculta en bandeja, espaciar las consultas (WMI/LHM) para
+        // ahorrar CPU en segundo plano.
+        _trayTooltipTimer.Interval = IsWindowVisible ? TimeSpan.FromSeconds(2) : TimeSpan.FromSeconds(5);
+
+        if (_cpuCounter == null && _memoryService != null)
+            InitializePerformanceCounters();
+
+        if (!_trayTooltipTimer.IsRunning)
+            _trayTooltipTimer.Start();
+
+        _ = UpdateTrayTooltipAsync();
+    }
+
+    private void StopTrayMetrics()
+    {
+        _trayTooltipTimer?.Stop();
+        if (_cpuCounter != null || _gpuCounter != null)
+        {
+            _cpuCounter?.Dispose();
+            _gpuCounter?.Dispose();
+            _cpuCounter = null;
+            _gpuCounter = null;
+        }
+    }
+
+    /// <summary>
+    /// Libera la memoria del proceso: compacta el heap de .NET y vacía el working
+    /// set, así el Administrador de tareas muestra la RAM real que ya no se usa.
+    /// Solo se invoca al ocultar la ventana con "Optimizar Rendimiento" activo.
+    /// </summary>
+    private static void TrimProcessMemory()
+    {
+        try
+        {
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: true, compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Optimized, blocking: true, compacting: true);
+            var handle = System.Diagnostics.Process.GetCurrentProcess().Handle;
+            EmptyWorkingSet(handle);
+        }
+        catch { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("psapi.dll")]
+    private static extern bool EmptyWorkingSet(IntPtr hProcess);
+
+    private void InitializePerformanceCounters()
+    {
+        // CPU - siempre disponible
+        try
+        {
+            _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+            _cpuCounter.NextValue(); // Primera llamada para inicializar
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error inicializando contador CPU", ex);
+            _cpuCounter = null;
+        }
+
+        // GPU - puede no estar disponible
+        try
+        {
+            _gpuCounter = new PerformanceCounter("GPU Engine", "Utilization Percentage", "_Total");
+            _gpuCounter.NextValue();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogInfo("Contador GPU no disponible: " + ex.Message);
+            _gpuCounter = null;
+        }
+    }
+
+    private async Task UpdateTrayTooltipAsync()
+    {
+        if (_notifyIcon == null) return;
+
+        try
+        {
+            // Obtener estadísticas - usar 0 si el contador no está disponible
+            var cpuUsage = _cpuCounter != null ? _cpuCounter.NextValue() : 0;
+            var gpuUsage = _gpuCounter != null ? _gpuCounter.NextValue() : 0;
+
+            // Temperaturas al lado del uso (LHM + fallbacks; fuera del hilo de UI por si WMI tarda)
+            var cpuTemp = await Task.Run(() => _systemInfoService.GetCpuTemperature());
+            var gpuTemp = await Task.Run(() => _systemInfoService.GetGpuTemperature());
+
+            var memStats = _memoryService.GetMemoryStats();
+            var cacheMB = memStats.StandbyMB;
+
+            var currentTR = _memoryService.GetCurrentTimerResolution();
+            var trMs = currentTR / 10000.0;
+
+            var cpuTempPart = cpuTemp > 0 ? $" · {cpuTemp:F0}°C" : "";
+            var gpuTempPart = gpuTemp > 0 ? $" · {gpuTemp:F0}°C" : "";
+
+            var tooltip = $"CPU: {cpuUsage:F0}%{cpuTempPart}\r\n" +
+                $"GPU: {gpuUsage:F0}%{gpuTempPart}\r\n" +
+                $"RAM: {memStats.UsedPercent:F0}% ({memStats.UsedMB:F0} MB)\r\n" +
+                $"Cache: {cacheMB:F0} MB\r\n" +
+                $"TR: {trMs:F2} ms";
+
+            _notifyIcon.Text = tooltip;
+            LogTooltipIfChanged(cpuUsage, memStats.UsedPercent);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error actualizando tooltip de tray", ex);
+            // Fallback: mostrar al menos info básica
+            try
             {
-                _cpuCounter?.Dispose();
-                _gpuCounter?.Dispose();
-                _cpuCounter = null;
-                _gpuCounter = null;
+                var memStats = _memoryService.GetMemoryStats();
+                var currentTR = _memoryService.GetCurrentTimerResolution();
+                var trMs = currentTR / 10000.0;
+                _notifyIcon.Text = $"WinForge\nRAM: {memStats.UsedMB:F0}/{memStats.TotalPhysicalMB:F0} MB\nTR: {trMs:F3} ms";
             }
-            if (_notifyIcon != null)
-            {
-                _notifyIcon.Text = "WinForge";
-            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Loguea el tooltip solo cuando cambia el uso (>= 1 punto) o como heartbeat cada
+    /// 5 minutos: el tick corre cada 2-5 s y loguear siempre llenaría el archivo de
+    /// decenas de miles de líneas por día.
+    /// </summary>
+    private void LogTooltipIfChanged(double cpuUsage, double ramPercent)
+    {
+        var now = DateTime.Now;
+        var cpuChanged = double.IsNaN(_lastLoggedCpu) || Math.Abs(cpuUsage - _lastLoggedCpu) >= 1.0;
+        var ramChanged = double.IsNaN(_lastLoggedRam) || Math.Abs(ramPercent - _lastLoggedRam) >= 1.0;
+        if (cpuChanged || ramChanged || (now - _lastTooltipLog).TotalMinutes >= 5)
+        {
+            _lastLoggedCpu = cpuUsage;
+            _lastLoggedRam = ramPercent;
+            _lastTooltipLog = now;
+            _loggingService.LogInfo($"Tooltip actualizado: CPU={cpuUsage:F0}%, RAM={ramPercent:F0}%");
         }
     }
 

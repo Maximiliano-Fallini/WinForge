@@ -992,6 +992,35 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 return cached.Temp;
         }
 
+        var temp = ReadCpuTemperatureCore();
+
+        lock (_cpuTempLock)
+            _cpuTempCache["cpu"] = (temp, DateTime.Now);
+
+        return temp;
+    }
+
+    public double GetCpuTemperatureFresh()
+    {
+        // Caché mínima de 1 s: varias llamadas en el mismo tick (página + hilo de
+        // monitoreo) comparten la lectura sin repetir el acceso a LHM/WMI.
+        lock (_cpuTempLock)
+        {
+            if (_cpuTempCache.TryGetValue("cpu-fresh", out var cached) &&
+                (DateTime.Now - cached.Checked).TotalSeconds < 1)
+                return cached.Temp;
+        }
+
+        var temp = ReadCpuTemperatureCore();
+
+        lock (_cpuTempLock)
+            _cpuTempCache["cpu-fresh"] = (temp, DateTime.Now);
+
+        return temp;
+    }
+
+    private double ReadCpuTemperatureCore()
+    {
         double temp = GetCpuTemperatureViaLhm();
         if (temp <= 0)
             temp = GetCpuTemperatureViaAcpi();
@@ -999,10 +1028,6 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             temp = ReadPerfThermalZoneTemperature();
         if (temp <= 0)
             temp = ReadTemperatureProbe();
-
-        lock (_cpuTempLock)
-            _cpuTempCache["cpu"] = (temp, DateTime.Now);
-
         return temp;
     }
 
@@ -1030,10 +1055,35 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                         .OrderByDescending(s => ScoreCpuTempSensor(s.Name))
                         .ToList();
 
+                    // 1) Sensor principal con lectura válida (Tctl/Tdie, Package, Die,
+                    //    Core Max, Average, ...). Estable y representativo.
                     foreach (var sensor in sensors)
                     {
                         if (sensor.Value is float f && f > 0 && f < 120)
+                        {
+                            LogCpuTempSensor(sensor.Name, f);
                             return f;
+                        }
+                    }
+
+                    // 2) Si ningún sensor principal leyó (p. ej. Tctl/Tdie en 0, caso
+                    //    conocido en algunos AMD), usar el MÁXIMO de los sensores por
+                    //    núcleo: es lo que representa Tctl/Tdie y evita que un solo
+                    //    núcleo al azar haga fluctuar el gráfico con la migración de hilos.
+                    double maxCore = 0;
+                    string maxCoreName = "";
+                    foreach (var sensor in sensors)
+                    {
+                        if (sensor.Value is float f && f > 0 && f < 120 && f > maxCore)
+                        {
+                            maxCore = f;
+                            maxCoreName = sensor.Name;
+                        }
+                    }
+                    if (maxCore > 0)
+                    {
+                        LogCpuTempSensor($"máx núcleos ({maxCoreName})", maxCore);
+                        return maxCore;
                     }
                 }
             }
@@ -1047,6 +1097,17 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             }
         }
         return 0;
+    }
+
+    private DateTime _lastCpuTempSensorLog = DateTime.MinValue;
+
+    // Log de diagnóstico acotado (cada 30 s como máximo): confirma qué sensor
+    // alimenta la temperatura y si cambia entre lecturas (causa de saltos).
+    private void LogCpuTempSensor(string sensorName, double value)
+    {
+        if ((DateTime.Now - _lastCpuTempSensorLog).TotalSeconds < 30) return;
+        _lastCpuTempSensorLog = DateTime.Now;
+        _loggingService.LogInfo($"Temp CPU vía {sensorName} = {value:F1} °C");
     }
 
     private static int ScoreCpuTempSensor(string sensorName)
@@ -1703,6 +1764,90 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         }
 
         return new MemoryInfo(0, 0, 0, 0, 0, 0);
+    }
+
+    public MemoryModuleInfo GetMemoryModuleInfo()
+    {
+        try
+        {
+            var channelTokens = new List<string>();
+            var speeds = new List<int>();
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT DeviceLocator, BankLabel, Speed, ConfiguredClockSpeed FROM Win32_PhysicalMemory");
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var bankLabel = obj["BankLabel"]?.ToString() ?? "";
+                var deviceLocator = obj["DeviceLocator"]?.ToString() ?? "";
+                channelTokens.Add(ChannelToken(bankLabel, deviceLocator));
+                var configured = Convert.ToInt32(obj["ConfiguredClockSpeed"] ?? 0);
+                var rated = Convert.ToInt32(obj["Speed"] ?? 0);
+                speeds.Add(configured > 0 ? configured : rated);
+            }
+
+            if (channelTokens.Count == 0)
+                return new MemoryModuleInfo("N/A", 0);
+
+            // Velocidad en vivo: la configurada actualmente, o la nominal como respaldo
+            var speedMHz = speeds.Where(s => s > 0).DefaultIfEmpty(0).Max();
+
+            // Canal: canales distintos que ocupan los módulos físicos
+            var channels = channelTokens.Distinct().Count();
+            var mode = channelTokens.Count == 1 ? "Single Channel" : channels switch
+            {
+                2 => "Dual Channel",
+                3 => "Triple Channel",
+                >= 4 => "Quad Channel",
+                _ => "Single Channel"
+            };
+
+            _loggingService.LogInfo($"Memoria módulos: {channelTokens.Count} módulo(s), {mode}, {speedMHz} MHz");
+            return new MemoryModuleInfo(mode, speedMHz);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error obteniendo módulos de memoria", ex);
+            return new MemoryModuleInfo("N/A", 0);
+        }
+    }
+
+    // Token de canal a partir del BankLabel (primario) o DeviceLocator (respaldo):
+    // "P0 CHANNEL A DIMM 0" -> A, "ChannelA-DIMM0" -> A, "DIMM_A1" -> A,
+    // "BANK 0"/"BANK 2" -> A y "BANK 1"/"BANK 3" -> B (bancos pares/impares
+    // son el mismo canal interleaved en boards dual-channel).
+    private static string ChannelToken(string bankLabel, string deviceLocator)
+    {
+        var label = string.IsNullOrWhiteSpace(bankLabel) ? deviceLocator : bankLabel;
+
+        var idx = label.IndexOf("Channel", StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0)
+        {
+            var after = idx + 7;
+            while (after < label.Length && label[after] == ' ')
+                after++;
+            if (after < label.Length && char.IsLetter(label[after]))
+                return "C" + char.ToUpperInvariant(label[after]);
+        }
+
+        var di = label.IndexOf("DIMM", StringComparison.OrdinalIgnoreCase);
+        if (di >= 0)
+        {
+            var after = di + 4;
+            if (after < label.Length && (label[after] == '_' || label[after] == '-'))
+                after++;
+            if (after < label.Length && char.IsLetter(label[after]))
+                return "C" + char.ToUpperInvariant(label[after]);
+        }
+
+        var bank = label.IndexOf("BANK", StringComparison.OrdinalIgnoreCase);
+        if (bank >= 0)
+        {
+            for (var i = bank + 4; i < label.Length; i++)
+                if (char.IsDigit(label[i]))
+                    return (label[i] - '0') % 2 == 0 ? "CA" : "CB";
+        }
+
+        // Sin patrón reconocible: cada etiqueta distinta se cuenta como canal propio
+        return label;
     }
 
     public List<DiskInfo> GetDiskInfo()

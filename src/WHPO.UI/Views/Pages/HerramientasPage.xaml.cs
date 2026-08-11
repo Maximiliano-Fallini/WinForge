@@ -252,7 +252,7 @@ public sealed partial class HerramientasPage : Page
             ? await _winUtilService.EnableFeatureAsync(feature.Id, progress)
             : await _winUtilService.DisableFeatureAsync(feature.Id, progress);
 
-        AppendConsole(result.Success ? $"✓ '{feature.Name}' {(enable ? "activada" : "desactivada")}" : $"✗ {result.Output}", result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+        AppendConsole(result.Success ? $"'{feature.Name}' {(enable ? "activada" : "desactivada")}" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
         if (!result.Success) _loggingService.LogWarning($"Feature {feature.Id}: {result.Output}");
 
         SetFeatureBusy(feature.Id, false);
@@ -343,10 +343,35 @@ public sealed partial class HerramientasPage : Page
             {
                 removeBtn.IsEnabled = false;
                 var result = await _winUtilService.RemoveAutoLogonAsync();
-                AppendConsole(result.Success ? $"✓ AutoLogon desactivado" : $"✗ {result.Output}", result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+                AppendConsole(result.Success ? "AutoLogon desactivado" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
                 removeBtn.IsEnabled = true;
             };
             actions.Children.Add(removeBtn);
+        }
+
+        if (fix.SupportsRevert)
+        {
+            var revertBtn = new Button
+            {
+                Content = "Quitar",
+                Background = TransparentBrush,
+                BorderBrush = CardBorderBrush,
+                BorderThickness = new Thickness(1),
+                Foreground = MutedBrush,
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(12, 7, 12, 7)
+            };
+            revertBtn.Click += async (s, e) =>
+            {
+                revertBtn.IsEnabled = false;
+                AppendConsole($"Revirtiendo '{fix.Name}'...", ConsoleStatus.Running);
+                var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
+                var result = await _winUtilService.RevertFixAsync(fix.Id, progress);
+                AppendConsole(result.Success ? $"'{fix.Name}' revertido" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+                if (!result.Success) _loggingService.LogWarning($"Revertir fix {fix.Id}: {result.Output}");
+                revertBtn.IsEnabled = true;
+            };
+            actions.Children.Add(revertBtn);
         }
 
         Grid.SetColumn(content, 0);
@@ -373,7 +398,7 @@ public sealed partial class HerramientasPage : Page
         var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
         var result = await _winUtilService.RunFixAsync(fix.Id, progress);
 
-        AppendConsole(result.Success ? $"✓ '{fix.Name}' completado" : $"✗ {result.Output}", result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+        AppendConsole(result.Success ? $"'{fix.Name}' completado" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
         if (!result.Success) _loggingService.LogWarning($"Fix {fix.Id}: {result.Output}");
 
         button.IsEnabled = true;
@@ -418,7 +443,7 @@ public sealed partial class HerramientasPage : Page
         AppendConsole($"Configurando AutoLogon para '{username}'...", ConsoleStatus.Running);
         var applyResult = await _winUtilService.SetAutoLogonAsync(username, password,
             string.IsNullOrWhiteSpace(domainBox.Text) ? null : domainBox.Text.Trim());
-        AppendConsole(applyResult.Success ? $"✓ {applyResult.Output}" : $"✗ {applyResult.Output}", applyResult.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+        AppendConsole(applyResult.Output, applyResult.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
     }
 
     // ====== BOTÓN DE INFO (tooltip) ======
@@ -480,7 +505,13 @@ public sealed partial class HerramientasPage : Page
     {
         if (ConsolePanel == null || ConsoleText == null || ConsoleScroll == null) return;
 
+        var wasCollapsed = ConsolePanel.Visibility == Visibility.Collapsed;
         ConsolePanel.Visibility = Visibility.Visible;
+
+        // La consola vive al final del ScrollViewer: al aparecer la primera vez, scrollear
+        // hasta ella para que el usuario vea el feedback del fix que acaba de ejecutar.
+        if (wasCollapsed)
+            ConsolePanel.StartBringIntoView();
 
         var (prefix, color) = status switch
         {

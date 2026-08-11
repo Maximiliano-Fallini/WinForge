@@ -14,15 +14,16 @@
                      que el sidebar siempre se diferencie de las vistas. Las cards se separan
                      del fondo por color + borde. -->
                 <ResourceDictionary x:Key="Dark">
-                    <!-- Fondo de las vistas: NEGRO puro #000000. El navbar es un gris-azulado
-                         oscuro #1F242C, un poco más claro para acercarse a las cards sin
+                    <!-- Fondo de las vistas: carbón #171717 (un negro menos oscuro, para
+                         que no sea negro puro). El navbar es un gris-azulado oscuro
+                         #1F242C, un poco más claro para acercarse a las cards sin
                          igualarlas. -->
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF000000"/>
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF171717"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF262A31"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF343A45"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF8A94A6"/>
                     <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1F242C"/>
-                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF000000"/>
+                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF171717"/>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFE8EAEE"/>
@@ -35,6 +36,10 @@
             </ResourceDictionary.ThemeDictionaries>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- Override del acento del sistema: DEBE ir después de XamlControlsResources
+                     para que sus claves ganen el lookup (si va antes, el diccionario de
+                     XamlControlsResources pisa el azul con el acento del sistema). -->
+                <ResourceDictionary Source="Controls/AccentOverrides.xaml"/>
                 <!-- Reusable Controls - Phase 4 -->
                 <ResourceDictionary Source="Controls/Buttons.xaml"/>
                 <ResourceDictionary Source="Controls/Cards.xaml"/>
@@ -47,6 +52,10 @@
             <SolidColorBrush x:Key="AccentBrush" Color="#8AB4F8"/>
             <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
             <SolidColorBrush x:Key="DarkCardBrush" Color="#1C1C1C"/>
+            <!-- Paleta de estado (coincide con Feedback.cs) -->
+            <SolidColorBrush x:Key="SuccessBrush" Color="#FF4CAF50"/>
+            <SolidColorBrush x:Key="WarningBrush" Color="#FFFFC107"/>
+            <SolidColorBrush x:Key="ErrorBrush" Color="#FFF0616D"/>
             <!-- Other app resources here -->
         </ResourceDictionary>
     </Application.Resources>

@@ -14,7 +14,8 @@
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
-                    <ComboBox x:Name="DnsProviderCombo" Header="Proveedor DNS" HorizontalAlignment="Stretch" SelectionChanged="DnsProviderCombo_SelectionChanged"/>
+                    <TextBlock Text="Proveedor DNS" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <ComboBox x:Name="DnsProviderCombo" HorizontalAlignment="Stretch" PlaceholderText="Seleccioná un proveedor" DropDownOpened="DnsProviderCombo_DropDownOpened"/>
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowSpacing="12">
                         <TextBox x:Name="PrimaryDnsTextBox" Header="DNS Primario" PlaceholderText="Ej: 8.8.8.8" BeforeTextChanging="DnsTextBox_BeforeTextChanging"/>
                         <TextBox Grid.Column="1" x:Name="SecondaryDnsTextBox" Header="DNS Secundario" PlaceholderText="Ej: 8.8.4.4" BeforeTextChanging="DnsTextBox_BeforeTextChanging"/>
@@ -40,14 +41,21 @@
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
+                    <Button x:Name="RunDnsTestButton" Content="Ejecutar test de DNS" Click="RunDnsTestButton_Click" HorizontalAlignment="Left"
+                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
+                    <StackPanel Spacing="2">
+                        <Button x:Name="ApplyFastestDnsButton" Content="Probar y aplicar el más rápido" Click="ApplyFastestDnsButton_Click" HorizontalAlignment="Left"
+                                CornerRadius="6" Padding="16,8"/>
+                        <TextBlock Text="Ejecuta el test completo y aplica automáticamente el DNS con menor latencia." FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+
+                    <!-- DNS manuales (opcional): se agregan a la lista a probar con "+" -->
                     <Grid ColumnDefinitions="*,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
-                        <TextBox x:Name="ManualDns1TextBox" Header="DNS Manual 1" PlaceholderText="Ej: 1.2.3.4"/>
-                        <TextBox Grid.Column="1" x:Name="ManualDns2TextBox" Header="DNS Manual 2" PlaceholderText="Ej: 4.5.6.7"/>
+                        <TextBox x:Name="ManualDns1TextBox" Header="DNS Manual 1 (opcional)" PlaceholderText="Ej: 1.2.3.4"/>
+                        <TextBox Grid.Column="1" x:Name="ManualDns2TextBox" Header="DNS Manual 2 (opcional)" PlaceholderText="Ej: 4.5.6.7"/>
                         <Button Grid.Column="2" x:Name="AddManualDnsButton" Content="+" Click="AddManualDnsButton_Click" VerticalAlignment="Bottom" Width="40" Margin="0,4,0,0"/>
                     </Grid>
                     <StackPanel x:Name="ManualDnsListPanel" Spacing="4" Margin="0,4,0,0"/>
-                    <Button x:Name="RunDnsTestButton" Content="Ejecutar test de DNS" Click="RunDnsTestButton_Click" HorizontalAlignment="Left"
-                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
 
                     <!-- Pestaña de resultados: cerrable, con scroll propio para no alargar la página -->
                     <Border x:Name="DnsResultsTab" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" Visibility="Collapsed">
@@ -86,7 +94,8 @@
                             <TextBlock x:Name="PacketLossDurationText" Text="10 segundos" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="4">
-                            <ComboBox x:Name="PacketLossServerCombo" Header="Servidor" HorizontalAlignment="Stretch"/>
+                            <TextBlock Text="Servidor" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="PacketLossServerCombo" HorizontalAlignment="Stretch"/>
                         </StackPanel>
                     </Grid>
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="16" Margin="0,4,0,0">

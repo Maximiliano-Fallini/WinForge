@@ -24,6 +24,7 @@ public sealed partial class ConfiguracionPage : Page
         ("temporizador", "Resolución del Temporizador"),
         ("nucleos", "Núcleos y Plan de energía"),
         ("estabilidad", "Test de estabilidad"),
+        ("sensores", "Monitor de sensores"),
         ("optimizaciones", "Optimizaciones"),
         ("herramientas", "Herramientas y funciones"),
         ("panelwindows", "Panel de Windows"),
@@ -43,7 +44,7 @@ public sealed partial class ConfiguracionPage : Page
 
         Loaded += OnLoaded;
         MinimizeToTrayToggle.Toggled += OnMinimizeToTrayToggled;
-        ShowTrayMetricsToggle.Toggled += OnShowTrayMetricsToggled;
+        OptimizePerformanceToggle.Toggled += OnOptimizePerformanceToggled;
         LaunchAtStartupToggle.Toggled += OnLaunchAtStartupToggled;
         StartMinimizedToggle.Toggled += OnStartMinimizedToggled;
     }
@@ -54,12 +55,12 @@ public sealed partial class ConfiguracionPage : Page
         try
         {
             MinimizeToTrayToggle.IsOn = _settingsService.Get("window.minimizeToTray", true);
-            ShowTrayMetricsToggle.IsOn = _settingsService.Get("tray.showMetrics", false);
+            OptimizePerformanceToggle.IsOn = _settingsService.Get("tray.optimizePerformance", true);
             LaunchAtStartupToggle.IsOn = _startupService.IsEnabled();
             StartMinimizedToggle.IsOn = _settingsService.Get("window.startMinimized", false);
             BuildNavMenu();
             SelectTheme(_themeService.CurrentTheme);
-            App.MainWindowInstance?.UpdateTrayMetricsState();
+            App.MainWindowInstance?.UpdateTrayStatus();
         }
         finally
         {
@@ -92,12 +93,12 @@ public sealed partial class ConfiguracionPage : Page
         _settingsService.Save();
     }
 
-    private void OnShowTrayMetricsToggled(object sender, RoutedEventArgs e)
+    private void OnOptimizePerformanceToggled(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
-        _settingsService.Set("tray.showMetrics", ShowTrayMetricsToggle.IsOn);
+        _settingsService.Set("tray.optimizePerformance", OptimizePerformanceToggle.IsOn);
         _settingsService.Save();
-        App.MainWindowInstance?.UpdateTrayMetricsState();
+        App.MainWindowInstance?.UpdateTrayStatus();
     }
 
     private void OnLaunchAtStartupToggled(object sender, RoutedEventArgs e)

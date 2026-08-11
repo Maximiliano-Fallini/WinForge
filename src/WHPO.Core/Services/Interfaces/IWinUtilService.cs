@@ -33,7 +33,8 @@ public record WinFixInfo(
     string Name,
     string Description,
     bool IsLongRunning = false,
-    bool RequiresRestart = false);
+    bool RequiresRestart = false,
+    bool SupportsRevert = false);
 
 /// <summary>
 /// Panel clásico de Windows que se abre con un botón (Legacy Windows Panels de winutil).
@@ -67,6 +68,9 @@ public interface IWinUtilService
 
     /// <summary>Ejecuta una utilidad (Fix).</summary>
     Task<CommandResult> RunFixAsync(string fixId, IProgress<string>? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>Revierte una utilidad (Fix) con estado reversible (ej. volver al NTP de Windows).</summary>
+    Task<CommandResult> RevertFixAsync(string fixId, IProgress<string>? progress = null, CancellationToken cancellationToken = default);
 
     /// <summary>Configura el inicio de sesión automático (AutoLogon).</summary>
     Task<CommandResult> SetAutoLogonAsync(string username, string password, string? domain = null);

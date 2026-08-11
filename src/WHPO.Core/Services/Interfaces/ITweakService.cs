@@ -20,14 +20,16 @@ public interface ITweakService
     bool IsTweakApplied(string tweakId);
 
     /// <summary>
-    /// Aplica un tweak del sistema.
+    /// Aplica un tweak del sistema. Si se pasa <paramref name="progress"/>, reporta
+    /// los comandos reales que ejecuta (estilo cmd/winutil).
     /// </summary>
-    Task<TweakResult> ApplyTweakAsync(string tweakId);
+    Task<TweakResult> ApplyTweakAsync(string tweakId, IProgress<string>? progress = null);
 
     /// <summary>
-    /// Revierte un tweak del sistema.
+    /// Revierte un tweak del sistema. Si se pasa <paramref name="progress"/>, reporta
+    /// los comandos reales que ejecuta (estilo cmd/winutil).
     /// </summary>
-    Task<TweakResult> RevertTweakAsync(string tweakId);
+    Task<TweakResult> RevertTweakAsync(string tweakId, IProgress<string>? progress = null);
 
     /// <summary>
     /// Evento que se dispara cuando cambia el estado de un tweak.

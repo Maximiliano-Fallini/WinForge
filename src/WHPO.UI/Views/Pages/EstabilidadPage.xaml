@@ -50,7 +50,7 @@
                         <CheckBox x:Name="TempChartCheck" VerticalAlignment="Center"
                                   Checked="ChartCheck_Changed" Unchecked="ChartCheck_Changed">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE7F4;" FontSize="15" Foreground="#FF4CC257" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xE9CA;" FontSize="15" Foreground="#FF4CC257" VerticalAlignment="Center"/>
                                 <TextBlock Text="Temperatura del CPU" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </CheckBox>
@@ -81,7 +81,7 @@
                         <CheckBox x:Name="PowerChartCheck" VerticalAlignment="Center"
                                   Checked="ChartCheck_Changed" Unchecked="ChartCheck_Changed">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE9EA;" FontSize="15" Foreground="#FFFFC93C" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xEC4A;" FontSize="15" Foreground="#FFFFC93C" VerticalAlignment="Center"/>
                                 <TextBlock Text="Potencia del CPU (W)" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </CheckBox>

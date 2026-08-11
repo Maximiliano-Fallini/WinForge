@@ -92,9 +92,13 @@ public class NetworkService : INetworkService
     {
         try
         {
-            var output = await RunCommandAsync("ipconfig", "/flushdns");
-            var success = !output.ToLowerInvariant().Contains("no se pudo") && !output.ToLowerInvariant().Contains("failed");
-            _loggingService.LogInfo($"Flush DNS ejecutado: {(success ? "OK" : "Error")}");
+            // El exit code es la fuente confiable de éxito; los marcadores de texto
+            // quedan como red de seguridad para versiones de Windows que no lo seteen bien.
+            var (output, exitCode) = await RunCommandWithExitCodeAsync("ipconfig", "/flushdns");
+            var success = exitCode == 0
+                && !output.Contains("no se pudo", StringComparison.OrdinalIgnoreCase)
+                && !output.Contains("failed", StringComparison.OrdinalIgnoreCase);
+            _loggingService.LogInfo($"Flush DNS ejecutado: {(success ? "OK" : "Error")} (exit {exitCode})");
             return new CommandResult(success, output);
         }
         catch (Exception ex)
@@ -112,8 +116,10 @@ public class NetworkService : INetworkService
             var setCommand = string.IsNullOrEmpty(secondaryDns)
                 ? $"interface ip set dns \"{adapterName}\" static {primaryDns}"
                 : $"interface ip set dns \"{adapterName}\" static {primaryDns} primary";
-            var setOutput = await RunCommandAsync("netsh", setCommand);
-            var setSuccess = !setOutput.Contains("error", StringComparison.OrdinalIgnoreCase) && !setOutput.Contains("no se pudo", StringComparison.OrdinalIgnoreCase);
+            var (setOutput, setExitCode) = await RunCommandWithExitCodeAsync("netsh", setCommand);
+            var setSuccess = setExitCode == 0
+                && !setOutput.Contains("error", StringComparison.OrdinalIgnoreCase)
+                && !setOutput.Contains("no se pudo", StringComparison.OrdinalIgnoreCase);
 
             if (!setSuccess)
             {
@@ -126,8 +132,14 @@ public class NetworkService : INetworkService
             if (!string.IsNullOrEmpty(secondaryDns))
             {
                 var addCommand = $"interface ip add dns \"{adapterName}\" {secondaryDns} index=2";
-                var addOutput = await RunCommandAsync("netsh", addCommand);
+                var (addOutput, addExitCode) = await RunCommandWithExitCodeAsync("netsh", addCommand);
                 result += "\n" + addOutput;
+                if (addExitCode != 0)
+                {
+                    // El primario ya quedó configurado: avisar pero no fallar toda la operación
+                    _loggingService.LogWarning($"No se pudo agregar el DNS secundario {secondaryDns}: {addOutput}");
+                    result += $"\n(Advertencia: no se pudo agregar el DNS secundario {secondaryDns})";
+                }
             }
 
             _loggingService.LogInfo($"DNS configurados para {adapterName}: {primaryDns} / {secondaryDns}");
@@ -241,6 +253,16 @@ public class NetworkService : INetworkService
 
     private async Task<string> RunCommandAsync(string fileName, string arguments)
     {
+        var (output, _) = await RunCommandWithExitCodeAsync(fileName, arguments);
+        return output;
+    }
+
+    /// <summary>
+    /// Ejecuta un comando y devuelve su salida junto con el código de salida del proceso.
+    /// Lee stdout y stderr en paralelo para evitar deadlocks con salidas grandes.
+    /// </summary>
+    private async Task<(string Output, int ExitCode)> RunCommandWithExitCodeAsync(string fileName, string arguments)
+    {
         var psi = new ProcessStartInfo
         {
             FileName = fileName,
@@ -251,11 +273,13 @@ public class NetworkService : INetworkService
             CreateNoWindow = true
         };
         using var process = Process.Start(psi);
-        if (process == null) return "";
-        var output = await process.StandardOutput.ReadToEndAsync();
-        var error = await process.StandardError.ReadToEndAsync();
+        if (process == null) return ("", -1);
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        var output = await outputTask;
+        var error = await errorTask;
         await process.WaitForExitAsync();
-        return output + error;
+        return (output + error, process.ExitCode);
     }
 
     private NetworkBenchmarkResult ParsePingOutput(string output, string target)

@@ -112,6 +112,7 @@ public sealed partial class NucleosPage : Page
     private sealed class CoreBar
     {
         public Border Fill = null!;
+        public TextBlock Usage = null!;
         public TextBlock Temp = null!;
         public TextBlock Status = null!;
         public double TrackHeight;
@@ -295,7 +296,7 @@ public sealed partial class NucleosPage : Page
                 double[] usages = _systemInfoService.GetCpuCoreUsages();
                 double[] coreTemps = _systemInfoService.GetCpuCoreTemperatures();
                 bool[]? parked = _systemInfoService.GetCpuCoreParkedStatus();
-                double temp = _systemInfoService.GetCpuTemperature();
+                double temp = _systemInfoService.GetCpuTemperatureFresh();
                 double clock = _systemInfoService.GetCpuFrequency();
                 return (usages, coreTemps, parked, temp, clock);
             });
@@ -851,6 +852,15 @@ public sealed partial class NucleosPage : Page
                 Child = bar.Fill
             };
 
+            bar.Usage = new TextBlock
+            {
+                Text = "--%",
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = BGreen
+            };
+
             bar.Temp = new TextBlock
             {
                 Text = "--",
@@ -871,6 +881,7 @@ public sealed partial class NucleosPage : Page
             var sp = new StackPanel { Spacing = 8 };
             sp.Children.Add(name);
             sp.Children.Add(track);
+            sp.Children.Add(bar.Usage);
             sp.Children.Add(bar.Temp);
             sp.Children.Add(bar.Status);
 
@@ -898,24 +909,28 @@ public sealed partial class NucleosPage : Page
 
             double u = Math.Clamp(usages[i], 0, 100);
             bar.Fill.Height = Math.Max(3, u / 100.0 * bar.TrackHeight);
+            bar.Usage.Text = $"{u:F0}%";
 
             // Estado de parking REAL (el contador distingue estacionado de 0% de uso)
             bool? isParked = parked != null && i < parked.Length ? parked[i] : null;
             if (isParked == true)
             {
                 bar.Fill.Background = BRed;
+                bar.Usage.Foreground = BRed;
                 bar.Status.Text = "Estacionado";
                 bar.Status.Foreground = BRed;
             }
             else if (isParked == false)
             {
                 bar.Fill.Background = BGreen;
+                bar.Usage.Foreground = BGreen;
                 bar.Status.Text = "Activo";
                 bar.Status.Foreground = BGreen;
             }
             else
             {
                 bar.Fill.Background = BNeutral;
+                bar.Usage.Foreground = BNeutral;
                 bar.Status.Text = "—";
                 bar.Status.Foreground = BNeutral;
             }
@@ -937,6 +952,37 @@ public sealed partial class NucleosPage : Page
     }
 
     // ===================== Plan de energía =====================
+
+    // El popup del ComboBox abre con un VerticalOffset que WinUI 3 calcula mal cuando
+    // el combo está dentro del Frame/ScrollViewer: queda desplazado hacia arriba. En
+    // cada apertura alineamos el tope del popup con el tope del combo (igual que el de
+    // "Tipo de test"), una vez que el popup ya está medido.
+    private async void PowerPlanCombo_DropDownOpened(object sender, object e)
+    {
+        var combo = (ComboBox)sender;
+        try
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                await Task.Delay(16);
+                var popups = VisualTreeHelper.GetOpenPopupsForXamlRoot(combo.XamlRoot);
+                if (popups.Count == 0 || popups[0].Child is not FrameworkElement fe || fe.ActualHeight <= 0)
+                    continue;
+
+                var popup = popups[0];
+                var popupPos = fe.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                var comboPos = combo.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                double delta = comboPos.Y - popupPos.Y;
+                if (Math.Abs(delta) < 0.5) break;
+                popup.VerticalOffset += delta;
+                break;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"POWERPLAN reposition: {ex.Message}");
+        }
+    }
 
     private async Task LoadPowerPlansAsync()
     {
@@ -962,29 +1008,13 @@ public sealed partial class NucleosPage : Page
             ApplyPowerPlanButton.IsEnabled = PowerPlanCombo.SelectedIndex >= 0;
             // No pisar el mensaje de confirmación/error cuando la carga es exitosa.
             if (plans.Count == 0)
-                SetPowerPlanStatus("No se detectaron planes de energía.");
+                Feedback.Warning(PowerPlanStatusText, "No se detectaron planes de energía.");
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"NucleosPage: error cargando planes de energía: {ex.Message}");
-            SetPowerPlanStatus("No se pudieron cargar los planes de energía.");
+            Feedback.Warning(PowerPlanStatusText, "No se pudieron cargar los planes de energía.");
         }
-    }
-
-    // Muestra el estado del selector de plan de energía; con texto vacío colapsa el
-    // elemento para no dejar espacio muerto entre el desplegable y el borde de la card.
-    private void SetPowerPlanStatus(string text, SolidColorBrush? brush = null)
-    {
-        PowerPlanStatusText.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
-        if (brush != null) PowerPlanStatusText.Foreground = brush;
-        PowerPlanStatusText.Text = text;
-    }
-
-    private void PowerPlanCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        // Solo habilita el botón: no limpiar el estado aquí, porque la recarga
-        // programática de items (Items.Clear) borraría el mensaje de confirmación.
-        ApplyPowerPlanButton.IsEnabled = PowerPlanCombo.SelectedItem != null;
     }
 
     private async void ApplyPowerPlanButton_Click(object sender, RoutedEventArgs e)
@@ -994,7 +1024,7 @@ public sealed partial class NucleosPage : Page
         var planName = (PowerPlanCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? planGuid;
 
         ApplyPowerPlanButton.IsEnabled = false;
-        SetPowerPlanStatus("Aplicando plan...");
+        Feedback.Running(PowerPlanStatusText, "Aplicando plan...");
         try
         {
             var result = await _cpuPowerService.SetActivePowerPlanAsync(planGuid);
@@ -1004,14 +1034,14 @@ public sealed partial class NucleosPage : Page
             if (result.Success)
                 await LoadPowerPlansAsync();
 
-            SetPowerPlanStatus(result.Success
-                ? $"✓ Plan de energía establecido: {planName}"
-                : $"✗ {result.Output}",
-                result.Success ? BGreen : BRed);
+            if (result.Success)
+                Feedback.Success(PowerPlanStatusText, $"Plan de energía establecido: {planName}");
+            else
+                Feedback.Error(PowerPlanStatusText, result.Output);
         }
         catch (Exception ex)
         {
-            SetPowerPlanStatus($"✗ {ex.Message}", BRed);
+            Feedback.Error(PowerPlanStatusText, ex.Message);
             _loggingService.LogWarning($"NucleosPage: error aplicando plan de energía: {ex.Message}");
         }
         finally
@@ -1058,14 +1088,14 @@ public sealed partial class NucleosPage : Page
             if (items.Count == 0)
             {
                 ManagePlanStatusText.Visibility = Visibility.Visible;
-                ManagePlanStatusText.Text = "No se detectaron planes de energía.";
+                Feedback.Warning(ManagePlanStatusText, "No se detectaron planes de energía.");
             }
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"NucleosPage: error cargando gestión de planes: {ex.Message}");
             ManagePlanStatusText.Visibility = Visibility.Visible;
-            ManagePlanStatusText.Text = "No se pudieron cargar los planes de energía.";
+            Feedback.Warning(ManagePlanStatusText, "No se pudieron cargar los planes de energía.");
         }
     }
 
@@ -1131,9 +1161,10 @@ public sealed partial class NucleosPage : Page
 
     private void SetManageStatus(bool success, string message)
     {
-        ManagePlanStatusText.Visibility = Visibility.Visible;
-        ManagePlanStatusText.Foreground = success ? BGreen : BRed;
-        ManagePlanStatusText.Text = success ? $"✓ {message}" : $"✗ {message}";
+        if (success)
+            Feedback.Success(ManagePlanStatusText, message);
+        else
+            Feedback.Error(ManagePlanStatusText, message);
     }
 
     private async void RenamePlanButton_Click(object sender, RoutedEventArgs e)
@@ -1180,7 +1211,7 @@ public sealed partial class NucleosPage : Page
         if (item == null) return;
 
         ActivatePlanButton.IsEnabled = false;
-        ManagePlanStatusText.Text = "Activando plan...";
+        Feedback.Running(ManagePlanStatusText, "Activando plan...");
         var result = await _cpuPowerService.SetActivePowerPlanAsync(item.Guid);
         SetManageStatus(result.Success, result.Output);
         if (result.Success)
@@ -1268,20 +1299,6 @@ public sealed partial class NucleosPage : Page
     private static string? SelectedPlanGuid(ComboBox combo)
         => (combo.SelectedItem as ComboBoxItem)?.Tag as string;
 
-    // Muestra el estado de la comparación; con texto vacío colapsa el elemento para
-    // no dejar espacio muerto entre el botón y el borde de la card.
-    private void SetCompareStatus(string? text, SolidColorBrush? brush = null)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            CompareStatusText.Visibility = Visibility.Collapsed;
-            return;
-        }
-        CompareStatusText.Visibility = Visibility.Visible;
-        if (brush != null) CompareStatusText.Foreground = brush;
-        CompareStatusText.Text = text;
-    }
-
     private void ComparePlanCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var guidA = SelectedPlanGuid(ComparePlanACombo);
@@ -1292,11 +1309,11 @@ public sealed partial class NucleosPage : Page
             // No permitir el mismo plan en ambos desplegables
             if (ReferenceEquals(sender, ComparePlanACombo)) ComparePlanACombo.SelectedItem = null;
             else ComparePlanBCombo.SelectedItem = null;
-            SetCompareStatus("Los dos planes deben ser diferentes.", BYellow);
+            Feedback.Warning(CompareStatusText, "Los dos planes deben ser diferentes.");
         }
         else
         {
-            SetCompareStatus(null);
+            Feedback.Set(CompareStatusText, null);
         }
 
         CompareButton.IsEnabled = guidA != null && guidB != null && guidA != guidB;
@@ -1360,14 +1377,14 @@ public sealed partial class NucleosPage : Page
         if (guidA == null || guidB == null || guidA == guidB) return;
 
         CompareButton.IsEnabled = false;
-        SetCompareStatus("Comparando planes...", BTimeLabel);
+        Feedback.Running(CompareStatusText, "Comparando planes...");
 
         try
         {
             var (da, db) = await Task.Run(() => (_cpuPowerService.GetPowerPlanDetails(guidA), _cpuPowerService.GetPowerPlanDetails(guidB)));
             if (da == null || db == null)
             {
-                SetCompareStatus("No se pudo leer el detalle de uno de los planes.", BRed);
+                Feedback.Error(CompareStatusText, "No se pudo leer el detalle de uno de los planes.");
                 return;
             }
 
@@ -1376,12 +1393,12 @@ public sealed partial class NucleosPage : Page
             BuildComparison();
 
             // Sin feedback de "comparación lista": la cuadrícula ya muestra las diferencias.
-            SetCompareStatus(null);
+            Feedback.Set(CompareStatusText, null);
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"NucleosPage: error comparando planes: {ex.Message}");
-            SetCompareStatus($"Error al comparar: {ex.Message}", BRed);
+            Feedback.Error(CompareStatusText, $"No se pudo comparar: {ex.Message}");
         }
         finally
         {
@@ -1421,6 +1438,19 @@ public sealed partial class NucleosPage : Page
         }
 
         CompareScroll.Visibility = Visibility.Visible;
+        CompareActionsPanel.Visibility = Visibility.Visible;
+    }
+
+    private void ExpandAllButton_Click(object sender, RoutedEventArgs e) => SetAllExpandersExpanded(true);
+
+    private void CollapseAllButton_Click(object sender, RoutedEventArgs e) => SetAllExpandersExpanded(false);
+
+    private void SetAllExpandersExpanded(bool expanded)
+    {
+        foreach (var child in ComparePlanAContainer.Children)
+            if (child is Expander expA) expA.IsExpanded = expanded;
+        foreach (var child in ComparePlanBContainer.Children)
+            if (child is Expander expB) expB.IsExpanded = expanded;
     }
 
     private static Border BuildPlanHeader(string name, Color color)

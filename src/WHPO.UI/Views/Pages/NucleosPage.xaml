@@ -240,7 +240,7 @@
                                 BorderThickness="1">
                             <StackPanel Spacing="10">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon Glyph="&#xE7F4;" FontSize="14" Foreground="#FFF0616D" VerticalAlignment="Center"/>
+                                    <FontIcon Glyph="&#xE9CA;" FontSize="14" Foreground="#FF4CC257" VerticalAlignment="Center"/>
                                     <TextBlock Text="Temperatura" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 </StackPanel>
                                 <TextBlock x:Name="CpuTempValueText" Text="--°C" FontSize="30" FontWeight="Bold" Foreground="#FF4CC257"/>
@@ -265,7 +265,7 @@
                                 BorderThickness="1">
                             <StackPanel Spacing="10">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon Glyph="&#xE8F0;" FontSize="14" Foreground="#FF4CC257" VerticalAlignment="Center"/>
+                                    <FontIcon Glyph="&#xEC4A;" FontSize="14" Foreground="#FF4CC257" VerticalAlignment="Center"/>
                                     <TextBlock Text="Frecuencia (Clock)" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 </StackPanel>
                                 <TextBlock x:Name="CpuClockValueText" Text="--" FontSize="30" FontWeight="Bold" Foreground="#FF4CC257"/>
@@ -328,7 +328,7 @@
                             BorderThickness="1">
                         <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <FontIcon Glyph="&#xE9EA;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                            <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
                             <TextBlock Text="Plan de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                         </StackPanel>
                             <TextBlock Text="Elegí el plan de energía activo de Windows. No requiere permisos de administrador."
@@ -338,9 +338,8 @@
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                                 <ComboBox x:Name="PowerPlanCombo"
                                           HorizontalAlignment="Stretch"
-                                          VerticalAlignment="Center"
                                           PlaceholderText="Cargando planes..."
-                                          SelectionChanged="PowerPlanCombo_SelectionChanged"/>
+                                          DropDownOpened="PowerPlanCombo_DropDownOpened"/>
                                 <Button x:Name="ApplyPowerPlanButton"
                                         Grid.Column="1"
                                         Content="Aplicar plan"
@@ -370,7 +369,7 @@
                             BorderThickness="1">
                         <StackPanel Spacing="10">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE9EA;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
                                 <TextBlock Text="Gestionar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                             <TextBlock Text="Seleccioná un plan para renombrarlo, activarlo o borrarlo."
@@ -405,7 +404,7 @@
                                         CornerRadius="6"
                                         Padding="14,8">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon Glyph="&#xE9EA;" FontSize="14" VerticalAlignment="Center"/>
+                                        <FontIcon Glyph="&#xE83E;" FontSize="14" VerticalAlignment="Center"/>
                                         <TextBlock Text="Abrir planes de energía de Windows" FontSize="13" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
@@ -431,7 +430,7 @@
                             BorderThickness="1">
                         <StackPanel Spacing="12">
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE8F0;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
                                 <TextBlock Text="Comparar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                             <TextBlock Text="Elegí dos planes distintos y el color con el que se van a marcar las diferencias en cada cuadrícula. Se muestran todos los ajustes de energía: los que el plan define muestran su valor, y los que no, el valor predeterminado de Windows para ese tipo de plan."
@@ -440,11 +439,13 @@
                                        TextWrapping="Wrap"/>
 
                             <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="12" RowSpacing="8">
-                                <ComboBox x:Name="ComparePlanACombo"
-                                          Header="Plan A"
-                                          PlaceholderText="Seleccioná un plan"
-                                          HorizontalAlignment="Stretch"
-                                          SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                <StackPanel Grid.Column="0" Spacing="4">
+                                    <TextBlock Text="Plan A" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <ComboBox x:Name="ComparePlanACombo"
+                                              PlaceholderText="Seleccioná un plan"
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                </StackPanel>
                                 <Button x:Name="ColorAButton"
                                         Grid.Column="1"
                                         VerticalAlignment="Bottom"
@@ -452,12 +453,13 @@
                                         Padding="12,8"
                                         MinWidth="104"
                                         Click="ColorAButton_Click"/>
-                                <ComboBox x:Name="ComparePlanBCombo"
-                                          Grid.Column="2"
-                                          Header="Plan B"
-                                          PlaceholderText="Seleccioná un plan"
-                                          HorizontalAlignment="Stretch"
-                                          SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                <StackPanel Grid.Column="2" Spacing="4">
+                                    <TextBlock Text="Plan B" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <ComboBox x:Name="ComparePlanBCombo"
+                                              PlaceholderText="Seleccioná un plan"
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                </StackPanel>
                                 <Button x:Name="ColorBButton"
                                         Grid.Column="3"
                                         VerticalAlignment="Bottom"
@@ -496,10 +498,33 @@
                                   HorizontalScrollBarVisibility="Disabled"
                                   HorizontalScrollMode="Disabled"
                                   ZoomMode="Disabled">
-                        <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
-                            <StackPanel x:Name="ComparePlanAContainer" Spacing="0"/>
-                            <StackPanel Grid.Column="1" x:Name="ComparePlanBContainer" Spacing="0"/>
-                        </Grid>
+                        <StackPanel Spacing="10">
+                            <!-- Botones para expandir/cerrar todos los subgrupos: aparecen
+                                 después de comparar, junto con la cuadrícula de resultados. -->
+                            <StackPanel x:Name="CompareActionsPanel"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        Visibility="Collapsed">
+                                <Button x:Name="ExpandAllButton"
+                                        Content="Expandir subgrupos"
+                                        Click="ExpandAllButton_Click"
+                                        CornerRadius="6"
+                                        Padding="12,7"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"/>
+                                <Button x:Name="CollapseAllButton"
+                                        Content="Cerrar subgrupos"
+                                        Click="CollapseAllButton_Click"
+                                        CornerRadius="6"
+                                        Padding="12,7"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"/>
+                            </StackPanel>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+                                <StackPanel x:Name="ComparePlanAContainer" Spacing="0"/>
+                                <StackPanel Grid.Column="1" x:Name="ComparePlanBContainer" Spacing="0"/>
+                            </Grid>
+                        </StackPanel>
                     </ScrollViewer>
                 </StackPanel>
             </ScrollViewer>

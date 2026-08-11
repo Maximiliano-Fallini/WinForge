@@ -68,19 +68,19 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock Text="Métricas en la bandeja" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="Optimizar Rendimiento" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock
-                                    Text="Muestra el uso de CPU, memoria y temperatura en el texto emergente del icono."
+                                    Text="Prendido (predeterminado): elimina las métricas del ícono y libera la memoria del proceso al minimizar, para que la app consuma lo mínimo en segundo plano. Apagado: el ícono vuelve a mostrar CPU, memoria y temperatura al pasar el cursor."
                                     FontSize="13"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     TextWrapping="Wrap"/>
                             </StackPanel>
 
                             <ToggleSwitch
-                                x:Name="ShowTrayMetricsToggle"
+                                x:Name="OptimizePerformanceToggle"
                                 Grid.Column="1"
                                 Style="{StaticResource CompactToggleSwitchStyle}"
-                                IsOn="False"
+                                IsOn="True"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center"/>
                         </Grid>

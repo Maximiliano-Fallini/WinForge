@@ -167,7 +167,7 @@ public sealed partial class EstabilidadPage : Page
                 catch { }
 
                 double temp = 0, power = 0, freq = 0;
-                try { temp = _systemInfoService.GetCpuTemperature(); } catch { }
+                try { temp = _systemInfoService.GetCpuTemperatureFresh(); } catch { }
                 try { power = _systemInfoService.GetCpuPower(); } catch { }
                 try { freq = _systemInfoService.GetCpuFrequency(); } catch { }
                 return (usage, temp, power, freq);
@@ -270,13 +270,13 @@ public sealed partial class EstabilidadPage : Page
 
         if (TestTypeCombo.SelectedItem is not ComboBoxItem { Tag: StabilityTestType type })
         {
-            TestStatusText.Text = "Elegí un tipo de test.";
+            Feedback.Error(TestStatusText, "Elegí un tipo de test.");
             return;
         }
 
         if (!TryParseDuration(DurationTextBox.Text, out var duration))
         {
-            TestStatusText.Text = "Duración inválida: usá min:seg.mmm (0:30 · 10:30.5 · 1:15:00.25), entre 0.1 s y 1440 min.";
+            Feedback.Error(TestStatusText, "Duración inválida: usá min:seg.mmm (0:30 · 10:30.5 · 1:15:00.25), entre 0.1 s y 1440 min.");
             return;
         }
 
@@ -285,7 +285,7 @@ public sealed partial class EstabilidadPage : Page
         _powerChart?.Clear();
 
         RemainingTimeText.Text = FormatTime(duration);
-        TestStatusText.Text = "Iniciando...";
+        Feedback.Running(TestStatusText, "Iniciando...", persistent: true);
 
         SetRunningUi(true);
         _stabilityService.Start(type, duration);
@@ -332,14 +332,14 @@ public sealed partial class EstabilidadPage : Page
             var last = _stabilityService.LastSample;
             if (last != null)
             {
-                TestStatusText.Text = "Test en ejecución...";
+                Feedback.Running(TestStatusText, "Test en ejecución...", persistent: true);
             }
         }
         else
         {
             SetRunningUi(false);
             RemainingTimeText.Text = FormatTime(ParseDurationOrDefault());
-            TestStatusText.Text = "Listo para iniciar";
+            Feedback.Set(TestStatusText, "Listo para iniciar", Feedback.MutedBrush, persistent: true);
         }
     }
 
@@ -388,11 +388,11 @@ public sealed partial class EstabilidadPage : Page
 
             if (result.Completed)
             {
-                TestStatusText.Text = $"Test completado · uso máx {result.MaxUsagePercent:F0}% · temp máx {result.MaxTempCelsius:F0}°C · potencia máx {result.MaxPowerWatts:F0} W";
+                Feedback.Success(TestStatusText, $"Test completado · uso máx {result.MaxUsagePercent:F0}% · temp máx {result.MaxTempCelsius:F0}°C · potencia máx {result.MaxPowerWatts:F0} W");
             }
             else
             {
-                TestStatusText.Text = "Test detenido manualmente.";
+                Feedback.Warning(TestStatusText, "Test detenido manualmente.");
             }
         });
     }

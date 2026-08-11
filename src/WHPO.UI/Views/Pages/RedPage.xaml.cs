@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Extensions.DependencyInjection;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Controls;
@@ -73,6 +75,10 @@ public sealed partial class RedPage : Page
 
     private string _factoryPrimaryDns = "";
     private string _factorySecondaryDns = "";
+    // DNS actual del sistema (lo que muestra la opción "Personalizado").
+    // Se actualiza al aplicar un DNS; _factory* queda como snapshot de carga para "DNS de fábrica (router)".
+    private string _currentPrimaryDns = "";
+    private string _currentSecondaryDns = "";
     private readonly List<string> _manualDnsList = new();
     private System.Threading.CancellationTokenSource? _packetLossCts;
     private bool _packetLossRunning;
@@ -150,10 +156,12 @@ public sealed partial class RedPage : Page
             if (actualDns.Count > 0)
             {
                 _factoryPrimaryDns = actualDns[0];
+                _currentPrimaryDns = actualDns[0];
             }
             if (actualDns.Count > 1)
             {
                 _factorySecondaryDns = actualDns[1];
+                _currentSecondaryDns = actualDns[1];
             }
 
             // Inicializar desplegable de DNS
@@ -192,13 +200,12 @@ public sealed partial class RedPage : Page
     private void InitializePacketLossServerCombo()
     {
         if (PacketLossServerCombo == null) return;
-        
+
         PacketLossServerCombo.Items.Clear();
         foreach (var server in PacketLossServers)
         {
-            PacketLossServerCombo.Items.Add(server);
+            PacketLossServerCombo.Items.Add(new ComboBoxItem { Content = server.Name, Tag = server });
         }
-        PacketLossServerCombo.DisplayMemberPath = "Name";
         PacketLossServerCombo.SelectedIndex = 0;
     }
 
@@ -303,9 +310,9 @@ public sealed partial class RedPage : Page
                 return;
             }
 
-            if (PacketLossServerCombo.SelectedItem is not PacketLossServer server)
+            if (PacketLossServerCombo.SelectedItem is not ComboBoxItem { Tag: PacketLossServer server })
             {
-                PacketLossStatusText.Text = "Seleccione un servidor para iniciar el test.";
+                Feedback.Info(PacketLossStatusText, "Seleccione un servidor para iniciar el test.");
                 return;
             }
 
@@ -315,8 +322,7 @@ public sealed partial class RedPage : Page
             _liveSent = 0;
             _liveReceived = 0;
             PacketLossStartButton.Content = "Detener test";
-            PacketLossStatusText.Text = $"Probando {server.Name} ({server.Host})...";
-            PacketLossStatusText.Foreground = MutedTextBrush;
+            Feedback.Running(PacketLossStatusText, $"Probando {server.Name} ({server.Host})...", persistent: true);
             
             if (PacketLossResultsPanel != null)
                 PacketLossResultsPanel.Visibility = Visibility.Collapsed;
@@ -499,20 +505,22 @@ public sealed partial class RedPage : Page
 
             if (cts.IsCancellationRequested)
             {
-                PacketLossStatusText.Text = $"Test detenido por el usuario. Resultados parciales: {lost} de {sent} paquetes perdidos ({packetLossPercent:F1}%).";
-                PacketLossStatusText.Foreground = MutedTextBrush;
+                Feedback.Warning(PacketLossStatusText, $"Test detenido por el usuario. Resultados parciales: {lost} de {sent} paquetes perdidos ({packetLossPercent:F1}%).");
             }
             else
             {
-                PacketLossStatusText.Text = $"Test completado: {packetLossPercent:F1}% de pérdida ({lost} de {sent} paquetes perdidos).";
-                PacketLossStatusText.Foreground = packetLossPercent < 1
-                    ? SuccessBrush
-                    : packetLossPercent < 5 ? WarningBrush : LatencyErrorBrush;
+                var packetLossMessage = $"Test completado: {packetLossPercent:F1}% de pérdida ({lost} de {sent} paquetes perdidos).";
+                if (packetLossPercent < 1)
+                    Feedback.Success(PacketLossStatusText, packetLossMessage);
+                else if (packetLossPercent < 5)
+                    Feedback.Warning(PacketLossStatusText, packetLossMessage);
+                else
+                    Feedback.Error(PacketLossStatusText, packetLossMessage);
             }
         }
         catch (Exception ex)
         {
-            PacketLossStatusText.Text = $"Error: {ex.Message}";
+            Feedback.Error(PacketLossStatusText, ex.Message);
             _loggingService.LogError("Error en PacketLossStartButton_Click", ex);
         }
         finally
@@ -535,20 +543,20 @@ public sealed partial class RedPage : Page
             DnsProviderCombo.Items.Clear();
             foreach (var preset in DnsPresets)
             {
-                DnsProviderCombo.Items.Add(preset);
+                // ComboBoxItem (como en el resto de la app): el Content directo evita que
+                // el popup mida mal con DisplayMemberPath al abrirse por primera vez.
+                DnsProviderCombo.Items.Add(new ComboBoxItem { Content = preset.Name, Tag = preset });
             }
 
-            DnsProviderCombo.DisplayMemberPath = "Name";
-
             // La opción "Personalizado" es la primera y la seleccionada por defecto,
-            // mostrando el DNS de fábrica en los textboxes para que el usuario lo vea
+            // mostrando el DNS actual del sistema en los textboxes para que el usuario lo vea
             DnsProviderCombo.SelectedIndex = 0;
 
-            // Cargar valores de fábrica en los textboxes (mostrar DHCP si está vacío)
+            // Cargar valores actuales en los textboxes (mostrar DHCP si está vacío)
             if (PrimaryDnsTextBox != null)
-                PrimaryDnsTextBox.Text = string.IsNullOrEmpty(_factoryPrimaryDns) ? "(Automático DHCP)" : _factoryPrimaryDns;
+                PrimaryDnsTextBox.Text = string.IsNullOrEmpty(_currentPrimaryDns) ? "(Automático DHCP)" : _currentPrimaryDns;
             if (SecondaryDnsTextBox != null)
-                SecondaryDnsTextBox.Text = string.IsNullOrEmpty(_factorySecondaryDns) ? "" : _factorySecondaryDns;
+                SecondaryDnsTextBox.Text = string.IsNullOrEmpty(_currentSecondaryDns) ? "" : _currentSecondaryDns;
 
             // Personalizado seleccionado por defecto = editable
             if (PrimaryDnsTextBox != null)
@@ -565,35 +573,18 @@ public sealed partial class RedPage : Page
         }
     }
 
-    private void DnsProviderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    /// <summary>
+    /// Valores a aplicar según lo seleccionado en el combo (igual que el combo de
+    /// tipo de test: la selección se lee al hacer clic, sin SelectionChanged).
+    /// Un preset predefinido se aplica tal cual; "Personalizado" usa los campos.
+    /// </summary>
+    private (string Primary, string Secondary) GetDnsValuesToApply()
     {
-        if (DnsProviderCombo.SelectedItem is not DnsPreset preset) return;
-        if (PrimaryDnsTextBox == null || SecondaryDnsTextBox == null) return;
-
-        bool isCustom = preset.Name == "Personalizado";
-        
-        // Solo "Personalizado" es editable; los demás presets son solo lectura
-        PrimaryDnsTextBox.IsReadOnly = !isCustom;
-        SecondaryDnsTextBox.IsReadOnly = !isCustom;
-
-        switch (preset.Name)
+        if (DnsProviderCombo.SelectedItem is ComboBoxItem { Tag: DnsPreset preset } && preset.Name != "Personalizado")
         {
-            case "Personalizado":
-                // Mostrar el DNS actual del sistema para que el usuario lo vea y edite
-                PrimaryDnsTextBox.Text = _factoryPrimaryDns;
-                SecondaryDnsTextBox.Text = _factorySecondaryDns;
-                break;
-            case "DNS de fábrica (router)":
-                // Mostrar lo que tiene el router/sistema (solo lectura)
-                PrimaryDnsTextBox.Text = _factoryPrimaryDns;
-                SecondaryDnsTextBox.Text = _factorySecondaryDns;
-                break;
-            default:
-                // Presets predefinidos: mostrar DNS fijos (solo lectura)
-                PrimaryDnsTextBox.Text = preset.PrimaryDns;
-                SecondaryDnsTextBox.Text = preset.SecondaryDns;
-                break;
+            return (preset.PrimaryDns, preset.SecondaryDns);
         }
+        return (PrimaryDnsTextBox.Text.Trim(), SecondaryDnsTextBox.Text.Trim());
     }
 
     private void OpenNetworkAdapterPropertiesButton_Click(object sender, RoutedEventArgs e)
@@ -669,7 +660,38 @@ public sealed partial class RedPage : Page
         catch (Exception ex)
         {
             _loggingService.LogError("Error abriendo ncpa.cpl", ex);
-            SetDnsResultText(ApplyDnsResultText, "No se pudo abrir conexiones de red. Ejecute 'ncpa.cpl' manualmente (Win+R → ncpa.cpl).");
+            Feedback.Error(ApplyDnsResultText, "No se pudo abrir conexiones de red. Ejecute 'ncpa.cpl' manualmente (Win+R → ncpa.cpl).");
+        }
+    }
+
+    // El popup del ComboBox abre con un VerticalOffset que WinUI 3 calcula mal cuando
+    // el combo está dentro del Frame/ScrollViewer: queda desplazado hacia arriba. En
+    // cada apertura alineamos el tope del popup con el tope del combo (igual que el de
+    // "Tipo de test"), una vez que el popup ya está medido.
+    private async void DnsProviderCombo_DropDownOpened(object sender, object e)
+    {
+        var combo = (ComboBox)sender;
+        try
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                await Task.Delay(16);
+                var popups = VisualTreeHelper.GetOpenPopupsForXamlRoot(combo.XamlRoot);
+                if (popups.Count == 0 || popups[0].Child is not FrameworkElement fe || fe.ActualHeight <= 0)
+                    continue;
+
+                var popup = popups[0];
+                var popupPos = fe.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                var comboPos = combo.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+                double delta = comboPos.Y - popupPos.Y;
+                if (Math.Abs(delta) < 0.5) break;
+                popup.VerticalOffset += delta;
+                break;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"DNSCOMBO reposition: {ex.Message}");
         }
     }
 
@@ -679,41 +701,36 @@ public sealed partial class RedPage : Page
         args.Cancel = args.NewText.Any(c => c != '.' && !char.IsDigit(c));
     }
 
-    // Muestra un resultado de DNS; con texto vacío colapsa el elemento para no dejar
-    // espacio muerto entre los botones y el separador / borde de la card.
-    private void SetDnsResultText(TextBlock tb, string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            tb.Visibility = Visibility.Collapsed;
-            return;
-        }
-        tb.Visibility = Visibility.Visible;
-        tb.Text = text;
-    }
-
     private async void ApplyDnsButton_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var primaryDns = PrimaryDnsTextBox.Text.Trim();
-            var secondaryDns = SecondaryDnsTextBox.Text.Trim();
+            var (primaryDns, secondaryDns) = GetDnsValuesToApply();
 
             if (string.IsNullOrEmpty(primaryDns))
             {
-                SetDnsResultText(ApplyDnsResultText, "Seleccione o ingrese un DNS válido antes de aplicar.");
+                Feedback.Error(ApplyDnsResultText, "Seleccione o ingrese un DNS válido antes de aplicar.");
                 return;
             }
 
             ApplyDnsButton.IsEnabled = false;
-            SetDnsResultText(ApplyDnsResultText, "Buscando adaptador de red...");
+            Feedback.Running(ApplyDnsResultText, "Buscando adaptador de red...");
 
             var (success, message) = await ApplyDnsToActiveAdapterAsync(primaryDns, secondaryDns);
-            SetDnsResultText(ApplyDnsResultText, message);
+            if (success)
+            {
+                UpdateCurrentDns(primaryDns, secondaryDns);
+                var applied = string.IsNullOrEmpty(secondaryDns) ? primaryDns : $"{primaryDns} / {secondaryDns}";
+                Feedback.Success(ApplyDnsResultText, $"DNS aplicado: {applied}. {message}");
+            }
+            else
+            {
+                Feedback.Error(ApplyDnsResultText, message);
+            }
         }
         catch (Exception ex)
         {
-            SetDnsResultText(ApplyDnsResultText, $"Error: {ex.Message}");
+            Feedback.Error(ApplyDnsResultText, ex.Message);
             _loggingService.LogError("Error en ApplyDnsButton_Click", ex);
         }
         finally
@@ -767,6 +784,25 @@ public sealed partial class RedPage : Page
             : $"Error al configurar DNS: {result.Output}");
     }
 
+    /// <summary>
+    /// Actualiza la config "Personalizado" (DNS actual del sistema) tras aplicar DNS con éxito.
+    /// Si "Personalizado" está seleccionado en el desplegable, refleja los nuevos valores al instante.
+    /// </summary>
+    private void UpdateCurrentDns(string primary, string secondary)
+    {
+        _currentPrimaryDns = primary;
+        _currentSecondaryDns = secondary;
+
+        // Solo refrescar los campos si la opción seleccionada es "Personalizado"
+        if (DnsProviderCombo.SelectedItem is ComboBoxItem { Tag: DnsPreset preset } && preset.Name == "Personalizado")
+        {
+            if (PrimaryDnsTextBox != null)
+                PrimaryDnsTextBox.Text = primary;
+            if (SecondaryDnsTextBox != null)
+                SecondaryDnsTextBox.Text = secondary ?? "";
+        }
+    }
+
 
     private async void AddManualDnsButton_Click(object sender, RoutedEventArgs e)
     {
@@ -813,78 +849,148 @@ public sealed partial class RedPage : Page
     {
         try
         {
-            RunDnsTestButton.IsEnabled = false;
-            CloseDnsResultsButton.IsEnabled = false;
+            SetDnsTestButtonsEnabled(false);
 
             // Mostrar la pestaña de resultados y arrancar vacía
             DnsResultsTab.Visibility = Visibility.Visible;
             DnsTestResultsPanel.Children.Clear();
-            DnsTestStatusText.Text = "Ejecutando test de DNS...";
+            Feedback.Running(DnsTestStatusText, "Ejecutando test de DNS...", persistent: true);
 
-            // Probar el DNS personalizado (si está definido)
-            var customPrimary = PrimaryDnsTextBox.Text.Trim();
-            var customSecondary = SecondaryDnsTextBox.Text.Trim();
-            
-            if (!string.IsNullOrEmpty(customPrimary) || !string.IsNullOrEmpty(customSecondary))
-            {
-                DnsTestStatusText.Text = "Probando DNS personalizado...";
-                double primaryLatency = -1, secondaryLatency = -1;
-                
-                if (!string.IsNullOrEmpty(customPrimary))
-                {
-                    primaryLatency = await _networkService.TestDnsLatencyAsync(customPrimary);
-                }
-                if (!string.IsNullOrEmpty(customSecondary) && customSecondary != customPrimary)
-                {
-                    secondaryLatency = await _networkService.TestDnsLatencyAsync(customSecondary);
-                }
-                
-                AddDnsResultCard("Personalizado", customPrimary, customSecondary, primaryLatency, secondaryLatency);
-            }
+            await RunDnsTestCoreAsync();
 
-            // Probar DNS manuales agregados
-            foreach (var manualDns in _manualDnsList)
-            {
-                DnsTestStatusText.Text = $"Probando DNS manual ({manualDns})...";
-                var latency = await _networkService.TestDnsLatencyAsync(manualDns);
-                AddDnsResultCard("Manual", manualDns, "", latency, -1);
-            }
-
-            // Probar cada proveedor preestablecido (excepto Personalizado y DNS de fábrica, para no duplicar)
-            var presets = DnsPresets.Where(p => p.Name != "Personalizado" && p.Name != "DNS de fábrica (router)").ToList();
-            int tested = 0;
-            foreach (var preset in presets)
-            {
-                tested++;
-                DnsTestStatusText.Text = $"Probando ({tested}/{presets.Count}): {preset.Name}...";
-                double primaryLatency = -1, secondaryLatency = -1;
-                
-                if (!string.IsNullOrEmpty(preset.PrimaryDns))
-                {
-                    primaryLatency = await _networkService.TestDnsLatencyAsync(preset.PrimaryDns);
-                }
-                if (!string.IsNullOrEmpty(preset.SecondaryDns) && preset.SecondaryDns != preset.PrimaryDns)
-                {
-                    secondaryLatency = await _networkService.TestDnsLatencyAsync(preset.SecondaryDns);
-                }
-                
-                AddDnsResultCard(preset.Name, preset.PrimaryDns, preset.SecondaryDns, primaryLatency, secondaryLatency);
-            }
-
-            DnsTestStatusText.Text = "Test de DNS completado.";
+            Feedback.Success(DnsTestStatusText, "Test de DNS completado.", persistent: true);
         }
         catch (Exception ex)
         {
-            DnsTestStatusText.Text = $"Error: {ex.Message}";
+            Feedback.Error(DnsTestStatusText, ex.Message, persistent: true);
             _loggingService.LogError("Error en RunDnsTestButton_Click", ex);
         }
         finally
         {
-            RunDnsTestButton.IsEnabled = true;
-            CloseDnsResultsButton.IsEnabled = true;
+            SetDnsTestButtonsEnabled(true);
             // Evitar que el foco salte a los campos al deshabilitar el botón
             RunDnsTestButton.Focus(FocusState.Programmatic);
         }
+    }
+
+    private async void ApplyFastestDnsButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            SetDnsTestButtonsEnabled(false);
+
+            // Mostrar la pestaña de resultados y arrancar vacía
+            DnsResultsTab.Visibility = Visibility.Visible;
+            DnsTestResultsPanel.Children.Clear();
+            Feedback.Running(DnsTestStatusText, "Ejecutando test de DNS...", persistent: true);
+
+            var entries = await RunDnsTestCoreAsync();
+
+            // Mejor candidato: DNS primario que respondió y con la menor latencia
+            var best = entries
+                .Where(entry => !string.IsNullOrEmpty(entry.Primary) && entry.BestLatency < double.MaxValue)
+                .OrderBy(entry => entry.BestLatency)
+                .FirstOrDefault();
+
+            if (best == null)
+            {
+                Feedback.Error(DnsTestStatusText, "Ningún servidor DNS respondió. No se aplicó nada.", persistent: true);
+                return;
+            }
+
+            Feedback.Running(DnsTestStatusText, $"Aplicando {best.Name} ({best.Primary})...", persistent: true);
+            var (success, message) = await ApplyDnsToActiveAdapterAsync(best.Primary, best.Secondary);
+            if (success)
+            {
+                UpdateCurrentDns(best.Primary, best.Secondary);
+                Feedback.Success(DnsTestStatusText, $"✓ Aplicado {best.Name} ({best.Primary}) · {best.BestLatency:F0} ms", persistent: true);
+            }
+            else
+            {
+                Feedback.Error(DnsTestStatusText, message, persistent: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(DnsTestStatusText, ex.Message, persistent: true);
+            _loggingService.LogError("Error en ApplyFastestDnsButton_Click", ex);
+        }
+        finally
+        {
+            SetDnsTestButtonsEnabled(true);
+            ApplyFastestDnsButton.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void SetDnsTestButtonsEnabled(bool enabled)
+    {
+        RunDnsTestButton.IsEnabled = enabled;
+        ApplyFastestDnsButton.IsEnabled = enabled;
+        CloseDnsResultsButton.IsEnabled = enabled;
+    }
+
+    /// <summary>
+    /// Ejecuta el test de DNS completo (personalizado + manuales + presets), mostrando
+    /// cada resultado en vivo y devolviendo la lista de lo probado para decisiones posteriores.
+    /// </summary>
+    private async Task<List<DnsTestEntry>> RunDnsTestCoreAsync()
+    {
+        var entries = new List<DnsTestEntry>();
+
+        // Probar el DNS personalizado (si está definido)
+        var customPrimary = PrimaryDnsTextBox.Text.Trim();
+        var customSecondary = SecondaryDnsTextBox.Text.Trim();
+
+        if (!string.IsNullOrEmpty(customPrimary) || !string.IsNullOrEmpty(customSecondary))
+        {
+            Feedback.Running(DnsTestStatusText, "Probando DNS personalizado...", persistent: true);
+            double primaryLatency = -1, secondaryLatency = -1;
+
+            if (!string.IsNullOrEmpty(customPrimary))
+            {
+                primaryLatency = await _networkService.TestDnsLatencyAsync(customPrimary);
+            }
+            if (!string.IsNullOrEmpty(customSecondary) && customSecondary != customPrimary)
+            {
+                secondaryLatency = await _networkService.TestDnsLatencyAsync(customSecondary);
+            }
+
+            entries.Add(new DnsTestEntry("Personalizado", customPrimary, customSecondary, BestDnsLatency(primaryLatency, secondaryLatency)));
+            AddDnsResultCard("Personalizado", customPrimary, customSecondary, primaryLatency, secondaryLatency);
+        }
+
+        // Probar DNS manuales agregados
+        foreach (var manualDns in _manualDnsList)
+        {
+            Feedback.Running(DnsTestStatusText, $"Probando DNS manual ({manualDns})...", persistent: true);
+            var latency = await _networkService.TestDnsLatencyAsync(manualDns);
+            entries.Add(new DnsTestEntry("Manual", manualDns, "", BestDnsLatency(latency, -1)));
+            AddDnsResultCard("Manual", manualDns, "", latency, -1);
+        }
+
+        // Probar cada proveedor preestablecido (excepto Personalizado y DNS de fábrica, para no duplicar)
+        var presets = DnsPresets.Where(p => p.Name != "Personalizado" && p.Name != "DNS de fábrica (router)").ToList();
+        int tested = 0;
+        foreach (var preset in presets)
+        {
+            tested++;
+            Feedback.Running(DnsTestStatusText, $"Probando ({tested}/{presets.Count}): {preset.Name}...", persistent: true);
+            double primaryLatency = -1, secondaryLatency = -1;
+
+            if (!string.IsNullOrEmpty(preset.PrimaryDns))
+            {
+                primaryLatency = await _networkService.TestDnsLatencyAsync(preset.PrimaryDns);
+            }
+            if (!string.IsNullOrEmpty(preset.SecondaryDns) && preset.SecondaryDns != preset.PrimaryDns)
+            {
+                secondaryLatency = await _networkService.TestDnsLatencyAsync(preset.SecondaryDns);
+            }
+
+            entries.Add(new DnsTestEntry(preset.Name, preset.PrimaryDns, preset.SecondaryDns, BestDnsLatency(primaryLatency, secondaryLatency)));
+            AddDnsResultCard(preset.Name, preset.PrimaryDns, preset.SecondaryDns, primaryLatency, secondaryLatency);
+        }
+
+        return entries;
     }
 
     /// <summary>
@@ -935,7 +1041,7 @@ public sealed partial class RedPage : Page
     {
         DnsResultsTab.Visibility = Visibility.Collapsed;
         DnsTestResultsPanel.Children.Clear();
-        DnsTestStatusText.Text = "";
+        Feedback.Set(DnsTestStatusText, null);
     }
 
     private Border BuildLatencyCard(string name, string primary, string secondary, double primaryLatency, double secondaryLatency)
@@ -994,7 +1100,7 @@ public sealed partial class RedPage : Page
         {
             if (string.IsNullOrEmpty(primary))
             {
-                SetDnsResultText(ApplyDnsResultText, $"\"{name}\" no tiene DNS primario para aplicar.");
+                Feedback.Error(ApplyDnsResultText, $"\"{name}\" no tiene DNS primario para aplicar.");
                 return;
             }
 
@@ -1003,12 +1109,20 @@ public sealed partial class RedPage : Page
             try
             {
                 var (success, message) = await ApplyDnsToActiveAdapterAsync(primary, secondary);
-                SetDnsResultText(ApplyDnsResultText, $"{name}: {message}");
+                if (success)
+                {
+                    UpdateCurrentDns(primary, secondary);
+                    Feedback.Success(ApplyDnsResultText, $"{name}: {message}");
+                }
+                else
+                {
+                    Feedback.Error(ApplyDnsResultText, $"{name}: {message}");
+                }
                 applyButton.Content = success ? "✓ Aplicado" : "Error";
             }
             catch (Exception ex)
             {
-                SetDnsResultText(ApplyDnsResultText, $"{name}: error al aplicar: {ex.Message}");
+                Feedback.Error(ApplyDnsResultText, $"{name}: no se pudo aplicar: {ex.Message}");
                 _loggingService.LogError($"Error aplicando DNS desde resultado ({name})", ex);
                 applyButton.Content = "Error";
             }
@@ -1030,15 +1144,16 @@ public sealed partial class RedPage : Page
         try
         {
             FlushDnsButton.IsEnabled = false;
-            SetDnsResultText(FlushDnsResultText, "Ejecutando flush DNS...");
+            Feedback.Running(FlushDnsResultText, "Ejecutando flush DNS...");
             var result = await _networkService.FlushDnsAsync();
-            SetDnsResultText(FlushDnsResultText, result.Success
-                ? "Caché DNS vaciada correctamente."
-                : $"Error al vaciar la caché DNS: {result.Output}");
+            if (result.Success)
+                Feedback.Success(FlushDnsResultText, "Caché DNS vaciada correctamente.");
+            else
+                Feedback.Error(FlushDnsResultText, result.Output);
         }
         catch (Exception ex)
         {
-            SetDnsResultText(FlushDnsResultText, $"Error: {ex.Message}");
+            Feedback.Error(FlushDnsResultText, ex.Message);
             _loggingService.LogError("Error en FlushDnsButton_Click", ex);
         }
         finally
@@ -1066,6 +1181,9 @@ public sealed partial class RedPage : Page
     }
 
     private record DnsPreset(string Name, string PrimaryDns, string SecondaryDns);
+
+    /// <summary>Resultado de un DNS probado en el test, con su mejor latencia.</summary>
+    private record DnsTestEntry(string Name, string Primary, string Secondary, double BestLatency);
 
     private record PacketLossServer(string Name, string Host);
 }

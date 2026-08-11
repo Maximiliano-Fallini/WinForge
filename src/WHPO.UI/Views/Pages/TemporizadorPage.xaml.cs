@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO_UI.Views.Pages;
@@ -81,8 +82,9 @@ public sealed partial class TemporizadorPage : Page
         if (_settingsService.Get("timer.autoStart", false))
         {
             _timerResolutionActive = true;
-            TimerResolutionButton.Content = "Detener";
+            SetTimerButtonState(true);
         }
+        UpdateInputsEnabled();
 
         _loggingService.LogInfo("TemporizadorPage: datos cargados");
     }
@@ -108,17 +110,29 @@ public sealed partial class TemporizadorPage : Page
         args.Cancel = args.NewText.Any(c => c != '.' && !char.IsDigit(c));
     }
 
-    // Muestra el resultado de la resolución; con texto vacío colapsa el elemento para
-    // no dejar espacio muerto entre los botones y el borde de la card.
-    private void SetResultText(TextBlock tb, string? text)
+    // La resolución deseada y el Autoajustar no se pueden usar mientras el ajuste
+    // está iniciado (igual que en la limpieza automática).
+    private void UpdateInputsEnabled()
     {
-        if (string.IsNullOrEmpty(text))
+        DesiredResolutionTextBox.IsEnabled = !_timerResolutionActive;
+        AutoajustarTimerButton.IsEnabled = !_timerResolutionActive;
+    }
+
+    // Estado del botón Iniciar/Detener: Detener usa rojo (igual que "Detener test"
+    // en Estabilidad) para que la acción de parar se vea igual en toda la app.
+    private void SetTimerButtonState(bool running)
+    {
+        TimerResolutionButton.Content = running ? "Detener" : "Iniciar";
+        if (running)
         {
-            tb.Visibility = Visibility.Collapsed;
-            return;
+            TimerResolutionButton.Background = Feedback.ErrorBrush;
+            TimerResolutionButton.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
         }
-        tb.Visibility = Visibility.Visible;
-        tb.Text = text;
+        else
+        {
+            TimerResolutionButton.Background = (SolidColorBrush)App.Current.Resources["AccentBrush"];
+            TimerResolutionButton.Foreground = (SolidColorBrush)App.Current.Resources["AccentForegroundBrush"];
+        }
     }
 
     private async void TimerResolutionButton_Click(object sender, RoutedEventArgs e)
@@ -130,12 +144,14 @@ public sealed partial class TemporizadorPage : Page
                 // Detener: restablecer resolución
                 var result = await _memoryService.ResetTimerResolutionAsync();
                 _timerResolutionActive = false;
-                TimerResolutionButton.Content = "Iniciar";
+                SetTimerButtonState(false);
+                UpdateInputsEnabled();
                 _settingsService.Set("timer.autoStart", false);
                 _settingsService.Save();
-                SetResultText(TimerResolutionResultText, result.Success
-                    ? result.Output
-                    : $"Error: {result.Output}");
+                if (result.Success)
+                    Feedback.Success(TimerResolutionResultText, result.Output);
+                else
+                    Feedback.Error(TimerResolutionResultText, result.Output);
 
                 // Actualizar resolución actual después de detener
                 var currentRes = _memoryService.GetCurrentTimerResolution();
@@ -146,18 +162,26 @@ public sealed partial class TemporizadorPage : Page
             // Validar resolución deseada (usar InvariantCulture para soportar punto decimal)
             if (!double.TryParse(DesiredResolutionTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double desiredMs) || desiredMs <= 0)
             {
-                SetResultText(TimerResolutionResultText, "Ingrese una resolución válida en ms.");
+                Feedback.Error(TimerResolutionResultText, "Ingrese una resolución válida en ms.");
                 return;
             }
 
             // Convertir ms a 100ns units
             int resolution100ns = (int)(desiredMs * 10000);
 
-            // Validar contra la resolución máxima (mínimo valor numérico = mejor resolución)
-            var maxRes = _memoryService.GetMaximumTimerResolution();
-            if (resolution100ns < maxRes)
+            // Validar rango: no más fina que la máxima posible (0,5 ms) ni más gruesa
+            // que la mínima posible (15,625 ms). OJO: en NtQueryTimerResolution la
+            // "máxima" es la más fina (valor numérico menor) y la "mínima" la más gruesa.
+            var finestRes = _memoryService.GetMaximumTimerResolution();
+            var coarsestRes = _memoryService.GetMinimumTimerResolution();
+            if (resolution100ns < finestRes)
             {
-                SetResultText(TimerResolutionResultText, $"La resolución deseada no puede ser menor que la máxima ({maxRes / 10000.0:F3} ms).");
+                Feedback.Error(TimerResolutionResultText, $"La resolución deseada no puede ser más fina que {finestRes / 10000.0:F3} ms (la máxima que soporta el sistema).");
+                return;
+            }
+            if (resolution100ns > coarsestRes)
+            {
+                Feedback.Error(TimerResolutionResultText, $"La resolución deseada no puede ser más gruesa que {coarsestRes / 10000.0:F3} ms (la mínima que soporta el sistema).");
                 return;
             }
 
@@ -170,15 +194,17 @@ public sealed partial class TemporizadorPage : Page
             if (setResult.Success)
             {
                 _timerResolutionActive = true;
-                TimerResolutionButton.Content = "Detener";
+                SetTimerButtonState(true);
+                UpdateInputsEnabled();
                 // Recordar que se arrancó: se reaplica al abrir la app la próxima vez.
                 _settingsService.Set("timer.autoStart", true);
                 _settingsService.Save();
             }
 
-            SetResultText(TimerResolutionResultText, setResult.Success
-                ? setResult.Output
-                : $"Error: {setResult.Output}");
+            if (setResult.Success)
+                Feedback.Success(TimerResolutionResultText, setResult.Output);
+            else
+                Feedback.Error(TimerResolutionResultText, setResult.Output);
 
             // Actualizar resolución actual
             var current = _memoryService.GetCurrentTimerResolution();
@@ -186,41 +212,16 @@ public sealed partial class TemporizadorPage : Page
         }
         catch (Exception ex)
         {
-            SetResultText(TimerResolutionResultText, $"Error: {ex.Message}");
+            Feedback.Error(TimerResolutionResultText, ex.Message);
             _loggingService.LogError("Error en TimerResolutionButton_Click", ex);
         }
     }
 
-    private async void ResetTimerResolutionButton_Click(object sender, RoutedEventArgs e)
+    // Autoajustar: pone la resolución recomendada (0,5 ms, la mejor para juegos/audio)
+    // en el campo. No inicia: el usuario le da Iniciar después, igual que en la limpieza.
+    private void AutoajustarTimerButton_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            ResetTimerResolutionButton.IsEnabled = false;
-            SetResultText(TimerResolutionResultText, "Restableciendo resolución del temporizador...");
-
-            var result = await _memoryService.ResetTimerResolutionAsync();
-
-            _timerResolutionActive = false;
-            TimerResolutionButton.Content = "Iniciar";
-            _settingsService.Set("timer.autoStart", false);
-            _settingsService.Save();
-
-            SetResultText(TimerResolutionResultText, result.Success
-                ? result.Output
-                : $"Error: {result.Output}");
-
-            // Actualizar resolución actual
-            var current = _memoryService.GetCurrentTimerResolution();
-            CurrentTimerResolutionText.Text = $"{current / 10000.0:F3} ms";
-        }
-        catch (Exception ex)
-        {
-            SetResultText(TimerResolutionResultText, $"Error: {ex.Message}");
-            _loggingService.LogError("Error en ResetTimerResolutionButton_Click", ex);
-        }
-        finally
-        {
-            ResetTimerResolutionButton.IsEnabled = true;
-        }
+        DesiredResolutionTextBox.Text = "0.5";
+        Feedback.Success(TimerResolutionResultText, "Autoajuste listo: resolución deseada 0,5 ms.");
     }
 }

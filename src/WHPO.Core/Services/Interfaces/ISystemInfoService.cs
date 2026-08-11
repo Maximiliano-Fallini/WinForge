@@ -18,6 +18,11 @@ public interface ISystemInfoService
     MemoryInfo GetMemoryInfo();
 
     /// <summary>
+    /// Obtiene el modo de canal y la velocidad de la memoria RAM (módulos físicos).
+    /// </summary>
+    MemoryModuleInfo GetMemoryModuleInfo();
+
+    /// <summary>
     /// Obtiene información del disco.
     /// </summary>
     List<DiskInfo> GetDiskInfo();
@@ -66,6 +71,12 @@ public interface ISystemInfoService
     /// Obtiene la temperatura actual de la CPU en °C (con caché interna de 5 s).
     /// </summary>
     double GetCpuTemperature();
+
+    /// <summary>
+    /// Temperatura de CPU sin la caché de 5 s (solo 1 s): para gráficos en vivo
+    /// que muestrean cada segundo, donde la caché larga produce saltos.
+    /// </summary>
+    double GetCpuTemperatureFresh();
 
     /// <summary>
     /// Obtiene el consumo actual de la CPU en watts (sensor de potencia de
@@ -159,6 +170,14 @@ public record MemoryInfo(
     double UsagePercent,
     long CachedBytes,
     long CommittedBytes
+);
+
+/// <summary>
+/// Modo de canal y velocidad de los módulos de memoria física.
+/// </summary>
+public record MemoryModuleInfo(
+    string ChannelMode,
+    int SpeedMHz
 );
 
 /// <summary>

@@ -15,6 +15,10 @@ public class LoggingService : ILoggingService
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "WHPO", "app.log");
 
+    // Tope de tamaño del log: al superarlo se rota a app.log.old (pisando el anterior)
+    // y se arranca uno nuevo, así el disco nunca se llena pero queda historial reciente.
+    private const long MaxLogBytes = 5 * 1024 * 1024; // 5 MB
+
     public LoggingService(ILogger<LoggingService> logger)
     {
         _logger = logger;
@@ -27,8 +31,24 @@ public class LoggingService : ILoggingService
             lock (_fileLock)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_logPath)!);
+                RotateIfNeeded();
                 File.AppendAllText(_logPath, $"[{DateTime.Now:HH:mm:ss.fff}] [{level}] {message}{Environment.NewLine}");
             }
+        }
+        catch { }
+    }
+
+    private static void RotateIfNeeded()
+    {
+        try
+        {
+            var fi = new FileInfo(_logPath);
+            if (!fi.Exists || fi.Length < MaxLogBytes) return;
+
+            var oldPath = _logPath + ".old";
+            if (File.Exists(oldPath))
+                File.Delete(oldPath);
+            File.Move(_logPath, oldPath);
         }
         catch { }
     }

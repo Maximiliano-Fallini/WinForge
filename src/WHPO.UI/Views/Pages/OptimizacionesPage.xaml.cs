@@ -218,13 +218,21 @@ public sealed partial class OptimizacionesPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
 
+        // Igual que WinUtil: la sección avanzada se marca como "CAUTION" (título ámbar + ⚠️)
+        // para distinguirla visualmente de los tweaks esenciales.
+        var isCaution = title.Contains("Advanced", StringComparison.OrdinalIgnoreCase);
+
         var headerStack = new StackPanel { Spacing = 2 };
-        headerStack.Children.Add(new TextBlock
+        var titleBlock = new TextBlock
         {
-            Text = title,
+            Text = isCaution ? "⚠️ " + title : title,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             FontSize = 18
-        });
+        };
+        // NO setear Foreground en null: rompe la herencia del tema y el título queda invisible.
+        // Solo la sección Advanced pinta su título de ámbar (estilo CAUTION de WinUtil).
+        if (isCaution) titleBlock.Foreground = WarningBrush;
+        headerStack.Children.Add(titleBlock);
         headerStack.Children.Add(new TextBlock
         {
             Text = subtitle,
@@ -455,7 +463,13 @@ public sealed partial class OptimizacionesPage : Page
     {
         if (ConsolePanel == null || ConsoleText == null || ConsoleScroll == null) return;
 
+        var wasCollapsed = ConsolePanel.Visibility == Visibility.Collapsed;
         ConsolePanel.Visibility = Visibility.Visible;
+
+        // La consola vive al final del ScrollViewer: al aparecer la primera vez, scrollear
+        // hasta ella para que el usuario vea el feedback del lote que acaba de ejecutar.
+        if (wasCollapsed)
+            ConsolePanel.StartBringIntoView();
 
         var (prefix, color) = status switch
         {
@@ -635,6 +649,9 @@ public sealed partial class OptimizacionesPage : Page
         var verb = apply ? "Aplicar" : "Revertir";
         AppendConsole($"{verb} {selected.Count} tweaks seleccionados...", ConsoleStatus.Neutral);
 
+        // Estilo cmd/winutil: reporta los comandos reales que ejecuta cada tweak.
+        var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
+
         try
         {
             for (int i = 0; i < selected.Count; i++)
@@ -665,8 +682,8 @@ public sealed partial class OptimizacionesPage : Page
 
                 AppendConsole($"{verb} '{name}'...", ConsoleStatus.Running);
                 var result = apply
-                    ? await _tweakService.ApplyTweakAsync(def.Id)
-                    : await _tweakService.RevertTweakAsync(def.Id);
+                    ? await _tweakService.ApplyTweakAsync(def.Id, progress)
+                    : await _tweakService.RevertTweakAsync(def.Id, progress);
 
                 if (result.Success)
                 {

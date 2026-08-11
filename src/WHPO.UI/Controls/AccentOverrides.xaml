@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Override del acento para TODA la UI. WinUI inyecta el acento del SISTEMA
+    (que puede ser morado/verde/lo que sea) en dos lugares:
+
+    1. Los pinceles AccentFillColor* / SystemAccentColorBrush -> los usan los
+       controles internos (ToggleSwitch, CheckBox, RadioButton, ProgressBar)
+       y los controles propios de la app (Buttons.xaml, Toggles.xaml,
+       CustomControls.xaml -> barras de uso).
+    2. Los colores SystemAccentColor* (Light1-3, Dark1-3) -> de ellos derivan
+       los pinceles internos del theme dictionary via {ThemeResource}, que es
+       DINÁMICO y sí re-resuelve en runtime.
+
+    Sobrescribir solo los pinceles NO alcanza: las cadenas {StaticResource}
+    internas del theme dictionary se congelan en parse time apuntando al pincel
+    del acento del sistema. Sobrescribiendo los COLORES el pincel interno
+    re-evalúa su Color en runtime y toda la cadena queda azul.
+
+    Este diccionario se mergea DESPUÉS de XamlControlsResources en App.xaml
+    para que sus claves ganen el lookup.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <!-- Azul de la app (mismo #8AB4F8 que AccentBrush) -->
+            <Color x:Key="SystemAccentColor">#FF8AB4F8</Color>
+            <Color x:Key="SystemAccentColorLight1">#FFA2C2FA</Color>
+            <Color x:Key="SystemAccentColorLight2">#FF8AB4F8</Color>
+            <Color x:Key="SystemAccentColorLight3">#FF78A9F7</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF6D9EF6</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF5A90F4</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF4782F3</Color>
+
+            <SolidColorBrush x:Key="SystemAccentColorBrush" Color="#FF8AB4F8"/>
+            <SolidColorBrush x:Key="SystemAccentColorForegroundBrush" Color="#FF101418"/>
+
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF8AB4F8"/>
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF8AB4F8" Opacity="0.9"/>
+            <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF8AB4F8" Opacity="0.8"/>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="SystemAccentColor">#FF3D7EDB</Color>
+            <Color x:Key="SystemAccentColorLight1">#FF5590E0</Color>
+            <Color x:Key="SystemAccentColorLight2">#FF3D7EDB</Color>
+            <Color x:Key="SystemAccentColorLight3">#FF2A6FCE</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF2C63B8</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF2554A1</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF1F4589</Color>
+
+            <SolidColorBrush x:Key="SystemAccentColorBrush" Color="#FF3D7EDB"/>
+            <SolidColorBrush x:Key="SystemAccentColorForegroundBrush" Color="#FF101418"/>
+
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF3D7EDB"/>
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF3D7EDB" Opacity="0.9"/>
+            <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF3D7EDB" Opacity="0.8"/>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+</ResourceDictionary>

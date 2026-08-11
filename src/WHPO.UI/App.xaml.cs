@@ -108,6 +108,9 @@ public partial class App : Application
         var sysInfo = Services.GetRequiredService<ISystemInfoService>();
         _ = Task.Run(() => { try { sysInfo.GetCpuTemperature(); } catch { } });
 
+        // Marcador de sesión en el log: ayuda a separar corridas en fase de desarrollo.
+        Services.GetRequiredService<ILoggingService>().LogInfo("===== WinForge iniciado =====");
+
         _window = new MainWindow();
         _window.Closed += OnWindowClosed;
         MainWindowInstance = _window as MainWindow;

@@ -144,7 +144,7 @@ public class StabilityService : IStabilityService
 
             double usage = 0, temp = 0, power = 0, freq = 0;
             try { if (_cpuCounter != null) usage = Math.Max(0, _cpuCounter.NextValue()); } catch { }
-            try { temp = _systemInfoService.GetCpuTemperature(); } catch { }
+            try { temp = _systemInfoService.GetCpuTemperatureFresh(); } catch { }
             try { power = _systemInfoService.GetCpuPower(); } catch { }
             try { freq = _systemInfoService.GetCpuFrequency(); } catch { }
 
