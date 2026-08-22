@@ -35,11 +35,9 @@ packages/
 *.msix
 *.msixbundle
 
-# Instalador (WiX)
+# Instalador (WiX): carpeta completa fuera del repo (fuentes .wxs incluidas)
 .tools/
-installer/publish/
-installer/*.msi
-installer/*.wixpdb
+installer/
 
 # Dependencias de terceros
 node_modules/

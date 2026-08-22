@@ -1,13 +1,17 @@
-# 🛠️ WinForge
+<p align="center">
+  <img src="src/WHPO.UI/logos/WinForge.png" alt="Ícono de WinForge" width="120" />
+</p>
 
-**WinForge** es un centro de control y optimizador para Windows, pensado para gamers y usuarios avanzados. Una sola app para monitorear tu equipo, optimizarlo al jugar, gestionar tus juegos y ajustar Windows a tu medida — **en tu idioma**.
+# <p align="center">🛠️ WinForge</p>
+
+**WinForge** es un **optimizador competitivo para Windows**, pensado para gamers y usuarios avanzados que quieren sacar el máximo provecho de su equipo. Una sola app para monitorear tu PC, optimizarla al jugar, gestionar tus juegos y ajustar Windows a tu medida — **en tu idioma**.
 
 ## ✨ ¿Qué hace?
 
 ### 🎮 Optimización automática al iniciar un juego
 Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada queda tocado al cerrar):
 
-- **Procesos en segundo plano** a prioridad baja + modo eficiencia (EcoQoS) — lista configurable de procesos del sistema y apps.
+- **Procesos en segundo plano** a prioridad baja + modo eficiencia (EcoQoS) — lista configurable de procesos del sistema y apps. Menos ruido en el sistema, más rendimiento para tu juego.
 - **Pausa de Windows Update** y servicios de mantenimiento/telemetría mientras jugás (wuauserv, UsoSvc, BITS, WSearch, SysMain…), reiniciándolos al cerrar.
 - **Plan de energía global** (o por juego) que se activa al iniciar y se revierte al cerrar.
 - **Notificaciones silenciadas** durante la partida (modo "solo alarmas"), restauradas al salir.
@@ -29,15 +33,10 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 - **Temporizador de apagado**, panel de ventanas, estabilidad y más.
 
 ### 🌍 Multilenguaje
-La app se adapta al idioma de tu Windows (o lo elegís vos) — se traduce al instante, sin reiniciar:
+La app se adapta al idioma de tu Windows (o lo elegís vos desde el selector de banderas del navbar) — se traduce al instante, sin reiniciar:
 
-| Idioma | Código | Ejemplo |
-|---|---|---|
-| Español | `es-AR` | ¡Hola, bienvenido a WinForge! |
-| English | `en-US` | Hello, welcome to WinForge! |
-| Português | `pt-BR` | Olá, bem-vindo ao WinForge! |
-| Deutsch | `de-DE` | Hallo, willkommen bei WinForge! |
-| Français | `fr-FR` | Bonjour, bienvenue sur WinForge ! |
+| 🇦🇷 | 🇺🇸 | 🇧🇷 | 🇩🇪 | 🇫🇷 |
+|:-:|:-:|:-:|:-:|:-:|
 
 ## ⚙️ Requisitos
 
@@ -80,4 +79,4 @@ installer/           # Fuentes WiX + script de build del MSI (local, fuera del r
 
 ---
 
-*WinForge — rendimiento y control para tu Windows.*
+*WinForge — el optimizador competitivo para tu Windows. Rendimiento y control, al máximo.*
