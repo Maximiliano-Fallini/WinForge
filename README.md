@@ -50,32 +50,21 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 
 ## 📦 Instalación
 
-### Descargar (pre-release)
-> ⚡ **Instalador disponible temporalmente en [Releases](https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.0)** → [`WinForge-0.1.0.msi`](https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.0/WinForge-0.1.0.msi) (~85 MB)
-
-### Instalador MSI
-El instalador (`WinForge-0.1.0.msi`, ~85 MB, self-contained — no requiere .NET instalado) se genera localmente con `installer/build-installer.ps1` (requiere [WiX v7](https://github.com/wixtoolset/wix) en `.tools/wix`):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File installer/build-installer.ps1
-```
-
-> Nota: `installer/` y `.tools/` están fuera del repositorio (ver `.gitignore`): el instalador es un artefacto local.
-
-### Compilar desde el código
-```powershell
-dotnet build src/WHPO.UI/WHPO.UI.csproj
-```
-El ejecutable queda en `src/bin/Debug/WHPO.Debug/WinForge.exe`.
-
-## 🗂️ Estructura del proyecto
-
-```
-src/
-├── WHPO.Core/       # Lógica y servicios: procesos, juegos, energía, sensores, tweaks, boost
-└── WHPO.UI/         # Interfaz WinUI 3: páginas, bandeja del sistema, overlay, traducciones
-installer/           # Fuentes WiX + script de build del MSI (local, fuera del repo)
-```
+<p align="center">
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.0/WinForge-0.1.0.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.0_MSI_~85_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.1.0 MSI"/>
+  </a>
+  <br/><br/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.0">
+    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.0_(pre--release)-2ea44f?style=flat-square" alt="Releases"/>
+  </a>
+  &nbsp;
+  <img src="https://img.shields.io/badge/self--contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self-contained"/>
+  &nbsp;
+  <img src="https://img.shields.io/badge/ejecutar-como_administrador-e3b341?style=flat-square" alt="Como administrador"/>
+  <br/>
+  <sub>⚡ Disponibilidad temporal — instalador generado localmente como artefacto de prueba</sub>
+</p>
 
 ## 🧱 Tecnología
 
