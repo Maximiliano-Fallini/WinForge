@@ -50,6 +50,9 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 
 ## 📦 Instalación
 
+### Descargar (pre-release)
+> ⚡ **Instalador disponible temporalmente en [Releases](https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.0)** → [`WinForge-0.1.0.msi`](https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.0/WinForge-0.1.0.msi) (~85 MB)
+
 ### Instalador MSI
 El instalador (`WinForge-0.1.0.msi`, ~85 MB, self-contained — no requiere .NET instalado) se genera localmente con `installer/build-installer.ps1` (requiere [WiX v7](https://github.com/wixtoolset/wix) en `.tools/wix`):
 
