@@ -134,6 +134,9 @@ public static class Translations
 
         // ===== Núcleos y plan de energía =====
         ["Núcleos"] = ("Cores", "Núcleos", "Kerne", "Cœurs"),
+        ["? Esta acción no se puede deshacer."] = ("? This action cannot be undone.", "? Esta ação não pode ser desfeita.", "? Diese Aktion kann nicht rückgängig gemacht werden.", "? Cette action est irréversible."),
+        ["Color A"] = ("Color A", "Cor A", "Farbe A", "Couleur A"),
+        ["Color B"] = ("Color B", "Cor B", "Farbe B", "Couleur B"),
         ["Gestionar planes de energía"] = ("Manage power plans", "Gerenciar planos de energia", "Energiepläne verwalten", "Gérer les plans d'alimentation"),
         ["Instalar planes de energía"] = ("Install power plans", "Instalar planos de energia", "Energiepläne installieren", "Installer des plans d'alimentation"),
         ["Planes oficiales de Windows y presets reconocidos por la comunidad (Ryzen, Bitsum…). Se instalan duplicando un plan base; podés borrarlos después desde la lista de arriba."] = ("Official Windows plans and community-recognized presets (Ryzen, Bitsum…). They are installed by duplicating a base plan; you can delete them later from the list above.", "Planos oficiais do Windows e presets reconhecidos pela comunidade (Ryzen, Bitsum…). São instalados duplicando um plano base; você pode excluí-los depois na lista acima.", "Offizielle Windows-Pläne und von der Community anerkannte Presets (Ryzen, Bitsum…). Sie werden durch Duplizieren eines Basisplans installiert und können später aus der Liste oben gelöscht werden.", "Plans officiels de Windows et préréglages reconnus par la communauté (Ryzen, Bitsum…). Ils sont installés en dupliquant un plan de base ; vous pourrez les supprimer plus tard depuis la liste ci-dessus."),
