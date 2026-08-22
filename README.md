@@ -1,8 +1,14 @@
-# <img src="src/WHPO.UI/logos/WinForge.png" width="52" alt="Ícono de WinForge" /> WinForge
+<h1 align="center">
+  <img src="src/WHPO.UI/logos/WinForge.png" height="44" alt="Ícono de WinForge"/> WinForge
+</h1>
 
-**WinForge** es un **optimizador competitivo para Windows**, pensado para gamers y usuarios avanzados que quieren sacar el máximo provecho de su equipo. Una sola app para monitorear tu PC, optimizarla al jugar, gestionar tus juegos y ajustar Windows a tu medida — **en tu idioma**.
+**WinForge** es un **optimizador competitivo para Windows**, pensado para gamers y usuarios avanzados que quieren sacar el máximo provecho de su equipo. Una sola app para monitorear tu PC, optimizarla al jugar, gestionar tus juegos y ajustar Windows a tu medida.
+
+<h2 align="center">🌐 Multilenguaje</h2>
 
 <p align="center">
+  La app se adapta al idioma de tu Windows (o lo elegís vos desde el selector de banderas del navbar) — se traduce al instante, sin reiniciar.<br/>
+  <code>es-AR</code>&ensp;<code>en-US</code>&ensp;<code>pt-BR</code>&ensp;<code>de-DE</code>&ensp;<code>fr-FR</code><br/><br/>
   <img src="assets/flags/ar.png" height="26" alt="es-AR" title="Español (es-AR)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/us.png" height="26" alt="en-US" title="English (en-US)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/br.png" height="26" alt="pt-BR" title="Português (pt-BR)" hspace="8"/>&nbsp;&nbsp;
@@ -36,8 +42,6 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 - **Teclado**: macros, reasignación y **autoclicker**.
 - **Temporizador de apagado**, panel de ventanas, estabilidad y más.
 
-### 🌍 Multilenguaje
-La app se adapta al idioma de tu Windows (o lo elegís vos desde el selector de banderas del navbar) — se traduce al instante, sin reiniciar: `es-AR`, `en-US`, `pt-BR`, `de-DE` y `fr-FR`.
 ## ⚙️ Requisitos
 
 - **Windows 10/11** (probado en Windows 11 24H2)
