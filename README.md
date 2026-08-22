@@ -46,7 +46,6 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 
 - **Windows 10/11** (probado en Windows 11 24H2)
 - Ejecutar **como administrador** (necesario para optimización de procesos, servicios y planes de energía)
-- [.NET SDK 9](https://dotnet.microsoft.com/download/dotnet/9.0) para compilar
 
 ## 📦 Instalación
 
