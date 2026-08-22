@@ -56,10 +56,10 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   </a>
   <br/><br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.0">
-    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.0_(pre--release)-2ea44f?style=flat-square" alt="Releases"/>
+    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.0_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/self--contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self-contained"/>
+  <img src="https://img.shields.io/badge/self_contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self contained"/>
   &nbsp;
   <img src="https://img.shields.io/badge/ejecutar-como_administrador-e3b341?style=flat-square" alt="Como administrador"/>
   <br/>
