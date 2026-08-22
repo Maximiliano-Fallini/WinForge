@@ -66,7 +66,7 @@ public record SensorGroupInfo(string Name, List<SensorCategoryInfo> Categories, 
 /// usan las páginas de Núcleos/Estabilidad, para mantener los caminos calientes
 /// livianos. El acceso no es thread-safe: se serializa con un lock interno.
 /// </summary>
-public interface ISensorService
+public interface ISensorService : IDisposable
 {
     /// <summary>Indica si LibreHardwareMonitor pudo inicializarse (driver cargado).</summary>
     bool IsAvailable { get; }

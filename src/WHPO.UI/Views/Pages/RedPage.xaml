@@ -9,7 +9,7 @@
 
             <!-- ====== SECCIÓN 1: DNS ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <SymbolIcon Symbol="Globe" Foreground="{StaticResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
+                <SymbolIcon Symbol="Globe" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock Text="Servidores DNS" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
@@ -22,27 +22,27 @@
                     </Grid>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Button x:Name="ApplyDnsButton" Content="Aplicar DNS" Click="ApplyDnsButton_Click"
-                                Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
+                                Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                         <Button x:Name="OpenNetworkAdapterPropertiesButton" Content="Conexiones de red" Click="OpenNetworkAdapterPropertiesButton_Click" ToolTipService.ToolTip="Abrir conexiones de red para configurar IPv4 manualmente" Padding="16,8"/>
                     </StackPanel>
                     <TextBlock x:Name="ApplyDnsResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 
                     <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
                     <Button x:Name="FlushDnsButton" Content="Vaciar caché DNS" Click="FlushDnsButton_Click" HorizontalAlignment="Left"
-                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
+                            Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                     <TextBlock x:Name="FlushDnsResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 
             <!-- ====== SECCIÓN 2: TEST DE DNS (DNS Jumper) ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <SymbolIcon Symbol="Setting" Foreground="{StaticResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
+                <SymbolIcon Symbol="Setting" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock Text="Test de DNS" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <Button x:Name="RunDnsTestButton" Content="Ejecutar test de DNS" Click="RunDnsTestButton_Click" HorizontalAlignment="Left"
-                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
+                            Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                     <StackPanel Spacing="2">
                         <Button x:Name="ApplyFastestDnsButton" Content="Probar y aplicar el más rápido" Click="ApplyFastestDnsButton_Click" HorizontalAlignment="Left"
                                 CornerRadius="6" Padding="16,8"/>
@@ -62,7 +62,7 @@
                         <StackPanel>
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Padding="12,8,8,8">
                                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                    <FontIcon Glyph="&#xE9D2;" FontSize="14" Foreground="{StaticResource AccentBrush}"/>
+                                    <FontIcon Glyph="&#xE9D2;" FontSize="14" Foreground="{ThemeResource AccentBrush}"/>
                                     <TextBlock x:Name="DnsTestStatusText" Text="Resultados del test" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                                 <Button Grid.Column="1" x:Name="CloseDnsResultsButton" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" Click="CloseDnsResultsButton_Click" Width="28" Height="28" Padding="0" FontSize="12" CornerRadius="4" ToolTipService.ToolTip="Cerrar"/>
@@ -82,8 +82,8 @@
 
             <!-- ====== SECCIÓN 5: PACKET LOSS TEST ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <SymbolIcon Symbol="Repair" Foreground="{StaticResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
-                <TextBlock Text="Packet Loss Test" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+                <SymbolIcon Symbol="Repair" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
+                <TextBlock x:Name="PacketLossTitleText" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
@@ -119,7 +119,7 @@
                     </Grid>
 
                     <Button x:Name="PacketLossStartButton" Content="Iniciar test" Click="PacketLossStartButton_Click" HorizontalAlignment="Center" MinWidth="160"
-                            Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
+                            Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                     <TextBlock x:Name="PacketLossStatusText" Text="" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" HorizontalAlignment="Center"/>
 
                     <!-- Resultados finales -->
@@ -155,9 +155,19 @@
 
             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
 
-            <!-- ====== SECCIÓN 6: ADAPTADORES (al final) ====== -->
+            <!-- ====== SECCIÓN 6: TCP AVANZADO ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <FontIcon Glyph="&#xE839;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
+                <SymbolIcon Symbol="Globe" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
+                <TextBlock Text="TCP / Red avanzado" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel x:Name="TcpAdvancedPanel" Spacing="12"/>
+
+            <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
+
+            <!-- ====== SECCIÓN 7: ADAPTADORES (al final; el optimizador WLAN vive
+                  inline en la card del adaptador Wi-Fi) ====== -->
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
+                <FontIcon Glyph="&#xE839;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Adaptadores" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <StackPanel x:Name="AdaptersPanel" Spacing="8"/>

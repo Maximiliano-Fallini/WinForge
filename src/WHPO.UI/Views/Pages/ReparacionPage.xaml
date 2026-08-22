@@ -7,11 +7,18 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
         <StackPanel Spacing="16" Margin="24">
 
-            <!-- Panel de notificaciones -->
-            <StackPanel x:Name="NotificationPanel" Spacing="8"/>
+            <!-- Panel de notificaciones: Collapsed cuando está vacío para no
+                 empujar la primera sección hacia abajo (el Spacing del padre
+                 no se aplica a hijos colapsados). -->
+            <StackPanel x:Name="NotificationPanel" Spacing="8" Visibility="Collapsed"/>
 
-            <!-- Lista de herramientas de reparación -->
-            <StackPanel x:Name="ToolsPanel" Spacing="12"/>
+            <!-- Lista de herramientas de reparación (2 columnas) -->
+            <Grid x:Name="ToolsPanel" ColumnSpacing="12" RowSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+            </Grid>
 
             <!-- Consola en vivo para herramientas que transmiten su progreso (ej: Reparar Windows Store) -->
             <Border x:Name="ConsolePanel" CornerRadius="10" Padding="12,10"

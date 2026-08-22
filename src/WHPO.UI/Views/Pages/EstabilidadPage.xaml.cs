@@ -38,19 +38,18 @@ public sealed partial class EstabilidadPage : Page
     private System.Diagnostics.PerformanceCounter? _cpuUsageCounter;
     private DispatcherQueueTimer? _countdownTimer;
 
-    // ---- Paleta (misma que la pestaña Núcleos) ----
-    private static readonly Color CGreen = Color.FromArgb(255, 0x4C, 0xC2, 0x57);
-    private static readonly Color CYellow = Color.FromArgb(255, 0xFF, 0xC9, 0x3C);
-    private static readonly Color CRed = Color.FromArgb(255, 0xF0, 0x61, 0x6D);
-    private static readonly SolidColorBrush BGreen = new(CGreen);
-    private static readonly SolidColorBrush BYellow = new(CYellow);
-    private static readonly SolidColorBrush BRed = new(CRed);
-    private static readonly SolidColorBrush BGrid = new(Color.FromArgb(255, 0x20, 0x2B, 0x39));
-    private static readonly SolidColorBrush BTimeLabel = new(Color.FromArgb(255, 0x8A, 0x94, 0xA6));
-    private static readonly SolidColorBrush BCrosshair = new(Color.FromArgb(255, 0x4A, 0x56, 0x66));
-    private static readonly SolidColorBrush BHoverBadgeBg = new(Color.FromArgb(255, 0x1C, 0x27, 0x35));
-    private static readonly SolidColorBrush BHoverBadgeBorder = new(Color.FromArgb(255, 0x3A, 0x4A, 0x5E));
-    private static readonly SolidColorBrush BHoverText = new(Color.FromArgb(255, 0xF2, 0xF4, 0xF8));
+    // ---- Paleta (misma que la pestaña Núcleos): colores desde los recursos de tema ----
+    private static SolidColorBrush ThemeBrush(string key) => ThemeBrushes.Get(key);
+
+    private static SolidColorBrush BGreen => ThemeBrush("MetricTempBrush");
+    private static SolidColorBrush BYellow => ThemeBrush("MetricPowerBrush");
+    private static SolidColorBrush BRed => ThemeBrush("ErrorBrush");
+    private static SolidColorBrush BGrid => ThemeBrush("ChartGridBrush");
+    private static SolidColorBrush BTimeLabel => ThemeBrush("ChartAxisTextBrush");
+    private static SolidColorBrush BCrosshair => ThemeBrush("ChartCrosshairBrush");
+    private static SolidColorBrush BHoverBadgeBg => ThemeBrush("ChartHoverBadgeBgBrush");
+    private static SolidColorBrush BHoverBadgeBorder => ThemeBrush("ChartHoverBadgeBorderBrush");
+    private static SolidColorBrush BHoverText => ThemeBrush("ChartHoverTextBrush");
 
     // ---- Gráficos ----
     private MiniChart? _usageChart;
@@ -85,9 +84,17 @@ public sealed partial class EstabilidadPage : Page
         TempChartCheck.IsChecked = true;
         PowerChartCheck.IsChecked = true;
 
-        _usageChart = new MiniChart(UsagePlot, UsageHover, UsageYAxis, UsageScroll, UsageInner, Color.FromArgb(255, 0x4C, 0xC2, 0xC9), fixedMax: 100, unit: "%");
-        _tempChart = new MiniChart(TempPlot, TempHover, TempYAxis, TempScroll, TempInner, Color.FromArgb(255, 0x4C, 0xC2, 0x57), fixedMax: 100, unit: "°C");
-        _powerChart = new MiniChart(PowerPlot, PowerHover, PowerYAxis, PowerScroll, PowerInner, Color.FromArgb(255, 0xFF, 0xC9, 0x3C), fixedMax: 0, unit: "W");
+        _usageChart = new MiniChart(UsagePlot, UsageHover, UsageYAxis, UsageScroll, UsageInner, ThemeBrush("MetricUsageBrush").Color, fixedMax: 100, unit: "%");
+        _tempChart = new MiniChart(TempPlot, TempHover, TempYAxis, TempScroll, TempInner, ThemeBrush("MetricTempBrush").Color, fixedMax: 100, unit: "°C");
+        _powerChart = new MiniChart(PowerPlot, PowerHover, PowerYAxis, PowerScroll, PowerInner, ThemeBrush("MetricPowerBrush").Color, fixedMax: 0, unit: "W");
+
+        // Si el tema cambia con la pestaña abierta, recolorar las líneas de los gráficos.
+        ActualThemeChanged += (s, e) =>
+        {
+            _usageChart?.SetColor(ThemeBrush("MetricUsageBrush").Color);
+            _tempChart?.SetColor(ThemeBrush("MetricTempBrush").Color);
+            _powerChart?.SetColor(ThemeBrush("MetricPowerBrush").Color);
+        };
 
         RestoreRunningState();
         Subscribe();
@@ -176,13 +183,16 @@ public sealed partial class EstabilidadPage : Page
             var now = DateTime.Now;
             _usageChart?.AddSample(now, Math.Clamp(data.usage, 0, 100));
             if (data.temp > 0) _tempChart?.AddSample(now, Math.Min(data.temp, 100));
-            if (data.power > 0) _powerChart?.AddSample(now, data.power);
+            // Potencia: se dibuja siempre (0 W incluido, así la línea no queda cortada
+            // cuando el sensor lee 0 en reposo) y se acota a 1000 W: una lectura falsa
+            // no puede deformar la escala del gráfico.
+            _powerChart?.AddSample(now, Math.Clamp(data.power, 0, 1000));
 
             UsageValueText.Text = $"{data.usage:F0}%";
             TempValueText.Text = data.temp > 0 ? $"{data.temp:F0}°C" : "--°C";
             TempValueText.Foreground = data.temp >= 90 ? BRed : data.temp >= 85 ? BYellow : BGreen;
             PowerValueText.Text = data.power > 0 ? $"{data.power:F0} W" : "-- W";
-            LiveValuesText.Text = $"Uso {data.usage:F0}% · {data.temp:F0}°C · {data.power:F0} W · {data.freq:F0} MHz";
+            LiveValuesText.Text = I18n.T("Uso {0}% · {1}°C · {2} W · {3} MHz", $"{data.usage:F0}", $"{data.temp:F0}", $"{data.power:F0}", $"{data.freq:F0}");
 
             if (_running)
             {
@@ -388,7 +398,8 @@ public sealed partial class EstabilidadPage : Page
 
             if (result.Completed)
             {
-                Feedback.Success(TestStatusText, $"Test completado · uso máx {result.MaxUsagePercent:F0}% · temp máx {result.MaxTempCelsius:F0}°C · potencia máx {result.MaxPowerWatts:F0} W");
+                Feedback.Success(TestStatusText, I18n.T("Test completado · uso máx {0}% · temp máx {1}°C · potencia máx {2} W",
+                    $"{result.MaxUsagePercent:F0}", $"{result.MaxTempCelsius:F0}", $"{result.MaxPowerWatts:F0}"));
             }
             else
             {
@@ -426,8 +437,8 @@ public sealed partial class EstabilidadPage : Page
         private readonly Canvas _yAxis;
         private readonly ScrollViewer _scroll;
         private readonly Grid _inner;
-        private readonly Color _color;
-        private readonly SolidColorBrush _brush;
+        private Color _color;
+        private SolidColorBrush _brush;
         private readonly double _fixedMax;             // 0 = escala automática
         private readonly string _unit;
 
@@ -463,6 +474,20 @@ public sealed partial class EstabilidadPage : Page
                 if (_chartWidth < _scroll.ViewportWidth - 1) Redraw();
                 if (_atRightEdge) ScrollToLatest();
             };
+
+            // Dibujar grilla + eje desde el arranque: si el sensor no reporta (0 W)
+            // el gráfico muestra el fondo listo en vez de un rectángulo vacío.
+            Redraw();
+        }
+
+        /// <summary>
+        /// Cambia el color de la línea (al cambiar el tema de la app).
+        /// </summary>
+        public void SetColor(Color color)
+        {
+            _color = color;
+            _brush = new SolidColorBrush(color);
+            Redraw();
         }
 
         public void Clear()
@@ -478,6 +503,9 @@ public sealed partial class EstabilidadPage : Page
             _hover.Width = _chartWidth;
             _inner.Width = _chartWidth;
             _hoverActive = false;
+            // Redibujar ya (con grilla/eje) en vez de dejar la card en blanco hasta
+            // la primera muestra válida.
+            Redraw();
         }
 
         public void AddSample(DateTime time, double value)
@@ -508,21 +536,23 @@ public sealed partial class EstabilidadPage : Page
 
         private void Redraw()
         {
-            double maxVal = _history.Count > 0 ? _history.Max(h => h.Value) : 0;
             if (_fixedMax > 0)
             {
                 _yMax = _fixedMax;
             }
             else
             {
-                // Escala automática con paso de 25 (0/25/50/75...), calculada sobre
-                // una ventana reciente (~2 min) y no sobre todo el historial: así un
-                // pico transitorio del sensor (o del consumo) no deforma el eje
-                // durante todo el gráfico y la escala vuelve sola a la normalidad.
+                // Escala automática con paso de 25 (0/25/50/75...), calculada SOLO
+                // sobre una ventana reciente (~2 min): un pico transitorio del sensor
+                // deforma el eje como mucho 2 minutos y la escala vuelve sola. Antes
+                // se sembraba maxVal con el máximo de TODO el historial, así una sola
+                // lectura falsa dejaba la escala alta para siempre y la línea quedaba
+                // aplastada contra el fondo.
                 int windowStart = Math.Max(0, _history.Count - 120);
+                double windowMax = 0;
                 for (int i = windowStart; i < _history.Count; i++)
-                    maxVal = Math.Max(maxVal, _history[i].Value);
-                _yMax = Math.Max(25, Math.Ceiling((maxVal + 10) / 25.0) * 25.0);
+                    windowMax = Math.Max(windowMax, _history[i].Value);
+                _yMax = Math.Max(25, Math.Ceiling((windowMax + 10) / 25.0) * 25.0);
             }
 
             double viewport = _scroll.ViewportWidth > 10 ? _scroll.ViewportWidth : 600;
@@ -662,7 +692,7 @@ public sealed partial class EstabilidadPage : Page
             {
                 Width = 9, Height = 9,
                 Fill = _brush,
-                Stroke = new SolidColorBrush(Color.FromArgb(255, 0x0D, 0x14, 0x1E)),
+                Stroke = ThemeBrushes.Get("ChartBackgroundBrush"),
                 StrokeThickness = 2
             };
             Canvas.SetLeft(dot, x - 4.5);

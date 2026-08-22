@@ -8,11 +8,10 @@
         <StackPanel Spacing="16" Margin="24">
 
             <!-- ====== INTERVALO POR CLICK ====== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE823;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE823;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Intervalo por click" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                     <TextBlock Text="Tiempo entre cada clic. Combiná horas, minutos, segundos y milisegundos."
@@ -40,11 +39,10 @@
             </Border>
 
             <!-- ====== OPCIONES ====== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE7E8;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE7E8;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Opciones" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
 
@@ -60,7 +58,7 @@
 
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <StackPanel Spacing="2">
-                            <TextBlock Text="Corner stop" FontSize="14" FontWeight="SemiBold"/>
+                            <TextBlock Text="Parada en esquina" FontSize="14" FontWeight="SemiBold"/>
                             <TextBlock Text="Detiene el autoclicker si movés el mouse hasta el borde de la pantalla."
                                        FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
@@ -70,11 +68,10 @@
             </Border>
 
             <!-- ====== LIMITE ====== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="16">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE8EC;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE8EC;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Límite" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
 
@@ -127,11 +124,10 @@
             </Border>
 
             <!-- ====== POSICION DEL CURSOR ====== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE96A;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE96A;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Posición del cursor" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                     <TextBlock Text="Coordenadas de pantalla (X, Y) donde se hará el clic. Dejá vacío para usar la posición actual del cursor."
@@ -148,11 +144,10 @@
             </Border>
 
             <!-- ====== HOTKEY ====== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE770;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE770;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Hotkey global" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                     <TextBlock Text="Inicia o detiene el autoclicker desde cualquier aplicación. Hacé clic en el campo y presioná la tecla que quieras usar."
@@ -160,7 +155,7 @@
 
                     <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
                         <Button x:Name="StartStopButton" Content="Iniciar (F6)" Click="StartStopButton_Click" MinWidth="160"
-                                Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}"
+                                Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}"
                                 FontWeight="SemiBold" CornerRadius="6" Padding="16,10"/>
                         <TextBox Grid.Column="1" x:Name="HotkeyBox" PlaceholderText="Hacé clic acá y presioná una tecla..."
                                  VerticalAlignment="Center" KeyDown="HotkeyBox_KeyDown" GotFocus="HotkeyBox_GotFocus" LostFocus="HotkeyBox_LostFocus"

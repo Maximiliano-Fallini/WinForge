@@ -18,70 +18,69 @@ public sealed partial class OptimizacionesPage : Page
     private readonly ITweakService _tweakService;
     private bool _dataLoaded;
 
-    // Texto claro fijo para las cards oscuras creadas en código: se mantienen oscuras en
-    // AMBOS temas (paneles oscuros), por eso su texto es claro explícito y siempre legible.
-    private static readonly SolidColorBrush LightTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
-    private static readonly SolidColorBrush CardBrush = new(Windows.UI.Color.FromArgb(255, 0x26, 0x2A, 0x31));
-    private static readonly SolidColorBrush CardHoverBrush = new(Windows.UI.Color.FromArgb(255, 0x2E, 0x33, 0x3B));
-    private static readonly SolidColorBrush CardSelectedBrush = new(Windows.UI.Color.FromArgb(255, 0x2F, 0x35, 0x41));
-    private static readonly SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xC2, 0xFF));
-    private static readonly SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xAF, 0x50));
-    private static readonly SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07));
+    // Pinceles desde los recursos de tema de la app (claro/oscuro): las cards creadas en
+    // código acompañan al tema igual que las del XAML. Se resuelven con el tema EFECTIVO
+    // (ThemeBrushes), no con el del sistema.
+    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static SolidColorBrush CardHoverBrush => ThemeBrushes.Get("CardHoverBrush");
+    private static SolidColorBrush CardSelectedBrush => ThemeBrushes.Get("CardSelectedBrush");
+    private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    private static SolidColorBrush SuccessBrush => (SolidColorBrush)App.Current.Resources["SuccessBrush"];
+    private static SolidColorBrush WarningBrush => (SolidColorBrush)App.Current.Resources["WarningBrush"];
+    private static SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
     private static readonly SolidColorBrush ErrorBrush = new(Windows.UI.Color.FromArgb(255, 0xF0, 0x61, 0x6D));
-    private static readonly SolidColorBrush MutedBrush = new(Windows.UI.Color.FromArgb(255, 0x9A, 0xA0, 0xA6));
     private static readonly SolidColorBrush TransparentBrush = new(Windows.UI.Color.FromArgb(0, 0, 0, 0));
 
     private readonly Dictionary<string, CheckBox> _tweakChecks = new();
     private readonly Dictionary<string, Border> _tweakBadges = new();
+    private readonly Dictionary<string, Border> _tweakCards = new();
+    // Títulos de las cards: se actualizan según el estado de instalación de la app
+    // (p. ej. "O&O ShutUp10++ - Ejecutar" → "- Instalar" si no está instalada).
+    private readonly Dictionary<string, TextBlock> _tweakTitles = new();
     private List<TweakDefinition>? _allTweaks;
 
     // ====== PRECONFIGURACIONES ======
-
+    // Espejo de los presets de winutil (Chris Titus Tech): Minimal → Mínimo,
+    // Standard → Balanceado, Advanced → Gaming. Se omiten los tweaks que ya viven
+    // en otra pestaña de la app (Herramientas tiene "Limpieza de disco", que cubre
+    // DiskCleanup + DeleteTempFiles de winutil).
     private static readonly string[] PresetMinimo =
     [
-        "Historial de actividad - Desactivar",
-        "Resultados recomendados de Microsoft Store - Desactivar",
-        "Seguimiento de ubicación - Desactivar",
         "ConsumerFeatures - Desactivar",
-        "Telemetría - Desactivar",
-        "Optimización de entrega - Desactivar",
         "Tabla binaria de plataforma Windows (WPBT) - Desactivar",
-        "Prevenir apps complementarias de dispositivos",
-        "Punto de restauración - Crear",
-        "Limpieza de disco - Ejecutar",
-        "Archivos temporales - Eliminar",
-        "Finalizar tarea con clic derecho - Activar"
+        "Servicios - Configurar en Manual",
+        "Telemetría - Desactivar"
     ];
 
     private static readonly string[] PresetBalanceado =
     [
-        .. PresetMinimo,
-        "Hibernación - Desactivar",
-        "Widgets - Quitar",
-        "Servicios - Configurar en Manual",
+        "Historial de actividad - Desactivar",
+        "ConsumerFeatures - Desactivar",
         "Detección automática de carpetas en Explorador - Desactivar",
-        "Diseño anterior del menú Inicio - Activar"
+        "Tabla binaria de plataforma Windows (WPBT) - Desactivar",
+        "Seguimiento de ubicación - Desactivar",
+        "Servicios - Configurar en Manual",
+        "Telemetría - Desactivar",
+        "Optimización de entrega - Desactivar",
+        "Finalizar tarea con clic derecho - Activar",
+        "Punto de restauración - Crear"
     ];
 
     private static readonly string[] PresetGaming =
     [
-        "Telemetría - Desactivar",
-        "Historial de actividad - Desactivar",
-        "Optimización de entrega - Desactivar",
-        "ConsumerFeatures - Desactivar",
-        "Efectos visuales - Configurar en Máximo rendimiento",
-        "Optimizaciones de pantalla completa - Desactivar",
-        "Apps en segundo plano - Desactivar",
-        "Teredo - Desactivar",
-        "IPv6 - Configurar IPv4 como preferido",
-        "Storage Sense - Desactivar",
-        "Notificaciones del sistema y calendario - Desactivar",
-        "Widgets - Quitar",
-        "Hibernación - Desactivar",
-        "Servicios - Configurar en Manual",
-        "Detección automática de carpetas en Explorador - Desactivar",
         "Punto de restauración - Crear",
-        "Finalizar tarea con clic derecho - Activar"
+        "Historial de actividad - Desactivar",
+        "ConsumerFeatures - Desactivar",
+        "Detección automática de carpetas en Explorador - Desactivar",
+        "Tabla binaria de plataforma Windows (WPBT) - Desactivar",
+        "Seguimiento de ubicación - Desactivar",
+        "Servicios - Configurar en Manual",
+        "Telemetría - Desactivar",
+        "Optimización de entrega - Desactivar",
+        "Finalizar tarea con clic derecho - Activar",
+        "Resultados recomendados de Microsoft Store - Desactivar",
+        "Diseño anterior del menú Inicio - Activar",
+        "Menú contextual anterior - Activar"
     ];
 
     public OptimizacionesPage()
@@ -93,6 +92,22 @@ public sealed partial class OptimizacionesPage : Page
             _loggingService = App.Services.GetRequiredService<ILoggingService>();
             _tweakService = App.Services.GetRequiredService<ITweakService>();
             Loaded += OnLoaded;
+
+            // Al cambiar el idioma, reconstruir las cards (títulos, descripciones
+            // y badges se crean en código con I18n.T; el recorrido del árbol visual
+            // no los alcanza). La página vive con NavigationCacheMode, así que se
+            // suscribe una sola vez como el tema.
+            I18n.LanguageChanged += () =>
+            {
+                if (_dataLoaded) LoadTweaks();
+            };
+
+            // Al cambiar el tema, re-aplicar los colores a las cards EXISTENTES
+            // (no se reconstruyen: se perdería la selección del usuario).
+            ActualThemeChanged += (s, e) =>
+            {
+                if (_dataLoaded) ApplyThemeToCards();
+            };
         }
         catch (Exception ex)
         {
@@ -109,11 +124,31 @@ public sealed partial class OptimizacionesPage : Page
         {
             LoadTweaks();
             _dataLoaded = true;
+
+            // Actualizar el badge al instante cuando un tweak se aplica/revierte
+            // (el refresco por lote puede tardar o fallar con cachés intermedias).
+            // La página vive con NavigationCacheMode, así que se suscribe una vez.
+            _tweakService.TweakStateChanged += OnTweakStateChanged;
         }
         catch (Exception ex)
         {
             DebugText.Text = $"Error: {ex.Message}";
             try { _loggingService.LogError($"Error en OnLoaded OptimizacionesPage: {ex}", ex); } catch { }
+        }
+    }
+
+    private void OnTweakStateChanged(string tweakId, bool applied)
+    {
+        try
+        {
+            var def = _allTweaks?.FirstOrDefault(t => t.Id == tweakId);
+            if (def == null) return;
+            if (_tweakBadges.TryGetValue(def.Name, out var badge))
+                badge.Visibility = applied ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            try { _loggingService.LogError("Error actualizando badge por TweakStateChanged", ex); } catch { }
         }
     }
 
@@ -123,6 +158,8 @@ public sealed partial class OptimizacionesPage : Page
         PresetsPanel.Children.Clear();
         _tweakChecks.Clear();
         _tweakBadges.Clear();
+        _tweakCards.Clear();
+        _tweakTitles.Clear();
 
         // Cachear definiciones UNA sola vez (evita GetAllTweaks() por cada tarjeta).
         _allTweaks = _tweakService.GetAllTweaks();
@@ -132,11 +169,19 @@ public sealed partial class OptimizacionesPage : Page
         var essential = GetEssentialTweaks();
         var advanced = GetAdvancedTweaks();
 
-        // Secciones abiertas al entrar, SIN caja contenedora (header plano + tarjetas sueltas).
-        TweaksPanel.Children.Add(BuildSection("Essential Tweaks", "Tweaks recomendados para todos los sistemas", essential));
-        TweaksPanel.Children.Add(BuildSection("Advanced Tweaks", "Requieren precaución, verificar compatibilidad", advanced));
+        // Dos columnas: esenciales a la izquierda, avanzados a la derecha.
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        UpdateSelectionCount();
+        var essentialSection = BuildSection("Essential Tweaks", I18n.T("Tweaks recomendados para todos los sistemas"), essential);
+        var advancedSection = BuildSection("Advanced Tweaks", I18n.T("Requieren precaución, verificar compatibilidad"), advanced);
+
+        Grid.SetColumn(essentialSection, 0);
+        Grid.SetColumn(advancedSection, 1);
+        grid.Children.Add(essentialSection);
+        grid.Children.Add(advancedSection);
+        TweaksPanel.Children.Add(grid);
 
         // Verificar estados aplicados en segundo plano para no bloquear la UI.
         _ = RefreshBadgesAsync();
@@ -148,57 +193,71 @@ public sealed partial class OptimizacionesPage : Page
 
     private void BuildPresets()
     {
-        var presets = new (string Name, string Subtitle, string[] Tweaks)[]
+        // Glifos monocromos MDL2 con el acento de la app (mismo estilo que el resto de la app).
+        var presets = new (string Glyph, string Name, string Subtitle, string[] Tweaks)[]
         {
-            ("🔒 Mínimo", "Privacidad y limpieza básica", PresetMinimo),
-            ("⚖️ Balanceado", "Mínimo + comodidad diaria", PresetBalanceado),
-            ("🎮 Gaming", "Máximo rendimiento para juegos", PresetGaming)
+            ("\uE72E", "Mínimo", "Privacidad esencial", PresetMinimo),          // Lock
+            ("\uE722", "Balanceado", "Recomendado para todos los sistemas", PresetBalanceado), // SpeedMedium
+            ("\uE7FC", "Gaming", "Perfil agresivo de máximo rendimiento", PresetGaming)        // Game
         };
 
-        foreach (var (name, subtitle, tweaks) in presets)
+        foreach (var (glyph, name, subtitle, tweaks) in presets)
         {
-            var stack = new StackPanel { Spacing = 2, HorizontalAlignment = HorizontalAlignment.Left };
-            stack.Children.Add(new TextBlock
+            // Glifo monocromo con el acento de la app + título/subtítulo con fuente normal.
+            var icon = new FontIcon
             {
-                Text = name,
+                Glyph = glyph,
+                FontSize = 20,
+                Foreground = AccentBrush,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var textPanel = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            textPanel.Children.Add(new TextBlock
+            {
+                Text = I18n.T(name),
                 FontSize = 15,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                FontFamily = new FontFamily("Segoe UI Emoji"), // emojis de los presets sin cortarse
-                Foreground = LightTextBrush
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
             });
-            stack.Children.Add(new TextBlock
+            textPanel.Children.Add(new TextBlock
             {
-                Text = $"{tweaks.Length} tweaks · {subtitle}",
+                Text = I18n.T("{0} tweaks · {1}", tweaks.Length, I18n.T(subtitle)),
                 FontSize = 11,
                 Foreground = MutedBrush,
                 TextWrapping = TextWrapping.Wrap
             });
 
+            var content = new Grid { ColumnSpacing = 12 };
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            content.Children.Add(icon);
+            Grid.SetColumn(textPanel, 1);
+            content.Children.Add(textPanel);
+
             var button = new Button
             {
-                Content = stack,
+                // Sin reborde. BorderThickness 0 explícito: si se omite, el template
+                // por defecto del Button dibuja su propio borde (ButtonBorderBrush).
+                Content = content,
                 Background = CardBrush,
-                BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x2A, 0x2F, 0x38)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12, 10, 12, 10),
-                MinHeight = 54,
-                HorizontalAlignment = HorizontalAlignment.Stretch
+                BorderBrush = TransparentBrush,
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(14, 12, 14, 12),
+                Width = 200,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                HorizontalAlignment = HorizontalAlignment.Center
             };
-            button.Click += (s, e) => ApplyPreset(tweaks, name);
+            button.Click += (s, e) => ApplyPreset(tweaks);
             PresetsPanel.Children.Add(button);
         }
     }
 
-    private void ApplyPreset(string[] tweaks, string presetName)
+    private void ApplyPreset(string[] tweaks)
     {
         foreach (var (tweakName, check) in _tweakChecks)
         {
             check.IsChecked = tweaks.Contains(tweakName);
         }
-        UpdateSelectionCount();
-        var count = _tweakChecks.Count(kv => kv.Value.IsChecked == true);
-        ShowNotification($"Perfil {presetName}: {count} tweaks seleccionados. Revisá la selección y aplicá en lote.", "info");
     }
 
     // ====== SECCIONES Y TARJETAS ======
@@ -225,7 +284,7 @@ public sealed partial class OptimizacionesPage : Page
         var headerStack = new StackPanel { Spacing = 2 };
         var titleBlock = new TextBlock
         {
-            Text = isCaution ? "⚠️ " + title : title,
+            Text = I18n.T(title),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             FontSize = 18
         };
@@ -242,6 +301,17 @@ public sealed partial class OptimizacionesPage : Page
 
         var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         headerRow.Children.Add(chevron);
+        // Ícono de advertencia monocromo (E7BA) en lugar del emoji ⚠️ a color.
+        if (isCaution)
+        {
+            headerRow.Children.Add(new FontIcon
+            {
+                Glyph = "\uE7BA",
+                FontSize = 16,
+                Foreground = WarningBrush,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        }
         headerRow.Children.Add(headerStack);
 
         var header = new Button
@@ -300,21 +370,25 @@ public sealed partial class OptimizacionesPage : Page
         checkBox.Checked += (s, e) => OnSelectionChanged(tweak.Name, card, true);
         checkBox.Unchecked += (s, e) => OnSelectionChanged(tweak.Name, card, false);
         _tweakChecks[tweak.Name] = checkBox;
+        _tweakCards[tweak.Name] = card;
 
         // Contenido: título + botón de info + descripción
         var content = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
 
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        titleRow.Children.Add(new TextBlock
+        var titleBlock = new TextBlock
         {
             // Nombre completo (ej: "Microsoft OneDrive - Eliminar") para entender la acción a primera vista.
-            Text = tweak.Name,
+            // Sin Foreground explícito: hereda el color de texto del tema (claro/oscuro). Se actualiza
+            // en RefreshBadgesAsync según el estado de instalación ("- Ejecutar" / "- Instalar").
+            Text = I18n.T(tweak.Name),
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
             FontSize = 13.5,
             TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = LightTextBrush
-        });
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        _tweakTitles[tweak.Name] = titleBlock;
+        titleRow.Children.Add(titleBlock);
         titleRow.Children.Add(BuildInfoButton(tweak));
         content.Children.Add(titleRow);
 
@@ -360,21 +434,21 @@ public sealed partial class OptimizacionesPage : Page
         var toolTipContent = new StackPanel { Spacing = 6, MaxWidth = 420 };
         toolTipContent.Children.Add(new TextBlock
         {
-            Text = tweak.Name,
+            Text = I18n.T(tweak.Name),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             FontSize = 13,
             TextWrapping = TextWrapping.Wrap
         });
         toolTipContent.Children.Add(new TextBlock
         {
-            Text = tweak.Description,
+            Text = I18n.T(tweak.Description),
             FontSize = 12,
             Foreground = MutedBrush,
             TextWrapping = TextWrapping.Wrap
         });
         toolTipContent.Children.Add(new TextBlock
         {
-            Text = $"Compatibilidad: {tweak.Compatibility}",
+            Text = I18n.T("Compatibilidad: {0}", I18n.T(tweak.Compatibility)),
             FontSize = 11,
             Foreground = MutedBrush,
             TextWrapping = TextWrapping.Wrap
@@ -401,7 +475,7 @@ public sealed partial class OptimizacionesPage : Page
         };
         badge.Child = new TextBlock
         {
-            Text = "✓ Aplicado",
+            Text = I18n.T("✓ Aplicado"),
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = SuccessBrush
@@ -425,28 +499,30 @@ public sealed partial class OptimizacionesPage : Page
             card.BorderBrush = TransparentBrush;
             card.BorderThickness = new Thickness(1);
         }
-        UpdateSelectionCount();
+    }
+
+    /// <summary>
+    /// Re-aplica los colores de tema a las cards de tweaks y a los botones de
+    /// preconfiguración sin reconstruirlas (preserva la selección del usuario).
+    /// </summary>
+    private void ApplyThemeToCards()
+    {
+        foreach (var (tweakName, card) in _tweakCards)
+        {
+            var selected = _tweakChecks.TryGetValue(tweakName, out var cb) && cb.IsChecked == true;
+            card.Background = selected ? CardSelectedBrush : CardBrush;
+            card.BorderBrush = selected ? AccentBrush : TransparentBrush;
+            card.BorderThickness = new Thickness(selected ? 1.5 : 1);
+        }
+
+        foreach (var child in PresetsPanel.Children)
+        {
+            if (child is Button button)
+                button.Background = CardBrush;
+        }
     }
 
     // ====== SELECCIÓN / LOTE ======
-
-    private void UpdateSelectionCount()
-    {
-        if (SelectionCountText == null) return;
-        var count = _tweakChecks.Count(kv => kv.Value.IsChecked == true);
-        SelectionCountText.Text = count == 0
-            ? "Ningún tweak seleccionado"
-            : $"{count} tweak{(count == 1 ? "" : "s")} seleccionado{(count == 1 ? "" : "s")}";
-    }
-
-    private void ClearSelectionButton_Click(object sender, RoutedEventArgs e)
-    {
-        foreach (var check in _tweakChecks.Values)
-        {
-            check.IsChecked = false;
-        }
-        UpdateSelectionCount();
-    }
 
     // ====== CONSOLA (estado en vivo estilo winutil) ======
 
@@ -536,7 +612,7 @@ public sealed partial class OptimizacionesPage : Page
         var selected = _tweakChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
         if (selected.Count == 0)
         {
-            ShowNotification("No hay tweaks seleccionados. Marcá los que quieras o usá una preconfiguración.", "warning");
+            ShowNotification(I18n.T("No hay tweaks seleccionados. Marcá los que quieras o usá una preconfiguración."), "warning");
             return;
         }
 
@@ -544,9 +620,9 @@ public sealed partial class OptimizacionesPage : Page
 
         var dialog = new ContentDialog
         {
-            Title = apply ? $"Aplicar {selected.Count} tweaks" : $"Revertir {selected.Count} tweaks",
-            PrimaryButtonText = apply ? "Aplicar" : "Revertir",
-            CloseButtonText = "Cancelar",
+            Title = apply ? I18n.T("Aplicar {0} tweaks", selected.Count) : I18n.T("Revertir {0} tweaks", selected.Count),
+            PrimaryButtonText = apply ? I18n.T("Aplicar") : I18n.T("Revertir"),
+            CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = XamlRoot,
             Content = BuildReviewPanel(selected, apply)
@@ -565,8 +641,8 @@ public sealed partial class OptimizacionesPage : Page
         root.Children.Add(new TextBlock
         {
             Text = apply
-                ? $"Se van a aplicar {selected.Count} tweaks. Revisá la lista antes de continuar."
-                : $"Se van a revertir {selected.Count} tweaks. Revisá la lista antes de continuar.",
+                ? I18n.T("Se van a aplicar {0} tweaks. Revisá la lista antes de continuar.", selected.Count)
+                : I18n.T("Se van a revertir {0} tweaks. Revisá la lista antes de continuar.", selected.Count),
             FontSize = 13,
             Foreground = MutedBrush,
             TextWrapping = TextWrapping.Wrap
@@ -590,25 +666,24 @@ public sealed partial class OptimizacionesPage : Page
             var col = new StackPanel { Spacing = 2 };
             col.Children.Add(new TextBlock
             {
-                Text = name,
+                Text = I18n.T(name),
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 FontSize = 13,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = LightTextBrush
+                TextWrapping = TextWrapping.Wrap
             });
 
             if (tweak != null)
             {
                 col.Children.Add(new TextBlock
                 {
-                    Text = tweak.Description,
+                    Text = I18n.T(tweak.Description),
                     FontSize = 12,
                     Foreground = MutedBrush,
                     TextWrapping = TextWrapping.Wrap
                 });
 
-                var meta = tweak.Compatibility;
-                if (isApplied) meta += " · YA APLICADA";
+                var meta = I18n.T(tweak.Compatibility);
+                if (isApplied) meta += " · " + I18n.T("YA APLICADA");
                 col.Children.Add(new TextBlock
                 {
                     Text = meta,
@@ -638,7 +713,7 @@ public sealed partial class OptimizacionesPage : Page
         var selected = preselected ?? _tweakChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
         if (selected.Count == 0)
         {
-            ShowNotification("No hay tweaks seleccionados. Marcá los que quieras o usá una preconfiguración.", "warning");
+            ShowNotification(I18n.T("No hay tweaks seleccionados. Marcá los que quieras o usá una preconfiguración."), "warning");
             return;
         }
 
@@ -647,7 +722,7 @@ public sealed partial class OptimizacionesPage : Page
         var failures = new List<string>();
 
         var verb = apply ? "Aplicar" : "Revertir";
-        AppendConsole($"{verb} {selected.Count} tweaks seleccionados...", ConsoleStatus.Neutral);
+        AppendConsole(I18n.T("{0} {1} tweaks seleccionados...", I18n.T(verb), selected.Count), ConsoleStatus.Neutral);
 
         // Estilo cmd/winutil: reporta los comandos reales que ejecuta cada tweak.
         var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
@@ -670,17 +745,17 @@ public sealed partial class OptimizacionesPage : Page
                 if (apply && isApplied)
                 {
                     skipped++;
-                    AppendConsole($"'{name}' ya estaba aplicada", ConsoleStatus.Skipped);
+                    AppendConsole(I18n.T("'{0}' ya estaba aplicada", name), ConsoleStatus.Skipped);
                     continue;
                 }
                 if (!apply && !isApplied)
                 {
                     skipped++;
-                    AppendConsole($"'{name}' no estaba aplicada (nada que revertir)", ConsoleStatus.Skipped);
+                    AppendConsole(I18n.T("'{0}' no estaba aplicada (nada que revertir)", name), ConsoleStatus.Skipped);
                     continue;
                 }
 
-                AppendConsole($"{verb} '{name}'...", ConsoleStatus.Running);
+                AppendConsole(I18n.T("{0} '{1}'...", I18n.T(verb), name), ConsoleStatus.Running);
                 var result = apply
                     ? await _tweakService.ApplyTweakAsync(def.Id, progress)
                     : await _tweakService.RevertTweakAsync(def.Id, progress);
@@ -688,13 +763,13 @@ public sealed partial class OptimizacionesPage : Page
                 if (result.Success)
                 {
                     ok++;
-                    AppendConsole($"'{name}' {(apply ? "aplicada" : "revertida")}", ConsoleStatus.Applied);
+                    AppendConsole(I18n.T(apply ? "'{0}' aplicada" : "'{0}' revertida", name), ConsoleStatus.Applied);
                 }
                 else
                 {
                     failed++;
                     failures.Add($"{name}: {result.Message}");
-                    AppendConsole($"'{name}' ERROR: {result.Message}", ConsoleStatus.Error);
+                    AppendConsole(I18n.T("'{0}' ERROR: {1}", name, result.Message), ConsoleStatus.Error);
                 }
             }
 
@@ -704,7 +779,7 @@ public sealed partial class OptimizacionesPage : Page
         {
             failed++;
             failures.Add(ex.Message);
-            AppendConsole($"ERROR de lote: {ex.Message}", ConsoleStatus.Error);
+            AppendConsole(I18n.T("ERROR de lote: {0}", ex.Message), ConsoleStatus.Error);
             _loggingService.LogError("Error ejecutando lote de tweaks", ex);
         }
         finally
@@ -718,33 +793,34 @@ public sealed partial class OptimizacionesPage : Page
             _loggingService.LogWarning("Fallas en lote: " + string.Join(" | ", failures));
         }
 
-        var summary = $"{ok} {(apply ? "aplicadas" : "revertidas")}, {skipped} omitidas, {failed} con error.";
-        AppendConsole($"Resumen: {summary}", ConsoleStatus.Neutral);
-        ShowNotification($"Lote {(apply ? "aplicado" : "revertido")}: {summary}", failed > 0 ? "error" : "success");
+        var summary = I18n.T("{0} aplicadas, {1} omitidas, {2} con error.", ok, skipped, failed);
+        AppendConsole(I18n.T("Resumen: {0}", summary), ConsoleStatus.Neutral);
+        ShowNotification(I18n.T("Lote {0}: {1}", I18n.T(apply ? "aplicado" : "revertido"), summary), failed > 0 ? "error" : "success");
     }
 
     private void SetBatchBusy(bool busy)
     {
         ApplySelectedButton.IsEnabled = !busy;
         RevertSelectedButton.IsEnabled = !busy;
-        ClearSelectionButton.IsEnabled = !busy;
-        ApplySelectedButton.Content = busy ? "Aplicando..." : "Aplicar seleccionados";
-        RevertSelectedButton.Content = busy ? "Revirtiendo..." : "Revertir seleccionados";
+        ApplySelectedButton.Content = busy ? I18n.T("Aplicando...") : I18n.T("Aplicar seleccionados");
+        RevertSelectedButton.Content = busy ? I18n.T("Revirtiendo...") : I18n.T("Revertir seleccionados");
     }
 
     private async Task RefreshBadgesAsync()
     {
         // Verificar todos los estados en background para no congelar la UI al abrir la página.
-        Dictionary<string, bool> states;
+        Dictionary<string, (bool Applied, bool Installed)> states;
         try
         {
             states = await Task.Run(() =>
             {
-                var dict = new Dictionary<string, bool>();
+                var dict = new Dictionary<string, (bool, bool)>();
                 foreach (var (tweakName, _) in _tweakBadges)
                 {
                     var def = _allTweaks?.FirstOrDefault(t => t.Name == tweakName);
-                    dict[tweakName] = def != null && _tweakService.IsTweakApplied(def.Id);
+                    dict[tweakName] = def != null
+                        ? (_tweakService.IsTweakApplied(def.Id), _tweakService.IsTweakAppInstalled(def.Id))
+                        : (false, true);
                 }
                 return dict;
             });
@@ -755,10 +831,25 @@ public sealed partial class OptimizacionesPage : Page
             return;
         }
 
-        foreach (var (tweakName, applied) in states)
+        foreach (var (tweakName, state) in states)
         {
             if (_tweakBadges.TryGetValue(tweakName, out var badge))
-                badge.Visibility = applied ? Visibility.Visible : Visibility.Collapsed;
+                badge.Visibility = state.Applied ? Visibility.Visible : Visibility.Collapsed;
+
+            // Título dinámico: si la app del tweak no está instalada y hay un nombre
+            // alternativo (p. ej. "O&O ShutUp10++ - Instalar" vs "- Ejecutar"), se muestra.
+            if (_tweakTitles.TryGetValue(tweakName, out var title))
+            {
+                var def = GetTweakDefinition(tweakName);
+                if (def != null)
+                {
+                    var display = !state.Installed && !string.IsNullOrEmpty(def.NameWhenNotInstalled)
+                        ? def.NameWhenNotInstalled!
+                        : def.Name;
+                    var translated = I18n.T(display);
+                    if (title.Text != translated) title.Text = translated;
+                }
+            }
         }
     }
 
@@ -772,7 +863,6 @@ public sealed partial class OptimizacionesPage : Page
         var list = new List<TweakInfo>();
         AddTweak(list, "Historial de actividad - Desactivar", "Borra documentos recientes, portapapeles e historial de ejecución.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         AddTweak(list, "Hibernación - Desactivar", "La hibernación está pensada para portátiles, ya que guarda la memoria antes de apagar el equipo. Realmente nunca debería usarse en escritorios.", "Compatible con Windows 10/11", true, "Essential Tweaks");
-        AddTweak(list, "Widgets - Quitar", "Elimina los molestos widgets en la parte inferior izquierda de la barra de tareas.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         AddTweak(list, "Diseño anterior del menú Inicio - Activar", "Restaura el diseño antiguo del menú Inicio anterior al despliegue gradual del nuevo en 25H2. En versiones nuevas de Windows no funcionará.", "Compatible con Windows 11 25H2", true, "Essential Tweaks");
         AddTweak(list, "Resultados recomendados de Microsoft Store - Desactivar", "No mostrará apps recomendadas de Microsoft Store al buscar en el menú Inicio.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         AddTweak(list, "Seguimiento de ubicación - Desactivar", "Desactiva el seguimiento de ubicación.", "Compatible con Windows 10/11", true, "Essential Tweaks");
@@ -785,8 +875,6 @@ public sealed partial class OptimizacionesPage : Page
         AddTweak(list, "Finalizar tarea con clic derecho - Activar", "Habilita la opción de finalizar tarea al hacer clic derecho en un programa de la barra de tareas.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         AddTweak(list, "Tabla binaria de plataforma Windows (WPBT) - Desactivar", "WPBT permite que el fabricante ejecute programas al iniciar, como software antirrobo o instalaciones forzadas sin consentimiento. Riesgo de seguridad.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         AddTweak(list, "Prevenir apps complementarias de dispositivos", "Evita que se instale software adicional al conectar dispositivos (ej. anuncios al conectar un monitor). Riesgo de seguridad.", "Compatible con Windows 10/11", true, "Essential Tweaks");
-        AddTweak(list, "Limpieza de disco - Ejecutar", "Ejecuta la limpieza del disco C: y elimina actualizaciones de Windows antiguas.", "Compatible con Windows 10/11", true, "Essential Tweaks");
-        AddTweak(list, "Archivos temporales - Eliminar", "Borra las carpetas TEMP.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         AddTweak(list, "Detección automática de carpetas en Explorador - Desactivar", "El Explorador intenta adivinar el tipo de carpeta según su contenido, ralentizando la navegación. ¡ADVERTENCIA! Desactivará la agrupación del Explorador.", "Compatible con Windows 10/11", true, "Essential Tweaks");
         return list;
     }
@@ -794,26 +882,21 @@ public sealed partial class OptimizacionesPage : Page
     private List<TweakInfo> GetAdvancedTweaks()
     {
         var list = new List<TweakInfo>();
-        AddTweak(list, "Brave Browser - Desbloat", "Desactiva varias molestias como Brave Rewards, Leo AI, Crypto Wallet y VPN.", "Requiere Brave Browser instalado", true, "Advanced Tweaks");
         AddTweak(list, "Advertencias de archivos RDP sin firmar - Desactivar", "Desactiva las advertencias al lanzar archivos RDP sin firmar introducidas en las últimas actualizaciones.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
-        AddTweak(list, "Microsoft Edge - Desbloat", "Desactiva varias opciones de telemetría, popups y otras molestias en Edge.", "Requiere Microsoft Edge instalado", true, "Advanced Tweaks");
-        AddTweak(list, "Microsoft Edge - Eliminar", "Desinstala Microsoft Edge creando un archivo dummy MicrosoftEdge.exe que engaña al desinstalador oficial para una eliminación a nivel de sistema.", "Requiere precaución", true, "Advanced Tweaks");
         AddTweak(list, "Fecha y hora - Configurar en UTC", "Esencial para equipos con dual-boot. Corrige la sincronización horaria con sistemas Linux.", "Solo dual-boot con Linux", true, "Advanced Tweaks");
-        AddTweak(list, "Microsoft OneDrive - Eliminar", "Deniega permisos para eliminar archivos de usuario de OneDrive, usa su desinstalador para quitarlo y restaura los permisos.", "Requiere precaución", true, "Advanced Tweaks");
         AddTweak(list, "Inicio y Galería del Explorador - Desactivar", "Elimina Inicio y Galería del Explorador y establece Este PC como predeterminado.", "Compatible con Windows 11", true, "Advanced Tweaks");
         AddTweak(list, "Efectos visuales - Configurar en Máximo rendimiento", "Configura las preferencias del sistema a rendimiento. Puedes hacerlo manualmente con sysdm.cpl.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
         AddTweak(list, "Almacenamiento reservado - Desactivar", "Desactiva el almacenamiento reservado de Windows (7-10 GB para actualizaciones). Solo recomendado en discos pequeños. Re-activar antes de grandes actualizaciones.", "Solo en discos pequeños", true, "Advanced Tweaks");
         AddTweak(list, "Storage Sense - Desactivar", "Storage Sense elimina archivos temporales automáticamente.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
-        AddTweak(list, "Windows AI - Desactivar y eliminar", "Elimina y desactiva todas las funciones y paquetes de IA.", "Compatible con Windows 11", true, "Advanced Tweaks");
-        AddTweak(list, "Instalación automática de software Razer - Desactivar", "Bloquea TODAS las instalaciones de software Razer. El hardware funciona bien sin software.", "Solo hardware Razer", true, "Advanced Tweaks");
+
         AddTweak(list, "Notificaciones del sistema y calendario - Desactivar", "Desactiva todas las notificaciones INCLUYENDO el calendario.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
-        AddTweak(list, "Lista de bloqueo de URL de Adobe - Activar", "Reduce interrupciones bloqueando selectivamente conexiones a servidores de activación y telemetría de Adobe.", "Requiere software Adobe", true, "Advanced Tweaks");
         AddTweak(list, "Menú contextual anterior - Activar", "Restaura el menú contextual clásico del Explorador, reemplazando la versión simplificada de Windows 11.", "Compatible con Windows 11", true, "Advanced Tweaks");
         AddTweak(list, "IPv6 - Configurar IPv4 como preferido", "Configurar la preferencia IPv4 puede tener beneficios de latencia y seguridad en redes privadas sin IPv6.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
         AddTweak(list, "Teredo - Desactivar", "Teredo es un túnel IPv6 que puede causar latencia adicional, aunque puede causar problemas con algunos juegos.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
         AddTweak(list, "IPv6 - Desactivar", "Desactiva IPv6.", "Requiere precaución", true, "Advanced Tweaks");
         AddTweak(list, "Apps en segundo plano - Desactivar", "Desactiva todas las apps de Microsoft Store en segundo plano, lo que debe hacerse individualmente desde Windows 11.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
         AddTweak(list, "Optimizaciones de pantalla completa - Desactivar", "Desactiva FSO en todas las aplicaciones. NOTA: Desactivará la gestión de color en pantalla completa exclusiva.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
+        AddTweak(list, "Barra de juegos (Game Bar) - Desactivar", "Desactiva la barra de juegos de Xbox (Win+G) y la grabación en segundo plano (Game DVR), que pueden robar rendimiento en juegos. Revertible desde la app.", "Compatible con Windows 10/11", true, "Advanced Tweaks");
         AddTweak(list, "O&O ShutUp10++ - Ejecutar", "Ejecuta O&O ShutUp10++ para aplicar su colección de tweaks de privacidad.", "Requiere descargar O&O ShutUp10++", true, "Advanced Tweaks");
         return list;
     }

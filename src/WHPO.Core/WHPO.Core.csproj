@@ -10,6 +10,8 @@
 
   <ItemGroup>
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.4" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.0.0" />

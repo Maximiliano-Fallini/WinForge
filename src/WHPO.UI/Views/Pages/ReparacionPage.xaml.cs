@@ -20,16 +20,15 @@ public sealed partial class ReparacionPage : Page
     private readonly IRepairService _repairService;
     private bool _dataLoaded;
 
-    // Las cards de herramientas se mantienen oscuras en ambos temas (paneles oscuros),
-    // por eso su título lleva texto claro explícito y siempre legible.
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush LightTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush = new(Windows.UI.Color.FromArgb(255, 0x26, 0x2A, 0x31));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 255, 193, 7));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush MutedBrush = new(Windows.UI.Color.FromArgb(255, 150, 150, 150));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xAF, 0x50));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush ErrorBrush = new(Windows.UI.Color.FromArgb(255, 0xF0, 0x61, 0x6D));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush AccentForegroundBrush = new(Windows.UI.Color.FromArgb(255, 16, 20, 24));
+    // Pinceles desde los recursos de tema de la app (claro/oscuro): las cards creadas
+    // en código acompañan al tema igual que las del XAML. Se resuelven con el tema
+    // EFECTIVO (ThemeBrushes), no con el del sistema.
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush SuccessBrush => (Microsoft.UI.Xaml.Media.SolidColorBrush)App.Current.Resources["SuccessBrush"];
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush ErrorBrush => (Microsoft.UI.Xaml.Media.SolidColorBrush)App.Current.Resources["ErrorBrush"];
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush AccentForegroundBrush => ThemeBrushes.Get("AccentForegroundBrush");
 
     public ReparacionPage()
     {
@@ -40,6 +39,16 @@ public sealed partial class ReparacionPage : Page
             _loggingService = App.Services.GetRequiredService<ILoggingService>();
             _repairService = App.Services.GetRequiredService<IRepairService>();
             Loaded += OnLoaded;
+
+            // Al cambiar el tema o el idioma, reconstruir las cards.
+            ActualThemeChanged += (s, e) =>
+            {
+                if (_dataLoaded) LoadTools();
+            };
+            I18n.LanguageChanged += () =>
+            {
+                if (_dataLoaded) LoadTools();
+            };
         }
         catch (Exception ex)
         {
@@ -76,6 +85,7 @@ public sealed partial class ReparacionPage : Page
     private void LoadTools()
     {
         ToolsPanel.Children.Clear();
+        ToolsPanel.RowDefinitions.Clear();
 
         var tools = _repairService.GetAvailableTools();
 
@@ -84,56 +94,77 @@ public sealed partial class ReparacionPage : Page
         var networkTools = tools.Where(t => t.Id is "reset_network" or "flush_dns").ToList();
         var otherTools = tools.Where(t => t.Id is "repair_store" or "repair_profile").ToList();
 
-        // Sección: Reparación del sistema
-        ToolsPanel.Children.Add(BuildSectionHeader(Symbol.Repair, "Reparación del sistema", "Herramientas que reparan archivos y componentes de Windows"));
-        foreach (var tool in systemTools)
+        // Cartas en 2 columnas: el header ocupa el ancho completo; las cards
+        // alternan columna. CADA fila nueva (header o primer card del par)
+        // agrega su RowDefinition: sin eso los hijos quedan en filas sin definir
+        // y el Grid los superpone en la última fila visible.
+        int col = 0;
+        int row = -1;
+        void AddCard(FrameworkElement element, bool fullWidth)
         {
-            ToolsPanel.Children.Add(BuildToolCard(tool));
+            if (fullWidth)
+            {
+                col = 0;
+                row++;
+                ToolsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                Grid.SetColumnSpan(element, 2);
+                Grid.SetRow(element, row);
+            }
+            else
+            {
+                if (col == 0)
+                {
+                    row++;
+                    ToolsPanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                }
+                Grid.SetColumn(element, col);
+                Grid.SetRow(element, row);
+                col++;
+                if (col >= 2) col = 0;
+            }
+            ToolsPanel.Children.Add(element);
         }
 
-        // Sección: Red
-        ToolsPanel.Children.Add(BuildSectionHeader(Symbol.Globe, "Red", "Herramientas para solucionar problemas de conectividad"));
-        foreach (var tool in networkTools)
-        {
-            ToolsPanel.Children.Add(BuildToolCard(tool));
-        }
+        // Sección: Reparación del sistema
+        AddCard(BuildSectionHeader(Symbol.Repair, I18n.T("Reparación del sistema")), fullWidth: true);
+        foreach (var tool in systemTools)
+            AddCard(BuildToolCard(tool), fullWidth: false);
 
         // Sección: Otro
-        ToolsPanel.Children.Add(BuildSectionHeader(Symbol.More, "Otro", "Otras herramientas de reparación"));
+        AddCard(BuildSectionHeader(Symbol.More, I18n.T("Otro")), fullWidth: true);
         foreach (var tool in otherTools)
-        {
-            ToolsPanel.Children.Add(BuildToolCard(tool));
-        }
+            AddCard(BuildToolCard(tool), fullWidth: false);
+
+        // Sección: Red (al final, como pidió el usuario)
+        AddCard(BuildSectionHeader(Symbol.Globe, I18n.T("Red")), fullWidth: true);
+        foreach (var tool in networkTools)
+            AddCard(BuildToolCard(tool), fullWidth: false);
 
         _loggingService.LogInfo($"ReparacionPage: {tools.Count} herramientas cargadas");
     }
 
-    private StackPanel BuildSectionHeader(Symbol icon, string title, string subtitle)
+    private StackPanel BuildSectionHeader(Symbol icon, string title)
     {
-        var header = new StackPanel { Spacing = 2, Margin = new Thickness(0, 12, 0, 4) };
-
+        // Misma geometría que el título de la página "Panel de Windows": ícono de
+        // 20px y texto de 22px SemiBold, ambos centrados verticalmente, Spacing 10.
+        var header = new StackPanel { Margin = new Thickness(0, 12, 0, 4) };
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         titleRow.Children.Add(new SymbolIcon
         {
             Symbol = icon,
             Foreground = AccentBrush,
             Width = 20,
-            Height = 20
+            Height = 20,
+            VerticalAlignment = VerticalAlignment.Center
         });
         titleRow.Children.Add(new TextBlock
         {
             Text = title,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            FontSize = 18
+            FontSize = 22,
+            VerticalAlignment = VerticalAlignment.Center
         });
         header.Children.Add(titleRow);
-
-        header.Children.Add(new TextBlock
-        {
-            Text = subtitle,
-            FontSize = 13,
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(MutedBrush.Color)
-        });
         return header;
     }
 
@@ -146,66 +177,41 @@ public sealed partial class ReparacionPage : Page
             Padding = new Thickness(16)
         };
 
-        var root = new StackPanel { Spacing = 8 };
+        // Grid con fila * (título + descripción) y fila Auto (botón): así el botón
+        // queda pegado al fondo de la card, alineado entre las dos columnas, sin
+        // depender de la altura del texto de la descripción.
+        var root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        // Título
-        root.Children.Add(new TextBlock
+        var content = new StackPanel { Spacing = 8 };
+
+        // Título (sin Foreground explícito: hereda el color de texto del tema)
+        content.Children.Add(new TextBlock
         {
-            Text = tool.Name,
+            Text = I18n.T(tool.Name),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            FontSize = 15,
-            Foreground = LightTextBrush
+            FontSize = 15
         });
 
         // Descripción
-        root.Children.Add(new TextBlock
+        content.Children.Add(new TextBlock
         {
-            Text = tool.Description,
+            Text = I18n.T(tool.Description),
             FontSize = 13,
             TextWrapping = TextWrapping.Wrap,
             Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(MutedBrush.Color)
         });
-
-        // Compatibilidad y administrador
-        var infoPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        infoPanel.Children.Add(new TextBlock
-        {
-            Text = $"Compatibilidad: {tool.Compatibility}",
-            FontSize = 12,
-            Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(MutedBrush.Color)
-        });
-        if (tool.RequiresAdmin)
-        {
-            infoPanel.Children.Add(new TextBlock
-            {
-                Text = "🔒 Requiere admin",
-                FontSize = 12,
-                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI Emoji"),
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(WarningBrush.Color)
-            });
-        }
-        root.Children.Add(infoPanel);
-
-        // Advertencia de duración
-        if (tool.IsLongRunning)
-        {
-            root.Children.Add(new TextBlock
-            {
-                Text = "⏱️ Se abrirá una consola: puede tardar varios minutos",
-                FontSize = 12,
-                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI Emoji"),
-                Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(WarningBrush.Color),
-                FontStyle = Windows.UI.Text.FontStyle.Italic
-            });
-        }
+        Grid.SetRow(content, 0);
+        root.Children.Add(content);
 
         // Botón de ejecución (mismo estilo accent que las acciones de RedPage)
         var button = new Button
         {
-            Content = "Ejecutar",
+            Content = I18n.T("Ejecutar"),
             HorizontalAlignment = HorizontalAlignment.Left,
             MinWidth = 120,
-            Margin = new Thickness(0, 4, 0, 0),
+            Margin = new Thickness(0, 8, 0, 0),
             Padding = new Thickness(16, 8, 16, 8),
             CornerRadius = new CornerRadius(6),
             Background = AccentBrush,
@@ -214,6 +220,7 @@ public sealed partial class ReparacionPage : Page
             Tag = tool.Id
         };
         button.Click += async (s, e) => await ToolButton_Click(tool, button);
+        Grid.SetRow(button, 1);
         root.Children.Add(button);
 
         card.Child = root;
@@ -237,6 +244,7 @@ public sealed partial class ReparacionPage : Page
 
             if (NotificationPanel != null)
             {
+                NotificationPanel.Visibility = Visibility.Visible;
                 NotificationPanel.Children.Add(notificationBar);
 
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -244,6 +252,9 @@ public sealed partial class ReparacionPage : Page
                 {
                     notificationBar.IsOpen = false;
                     NotificationPanel.Children.Remove(notificationBar);
+                    // Sin notificaciones → volver a colapsar (no empuja la primera sección).
+                    if (NotificationPanel.Children.Count == 0)
+                        NotificationPanel.Visibility = Visibility.Collapsed;
                     timer.Stop();
                 };
                 timer.Start();
@@ -268,25 +279,25 @@ public sealed partial class ReparacionPage : Page
         try
         {
             button.IsEnabled = false;
-            button.Content = "Ejecutando...";
+            button.Content = I18n.T("Ejecutando...");
 
             // Reparar Windows Store transmite su progreso en vivo a la consola embebida.
             if (tool.Id == "repair_store")
             {
                 ConsolePanel.Visibility = Visibility.Visible;
-                AppendConsole($"▶ Ejecutando {tool.Name}...", ConsoleStatus.Running);
+                AppendConsole(I18n.T("Ejecutando {0}...", tool.Name), ConsoleStatus.Running);
             }
 
             RepairResult result = tool.Id switch
             {
                 "repair_store" => await _repairService.RepairStoreAsync(new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral))),
                 "repair_profile" => await _repairService.RepairUserProfileAsync(),
-                _ => new RepairResult(false, "Herramienta no reconocida")
+                _ => new RepairResult(false, I18n.T("Herramienta no reconocida"))
             };
 
             if (tool.Id == "repair_store")
             {
-                AppendConsole(result.Success ? $"✓ {tool.Name} completado." : $"✗ {tool.Name}: {result.Message}", result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+                AppendConsole(result.Success ? I18n.T("✓ {0} completado.", tool.Name) : I18n.T("✗ {0}: {1}", tool.Name, result.Message), result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
             }
 
             // Estas herramientas no abren consola: muestran el detalle en un diálogo
@@ -297,11 +308,11 @@ public sealed partial class ReparacionPage : Page
             }
             else if (result.Success)
             {
-                ShowNotification($"{tool.Name} - Operación exitosa", "success");
+                ShowNotification(I18n.T("{0} - Operación exitosa", tool.Name), "success");
             }
             else
             {
-                ShowNotification($"{tool.Name} - Error", "error");
+                ShowNotification(I18n.T("{0} - Error", tool.Name), "error");
             }
 
             _loggingService.LogInfo($"Herramienta {tool.Id}: {(result.Success ? "Éxito" : "Fallo")}");
@@ -309,12 +320,12 @@ public sealed partial class ReparacionPage : Page
         catch (Exception ex)
         {
             _loggingService.LogError($"Error ejecutando herramienta {tool.Id}", ex);
-            ShowNotification($"{tool.Name} - Error: {ex.Message}", "error");
+            ShowNotification(I18n.T("{0} - Error: {1}", tool.Name, ex.Message), "error");
         }
         finally
         {
             button.IsEnabled = true;
-            button.Content = "Ejecutar";
+            button.Content = I18n.T("Ejecutar");
         }
     }
 
@@ -362,7 +373,7 @@ public sealed partial class ReparacionPage : Page
             XamlRoot = XamlRoot,
             Title = toolName,
             Content = panel,
-            CloseButtonText = "Cerrar"
+            CloseButtonText = I18n.T("Cerrar")
         };
         await dialog.ShowAsync();
     }
@@ -498,10 +509,10 @@ public sealed partial class ReparacionPage : Page
         catch (Exception ex)
         {
             _loggingService.LogError($"No se pudo abrir la consola para {tool.Id}", ex);
-            ShowNotification($"{tool.Name} - No se pudo abrir la consola elevada: {ex.Message}", "error");
+            ShowNotification(I18n.T("{0} - No se pudo abrir la consola elevada: {1}", tool.Name, ex.Message), "error");
             return;
         }
 
-        ShowNotification($"{tool.Name} - Consola abierta", "success");
+        ShowNotification(I18n.T("{0} - Consola abierta", tool.Name), "success");
     }
 }

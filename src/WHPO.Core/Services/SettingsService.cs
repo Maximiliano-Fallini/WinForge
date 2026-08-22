@@ -28,41 +28,61 @@ public class SettingsService : ISettingsService
         Load();
     }
 
+        private readonly object _settingsLock = new();
+
+    // Opciones de serialización compartidas (evita re-crear el contrato en cada Get/Set).
+    private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
+
     public T? Get<T>(string key)
     {
-        if (_settings.TryGetValue(key, out var element))
+        lock (_settingsLock)
         {
-            return JsonSerializer.Deserialize<T>(element.GetRawText());
+            if (_settings.TryGetValue(key, out var element))
+            {
+                return JsonSerializer.Deserialize<T>(element.GetRawText(), SerializerOptions);
+            }
         }
         return default;
     }
 
     public T? Get<T>(string key, T defaultValue)
     {
-        if (_settings.TryGetValue(key, out var element))
+        lock (_settingsLock)
         {
-            return JsonSerializer.Deserialize<T>(element.GetRawText()) ?? defaultValue;
+            if (_settings.TryGetValue(key, out var element))
+            {
+                return JsonSerializer.Deserialize<T>(element.GetRawText(), SerializerOptions) ?? defaultValue;
+            }
         }
         return defaultValue;
     }
 
     public void Set<T>(string key, T value)
     {
-        var json = JsonSerializer.Serialize(value);
-        _settings[key] = JsonDocument.Parse(json).RootElement.Clone();
+        lock (_settingsLock)
+        {
+            var json = JsonSerializer.Serialize(value, SerializerOptions);
+            _settings[key] = JsonDocument.Parse(json).RootElement.Clone();
+        }
         _logger.LogDebug($"Configuración establecida: {key}");
     }
 
     public bool Contains(string key)
     {
-        return _settings.ContainsKey(key);
+        lock (_settingsLock)
+        {
+            return _settings.ContainsKey(key);
+        }
     }
 
     public void Remove(string key)
     {
-        if (_settings.Remove(key))
+        lock (_settingsLock)
         {
-            _logger.LogDebug($"Configuración eliminada: {key}");
+            if (_settings.Remove(key))
+            {
+                _logger.LogDebug($"Configuración eliminada: {key}");
+            }
         }
     }
 
@@ -70,8 +90,11 @@ public class SettingsService : ISettingsService
     {
         try
         {
-            var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_settingsFilePath, json);
+            lock (_settingsLock)
+            {
+                var json = JsonSerializer.Serialize(_settings, SerializerOptions);
+                File.WriteAllText(_settingsFilePath, json);
+            }
             _logger.LogInfo("Configuración guardada");
         }
         catch (Exception ex)

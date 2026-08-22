@@ -5,12 +5,12 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel Spacing="12" Margin="20,16,20,24">
+        <StackPanel Spacing="16" Margin="24">
 
-            <!-- Encabezado -->
-            <StackPanel Spacing="4" Margin="0,0,0,8">
+            <!-- Encabezado (mismo estilo de separación que las secciones de Reparación) -->
+            <StackPanel Spacing="2" Margin="0,12,0,4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
-                    <FontIcon Glyph="&#xE770;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
+                    <FontIcon Glyph="&#xE770;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                     <TextBlock Text="Panel de Windows" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
                 </StackPanel>
                 <TextBlock Text="Accedé directamente a los paneles clásicos de Windows con un clic. Inspirado en la sección de paneles de WinUtil (Chris Titus Tech)."

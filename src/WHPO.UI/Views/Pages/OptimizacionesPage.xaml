@@ -6,59 +6,28 @@
 
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
         <!-- Margen reducido para que el contenido quede pegado al navbar (NavigationView). -->
-        <StackPanel Spacing="12" Margin="16">
+        <!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
+        <StackPanel Spacing="16" Margin="24">
 
             <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
             <!-- ====== PRECONFIGURACIONES ====== -->
-            <StackPanel Spacing="10">
-                <TextBlock Text="Preconfiguraciones" FontWeight="SemiBold" FontSize="22"/>
-                <TextBlock Text="Elegí un perfil para marcar automáticamente los tweaks recomendados. Después podés ajustar la selección a mano y aplicarla en lote."
-                           FontSize="13.5"
-                           Foreground="{ThemeResource SecondaryTextBrush}"
-                           TextWrapping="Wrap"/>
-                <StackPanel x:Name="PresetsPanel" Orientation="Horizontal" Spacing="10"/>
-            </StackPanel>
-
-            <!-- ====== BARRA DE SELECCIÓN (responsive: los botones envuelven en ventanas angostas) ====== -->
-            <Border CornerRadius="10" Padding="14,12" Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
-                <StackPanel Spacing="10">
-                    <StackPanel Spacing="2">
-                        <TextBlock x:Name="SelectionCountText" FontWeight="SemiBold" FontSize="14"/>
-                        <TextBlock x:Name="SelectionHintText"
-                                   FontSize="12"
-                                   Foreground="{ThemeResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap"
-                                   Text="Marcá los tweaks con la casilla y aplicá o revertí todo junto."/>
+            <StackPanel Spacing="12">
+                <!-- Misma geometría que "Panel de Windows" y las secciones de Reparación:
+                     emoji 20px + título 22px SemiBold, ambos centrados verticalmente, Spacing 10. -->
+                <StackPanel Spacing="2" Margin="0,12,0,4">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
+                        <FontIcon Glyph="&#xE713;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Preconfiguraciones" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
                     </StackPanel>
-
-                    <ItemsControl>
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="0"/>
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-
-                        <Button x:Name="ApplySelectedButton"
-                                Content="Aplicar seleccionados"
-                                Background="#4CC2FF" Foreground="#0B1520"
-                                FontWeight="SemiBold" CornerRadius="6" Padding="16,8"
-                                MinWidth="170" Margin="0,0,10,8"
-                                Click="ApplySelectedButton_Click"/>
-                        <Button x:Name="RevertSelectedButton"
-                                Content="Revertir seleccionados"
-                                Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
-                                CornerRadius="6" Padding="16,8"
-                                MinWidth="160" Margin="0,0,10,8"
-                                Click="RevertSelectedButton_Click"/>
-                        <Button x:Name="ClearSelectionButton"
-                                Content="Quitar selección"
-                                Background="Transparent" Foreground="{ThemeResource SecondaryTextBrush}"
-                                CornerRadius="6" Padding="12,8" Margin="0,0,10,8"
-                                Click="ClearSelectionButton_Click"/>
-                    </ItemsControl>
+                    <TextBlock Text="Elegí un perfil para marcar automáticamente los tweaks recomendados. Después podés ajustar la selección a mano y aplicarla en lote."
+                               FontSize="13.5"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               TextWrapping="Wrap"/>
                 </StackPanel>
-            </Border>
+                <StackPanel x:Name="PresetsPanel" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center"/>
+            </StackPanel>
 
             <!-- ====== PANEL DE NOTIFICACIONES ====== -->
             <StackPanel x:Name="NotificationPanel" Spacing="8"/>
@@ -95,8 +64,22 @@
                 </StackPanel>
             </Border>
 
-            <!-- ====== LISTA DE TWEAKS ====== -->
+            <!-- ====== LISTA DE TWEAKS (2 columnas) ====== -->
             <StackPanel x:Name="TweaksPanel" Spacing="12"/>
+
+            <!-- ====== BOTONES DE LOTE (centrados) ====== -->
+            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" Margin="0,4,0,0">
+                <Button x:Name="ApplySelectedButton"
+                        Content="Aplicar seleccionados"
+                        Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}"
+                        FontWeight="SemiBold" CornerRadius="6" Padding="16,8" MinWidth="170"
+                        Click="ApplySelectedButton_Click"/>
+                <Button x:Name="RevertSelectedButton"
+                        Content="Revertir seleccionados"
+                        Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
+                        CornerRadius="6" Padding="16,8" MinWidth="160"
+                        Click="RevertSelectedButton_Click"/>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </Page>

@@ -14,24 +14,96 @@
                      que el sidebar siempre se diferencie de las vistas. Las cards se separan
                      del fondo por color + borde. -->
                 <ResourceDictionary x:Key="Dark">
-                    <!-- Fondo de las vistas: carbón #171717 (un negro menos oscuro, para
-                         que no sea negro puro). El navbar es un gris-azulado oscuro
-                         #1F242C, un poco más claro para acercarse a las cards sin
-                         igualarlas. -->
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF171717"/>
-                    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF262A31"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF343A45"/>
-                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF8A94A6"/>
-                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1F242C"/>
-                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF171717"/>
+                    <!-- Paleta base oscura = ex "Oscuro Negro Test" (estilo Blur-AutoClicker:
+                         fondo negro puro #0C0C0E, superficies grises) con el acento AZUL
+                         de la app en vez del verde original. El navbar y las cards
+                         comparten el gris #151517 (definido también en AccentOverrides.xaml). -->
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF0C0C0E"/>
+                    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF151517"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3A3A3C"/>
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF9FA0A2"/>
+
+                    <!-- Acento de la app: azul claro (identidad de la app). -->
+                    <SolidColorBrush x:Key="AccentBrush" Color="#FF8AB4F8"/>
+                    <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
+
+                    <!-- Gráficas (uso/temperatura/potencia): fondo y paleta de series. -->
+                    <SolidColorBrush x:Key="ChartBackgroundBrush" Color="#FF0A0A0C"/>
+                    <SolidColorBrush x:Key="ChartBackgroundHotBrush" Color="#FF150B0B"/>
+                    <SolidColorBrush x:Key="ChartGridBrush" Color="#FF202022"/>
+                    <SolidColorBrush x:Key="ChartCrosshairBrush" Color="#FF4A4A4C"/>
+                    <SolidColorBrush x:Key="ChartAxisTextBrush" Color="#FF808082"/>
+                    <SolidColorBrush x:Key="ChartHoverBadgeBgBrush" Color="#FF202022"/>
+                    <SolidColorBrush x:Key="ChartHoverBadgeBorderBrush" Color="#FF3A3A3C"/>
+                    <SolidColorBrush x:Key="ChartHoverTextBrush" Color="#FFF2F4F8"/>
+
+                    <!-- Colores semánticos de métricas (series y valores destacados). -->
+                    <SolidColorBrush x:Key="MetricUsageBrush" Color="#FF4CC2C9"/>
+                    <SolidColorBrush x:Key="MetricTempBrush" Color="#FF4CC257"/>
+                    <SolidColorBrush x:Key="MetricPowerBrush" Color="#FFFFC93C"/>
+
+                    <!-- Grilla del Monitor de sensores (grupos = color de card/navbar). -->
+                    <SolidColorBrush x:Key="SensorGridLineBrush" Color="#FF3A3A3C"/>
+                    <SolidColorBrush x:Key="SensorGroupFillBrush" Color="#FF151517"/>
+                    <SolidColorBrush x:Key="SensorCategoryFillBrush" Color="#FF141416"/>
+
+                    <!-- Card "Desactivar actualizaciones" (intencionalmente oscura/roja). -->
+                    <SolidColorBrush x:Key="DisabledCardBackgroundBrush" Color="#FF2B1C1C"/>
+                    <SolidColorBrush x:Key="DisabledCardTextBrush" Color="#FFFFC1BC"/>
+
+                    <!-- Hover/selección de cards en code-behind (Optimizaciones) y tint del acento (Panel Windows). -->
+                    <SolidColorBrush x:Key="CardHoverBrush" Color="#FF242424"/>
+                    <SolidColorBrush x:Key="CardSelectedBrush" Color="#FF262626"/>
+                    <SolidColorBrush x:Key="AccentTintBrush" Color="#228AB4F8"/>
+                    <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9A9C"/>
+
+                    <!-- Chips de instrucciones del procesador (Sistema). -->
+                    <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FF262626"/>
+
+                    <!-- Cards de núcleos (Núcleos): mismo color que las cards/navbar. -->
+                    <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FF151517"/>
+                    <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FF0F0F11"/>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFE8EAEE"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFD8DDE3"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF5C6470"/>
-                    <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
-                    <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>
+
+                    <!-- Acento de la app en claro: azul más saturado, legible sobre blanco. -->
+                    <SolidColorBrush x:Key="AccentBrush" Color="#FF3D7EDB"/>
+                    <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
+
+                    <!-- Gráficas: fondo claro con series más oscuras para contraste. -->
+                    <SolidColorBrush x:Key="ChartBackgroundBrush" Color="#FFF4F6F8"/>
+                    <SolidColorBrush x:Key="ChartBackgroundHotBrush" Color="#FFFBE9EC"/>
+                    <SolidColorBrush x:Key="ChartGridBrush" Color="#FFD8DEE6"/>
+                    <SolidColorBrush x:Key="ChartCrosshairBrush" Color="#FF98A2B0"/>
+                    <SolidColorBrush x:Key="ChartAxisTextBrush" Color="#FF5D636B"/>
+                    <SolidColorBrush x:Key="ChartHoverBadgeBgBrush" Color="#FFE8EEF6"/>
+                    <SolidColorBrush x:Key="ChartHoverBadgeBorderBrush" Color="#FFB8C4D4"/>
+                    <SolidColorBrush x:Key="ChartHoverTextBrush" Color="#FF1A1A1A"/>
+
+                    <SolidColorBrush x:Key="MetricUsageBrush" Color="#FF2AA0A8"/>
+                    <SolidColorBrush x:Key="MetricTempBrush" Color="#FF3A9A4A"/>
+                    <SolidColorBrush x:Key="MetricPowerBrush" Color="#FFC99600"/>
+
+                    <SolidColorBrush x:Key="SensorGridLineBrush" Color="#FFD8DEE6"/>
+                    <SolidColorBrush x:Key="SensorGroupFillBrush" Color="#FFFFFFFF"/>
+                    <SolidColorBrush x:Key="SensorCategoryFillBrush" Color="#FFEFF1F4"/>
+
+                    <SolidColorBrush x:Key="DisabledCardBackgroundBrush" Color="#FFFBE9E6"/>
+                    <SolidColorBrush x:Key="DisabledCardTextBrush" Color="#FF8A4A42"/>
+
+                    <SolidColorBrush x:Key="CardHoverBrush" Color="#FFF0F2F5"/>
+                    <SolidColorBrush x:Key="CardSelectedBrush" Color="#FFE2E9F6"/>
+                    <SolidColorBrush x:Key="AccentTintBrush" Color="#223D7EDB"/>
+                    <SolidColorBrush x:Key="MutedBrush" Color="#FF6E7683"/>
+
+                    <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FFEFF1F4"/>
+
+                    <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FFF4F6F8"/>
+                    <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FFE6EAEF"/>
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
             <ResourceDictionary.MergedDictionaries>
@@ -48,10 +120,6 @@
                 <ResourceDictionary Source="Controls/Notifications.xaml"/>
                 <ResourceDictionary Source="Controls/CustomControls.xaml"/>
             </ResourceDictionary.MergedDictionaries>
-            <!-- Colores compartidos de la app (antes duplicados en cada página) -->
-            <SolidColorBrush x:Key="AccentBrush" Color="#8AB4F8"/>
-            <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
-            <SolidColorBrush x:Key="DarkCardBrush" Color="#1C1C1C"/>
             <!-- Paleta de estado (coincide con Feedback.cs) -->
             <SolidColorBrush x:Key="SuccessBrush" Color="#FF4CAF50"/>
             <SolidColorBrush x:Key="WarningBrush" Color="#FFFFC107"/>

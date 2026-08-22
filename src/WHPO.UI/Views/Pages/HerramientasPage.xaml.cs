@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -18,15 +20,16 @@ public sealed partial class HerramientasPage : Page
     private readonly ILoggingService _loggingService;
     private bool _dataLoaded;
 
-    // Cards oscuras fijas (paneles oscuros en ambos temas) con texto claro explícito.
-    private static readonly SolidColorBrush LightTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
-    private static readonly SolidColorBrush CardBrush = new(Windows.UI.Color.FromArgb(255, 0x26, 0x2A, 0x31));
-    private static readonly SolidColorBrush CardBorderBrush = new(Windows.UI.Color.FromArgb(255, 0x34, 0x3A, 0x45));
-    private static readonly SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xC2, 0xFF));
-    private static readonly SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xAF, 0x50));
-    private static readonly SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07));
+    // Pinceles desde los recursos de tema de la app (claro/oscuro). Se resuelven con
+    // el tema EFECTIVO (ThemeBrushes), no con el del sistema: así las cards creadas en
+    // código acompañan al tema igual que las del XAML.
+    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static SolidColorBrush CardBorderBrush => ThemeBrushes.Get("CardBorderBrush");
+    private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    private static SolidColorBrush SuccessBrush => (SolidColorBrush)App.Current.Resources["SuccessBrush"];
+    private static SolidColorBrush WarningBrush => (SolidColorBrush)App.Current.Resources["WarningBrush"];
+    private static SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
     private static readonly SolidColorBrush ErrorBrush = new(Windows.UI.Color.FromArgb(255, 0xF0, 0x61, 0x6D));
-    private static readonly SolidColorBrush MutedBrush = new(Windows.UI.Color.FromArgb(255, 0x9A, 0xA0, 0xA6));
     private static readonly SolidColorBrush TransparentBrush = new(Windows.UI.Color.FromArgb(0, 0, 0, 0));
 
     private List<WinFeatureInfo> _features = new();
@@ -44,6 +47,20 @@ public sealed partial class HerramientasPage : Page
         _winUtilService = App.Services.GetRequiredService<IWinUtilService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         Loaded += OnLoaded;
+
+        // Al cambiar el tema o el idioma, reconstruir las cards.
+        ActualThemeChanged += (s, e) =>
+        {
+            if (!_dataLoaded) return;
+            BuildSections();
+            _ = RefreshFeatureStatesAsync();
+        };
+        I18n.LanguageChanged += () =>
+        {
+            if (!_dataLoaded) return;
+            BuildSections();
+            _ = RefreshFeatureStatesAsync();
+        };
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -71,22 +88,150 @@ public sealed partial class HerramientasPage : Page
         _features = _winUtilService.GetFeatures();
         _fixes = _winUtilService.GetFixes();
 
-        FeaturesPanel.Children.Add(BuildSectionHeader("Funciones", "Características opcionales de Windows que podés activar o desactivar."));
+        FeaturesPanel.Children.Add(BuildSectionHeader(I18n.T("Funciones"), I18n.T("Características opcionales de Windows que podés activar o desactivar.")));
         foreach (var feature in _features)
         {
             FeaturesPanel.Children.Add(BuildFeatureCard(feature));
         }
 
-        FixesPanel.Children.Add(BuildSectionHeader("Fixes", "Utilidades de reparación y configuración de un solo uso."));
+        FixesPanel.Children.Add(BuildSectionHeader(I18n.T("Fixes"), I18n.T("Utilidades de reparación y configuración de un solo uso.")));
         foreach (var fix in _fixes)
         {
             FixesPanel.Children.Add(BuildFixCard(fix));
         }
+
+        UtilitiesPanel.Children.Clear();
+        UtilitiesPanel.Children.Add(BuildSectionHeader(I18n.T("Utilidades"), I18n.T("Herramientas de mantenimiento de un solo uso.")));
+        UtilitiesPanel.Children.Add(BuildDiskCleanupCard());
+    }
+
+    // ====== LIMPIEZA DE DISCO ======
+
+    private Border BuildDiskCleanupCard()
+    {
+        var card = new Border
+        {
+            // Sin reborde (mismo estilo de cards que Reparación): solo fondo de card.
+            Background = CardBrush,
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16)
+        };
+
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        // Mismo ritmo que las cards de Reparación (Spacing 8, título 15 SemiBold, descripción 13).
+        var content = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = I18n.T("Limpieza de disco"),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 15,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        titleRow.Children.Add(BuildInfoButton(I18n.T("Limpieza de disco"),
+            I18n.T("Borra los archivos temporales del usuario (%TEMP%), los de Windows (C:\\Windows\\Temp) y la caché de descargas de Windows Update. NO toca Prefetch: Windows lo regenera y borrarlo no libera nada útil, solo enlentece el próximo arranque.")));
+        content.Children.Add(titleRow);
+        content.Children.Add(new TextBlock
+        {
+            Text = I18n.T("Borra %TEMP%, C:\\Windows\\Temp y la caché de Windows Update. No toca Prefetch."),
+            FontSize = 13,
+            Foreground = MutedBrush,
+            TextWrapping = TextWrapping.Wrap
+        });
+        var status = new TextBlock { Text = "", FontSize = 11.5, Foreground = MutedBrush, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+        content.Children.Add(status);
+
+        var runBtn = new Button
+        {
+            Content = I18n.T("Limpiar ahora"),
+            Background = AccentBrush,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x0B, 0x15, 0x20)),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 7, 14, 7),
+            MinWidth = 110,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        runBtn.Click += async (s, e) =>
+        {
+            runBtn.IsEnabled = false;
+            status.Text = I18n.T("Limpiando...");
+            status.Foreground = MutedBrush;
+            status.Visibility = Visibility.Visible;
+            try
+            {
+                var (mb, skipped) = await Task.Run(CleanTemporaryFiles);
+                status.Text = mb > 0.1
+                    ? I18n.T("{0:F1} MB liberados · {1} archivos en uso omitidos", mb, skipped)
+                    : I18n.T("Nada que limpiar.");
+                status.Foreground = SuccessBrush;
+            }
+            catch (Exception ex)
+            {
+                status.Text = I18n.T("La limpieza falló: {0}", ex.Message);
+                status.Foreground = ErrorBrush;
+                _loggingService.LogWarning($"Limpieza de disco: {ex.Message}");
+            }
+            finally
+            {
+                runBtn.IsEnabled = true;
+            }
+        };
+
+        Grid.SetColumn(content, 0);
+        Grid.SetColumn(runBtn, 1);
+        grid.Children.Add(content);
+        grid.Children.Add(runBtn);
+        card.Child = grid;
+        return card;
+    }
+
+    /// <summary>
+    /// Borra archivos temporales regenerables (no Prefetch): %TEMP% del usuario,
+    /// C:\Windows\Temp y la caché de descargas de Windows Update. Devuelve los MB
+    /// liberados y cuántos archivos estaban en uso y se omitieron.
+    /// </summary>
+    private static (double mb, int skipped) CleanTemporaryFiles()
+    {
+        double freed = 0;
+        int skipped = 0;
+        string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        string[] dirs =
+        {
+            Path.GetTempPath(),
+            Path.Combine(winDir, "Temp"),
+            Path.Combine(winDir, "SoftwareDistribution", "Download")
+        };
+        foreach (var dir in dirs)
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (var file in Directory.EnumerateFiles(dir))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        long size = info.Length;
+                        File.Delete(file);
+                        freed += size;
+                    }
+                    catch { skipped++; }
+                }
+            }
+            catch { }
+        }
+        return (freed / (1024.0 * 1024.0), skipped);
     }
 
     private StackPanel BuildSectionHeader(string title, string subtitle)
     {
-        var stack = new StackPanel { Spacing = 2, Margin = new Thickness(0, 10, 0, 2) };
+        // Mismo margen de sección que Panel de Windows y Reparación (0,12,0,4).
+        var stack = new StackPanel { Spacing = 2, Margin = new Thickness(0, 12, 0, 4) };
         stack.Children.Add(new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 18 });
         stack.Children.Add(new TextBlock { Text = subtitle, FontSize = 13, Foreground = MutedBrush, TextWrapping = TextWrapping.Wrap });
         return stack;
@@ -98,35 +243,35 @@ public sealed partial class HerramientasPage : Page
     {
         var card = new Border
         {
+            // Sin reborde (mismo estilo de cards que Reparación): solo fondo de card.
             Background = CardBrush,
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(12, 10, 14, 10),
-            BorderBrush = CardBorderBrush,
-            BorderThickness = new Thickness(1)
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16)
         };
 
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var content = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        // Mismo ritmo que las cards de Reparación (Spacing 8, título 15 SemiBold, descripción 13).
+        var content = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         titleRow.Children.Add(new TextBlock
         {
-            Text = feature.Name,
-            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            FontSize = 13.5,
+            // Sin Foreground explícito: hereda el color de texto del tema (claro/oscuro).
+            Text = I18n.T(feature.Name),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 15,
             TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = LightTextBrush
+            VerticalAlignment = VerticalAlignment.Center
         });
-        titleRow.Children.Add(BuildInfoButton(feature.Name, feature.Description));
+        titleRow.Children.Add(BuildInfoButton(I18n.T(feature.Name), I18n.T(feature.Description)));
         content.Children.Add(titleRow);
         if (feature.NeedsRestart)
         {
             content.Children.Add(new TextBlock
             {
-                Text = "⚠️ Requiere reiniciar el equipo para completar el cambio.",
+                Text = I18n.T("⚠️ Requiere reiniciar el equipo para completar el cambio."),
                 FontSize = 11.5,
                 Foreground = WarningBrush,
                 TextWrapping = TextWrapping.Wrap
@@ -137,7 +282,7 @@ public sealed partial class HerramientasPage : Page
 
         var toggleBtn = new Button
         {
-            Content = "Activar",
+            Content = I18n.T("Activar"),
             Background = AccentBrush,
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x0B, 0x15, 0x20)),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
@@ -168,16 +313,27 @@ public sealed partial class HerramientasPage : Page
     {
         var text = new TextBlock
         {
-            Text = "Verificando...",
+            Text = I18n.T("Verificando..."),
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = MutedBrush
+            Foreground = MutedBrush,
+            // Centrado dentro de la píldora: sin esto el texto queda pegado arriba a la
+            // izquierda cuando la píldora se estira a la altura del botón.
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
         };
         var badge = new Border
         {
             CornerRadius = new CornerRadius(10),
+            // Ancho mínimo fijo: "✓ Activado", "Desactivado", "Verificando..." y
+            // "Procesando..." quedan todos del mismo tamaño (el texto va centrado), así
+            // el ancho del badge no cambia al cambiar de estado y no empuja el botón.
+            // 100 px es lo que necesita el texto más largo de esos estados; 150 era
+            // excesivo y dejaba la píldora demasiado ancha para el texto.
+            MinWidth = 100,
             Padding = new Thickness(8, 3, 8, 3),
             HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 0x9A, 0xA0, 0xA6)),
             Child = text
         };
@@ -193,31 +349,31 @@ public sealed partial class HerramientasPage : Page
         switch (state)
         {
             case FeatureState.Enabled:
-                text.Text = "✓ Activada";
+                text.Text = I18n.T("✓ Activado");
                 text.Foreground = SuccessBrush;
                 badge.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(45, 0x4C, 0xAF, 0x50));
-                toggleBtn.Content = "Desactivar";
+                toggleBtn.Content = I18n.T("Desactivar");
                 toggleBtn.IsEnabled = true;
                 break;
             case FeatureState.Disabled:
-                text.Text = "Desactivada";
+                text.Text = I18n.T("Desactivado");
                 text.Foreground = MutedBrush;
                 badge.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 0x9A, 0xA0, 0xA6));
-                toggleBtn.Content = "Activar";
+                toggleBtn.Content = I18n.T("Activar");
                 toggleBtn.IsEnabled = true;
                 break;
             case FeatureState.Pending:
-                text.Text = "⏳ Pendiente de reinicio";
+                text.Text = I18n.T("⏳ Pendiente de reinicio");
                 text.Foreground = WarningBrush;
                 badge.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(45, 0xFF, 0xC1, 0x07));
-                toggleBtn.Content = "Pendiente";
+                toggleBtn.Content = I18n.T("Pendiente");
                 toggleBtn.IsEnabled = false;
                 break;
             default:
-                text.Text = "Estado desconocido";
+                text.Text = I18n.T("Estado desconocido");
                 text.Foreground = MutedBrush;
                 badge.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 0x9A, 0xA0, 0xA6));
-                toggleBtn.Content = "Activar";
+                toggleBtn.Content = I18n.T("Activar");
                 toggleBtn.IsEnabled = true;
                 break;
         }
@@ -226,7 +382,7 @@ public sealed partial class HerramientasPage : Page
     private void SetFeatureBusy(string featureId, bool busy)
     {
         if (_featureToggleBtns.TryGetValue(featureId, out var toggle)) toggle.IsEnabled = !busy;
-        if (_featureBadgeText.TryGetValue(featureId, out var text)) text.Text = busy ? "Procesando..." : text.Text;
+        if (_featureBadgeText.TryGetValue(featureId, out var text)) text.Text = busy ? I18n.T("Procesando...") : text.Text;
     }
 
     private async Task RefreshFeatureStatesAsync()
@@ -245,14 +401,14 @@ public sealed partial class HerramientasPage : Page
         var currentState = await _winUtilService.GetFeatureStateAsync(feature.Id);
         var enable = currentState != FeatureState.Enabled;
         var verb = enable ? "Activando" : "Desactivando";
-        AppendConsole($"{verb} '{feature.Name}'...", ConsoleStatus.Running);
+        AppendConsole(I18n.T("{0} '{1}'...", I18n.T(verb), feature.Name), ConsoleStatus.Running);
 
         var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
         var result = enable
             ? await _winUtilService.EnableFeatureAsync(feature.Id, progress)
             : await _winUtilService.DisableFeatureAsync(feature.Id, progress);
 
-        AppendConsole(result.Success ? $"'{feature.Name}' {(enable ? "activada" : "desactivada")}" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+        AppendConsole(result.Success ? I18n.T(enable ? "'{0}' activado" : "'{0}' desactivado", feature.Name) : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
         if (!result.Success) _loggingService.LogWarning($"Feature {feature.Id}: {result.Output}");
 
         SetFeatureBusy(feature.Id, false);
@@ -266,35 +422,35 @@ public sealed partial class HerramientasPage : Page
     {
         var card = new Border
         {
+            // Sin reborde (mismo estilo de cards que Reparación): solo fondo de card.
             Background = CardBrush,
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(12, 10, 14, 10),
-            BorderBrush = CardBorderBrush,
-            BorderThickness = new Thickness(1)
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16)
         };
 
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var content = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        // Mismo ritmo que las cards de Reparación (Spacing 8, título 15 SemiBold, descripción 13).
+        var content = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         titleRow.Children.Add(new TextBlock
         {
-            Text = fix.Name,
-            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            FontSize = 13.5,
+            // Sin Foreground explícito: hereda el color de texto del tema (claro/oscuro).
+            Text = I18n.T(fix.Name),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 15,
             TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = LightTextBrush
+            VerticalAlignment = VerticalAlignment.Center
         });
-        titleRow.Children.Add(BuildInfoButton(fix.Name, fix.Description));
+        titleRow.Children.Add(BuildInfoButton(I18n.T(fix.Name), I18n.T(fix.Description)));
         content.Children.Add(titleRow);
         if (fix.IsLongRunning)
         {
             content.Children.Add(new TextBlock
             {
-                Text = "⏱️ Puede tardar varios minutos.",
+                Text = I18n.T("⏱️ Puede tardar varios minutos."),
                 FontSize = 11.5,
                 Foreground = MutedBrush,
                 TextWrapping = TextWrapping.Wrap
@@ -304,7 +460,7 @@ public sealed partial class HerramientasPage : Page
         {
             content.Children.Add(new TextBlock
             {
-                Text = "⚠️ Se recomienda reiniciar al terminar.",
+                Text = I18n.T("⚠️ Se recomienda reiniciar al terminar."),
                 FontSize = 11.5,
                 Foreground = WarningBrush,
                 TextWrapping = TextWrapping.Wrap
@@ -315,13 +471,15 @@ public sealed partial class HerramientasPage : Page
 
         var runBtn = new Button
         {
-            Content = "Ejecutar",
+            Content = I18n.T("Ejecutar"),
             Background = AccentBrush,
             Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x0B, 0x15, 0x20)),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(14, 7, 14, 7),
-            MinWidth = 90
+            // Mismo ancho mínimo que el botón de Activar/Desactivar de las features
+            // (MinWidth 110), así todos quedan del mismo tamaño.
+            MinWidth = 110
         };
         runBtn.Click += (s, e) => _ = RunFixAsync(fix);
         _fixButtons[fix.Id] = runBtn;
@@ -331,7 +489,7 @@ public sealed partial class HerramientasPage : Page
         {
             var removeBtn = new Button
             {
-                Content = "Quitar",
+                Content = I18n.T("Quitar"),
                 Background = TransparentBrush,
                 BorderBrush = CardBorderBrush,
                 BorderThickness = new Thickness(1),
@@ -343,7 +501,7 @@ public sealed partial class HerramientasPage : Page
             {
                 removeBtn.IsEnabled = false;
                 var result = await _winUtilService.RemoveAutoLogonAsync();
-                AppendConsole(result.Success ? "AutoLogon desactivado" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+                AppendConsole(result.Success ? I18n.T("AutoLogon desactivado") : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
                 removeBtn.IsEnabled = true;
             };
             actions.Children.Add(removeBtn);
@@ -353,7 +511,7 @@ public sealed partial class HerramientasPage : Page
         {
             var revertBtn = new Button
             {
-                Content = "Quitar",
+                Content = I18n.T("Quitar"),
                 Background = TransparentBrush,
                 BorderBrush = CardBorderBrush,
                 BorderThickness = new Thickness(1),
@@ -364,10 +522,10 @@ public sealed partial class HerramientasPage : Page
             revertBtn.Click += async (s, e) =>
             {
                 revertBtn.IsEnabled = false;
-                AppendConsole($"Revirtiendo '{fix.Name}'...", ConsoleStatus.Running);
+                AppendConsole(I18n.T("Revirtiendo '{0}'...", fix.Name), ConsoleStatus.Running);
                 var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
                 var result = await _winUtilService.RevertFixAsync(fix.Id, progress);
-                AppendConsole(result.Success ? $"'{fix.Name}' revertido" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+                AppendConsole(result.Success ? I18n.T("'{0}' revertido", fix.Name) : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
                 if (!result.Success) _loggingService.LogWarning($"Revertir fix {fix.Id}: {result.Output}");
                 revertBtn.IsEnabled = true;
             };
@@ -393,12 +551,12 @@ public sealed partial class HerramientasPage : Page
 
         if (!_fixButtons.TryGetValue(fix.Id, out var button)) return;
         button.IsEnabled = false;
-        AppendConsole($"Ejecutando '{fix.Name}'...", ConsoleStatus.Running);
+        AppendConsole(I18n.T("Ejecutando {0}...", fix.Name), ConsoleStatus.Running);
 
         var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
         var result = await _winUtilService.RunFixAsync(fix.Id, progress);
 
-        AppendConsole(result.Success ? $"'{fix.Name}' completado" : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
+        AppendConsole(result.Success ? I18n.T("'{0}' completado", fix.Name) : result.Output, result.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);
         if (!result.Success) _loggingService.LogWarning($"Fix {fix.Id}: {result.Output}");
 
         button.IsEnabled = true;
@@ -408,9 +566,9 @@ public sealed partial class HerramientasPage : Page
     {
         if (XamlRoot == null) return;
 
-        var userBox = new TextBox { PlaceholderText = "Nombre de usuario", Header = "Usuario", Margin = new Thickness(0, 0, 0, 8) };
-        var passBox = new PasswordBox { PlaceholderText = "Contraseña", Header = "Contraseña", Margin = new Thickness(0, 0, 0, 8) };
-        var domainBox = new TextBox { PlaceholderText = "Dominio (opcional, dejar vacío para local)", Header = "Dominio" };
+        var userBox = new TextBox { PlaceholderText = I18n.T("Nombre de usuario"), Header = I18n.T("Usuario"), Margin = new Thickness(0, 0, 0, 8) };
+        var passBox = new PasswordBox { PlaceholderText = I18n.T("Contraseña"), Header = I18n.T("Contraseña"), Margin = new Thickness(0, 0, 0, 8) };
+        var domainBox = new TextBox { PlaceholderText = I18n.T("Dominio (opcional, dejar vacío para local)"), Header = I18n.T("Dominio") };
 
         var panel = new StackPanel
         {
@@ -424,8 +582,8 @@ public sealed partial class HerramientasPage : Page
             XamlRoot = XamlRoot,
             Title = "AutoLogon",
             Content = panel,
-            PrimaryButtonText = "Configurar",
-            CloseButtonText = "Cancelar",
+            PrimaryButtonText = I18n.T("Configurar"),
+            CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Primary
         };
 
@@ -436,11 +594,11 @@ public sealed partial class HerramientasPage : Page
         var password = passBox.Password ?? "";
         if (username.Length == 0)
         {
-            AppendConsole("✗ Ingresá el nombre de usuario.", ConsoleStatus.Error);
+            AppendConsole(I18n.T("✗ Ingresá el nombre de usuario."), ConsoleStatus.Error);
             return;
         }
 
-        AppendConsole($"Configurando AutoLogon para '{username}'...", ConsoleStatus.Running);
+        AppendConsole(I18n.T("Configurando AutoLogon para '{0}'...", username), ConsoleStatus.Running);
         var applyResult = await _winUtilService.SetAutoLogonAsync(username, password,
             string.IsNullOrWhiteSpace(domainBox.Text) ? null : domainBox.Text.Trim());
         AppendConsole(applyResult.Output, applyResult.Success ? ConsoleStatus.Applied : ConsoleStatus.Error);

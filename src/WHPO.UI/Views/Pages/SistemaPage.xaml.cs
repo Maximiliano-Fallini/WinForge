@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
@@ -27,10 +28,18 @@ public sealed partial class SistemaPage : Page
     private static readonly System.Diagnostics.Stopwatch SkeletonWatch = System.Diagnostics.Stopwatch.StartNew();
     private const int MinSkeletonVisibleMs = 550;
 
-    // Brush reutilizable para chips (evita acceder a Resources que puede fallar).
-    // Los chips se mantienen oscuros en ambos temas; su texto es claro explícito.
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush ChipBrush = new(Windows.UI.Color.FromArgb(255, 0x2F, 0x33, 0x3B));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush ChipTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
+    // Brush reutilizable para chips: desde los recursos de tema, resuelto con el tema
+    // EFECTIVO (ThemeBrushes), no con el del sistema.
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush ChipBrush => ThemeBrushes.Get("ChipBackgroundBrush");
+
+    // Datos de los chips para poder reconstruirlos al cambiar el tema.
+    private string[] _instructionChips = Array.Empty<string>();
+    private string _cpuArchitecture = "";
+
+    // Estado de seguridad del firmware (TPM / Secure Boot / IOMMU) para poder
+    // re-aplicarlo al cambiar de idioma.
+    private SecurityFeatures _securityFeatures = new(false, false, "", false, false, false);
+    private string _cpuVendor = "";
 
     public SistemaPage()
     {
@@ -42,6 +51,16 @@ public sealed partial class SistemaPage : Page
             _loggingService = App.Services.GetRequiredService<ILoggingService>();
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
+
+            // Al cambiar el tema, reconstruir los chips con los colores nuevos.
+            ActualThemeChanged += (s, e) =>
+            {
+                if (_dataLoaded) BuildInstructionChips();
+            };
+
+            // Al cambiar de idioma, re-aplicar los estados de seguridad (la página
+            // usa caché de navegación, así que se suscribe una sola vez).
+            I18n.LanguageChanged += OnLanguageChanged;
         }
         catch (Exception ex)
         {
@@ -51,6 +70,8 @@ public sealed partial class SistemaPage : Page
         }
     }
 
+    private bool _isActive;
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_dataLoaded) return;
@@ -59,7 +80,11 @@ public sealed partial class SistemaPage : Page
             StartSkeletonPulse();
             await LoadInitialDataAsync();
             _dataLoaded = true;
-            StartMonitoring();
+            // La carga es async: si el usuario ya navegó a otra página, NO arrancar
+            // el monitor acá (lo dejaba corriendo en la página oculta, ~1% de CPU
+            // constante con el WMI de GPU/discos/red detrás de cualquier página).
+            if (_isActive)
+                StartMonitoring();
         }
         catch (Exception ex)
         {
@@ -72,19 +97,63 @@ public sealed partial class SistemaPage : Page
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
+        _isActive = false;
         StopMonitoring();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _isActive = true;
         StartMonitoring();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _isActive = false;
         StopMonitoring();
+    }
+
+    /// <summary>
+    /// Reconstruye los chips de instrucciones del procesador (estilo CPU-Z) con los
+    /// colores del tema actual. Se usa al cargar y al cambiar claro/oscuro.
+    /// </summary>
+    private void BuildInstructionChips()
+    {
+        if (InstructionsPanel == null) return;
+        InstructionsPanel.Children.Clear();
+
+        if (_instructionChips.Length == 0)
+        {
+            InstructionsPanel.Children.Add(new TextBlock
+            {
+                Text = _cpuArchitecture == "x64" ? "x86-64" : "x86",
+                FontSize = 14,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            return;
+        }
+
+        foreach (var instr in _instructionChips)
+        {
+            var chip = new Border
+            {
+                Background = ChipBrush,
+                CornerRadius = new CornerRadius(16),
+                Padding = new Thickness(10, 4, 10, 4),
+                Margin = new Thickness(0, 0, 6, 6),
+                Child = new TextBlock
+                {
+                    Text = instr.Trim(),
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+                    TextTrimming = TextTrimming.None,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+            InstructionsPanel.Children.Add(chip);
+        }
     }
 
     private async Task LoadInitialDataAsync()
@@ -97,39 +166,18 @@ public sealed partial class SistemaPage : Page
         CpuNameText.Text = cpuInfo.Name.Trim();
         SetCpuLogo(cpuInfo.Name);
 
+        // Vendor para la card de IOMMU (VT-d en Intel, AMD-Vi en AMD).
+        var cpuNameUpper = cpuInfo.Name.ToUpperInvariant();
+        _cpuVendor = cpuNameUpper.Contains("AMD") ? "AMD-Vi"
+            : cpuNameUpper.Contains("INTEL") ? "Intel VT-d" : "";
+
         _cpuCoresText = $"{cpuInfo.PhysicalCores} núcleos / {cpuInfo.LogicalProcessors} hilos";
         CpuDetailsText.Text = $"{FormatFrequency(cpuInfo.CurrentFrequencyMHz)} · {_cpuCoresText}";
 
         // Instrucciones del procesador en chips estilo CPU-Z
-        InstructionsPanel.Children.Clear();
-        var instructions = cpuInfo.InstructionSet.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (instructions.Length == 0)
-        {
-            InstructionsPanel.Children.Add(new TextBlock { Text = cpuInfo.Architecture == "x64" ? "x86-64" : "x86", FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
-        }
-        else
-        {
-            foreach (var instr in instructions)
-            {
-                var chip = new Border
-                {
-                    Background = ChipBrush,
-                    CornerRadius = new CornerRadius(16),
-                    Padding = new Thickness(10, 4, 10, 4),
-                    Margin = new Thickness(0, 0, 6, 6),
-                    Child = new TextBlock
-                    {
-                        Text = instr.Trim(),
-                        FontSize = 12,
-                        FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-                        TextTrimming = TextTrimming.None,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        Foreground = ChipTextBrush
-                    }
-                };
-                InstructionsPanel.Children.Add(chip);
-            }
-        }
+        _instructionChips = cpuInfo.InstructionSet.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        _cpuArchitecture = cpuInfo.Architecture;
+        BuildInstructionChips();
 
         // CPU e instrucciones listas: revelar sus cards
         await RevealCardAsync(CpuSkeleton, CpuContent);
@@ -204,6 +252,14 @@ public sealed partial class SistemaPage : Page
         BiosVersionText.Text = biosInfo.SMBIOSBIOSVersion;
         await RevealCardAsync(BiosSkeleton, BiosContent);
 
+        // Seguridad del firmware (TPM, Secure Boot, IOMMU)
+        _loggingService.LogInfo("SistemaPage: cargando seguridad del firmware...");
+        _securityFeatures = await Task.Run(() => _systemInfoService.GetSecurityFeatures());
+        ApplySecurityFeatures();
+        await RevealCardAsync(TpmSkeleton, TpmContent);
+        await RevealCardAsync(SecureBootSkeleton, SecureBootContent);
+        await RevealCardAsync(IommuSkeleton, IommuContent);
+
         // Sistema Operativo
         _loggingService.LogInfo("SistemaPage: cargando SO...");
         var osInfo = await Task.Run(() => _systemInfoService.GetOsInfo());
@@ -220,14 +276,83 @@ public sealed partial class SistemaPage : Page
     private FrameworkElement?[] AllSkeletons => new FrameworkElement?[]
     {
         CpuSkeleton, GpuSkeleton, RamSkeleton, StorageSkeleton, OsSkeleton,
-        InstructionsSkeleton, BoardSkeleton, BiosSkeleton
+        InstructionsSkeleton, BoardSkeleton, BiosSkeleton,
+        TpmSkeleton, SecureBootSkeleton, IommuSkeleton
     };
 
     private FrameworkElement?[] AllContents => new FrameworkElement?[]
     {
         CpuContent, GpuContent, RamContent, StorageContent, OsContent,
-        InstructionsContent, BoardContent, BiosContent
+        InstructionsContent, BoardContent, BiosContent,
+        TpmContent, SecureBootContent, IommuContent
     };
+
+    /// <summary>
+    /// Rellena las cards de seguridad del firmware (TPM / Secure Boot / IOMMU)
+    /// con el estado detectado. Se usa al cargar y al cambiar de idioma: los
+    /// estados son textos traducibles, así que se re-aplican con I18n.T().
+    /// </summary>
+    private void ApplySecurityFeatures()
+    {
+        try
+        {
+            // TPM
+            if (_securityFeatures.TpmPresent)
+            {
+                TpmStatusText.Text = I18n.T(_securityFeatures.TpmEnabled ? "Activo" : "Desactivado");
+                TpmIndicator.Fill = StatusBrush(_securityFeatures.TpmEnabled ? "SuccessBrush" : "ErrorBrush");
+                TpmVersionText.Text = string.IsNullOrEmpty(_securityFeatures.TpmSpecVersion)
+                    ? ""
+                    : I18n.T("Especificación {0}", _securityFeatures.TpmSpecVersion);
+            }
+            else
+            {
+                TpmStatusText.Text = I18n.T("No detectado");
+                TpmIndicator.Fill = StatusBrush("WarningBrush");
+                TpmVersionText.Text = "";
+            }
+
+            // Secure Boot: solo existe en firmware UEFI; en BIOS legacy no aplica.
+            if (_securityFeatures.UefiFirmware)
+            {
+                SecureBootStatusText.Text = I18n.T(_securityFeatures.SecureBootEnabled ? "Activo" : "Desactivado");
+                SecureBootIndicator.Fill = StatusBrush(_securityFeatures.SecureBootEnabled ? "SuccessBrush" : "ErrorBrush");
+                SecureBootFirmwareText.Text = "UEFI";
+            }
+            else
+            {
+                SecureBootStatusText.Text = I18n.T("No disponible");
+                SecureBootIndicator.Fill = StatusBrush("WarningBrush");
+                SecureBootFirmwareText.Text = "BIOS";
+            }
+
+            // IOMMU: presencia de la tabla ACPI DMAR (Intel VT-d) / IVRS (AMD-Vi)
+            if (_securityFeatures.IommuPresent)
+            {
+                IommuStatusText.Text = I18n.T("Activo");
+                IommuIndicator.Fill = StatusBrush("SuccessBrush");
+                IommuVendorText.Text = _cpuVendor;
+            }
+            else
+            {
+                IommuStatusText.Text = I18n.T("No detectado");
+                IommuIndicator.Fill = StatusBrush("WarningBrush");
+                IommuVendorText.Text = "";
+            }
+        }
+        catch (Exception ex)
+        {
+            try { _loggingService.LogWarning($"Error aplicando estado de seguridad: {ex.Message}"); } catch { }
+        }
+    }
+
+    private void OnLanguageChanged()
+    {
+        if (_dataLoaded)
+            ApplySecurityFeatures();
+    }
+
+    private static SolidColorBrush StatusBrush(string key) => ThemeBrushes.Get(key);
 
     /// <summary>
     /// Anima los bloques del skeleton con un pulso de opacidad hasta que cada card se revela.

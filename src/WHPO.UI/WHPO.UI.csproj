@@ -2,6 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <!-- Versión 0.1.0 beta: coincide con la del instalador (WinForge-0.1.0.msi) -->
+    <Version>0.1.0</Version>
+    <InformationalVersion>0.1.0-beta</InformationalVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>WHPO_UI</RootNamespace>
     <!-- El ejecutable se llama WinForge.exe (no WHPO.UI.exe) -->
@@ -41,6 +44,15 @@
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
     <!-- Logo de WinForge: se copia al output para el icono de bandeja/ventana y el header -->
     <Content Include="logos\WinForge.png" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Logos de launchers (Steam/Epic/Battle.net/Ubisoft/EA/GOG/Xbox): badge en la card de juegos -->
+    <Content Include="logos\launcher\steamlogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\epicgameslogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\battlenet.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\ubisoftlogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\ealogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\goglogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\xboxlogo.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="logos\launcher\riotlogo.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

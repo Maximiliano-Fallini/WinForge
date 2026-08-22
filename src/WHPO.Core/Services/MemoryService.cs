@@ -14,6 +14,9 @@ public class MemoryService : IMemoryService
     private readonly ILoggingService _loggingService;
     private Timer? _autoCleanupTimer;
     private bool _autoCleanupActive;
+    // Guard de reentrada: el callback puede durar más que el intervalo (la purga hace
+    // un Sleep de 500 ms y el sondeo mínimo es de 100 ms), lo que solaparía llamadas.
+    private int _autoCleanupRunning;
     private double _minStandbyMB = 1024;
     private double _maxFreeMB = 4096;
     private int _pollIntervalMs = 1000;
@@ -122,9 +125,6 @@ public class MemoryService : IMemoryService
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool QueryPerformanceFrequency(out long lpFrequency);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool QueryPerformanceCounter(out long lpPerformanceCount);
 
     // ====== Implementación ======
 
@@ -276,7 +276,8 @@ public class MemoryService : IMemoryService
                 if (status != 0)
                 {
                     _loggingService.LogError($"NtSetSystemInformation falló con código {status}");
-                    return new CommandResult(false, $"No se pudo limpiar la lista standby (código {status}). Asegúrese de ejecutar como administrador.");
+                    return new CommandResult(false, $"No se pudo limpiar la lista standby (código {status}). Asegúrese de ejecutar como administrador.",
+                        "No se pudo limpiar la lista standby (código {0}). Asegúrese de ejecutar como administrador.", new object?[] { status });
                 }
 
                 // Esperar un momento para que el sistema actualice las estadísticas
@@ -288,7 +289,8 @@ public class MemoryService : IMemoryService
                 _loggingService.LogInfo($"Lista standby limpiada: {freedMB:F1} MB liberados");
                 StandbyCleanupCompleted?.Invoke(this, new StandbyCleanupEventArgs(freedMB, false));
 
-                return new CommandResult(true, $"Lista standby limpiada correctamente. {freedMB:F1} MB liberados.");
+                return new CommandResult(true, $"Lista standby limpiada correctamente. {freedMB:F1} MB liberados.",
+                    "Lista standby limpiada correctamente. {0} MB liberados.", new object?[] { $"{freedMB:F1}" });
             }
             catch (Exception ex)
             {
@@ -411,7 +413,8 @@ public class MemoryService : IMemoryService
                 if (status != 0)
                 {
                     _loggingService.LogError($"NtSetTimerResolution falló con código {status}");
-                    return new CommandResult(false, $"No se pudo establecer la resolución del temporizador (código {status}).");
+                    return new CommandResult(false, $"No se pudo establecer la resolución del temporizador (código {status}).",
+                        "No se pudo establecer la resolución del temporizador (código {0}).", new object?[] { status });
                 }
 
                 _currentTimerResolution = current;
@@ -420,11 +423,23 @@ public class MemoryService : IMemoryService
                 // Windows aplica siempre la solicitud MÁS FINA de todos los procesos: si otra
                 // aplicación pide una resolución más fina que la nuestra, la efectiva queda
                 // en esa y la nuestra queda registrada hasta que esa solicitud termine.
-                string message = Math.Abs(current - resolution100ns) > 1
-                    ? $"Solicitud registrada: {requestedMs:F3} ms. La resolución efectiva quedó en {effectiveMs:F3} ms porque otra aplicación pide una más fina; se aplicará cuando esa solicitud termine."
-                    : $"Resolución del temporizador establecida a {effectiveMs:F3} ms.";
+                string message;
+                string template;
+                object?[] args;
+                if (Math.Abs(current - resolution100ns) > 1)
+                {
+                    message = $"Solicitud registrada: {requestedMs:F3} ms. La resolución efectiva quedó en {effectiveMs:F3} ms porque otra aplicación pide una más fina; se aplicará cuando esa solicitud termine.";
+                    template = "Solicitud registrada: {0} ms. La resolución efectiva quedó en {1} ms porque otra aplicación pide una más fina; se aplicará cuando esa solicitud termine.";
+                    args = new object?[] { $"{requestedMs:F3}", $"{effectiveMs:F3}" };
+                }
+                else
+                {
+                    message = $"Resolución del temporizador establecida a {effectiveMs:F3} ms.";
+                    template = "Resolución del temporizador establecida a {0} ms.";
+                    args = new object?[] { $"{effectiveMs:F3}" };
+                }
                 _loggingService.LogInfo(message);
-                return new CommandResult(true, message);
+                return new CommandResult(true, message, template, args);
             }
             catch (Exception ex)
             {
@@ -444,13 +459,15 @@ public class MemoryService : IMemoryService
                 if (status != 0)
                 {
                     _loggingService.LogError($"NtSetTimerResolution (reset) falló con código {status}");
-                    return new CommandResult(false, $"No se pudo restablecer la resolución del temporizador (código {status}).");
+                    return new CommandResult(false, $"No se pudo restablecer la resolución del temporizador (código {status}).",
+                        "No se pudo restablecer la resolución del temporizador (código {0}).", new object?[] { status });
                 }
 
                 _currentTimerResolution = current;
                 double ms = current / 10000.0;
                 _loggingService.LogInfo($"Resolución del temporizador restablecida a {ms:F3} ms");
-                return new CommandResult(true, $"Resolución del temporizador restablecida a {ms:F3} ms.");
+                return new CommandResult(true, $"Resolución del temporizador restablecida a {ms:F3} ms.",
+                    "Resolución del temporizador restablecida a {0} ms.", new object?[] { $"{ms:F3}" });
             }
             catch (Exception ex)
             {
@@ -489,6 +506,9 @@ public class MemoryService : IMemoryService
 
     private void AutoCleanupCallback(object? state)
     {
+        // Si la corrida anterior sigue activa (purga con Sleep de 500 ms vs. sondeo de
+        // hasta 100 ms), descartar este tick: no se limpia dos veces en paralelo.
+        if (Interlocked.CompareExchange(ref _autoCleanupRunning, 1, 0) != 0) return;
         try
         {
             double standbyMB = GetStandbyListSizeMB();
@@ -520,6 +540,10 @@ public class MemoryService : IMemoryService
         catch (Exception ex)
         {
             _loggingService.LogError("Error en limpieza automática", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _autoCleanupRunning, 0);
         }
     }
 }

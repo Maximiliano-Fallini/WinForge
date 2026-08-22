@@ -62,6 +62,12 @@ public sealed class PowerPlanDetail
 }
 
 /// <summary>
+/// Ajuste individual para crear un plan custom (GUID de subgrupo, GUID de
+/// configuración y valores AC/DC).
+/// </summary>
+public record PowerPlanTuning(string SubgroupGuid, string SettingGuid, uint AcValue, uint DcValue);
+
+/// <summary>
 /// Servicio para la gestión de planes de energía de Windows (powercfg).
 /// </summary>
 public interface ICpuPowerService
@@ -100,4 +106,16 @@ public interface ICpuPowerService
     /// Elimina un plan de energía (no se puede borrar el plan activo).
     /// </summary>
     Task<CommandResult> DeletePowerPlanAsync(string planGuid);
+
+    /// <summary>
+    /// Instala un plan oficial oculto de Windows duplicando su esquema base
+    /// (powercfg -duplicatescheme). Reversible: se puede borrar después.
+    /// </summary>
+    Task<CommandResult> InstallBuiltInSchemeAsync(string schemeGuid);
+
+    /// <summary>
+    /// Crea un plan custom duplicando un esquema base, lo renombra y aplica los
+    /// ajustes AC/DC indicados, dejándolo activo al final.
+    /// </summary>
+    Task<CommandResult> CreateCustomPowerPlanAsync(string name, string baseSchemeGuid, IReadOnlyList<PowerPlanTuning> tunings);
 }

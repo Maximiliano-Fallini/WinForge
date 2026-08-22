@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="WHPO_UI.Views.Pages.ProcesosPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{ThemeResource AppBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ====== CABECERA (título simple, estilo monitor de sensores) ====== -->
+        <StackPanel Margin="24,16,24,0" Spacing="4">
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE21D;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                <TextBlock Text="Gestión de procesos" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock
+                Text="Lista en vivo de procesos del sistema. Clic derecho: reglas por proceso. Clic en la cabecera ordena; arrastrá el borde para ajustar columnas."
+                FontSize="12"
+                Foreground="{ThemeResource SecondaryTextBrush}"
+                TextWrapping="Wrap"/>
+            <TextBlock x:Name="StatusText"
+                       Text=""
+                       FontSize="12"
+                       Visibility="Collapsed"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- ====== BARRA DE HERRAMIENTAS (botones compactos, sin card) ====== -->
+        <Grid Grid.Row="1" Margin="24,10,24,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <!-- Filtro de procesos: todos o solo los del usuario actual. -->
+                <Button x:Name="FilterAllButton"
+                        Click="FilterAllButton_Click"
+                        Padding="12,6"
+                        CornerRadius="6"
+                        FontSize="12">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon x:Name="FilterAllIcon" Glyph="&#xE71D;" FontSize="13"/>
+                        <TextBlock x:Name="FilterAllLabel" Text="Todos los procesos" FontSize="12"/>
+                    </StackPanel>
+                </Button>
+
+                <Button x:Name="FilterUserButton"
+                        Click="FilterUserButton_Click"
+                        Padding="12,6"
+                        CornerRadius="6"
+                        FontSize="12">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon x:Name="FilterUserIcon" Glyph="&#xE77B;" FontSize="13"/>
+                        <TextBlock x:Name="FilterUserLabel" Text="Procesos del usuario" FontSize="12"/>
+                    </StackPanel>
+                </Button>
+
+                <Button x:Name="PauseButton"
+                        Click="PauseButton_Click"
+                        Padding="12,6"
+                        CornerRadius="6"
+                        FontSize="12">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon x:Name="PauseIcon" Glyph="&#xE769;" FontSize="13"/>
+                        <TextBlock x:Name="PauseLabel" Text="Pausar" FontSize="12"/>
+                    </StackPanel>
+                </Button>
+
+                <!-- Alterna vista plana (Admin de tareas) / vista árbol. -->
+                <Button x:Name="TreeButton"
+                        Click="TreeButton_Click"
+                        Padding="12,6"
+                        CornerRadius="6"
+                        FontSize="12">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon x:Name="TreeIcon" Glyph="&#xE8FD;" FontSize="13"/>
+                        <TextBlock x:Name="TreeLabel" Text="Vista árbol" FontSize="12"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+
+            <!-- Conteo en vivo (sale del mismo snapshot nativo: sin polling extra). -->
+            <TextBlock x:Name="ProcCountText"
+                       Grid.Column="1"
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+        </Grid>
+
+        <!-- ====== TABLA (borde + cabecera fija + filas, estilo monitor de sensores) ====== -->
+        <Border Grid.Row="2"
+                Margin="24,10,24,16"
+                BorderBrush="{ThemeResource SensorGridLineBrush}"
+                BorderThickness="1"
+                CornerRadius="6">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Cabecera de columnas (se desplaza en sincronía con las filas). -->
+                <Grid x:Name="HeaderHost"
+                      Grid.Row="0" Grid.Column="0"
+                      Height="32"
+                      Background="{ThemeResource SensorGroupFillBrush}">
+                    <Grid x:Name="HeaderGrid" Height="32" HorizontalAlignment="Left"/>
+                    <Rectangle Height="1"
+                               VerticalAlignment="Bottom"
+                               Fill="{ThemeResource SensorGridLineBrush}"
+                               IsHitTestVisible="False"/>
+                </Grid>
+
+                <!-- Filas + scrollbars propios en sus canaletas: los scrollbars nativos
+                     del ScrollViewer son overlay (se dibujan ENCIMA del contenido y tapan
+                     la fila/columna del borde), así que ambos se ocultan y se dibujan como
+                     ScrollBar nativos en columnas/filas separadas, FUERA del viewport:
+                     nunca tapan procesos. -->
+                <Grid Grid.Row="1" Grid.Column="0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <ScrollViewer x:Name="RowsScroll"
+                                  Grid.Row="0"
+                                  HorizontalScrollBarVisibility="Hidden"
+                                  HorizontalScrollMode="Auto"
+                                  VerticalScrollBarVisibility="Hidden"
+                                  VerticalScrollMode="Auto"
+                                  ViewChanged="RowsScroll_ViewChanged">
+                        <StackPanel x:Name="RowsPanel" Spacing="0"/>
+                    </ScrollViewer>
+
+                    <!-- Barra horizontal en su canaleta inferior (visible solo si desborda). -->
+                    <ScrollBar x:Name="HScrollBar"
+                               Grid.Row="1"
+                               Orientation="Horizontal"
+                               Height="12"
+                               Margin="0,4,0,0"
+                               IndicatorMode="MouseIndicator"
+                               Visibility="Collapsed"/>
+                </Grid>
+
+                <!-- Barra vertical en su canaleta derecha (visible solo si desborda). -->
+                <ScrollBar x:Name="VScrollBar"
+                           Grid.Row="1" Grid.Column="1"
+                           Orientation="Vertical"
+                           Width="12"
+                           Margin="4,0,0,0"
+                           IndicatorMode="MouseIndicator"
+                           Visibility="Collapsed"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Page>

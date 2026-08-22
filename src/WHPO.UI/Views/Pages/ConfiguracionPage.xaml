@@ -26,9 +26,9 @@
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
                             <ComboBox x:Name="ThemeComboBox" Grid.Column="1" MinWidth="150" SelectionChanged="ThemeComboBox_SelectionChanged">
-                                <ComboBoxItem Content="Usar sistema" Tag="SystemDefault"/>
-                                <ComboBoxItem Content="Oscuro" Tag="Dark"/>
-                                <ComboBoxItem Content="Claro" Tag="Light"/>
+                                <ComboBoxItem x:Name="ThemeSystemItem" Content="Usar sistema" Tag="SystemDefault"/>
+                                <ComboBoxItem x:Name="ThemeDarkItem" Content="Oscuro" Tag="Dark"/>
+                                <ComboBoxItem x:Name="ThemeLightItem" Content="Claro" Tag="Light"/>
                             </ComboBox>
                         </Grid>
                     </Border>
@@ -93,9 +93,83 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Logs de desarrollo" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="Registra la actividad de la app en un archivo (app.log). Apagado (predeterminado): no se generan logs. Útil solo para depurar problemas."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                    <TextBlock x:Name="DeveloperLogsSizeText" Text="" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <Button x:Name="DeleteLogsButton" Content="Borrar logs" FontSize="12"
+                                            Padding="12,4" VerticalAlignment="Center" Click="DeleteLogsButton_Click"/>
+                                    <Button x:Name="OpenLogsFolderButton" Content="Abrir carpeta de logs" FontSize="12"
+                                            Padding="12,4" VerticalAlignment="Center" Click="OpenLogsFolderButton_Click"/>
+                                    <TextBlock x:Name="DeleteLogsFeedbackText" Text="" FontSize="12"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="DeveloperLogsToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="False"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock
+                                Text="Borra los banners e íconos de juegos descargados y la biblioteca cacheada. Se regeneran solos la próxima vez. No borra configuración ni logs."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                <TextBlock x:Name="CacheSizeText" Text="" FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           VerticalAlignment="Center"/>
+                                <Button x:Name="ClearCacheButton" Content="Limpiar caché" FontSize="12"
+                                        Padding="12,4" VerticalAlignment="Center" Click="ClearCacheButton_Click"/>
+                                <TextBlock x:Name="ClearCacheFeedbackText" Text="" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Posición de la ventana" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock
+                                Text="Restablece la posición y el tamaño guardados para que la ventana vuelva a abrirse centrada (útil si quedó fuera de la vista al cambiar de monitor)."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                <Button x:Name="ResetWindowPositionButton" Content="Restablecer posición" FontSize="12"
+                                        Padding="12,4" VerticalAlignment="Center" Click="ResetWindowPositionButton_Click"/>
+                                <TextBlock x:Name="ResetWindowPositionFeedbackText" Text="" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="Iniciar con Windows" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock Text="Abre WHPO automáticamente cuando inicias sesión en este equipo."
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="StartupFeedbackText" Text="" FontSize="12"
+                                           TextWrapping="Wrap" Visibility="Collapsed"/>
                             </StackPanel>
                             <ToggleSwitch x:Name="LaunchAtStartupToggle" Grid.Column="1" Style="{StaticResource CompactToggleSwitchStyle}"
                                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
@@ -112,6 +186,14 @@
                                 <TextBlock Text="Iniciar minimizado" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock Text="Si WHPO se inicia automáticamente, se abrirá directamente en la bandeja del sistema."
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="StartMinimizedHint"
+                                           Text="Solo tiene efecto cuando «Iniciar con Windows» está activado."
+                                           FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap"
+                                           Visibility="Collapsed"/>
+                                <TextBlock x:Name="MinimizedFeedbackText" Text="" FontSize="12"
+                                           TextWrapping="Wrap" Visibility="Collapsed"/>
                             </StackPanel>
                             <ToggleSwitch x:Name="StartMinimizedToggle" Grid.Column="1" Style="{StaticResource CompactToggleSwitchStyle}"
                                           HorizontalAlignment="Right" VerticalAlignment="Center"/>

@@ -55,10 +55,16 @@ public record DnsServerInfo(
 
 /// <summary>
 /// Resultado de un comando del sistema.
+/// Output es el mensaje legible (español, para logs y fallback). Si el mensaje
+/// tiene valores interpolados, MessageTemplate/MessageArgs permiten traducirlo:
+/// la UI llama I18n.T(MessageTemplate, MessageArgs) para mostrar el texto en el
+/// idioma actual (la plantilla puede reordenar los marcadores libremente).
 /// </summary>
 public record CommandResult(
     bool Success,
-    string Output
+    string Output,
+    string? MessageTemplate = null,
+    object?[]? MessageArgs = null
 );
 
 /// <summary>

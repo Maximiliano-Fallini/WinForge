@@ -24,16 +24,21 @@ public sealed partial class SensoresPage : Page
     private readonly ILoggingService _loggingService;
     private DispatcherQueueTimer? _pollTimer;
     private bool _polling;
+
+    // Se marca cuando se creó un header de grupo/subgrupo nuevo (texto español en
+    // código): al final de la actualización se recorre el árbol para traducirlo.
+    private bool _newHeadersAdded;
     private int _nextRow;
 
-    // Colores fijos para texto sobre el fondo oscuro de la app.
-    private static readonly SolidColorBrush LightTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
-    private static readonly SolidColorBrush MutedBrush = new(Windows.UI.Color.FromArgb(255, 0xB4, 0xB4, 0xB4));
+    // Pinceles desde los recursos de tema de la app (claro/oscuro). Se resuelven con
+    // el tema EFECTIVO (ThemeBrushes), no con el del sistema: la grilla de sensores
+    // acompaña al tema igual que las cards del XAML.
+    private static SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
 
     // Línea de la grilla y rellenos de los encabezados (coinciden con el XAML).
-    private SolidColorBrush _lineBrush = new(Windows.UI.Color.FromArgb(255, 0x3A, 0x42, 0x50));
-    private SolidColorBrush _groupFill = new(Windows.UI.Color.FromArgb(255, 0x1B, 0x22, 0x2D));
-    private SolidColorBrush _categoryFill = new(Windows.UI.Color.FromArgb(255, 0x14, 0x1A, 0x24));
+    private SolidColorBrush LineBrush => ThemeBrushes.Get("SensorGridLineBrush");
+    private SolidColorBrush GroupFillBrush => ThemeBrushes.Get("SensorGroupFillBrush");
+    private SolidColorBrush CategoryFillBrush => ThemeBrushes.Get("SensorCategoryFillBrush");
 
     private const double ValueColumnWidth = 100;
 
@@ -107,19 +112,31 @@ public sealed partial class SensoresPage : Page
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Disabled;
         _sensorService = App.Services.GetRequiredService<ISensorService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
-        if (Resources.TryGetValue("SensorGridLineBrush", out var lineBrush) && lineBrush is SolidColorBrush sb)
-            _lineBrush = sb;
-        if (Resources.TryGetValue("SensorGroupFillBrush", out var g) && g is SolidColorBrush gb)
-            _groupFill = gb;
-        if (Resources.TryGetValue("SensorCategoryFillBrush", out var c) && c is SolidColorBrush cb)
-            _categoryFill = cb;
         Unloaded += (s, e) => StopPolling();
+
+        // Al cambiar el tema, reconstruir la grilla (grupos, categorías y filas)
+        // con los colores nuevos y volver a leer los sensores.
+        ActualThemeChanged += (s, e) => RebuildGrid();
+
+        // Al cambiar el idioma, reconstruir la grilla con los nombres traducidos.
+        // La página se recrea en cada navegación (cache Disabled): se desuscribe
+        // en OnNavigatedFrom para no acumular handlers del evento estático.
+        I18n.LanguageChanged += RebuildGrid;
+    }
+
+    private void RebuildGrid()
+    {
+        SensorsGrid.Children.Clear();
+        SensorsGrid.RowDefinitions.Clear();
+        _groups.Clear();
+        _nextRow = 0;
+        _ = PollOnceAsync();
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        SetStatusOnce($"{Feedback.RunningPrefix} Leyendo sensores...", Feedback.AccentBrush);
+        SetStatusOnce(I18n.T("▶ Leyendo sensores..."), Feedback.AccentBrush);
         StartPolling();
         _ = PollOnceAsync();
     }
@@ -128,6 +145,7 @@ public sealed partial class SensoresPage : Page
     {
         base.OnNavigatedFrom(e);
         StopPolling();
+        I18n.LanguageChanged -= RebuildGrid;
     }
 
     private void StartPolling()
@@ -135,7 +153,10 @@ public sealed partial class SensoresPage : Page
         if (_pollTimer == null)
         {
             _pollTimer = DispatcherQueue.CreateTimer();
-            _pollTimer.Interval = TimeSpan.FromMilliseconds(500);
+            // 1 s: cada lectura hace un Update() completo de LHM (todos los sensores);
+            // a 500 ms se pagaba el doble sin ganancia visible (los sensores HW
+            // cambian ~1 vez por segundo de todos modos).
+            _pollTimer.Interval = TimeSpan.FromSeconds(1);
             _pollTimer.Tick += (s, e) => _ = PollOnceAsync();
         }
         _pollTimer.Start();
@@ -160,7 +181,7 @@ public sealed partial class SensoresPage : Page
         catch (Exception ex)
         {
             _loggingService.LogError("Error leyendo sensores", ex);
-            SetStatusOnce($"{Feedback.ErrorPrefix} No se pudieron leer los sensores: {ex.Message}", Feedback.ErrorBrush);
+            SetStatusOnce(I18n.T("✗ No se pudieron leer los sensores: {0}", ex.Message), Feedback.ErrorBrush);
         }
         finally
         {
@@ -172,14 +193,14 @@ public sealed partial class SensoresPage : Page
     {
         if (!_sensorService.IsAvailable)
         {
-            SetStatusOnce($"{Feedback.ErrorPrefix} LibreHardwareMonitor no disponible en este equipo. Verificá que la app corre como administrador.",
+            SetStatusOnce(I18n.T("✗ LibreHardwareMonitor no disponible en este equipo. Verificá que la app corre como administrador."),
                 Feedback.ErrorBrush);
             return;
         }
 
         if (groups.Count == 0)
         {
-            SetStatusOnce($"{Feedback.InfoPrefix} No se detectaron sensores en este equipo.", Feedback.WarningBrush);
+            SetStatusOnce(I18n.T("ℹ No se detectaron sensores en este equipo."), Feedback.WarningBrush);
             return;
         }
 
@@ -223,6 +244,15 @@ public sealed partial class SensoresPage : Page
                 ApplyCategoryVisibility(gv, cv);
             }
         }
+
+        // Los headers de grupos/subgrupos se crean en código con texto en español:
+        // traducirlos apenas aparecen (y al cambiar de idioma el MainWindow re-recorre
+        // el árbol, así que los ya registrados se re-traducen solos).
+        if (_newHeadersAdded)
+        {
+            _newHeadersAdded = false;
+            I18n.ApplyToVisualTree(SensorsGrid);
+        }
     }
 
     // ---- Construcción del árbol (una sola grilla, filas ordenadas por índice) ----
@@ -242,7 +272,6 @@ public sealed partial class SensoresPage : Page
             Text = groupName,
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = LightTextBrush,
             VerticalAlignment = VerticalAlignment.Center
         };
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
@@ -252,8 +281,8 @@ public sealed partial class SensoresPage : Page
 
         var header = new Border
         {
-            Background = _groupFill,
-            BorderBrush = _lineBrush,
+            Background = GroupFillBrush,
+            BorderBrush = LineBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(10, 8, 10, 8),
             Child = panel
@@ -262,6 +291,7 @@ public sealed partial class SensoresPage : Page
         AddRow(header);
         SensorsGrid.Children.Add(header);
 
+        _newHeadersAdded = true;
         var gv = new GroupView { Name = groupName, Chevron = chevron };
         header.Tapped += (s, e) => ToggleGroup(gv);
         return gv;
@@ -289,8 +319,8 @@ public sealed partial class SensoresPage : Page
 
         var header = new Border
         {
-            Background = _categoryFill,
-            BorderBrush = _lineBrush,
+            Background = CategoryFillBrush,
+            BorderBrush = LineBrush,
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(24, 6, 10, 6),
             Child = panel
@@ -299,6 +329,7 @@ public sealed partial class SensoresPage : Page
         AddRow(header);
         SensorsGrid.Children.Add(header);
 
+        _newHeadersAdded = true;
         var cv = new CategoryView
         {
             Chevron = chevron,
@@ -468,7 +499,7 @@ public sealed partial class SensoresPage : Page
     {
         var cell = new Border
         {
-            BorderBrush = _lineBrush,
+            BorderBrush = LineBrush,
             BorderThickness = new Thickness(0, 0, rightLine ? 1 : 0, 1),
             Padding = new Thickness(leftPad, 3, 8, 3),
             Child = content

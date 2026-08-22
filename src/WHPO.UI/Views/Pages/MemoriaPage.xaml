@@ -9,7 +9,7 @@
 
             <!-- ====== SECCIÓN 1: STANDBY LIST CLEANER ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <FontIcon Glyph="&#xE7F1;" FontSize="20" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center"/>
+                <FontIcon Glyph="&#xE7F1;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Standby List Cleaner" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
@@ -60,7 +60,7 @@
 
                     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                         <Button x:Name="CleanStandbyButton" Content="Liberar memoria ahora" Click="CleanStandbyButton_Click" HorizontalAlignment="Left" MinWidth="180"
-                                Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
+                                Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                     </StackPanel>
                     <TextBlock x:Name="CleanStandbyResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 
@@ -68,23 +68,28 @@
 
                     <!-- Configuración de limpieza automática -->
                     <TextBlock Text="Limpieza automática" FontSize="14" FontWeight="SemiBold"/>
-                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <StackPanel Spacing="6">
-                            <TextBlock Text="Activar cuando la caché alcance" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBox x:Name="MinStandbyTextBox" Text="1024" BeforeTextChanging="NumericTextBox_BeforeTextChanging"/>
+                            <TextBlock Text="Preajuste" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="PresetCombo" HorizontalAlignment="Stretch" SelectionChanged="PresetCombo_SelectionChanged"/>
                         </StackPanel>
                         <StackPanel Grid.Column="1" Spacing="6">
-                            <TextBlock Text="Y la RAM libre baje de" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <TextBox x:Name="MaxFreeTextBox" Text="4096" BeforeTextChanging="NumericTextBox_BeforeTextChanging"/>
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" Spacing="6">
                             <TextBlock Text="Frecuencia de comprobación" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             <ComboBox x:Name="PollIntervalCombo" HorizontalAlignment="Stretch"/>
                         </StackPanel>
                     </Grid>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Activar cuando la caché alcance" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBox x:Name="MinStandbyTextBox" Text="1024" BeforeTextChanging="NumericTextBox_BeforeTextChanging" TextChanged="ThresholdTextChanged"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="6">
+                            <TextBlock Text="Y la RAM libre baje de" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBox x:Name="MaxFreeTextBox" Text="4096" BeforeTextChanging="NumericTextBox_BeforeTextChanging" TextChanged="ThresholdTextChanged"/>
+                        </StackPanel>
+                    </Grid>
                     <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                         <Button x:Name="AutoCleanupButton" Content="Iniciar" Click="AutoCleanupButton_Click" MinWidth="120" Padding="16,8" CornerRadius="6"/>
-                        <Button x:Name="AutoConfigureButton" Content="Autoajustar" Click="AutoConfigureButton_Click" MinWidth="140" Padding="16,8" CornerRadius="6"/>
                         <TextBlock x:Name="AutoCleanupStatusText" Text="Detenido" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" TextWrapping="Wrap"/>
                     </StackPanel>
                     <StackPanel x:Name="AutoCleanupLogPanel" Spacing="4"/>

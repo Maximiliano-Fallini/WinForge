@@ -130,8 +130,8 @@ public sealed partial class TemporizadorPage : Page
         }
         else
         {
-            TimerResolutionButton.Background = (SolidColorBrush)App.Current.Resources["AccentBrush"];
-            TimerResolutionButton.Foreground = (SolidColorBrush)App.Current.Resources["AccentForegroundBrush"];
+            TimerResolutionButton.Background = ThemeBrushes.Get("AccentBrush");
+            TimerResolutionButton.Foreground = ThemeBrushes.Get("AccentForegroundBrush");
         }
     }
 
@@ -148,10 +148,7 @@ public sealed partial class TemporizadorPage : Page
                 UpdateInputsEnabled();
                 _settingsService.Set("timer.autoStart", false);
                 _settingsService.Save();
-                if (result.Success)
-                    Feedback.Success(TimerResolutionResultText, result.Output);
-                else
-                    Feedback.Error(TimerResolutionResultText, result.Output);
+                Feedback.Result(TimerResolutionResultText, result);
 
                 // Actualizar resolución actual después de detener
                 var currentRes = _memoryService.GetCurrentTimerResolution();
@@ -176,12 +173,12 @@ public sealed partial class TemporizadorPage : Page
             var coarsestRes = _memoryService.GetMinimumTimerResolution();
             if (resolution100ns < finestRes)
             {
-                Feedback.Error(TimerResolutionResultText, $"La resolución deseada no puede ser más fina que {finestRes / 10000.0:F3} ms (la máxima que soporta el sistema).");
+                Feedback.Error(TimerResolutionResultText, I18n.T("La resolución deseada no puede ser más fina que {0} ms (la máxima que soporta el sistema).", $"{finestRes / 10000.0:F3}"));
                 return;
             }
             if (resolution100ns > coarsestRes)
             {
-                Feedback.Error(TimerResolutionResultText, $"La resolución deseada no puede ser más gruesa que {coarsestRes / 10000.0:F3} ms (la mínima que soporta el sistema).");
+                Feedback.Error(TimerResolutionResultText, I18n.T("La resolución deseada no puede ser más gruesa que {0} ms (la mínima que soporta el sistema).", $"{coarsestRes / 10000.0:F3}"));
                 return;
             }
 
@@ -201,10 +198,7 @@ public sealed partial class TemporizadorPage : Page
                 _settingsService.Save();
             }
 
-            if (setResult.Success)
-                Feedback.Success(TimerResolutionResultText, setResult.Output);
-            else
-                Feedback.Error(TimerResolutionResultText, setResult.Output);
+            Feedback.Result(TimerResolutionResultText, setResult);
 
             // Actualizar resolución actual
             var current = _memoryService.GetCurrentTimerResolution();

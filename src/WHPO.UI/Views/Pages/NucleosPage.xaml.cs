@@ -77,34 +77,38 @@ public sealed partial class NucleosPage : Page
     };
     private SolidColorBrush SecondaryBrush => SecondaryBrushes[ActualTheme == ElementTheme.Light ? ElementTheme.Light : ElementTheme.Dark];
 
-    // ---- Paleta ----
-    private static readonly Color CGreen = Color.FromArgb(255, 0x4C, 0xC2, 0x57);
-    private static readonly Color CYellow = Color.FromArgb(255, 0xFF, 0xC9, 0x3C);
-    private static readonly Color CRed = Color.FromArgb(255, 0xF0, 0x61, 0x6D);
-    private static readonly SolidColorBrush BGreen = new(CGreen);
-    private static readonly SolidColorBrush BYellow = new(CYellow);
-    private static readonly SolidColorBrush BRed = new(CRed);
-    private static readonly SolidColorBrush BGrid = new(Color.FromArgb(255, 0x20, 0x2B, 0x39));
-    private static readonly SolidColorBrush BCrosshair = new(Color.FromArgb(255, 0x4A, 0x56, 0x66));
-    private static readonly SolidColorBrush BChartBg = new(Color.FromArgb(255, 0x0D, 0x14, 0x1E));
-    private static readonly SolidColorBrush BChartBgHot = new(Color.FromArgb(255, 0x1E, 0x0F, 0x13));
-    private static readonly SolidColorBrush BTimeLabel = new(Color.FromArgb(255, 0x8A, 0x94, 0xA6));
-    private static readonly SolidColorBrush BThermalLine = new(Color.FromArgb(120, 0xFF, 0xC9, 0x3C));
-    private static readonly SolidColorBrush BNeutral = new(Color.FromArgb(255, 0x8A, 0x94, 0xA6));
+    // ---- Paleta: los colores viven en los recursos de tema de la app (claro/oscuro).
+    // Se resuelven con el tema EFECTIVO (ThemeBrushes), no con el del sistema. ----
+    private static SolidColorBrush ThemeBrush(string key) => ThemeBrushes.Get(key);
 
-    // ---- Cards de núcleos: fondo y pista según el tema (claro/oscuro) ----
-    private static readonly Dictionary<ElementTheme, SolidColorBrush> CoreCardBrushes = new()
+    private static Color CGreen => ThemeBrush("MetricTempBrush").Color;
+    private static Color CYellow => ThemeBrush("MetricPowerBrush").Color;
+    private static Color CRed => ThemeBrush("ErrorBrush").Color;
+    private static SolidColorBrush BGreen => ThemeBrush("MetricTempBrush");
+    private static SolidColorBrush BYellow => ThemeBrush("MetricPowerBrush");
+    private static SolidColorBrush BRed => ThemeBrush("ErrorBrush");
+    private static SolidColorBrush BGrid => ThemeBrush("ChartGridBrush");
+    private static SolidColorBrush BCrosshair => ThemeBrush("ChartCrosshairBrush");
+    private static SolidColorBrush BChartBg => ThemeBrush("ChartBackgroundBrush");
+    private static SolidColorBrush BChartBgHot => ThemeBrush("ChartBackgroundHotBrush");
+    private static SolidColorBrush BTimeLabel => ThemeBrush("ChartAxisTextBrush");
+    private static SolidColorBrush BNeutral => ThemeBrush("ChartAxisTextBrush");
+    private static SolidColorBrush BChartHoverText => ThemeBrush("ChartHoverTextBrush");
+    private static SolidColorBrush BChartHoverBadgeBg => ThemeBrush("ChartHoverBadgeBgBrush");
+    private static SolidColorBrush BChartHoverBadgeBorder => ThemeBrush("ChartHoverBadgeBorderBrush");
+    private static SolidColorBrush BThermalLine
     {
-        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x20, 0x24, 0x2B)),
-        [ElementTheme.Light] = new(Color.FromArgb(255, 0xF4, 0xF6, 0xF8))
-    };
-    private static readonly Dictionary<ElementTheme, SolidColorBrush> CoreTrackBrushes = new()
-    {
-        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x15, 0x19, 0x20)),
-        [ElementTheme.Light] = new(Color.FromArgb(255, 0xE6, 0xEA, 0xEF))
-    };
-    private SolidColorBrush CoreCardBrush => CoreCardBrushes[ActualTheme == ElementTheme.Light ? ElementTheme.Light : ElementTheme.Dark];
-    private SolidColorBrush CoreTrackBrush => CoreTrackBrushes[ActualTheme == ElementTheme.Light ? ElementTheme.Light : ElementTheme.Dark];
+        get
+        {
+            var c = ThemeBrush("MetricPowerBrush").Color;
+            return new SolidColorBrush(Color.FromArgb(120, c.R, c.G, c.B));
+        }
+    }
+
+    // ---- Cards de núcleos: fondo y pista desde los recursos de tema (en el tema base
+    // coinciden con los valores originales; las variantes los redefinen). ----
+    private static SolidColorBrush CoreCardBrush => ThemeBrushes.Get("CoreCardBackgroundBrush");
+    private static SolidColorBrush CoreTrackBrush => ThemeBrushes.Get("CoreTrackBackgroundBrush");
 
     // ---- Barras por núcleo ----
     private readonly List<CoreBar> _coreBars = new();
@@ -138,7 +142,7 @@ public sealed partial class NucleosPage : Page
         ChartCanvas.PointerMoved += ChartCanvas_PointerMoved;
         ChartCanvas.PointerExited += ChartCanvas_PointerExited;
 
-        // Al cambiar el tema, re-crear las cards de núcleos con los colores nuevos.
+        // Al cambiar el tema o el idioma, re-crear las cards de núcleos.
         ActualThemeChanged += (s, e) =>
         {
             if (_coreBars.Count > 0)
@@ -147,8 +151,15 @@ public sealed partial class NucleosPage : Page
                 UpdateCoreBars(_lastUsages, _lastCoreTemps, _lastParked);
             }
         };
+        // La página no se cachea: desuscribirse al desmontar para no filtrar memoria
+        // (el evento de idioma es estático y vive toda la app).
+        I18n.LanguageChanged += ReapplyLanguageToCores;
 
-        Unloaded += (s, e) => StopSampling();
+        Unloaded += (s, e) =>
+        {
+            StopSampling();
+            I18n.LanguageChanged -= ReapplyLanguageToCores;
+        };
     }
 
     // ===================== Ciclo de vida =====================
@@ -210,6 +221,15 @@ public sealed partial class NucleosPage : Page
         _samplingTimer?.Stop();
     }
 
+    private void ReapplyLanguageToCores()
+    {
+        if (_coreBars.Count > 0)
+        {
+            RebuildCoreBars(_coreBars.Count);
+            UpdateCoreBars(_lastUsages, _lastCoreTemps, _lastParked);
+        }
+    }
+
     // ===================== Skeleton de carga =====================
 
     private void ShowSkeleton()
@@ -269,6 +289,7 @@ public sealed partial class NucleosPage : Page
         {
             _manageLoaded = true;
             _ = LoadManagePlansAsync();
+            _ = LoadInstallPresetsAsync();
         }
         if (index == 2 && !_compareLoaded)
         {
@@ -344,7 +365,7 @@ public sealed partial class NucleosPage : Page
             else
             {
                 // Sensor aún cargando (driver de LHM): estado visible y pulsante, no un "--" confuso
-                CpuTempValueText.Text = "Cargando…";
+                CpuTempValueText.Text = I18n.T("Cargando…");
                 CpuTempValueText.Foreground = BTimeLabel;
                 StartTempLoadingPulse();
             }
@@ -644,7 +665,7 @@ public sealed partial class NucleosPage : Page
                 Text = _history[_history.Count - 1].Time.ToString("HH:mm:ss"),
                 FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromArgb(255, 0xD5, 0xDC, 0xE5))
+                Foreground = BChartHoverText
             };
             Canvas.SetLeft(now, _chartWidth - 52);
             Canvas.SetTop(now, PlotBottom + 8);
@@ -687,7 +708,7 @@ public sealed partial class NucleosPage : Page
             ThermalWarningBadge.BorderBrush = BRed;
             ThermalWarningIcon.Foreground = BRed;
             ThermalWarningText.Foreground = BRed;
-            ThermalWarningText.Text = "Thermal throttling inminente";
+            ThermalWarningText.Text = I18n.T("Thermal throttling inminente");
         }
         else if (t >= 85)
         {
@@ -696,7 +717,7 @@ public sealed partial class NucleosPage : Page
             ThermalWarningBadge.BorderBrush = BYellow;
             ThermalWarningIcon.Foreground = BYellow;
             ThermalWarningText.Foreground = BYellow;
-            ThermalWarningText.Text = "Posible Thermal throttling";
+            ThermalWarningText.Text = I18n.T("Posible Thermal throttling");
         }
         else
         {
@@ -767,7 +788,7 @@ public sealed partial class NucleosPage : Page
         {
             Width = 9, Height = 9,
             Fill = PickThermalBrush(temp),
-            Stroke = new SolidColorBrush(Color.FromArgb(255, 0x0D, 0x14, 0x1E)),
+            Stroke = BChartBg,
             StrokeThickness = 2
         };
         Canvas.SetLeft(dot, x - 4.5);
@@ -780,12 +801,12 @@ public sealed partial class NucleosPage : Page
             Text = $"{temp:F0}°C · {time:HH:mm:ss}",
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(Color.FromArgb(255, 0xF2, 0xF4, 0xF8))
+            Foreground = BChartHoverText
         };
         var badge = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(255, 0x1C, 0x27, 0x35)),
-            BorderBrush = new SolidColorBrush(Color.FromArgb(255, 0x3A, 0x4A, 0x5E)),
+            Background = BChartHoverBadgeBg,
+            BorderBrush = BChartHoverBadgeBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(8, 4, 8, 4),
@@ -827,7 +848,7 @@ public sealed partial class NucleosPage : Page
 
             var name = new TextBlock
             {
-                Text = $"Núcleo {i}",
+                Text = $"{I18n.T("Núcleo")} {i}",
                 FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center
@@ -917,14 +938,14 @@ public sealed partial class NucleosPage : Page
             {
                 bar.Fill.Background = BRed;
                 bar.Usage.Foreground = BRed;
-                bar.Status.Text = "Estacionado";
+                bar.Status.Text = I18n.T("Estacionado");
                 bar.Status.Foreground = BRed;
             }
             else if (isParked == false)
             {
                 bar.Fill.Background = BGreen;
                 bar.Usage.Foreground = BGreen;
-                bar.Status.Text = "Activo";
+                bar.Status.Text = I18n.T("Activo");
                 bar.Status.Foreground = BGreen;
             }
             else
@@ -998,7 +1019,7 @@ public sealed partial class NucleosPage : Page
                 var plan = plans[i];
                 PowerPlanCombo.Items.Add(new ComboBoxItem
                 {
-                    Content = plan.IsActive ? $"{plan.Name}  (activo)" : plan.Name,
+                    Content = plan.IsActive ? I18n.T("{0}  (activo)", plan.Name) : plan.Name,
                     Tag = plan.Guid
                 });
                 if (plan.IsActive) activeIndex = i;
@@ -1023,8 +1044,7 @@ public sealed partial class NucleosPage : Page
             return;
         var planName = (PowerPlanCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? planGuid;
 
-        ApplyPowerPlanButton.IsEnabled = false;
-        Feedback.Running(PowerPlanStatusText, "Aplicando plan...");
+        ApplyPowerPlanButton.IsEnabled = false;            Feedback.Running(PowerPlanStatusText, I18n.T("Aplicando plan..."));
         try
         {
             var result = await _cpuPowerService.SetActivePowerPlanAsync(planGuid);
@@ -1035,9 +1055,9 @@ public sealed partial class NucleosPage : Page
                 await LoadPowerPlansAsync();
 
             if (result.Success)
-                Feedback.Success(PowerPlanStatusText, $"Plan de energía establecido: {planName}");
+                Feedback.Success(PowerPlanStatusText, I18n.T("Plan de energía establecido: {0}", planName));
             else
-                Feedback.Error(PowerPlanStatusText, result.Output);
+                Feedback.Result(PowerPlanStatusText, result);
         }
         catch (Exception ex)
         {
@@ -1138,7 +1158,7 @@ public sealed partial class NucleosPage : Page
 
         var active = new TextBlock
         {
-            Text = item.IsActive ? "✓ Activo" : "",
+            Text = item.IsActive ? I18n.T("✓ Activo") : "",
             FontWeight = FontWeights.SemiBold,
             FontSize = 12,
             VerticalAlignment = VerticalAlignment.Center,
@@ -1159,12 +1179,15 @@ public sealed partial class NucleosPage : Page
         DeletePlanButton.IsEnabled = has && !item!.IsActive;
     }
 
-    private void SetManageStatus(bool success, string message)
+    private void SetManageStatus(bool success, string message, string? template = null, object?[]? args = null)
     {
+        var text = template != null
+            ? I18n.T(template, args ?? Array.Empty<object?>())
+            : I18n.T(message);
         if (success)
-            Feedback.Success(ManagePlanStatusText, message);
+            Feedback.Success(ManagePlanStatusText, text);
         else
-            Feedback.Error(ManagePlanStatusText, message);
+            Feedback.Error(ManagePlanStatusText, text);
     }
 
     private async void RenamePlanButton_Click(object sender, RoutedEventArgs e)
@@ -1175,16 +1198,16 @@ public sealed partial class NucleosPage : Page
         var nameBox = new TextBox
         {
             Text = item.Name,
-            Header = "Nuevo nombre",
+            Header = I18n.T("Nuevo nombre"),
             MaxLength = 255
         };
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "Renombrar plan",
+            Title = I18n.T("Renombrar plan"),
             Content = nameBox,
-            PrimaryButtonText = "Renombrar",
-            CloseButtonText = "Cancelar",
+            PrimaryButtonText = I18n.T("Renombrar"),
+            CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Primary
         };
 
@@ -1197,7 +1220,7 @@ public sealed partial class NucleosPage : Page
         }
 
         var result = await _cpuPowerService.RenamePowerPlanAsync(item.Guid, newName);
-        SetManageStatus(result.Success, result.Output);
+        SetManageStatus(result.Success, result.Output, result.MessageTemplate, result.MessageArgs);
         if (result.Success)
         {
             await LoadManagePlansAsync();
@@ -1213,7 +1236,7 @@ public sealed partial class NucleosPage : Page
         ActivatePlanButton.IsEnabled = false;
         Feedback.Running(ManagePlanStatusText, "Activando plan...");
         var result = await _cpuPowerService.SetActivePowerPlanAsync(item.Guid);
-        SetManageStatus(result.Success, result.Output);
+        SetManageStatus(result.Success, result.Output, result.MessageTemplate, result.MessageArgs);
         if (result.Success)
         {
             await LoadManagePlansAsync();
@@ -1226,7 +1249,7 @@ public sealed partial class NucleosPage : Page
         try
         {
             var result = await _winUtilService.LaunchPanelAsync("power");
-            if (!result.Success) SetManageStatus(false, result.Output);
+            if (!result.Success) SetManageStatus(false, result.Output, result.MessageTemplate, result.MessageArgs);
         }
         catch (Exception ex)
         {
@@ -1243,10 +1266,10 @@ public sealed partial class NucleosPage : Page
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "Borrar plan de energía",
-            Content = $"¿Seguro que querés borrar \"{item.Name}\"? Esta acción no se puede deshacer.",
-            PrimaryButtonText = "Borrar",
-            CloseButtonText = "Cancelar",
+            Title = I18n.T("Borrar plan de energía"),
+            Content = $"{I18n.T("¿Seguro que querés borrar ")}\"{item.Name}\"{I18n.T("? Esta acción no se puede deshacer.")}",
+            PrimaryButtonText = I18n.T("Borrar"),
+            CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Close
         };
 
@@ -1254,7 +1277,7 @@ public sealed partial class NucleosPage : Page
 
         DeletePlanButton.IsEnabled = false;
         var result = await _cpuPowerService.DeletePowerPlanAsync(item.Guid);
-        SetManageStatus(result.Success, result.Output);
+        SetManageStatus(result.Success, result.Output, result.MessageTemplate, result.MessageArgs);
         if (result.Success)
         {
             await LoadManagePlansAsync();
@@ -1262,10 +1285,211 @@ public sealed partial class NucleosPage : Page
         }
     }
 
+    // ===================== Instalar planes de energía =====================
+
+    // GUIDs de subgrupos/settings de energía (documentados por Microsoft).
+    private const string SubProcessorGuid = "54533251-82be-4824-96c1-47b60b740d00";
+    private const string ProcThrottleMinGuid = "893dee8e-2bef-41e0-89c6-b55d0929964c";
+    private const string ProcThrottleMaxGuid = "bc5038f7-23e0-4960-96da-33abaf5935ec";
+    private const string PerfBoostModeGuid = "be337238-0d82-4146-a960-4f3749d470c7";
+    private const string PerfAutonomousGuid = "8baa4a8a-14c6-4451-8e8b-14bdbd197537";
+
+    // Esquemas base de Windows.
+    private const string BalancedSchemeGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
+    private const string HighPerfSchemeGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
+    private const string PowerSaverSchemeGuid = "a1841308-3541-4fab-bc81-f71556f20b4a";
+    private const string UltimatePerfSchemeGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61";
+
+    private sealed class InstallPreset
+    {
+        public string Name { get; }
+        public string Description { get; }
+        public string Category { get; }
+        public string? BuiltInGuid { get; }
+        public string? BaseGuid { get; }
+        public PowerPlanTuning[]? Tunings { get; }
+
+        public InstallPreset(string name, string description, string category, string? builtInGuid = null, string? baseGuid = null, PowerPlanTuning[]? tunings = null)
+        {
+            Name = name;
+            Description = description;
+            Category = category;
+            BuiltInGuid = builtInGuid;
+            BaseGuid = baseGuid;
+            Tunings = tunings;
+        }
+    }
+
+    private sealed class InstallRowItem
+    {
+        public InstallPreset Preset { get; }
+        public bool Installed { get; }
+
+        public InstallRowItem(InstallPreset preset, bool installed)
+        {
+            Preset = preset;
+            Installed = installed;
+        }
+    }
+
+    private static List<InstallPreset> BuildInstallPresets() => new()
+    {
+        new InstallPreset(I18n.T("Máximo rendimiento"), I18n.T("Plan oculto de Windows para máximo desempeño (Ultimate Performance)."), I18n.T("Oficial"), builtInGuid: UltimatePerfSchemeGuid),
+        new InstallPreset(I18n.T("Alto rendimiento"), I18n.T("Plan oficial de Windows para alto desempeño."), I18n.T("Oficial"), builtInGuid: HighPerfSchemeGuid),
+        new InstallPreset(I18n.T("Ahorro de energía"), I18n.T("Plan oficial de Windows para reducir el consumo."), I18n.T("Oficial"), builtInGuid: PowerSaverSchemeGuid),
+        new InstallPreset(I18n.T("Equilibrado"), I18n.T("Plan oficial de Windows: balance entre rendimiento y consumo."), I18n.T("Oficial"), builtInGuid: BalancedSchemeGuid),
+        new InstallPreset(I18n.T("Ryzen Balanced"), I18n.T("Preset estilo 1usmus para CPU AMD Ryzen: mínimo 99%, boost eficiente agresivo y modo autónomo desactivado."), I18n.T("Ryzen"), baseGuid: BalancedSchemeGuid, tunings: new[]
+        {
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 99, 99),
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
+            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 4, 4),
+            new PowerPlanTuning(SubProcessorGuid, PerfAutonomousGuid, 0, 0)
+        }),
+        new InstallPreset(I18n.T("Ryzen High Performance"), I18n.T("Preset estilo 1usmus para CPU AMD Ryzen: mínimo 100%, boost agresivo y modo autónomo desactivado."), I18n.T("Ryzen"), baseGuid: HighPerfSchemeGuid, tunings: new[]
+        {
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 100, 100),
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
+            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 2, 2),
+            new PowerPlanTuning(SubProcessorGuid, PerfAutonomousGuid, 0, 0)
+        }),
+        new InstallPreset(I18n.T("Bitsum Highest Performance"), I18n.T("Preset de Bitsum (Process Lasso/ParkControl): mínimo 100% para evitar el parking de núcleos y boost agresivo."), I18n.T("Comunidad"), baseGuid: HighPerfSchemeGuid, tunings: new[]
+        {
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 100, 100),
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
+            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 2, 2)
+        }),
+        new InstallPreset(I18n.T("Bitsum Balanced"), I18n.T("Preset de Bitsum para uso general: mínimo 5% y boost eficiente habilitado."), I18n.T("Comunidad"), baseGuid: BalancedSchemeGuid, tunings: new[]
+        {
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 5, 5),
+            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
+            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 3, 3)
+        })
+    };
+
+    private async Task LoadInstallPresetsAsync()
+    {
+        try
+        {
+            var plans = await Task.Run(() => _cpuPowerService.GetPowerPlans());
+            var presets = BuildInstallPresets();
+
+            InstallPlansList.Items.Clear();
+            foreach (var preset in presets)
+            {
+                bool installed = preset.BuiltInGuid != null
+                    ? plans.Any(p => string.Equals(p.Guid, preset.BuiltInGuid, StringComparison.OrdinalIgnoreCase))
+                    : plans.Any(p => string.Equals(p.Name, preset.Name, StringComparison.OrdinalIgnoreCase));
+                InstallPlansList.Items.Add(BuildInstallRow(preset, installed));
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"NucleosPage: error cargando presets de instalación: {ex.Message}");
+            InstallPlanStatusText.Visibility = Visibility.Visible;
+            Feedback.Warning(InstallPlanStatusText, "No se pudieron cargar los planes instalables.");
+        }
+    }
+
+    private static ListViewItem BuildInstallRow(InstallPreset preset, bool installed)
+    {
+        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
+
+        row.Children.Add(new TextBlock
+        {
+            Text = preset.Name,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        });
+
+        var desc = new TextBlock
+        {
+            Text = preset.Description,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = BTimeLabel
+        };
+        Grid.SetColumn(desc, 1);
+        row.Children.Add(desc);
+
+        var category = new TextBlock
+        {
+            Text = preset.Category,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = BNeutral
+        };
+        Grid.SetColumn(category, 2);
+        row.Children.Add(category);
+
+        var status = new TextBlock
+        {
+            Text = installed ? I18n.T("Instalado") : "",
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = installed ? BGreen : BTimeLabel
+        };
+        Grid.SetColumn(status, 3);
+        row.Children.Add(status);
+
+        return new ListViewItem
+        {
+            Content = row,
+            Tag = new InstallRowItem(preset, installed),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+    }
+
+    private void InstallPlansList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var item = (InstallPlansList.SelectedItem as ListViewItem)?.Tag as InstallRowItem;
+        InstallPlanButton.IsEnabled = item != null && !item.Installed;
+    }
+
+    private async void InstallPlanButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = (InstallPlansList.SelectedItem as ListViewItem)?.Tag as InstallRowItem;
+        if (item == null || item.Installed) return;
+
+        InstallPlanButton.IsEnabled = false;
+        Feedback.Running(InstallPlanStatusText, "Instalando plan...");
+
+        var preset = item.Preset;
+        var result = preset.BuiltInGuid != null
+            ? await _cpuPowerService.InstallBuiltInSchemeAsync(preset.BuiltInGuid)
+            : await _cpuPowerService.CreateCustomPowerPlanAsync(preset.Name, preset.BaseGuid!, preset.Tunings!);
+
+        SetInstallStatus(result);
+        if (result.Success)
+        {
+            await LoadManagePlansAsync();
+            await LoadInstallPresetsAsync();
+            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
+        }
+    }
+
+    private void SetInstallStatus(CommandResult result)
+    {
+        var text = result.MessageTemplate != null
+            ? I18n.T(result.MessageTemplate, result.MessageArgs ?? Array.Empty<object?>())
+            : I18n.T(result.Output);
+        if (result.Success)
+            Feedback.Success(InstallPlanStatusText, text);
+        else
+            Feedback.Error(InstallPlanStatusText, text);
+    }
+
     // ===================== Comparar planes de energía =====================
 
-    private static readonly Color DefaultColorA = Color.FromArgb(255, 0x4C, 0xC2, 0x57); // verde
-    private static readonly Color DefaultColorB = Color.FromArgb(255, 0xFF, 0xC9, 0x3C); // ámbar
+    // Colores por defecto de las curvas de comparación: desde los recursos de tema.
+    private static Color DefaultColorA => ThemeBrushes.Get("MetricTempBrush").Color;
+    private static Color DefaultColorB => ThemeBrushes.Get("MetricPowerBrush").Color;
 
     private Color _colorA = DefaultColorA;
     private Color _colorB = DefaultColorB;
@@ -1398,7 +1622,7 @@ public sealed partial class NucleosPage : Page
         catch (Exception ex)
         {
             _loggingService.LogWarning($"NucleosPage: error comparando planes: {ex.Message}");
-            Feedback.Error(CompareStatusText, $"No se pudo comparar: {ex.Message}");
+            Feedback.Error(CompareStatusText, I18n.T("No se pudo comparar: {0}", ex.Message));
         }
         finally
         {
@@ -1549,14 +1773,14 @@ public sealed partial class NucleosPage : Page
         var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
         AddSettingColumns(grid);
 
-        grid.Children.Add(new TextBlock { Text = "ID de configuración", FontSize = 11, FontWeight = FontWeights.SemiBold });
-        var nombre = new TextBlock { Text = "Nombre", FontSize = 11, FontWeight = FontWeights.SemiBold };
+        grid.Children.Add(new TextBlock { Text = I18n.T("ID de configuración"), FontSize = 11, FontWeight = FontWeights.SemiBold });
+        var nombre = new TextBlock { Text = I18n.T("Nombre"), FontSize = 11, FontWeight = FontWeights.SemiBold };
         Grid.SetColumn(nombre, 1);
         grid.Children.Add(nombre);
-        var ac = new TextBlock { Text = "Valor AC", FontSize = 11, FontWeight = FontWeights.SemiBold };
+        var ac = new TextBlock { Text = I18n.T("Valor AC"), FontSize = 11, FontWeight = FontWeights.SemiBold };
         Grid.SetColumn(ac, 2);
         grid.Children.Add(ac);
-        var dc = new TextBlock { Text = "Valor DC", FontSize = 11, FontWeight = FontWeights.SemiBold };
+        var dc = new TextBlock { Text = I18n.T("Valor DC"), FontSize = 11, FontWeight = FontWeights.SemiBold };
         Grid.SetColumn(dc, 3);
         grid.Children.Add(dc);
         return grid;

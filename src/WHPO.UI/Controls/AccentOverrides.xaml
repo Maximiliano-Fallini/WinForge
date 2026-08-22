@@ -40,6 +40,13 @@
             <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF8AB4F8"/>
             <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF8AB4F8" Opacity="0.9"/>
             <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF8AB4F8" Opacity="0.8"/>
+
+            <!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
+                 XamlControlsResources (si se define solo en el raíz de App.xaml,
+                 WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
+                 cards (#151517) para que toda la UI sea un solo bloque. -->
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF0C0C0E"/>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <Color x:Key="SystemAccentColor">#FF3D7EDB</Color>
@@ -56,6 +63,9 @@
             <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF3D7EDB"/>
             <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF3D7EDB" Opacity="0.9"/>
             <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF3D7EDB" Opacity="0.8"/>
+
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 

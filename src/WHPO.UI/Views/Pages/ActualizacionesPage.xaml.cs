@@ -13,19 +13,14 @@ public sealed partial class ActualizacionesPage : Page
     private readonly IWindowsUpdateService _windowsUpdateService;
     private WindowsUpdateMode? _selectedMode;
 
-    private static readonly SolidColorBrush CardBgDefaultDark = new(Windows.UI.Color.FromArgb(255, 0x26, 0x2A, 0x31));
-    private static readonly SolidColorBrush CardBgDefaultLight = new(Windows.UI.Color.FromArgb(255, 0xF7, 0xF8, 0xFA));
-    private static readonly SolidColorBrush CardBgSelectedDark = new(Windows.UI.Color.FromArgb(255, 0x2F, 0x35, 0x41));
-    private static readonly SolidColorBrush CardBgSelectedLight = new(Windows.UI.Color.FromArgb(255, 0xE2, 0xE9, 0xF6));
-    private static readonly SolidColorBrush CardBgDisabled = new(Windows.UI.Color.FromArgb(255, 48, 34, 31));
-    private static readonly SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
-    private static readonly SolidColorBrush RedBorderBrush = new(Windows.UI.Color.FromArgb(255, 229, 115, 115));
+    // Fondos desde los recursos de tema: siguen la paleta activa (oscuro/claro).
+    // Se resuelven con el tema EFECTIVO de la app (ThemeBrushes), no con el del sistema.
+    private static SolidColorBrush CardBgDefault => ThemeBrushes.Get("CardBackgroundBrush");
+    private static SolidColorBrush CardBgSelected => ThemeBrushes.Get("CardSelectedBrush");
+    private static SolidColorBrush CardBgDisabled => ThemeBrushes.Get("DisabledCardBackgroundBrush");
+    private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    private static SolidColorBrush RedBorderBrush => (SolidColorBrush)App.Current.Resources["ErrorBrush"];
     private static readonly SolidColorBrush TransparentBrush = new(Windows.UI.Color.FromArgb(0, 0, 0, 0));
-
-    // La card "Desactivar" es intencionalmente oscura (rojo apagado) en AMBOS temas y su
-    // texto es claro, por eso su selección también se queda oscura; las otras dos siguen el tema.
-    private SolidColorBrush CardBgDefault => ActualTheme == ElementTheme.Light ? CardBgDefaultLight : CardBgDefaultDark;
-    private SolidColorBrush CardBgSelected => ActualTheme == ElementTheme.Light ? CardBgSelectedLight : CardBgSelectedDark;
 
     public ActualizacionesPage()
     {
@@ -49,8 +44,8 @@ public sealed partial class ActualizacionesPage : Page
     private void RefreshCurrentPolicy()
     {
         var policy = _windowsUpdateService.GetCurrentPolicy();
-        CurrentModeText.Text = policy.Title;
-        CurrentDescriptionText.Text = policy.Description;
+        CurrentModeText.Text = I18n.T(policy.Title);
+        CurrentDescriptionText.Text = I18n.T(policy.Description);
 
         // Preseleccionar la card que coincide con el estado actual del sistema
         if (policy.Mode is WindowsUpdateMode.Default or WindowsUpdateMode.Recommended or WindowsUpdateMode.Disabled)
@@ -75,7 +70,7 @@ public sealed partial class ActualizacionesPage : Page
         UpdateCardVisual(DefaultCard, DefaultCardCheck, mode == WindowsUpdateMode.Default, CardBgDefault, TransparentBrush, CardBgSelected);
         UpdateCardVisual(RecommendedCard, RecommendedCardCheck, mode == WindowsUpdateMode.Recommended, CardBgDefault, TransparentBrush, CardBgSelected);
         // La card Desactivar mantiene fondo oscuro siempre (texto claro): seleccionada usa el navy oscuro.
-        UpdateCardVisual(DisabledCard, DisabledCardCheck, mode == WindowsUpdateMode.Disabled, CardBgDisabled, RedBorderBrush, CardBgSelectedDark);
+        UpdateCardVisual(DisabledCard, DisabledCardCheck, mode == WindowsUpdateMode.Disabled, CardBgDisabled, RedBorderBrush, CardBgSelected);
     }
 
     private static void UpdateCardVisual(Border card, FontIcon check, bool selected, SolidColorBrush unselectedBg, SolidColorBrush unselectedBorder, SolidColorBrush selectedBg)
@@ -104,23 +99,23 @@ public sealed partial class ActualizacionesPage : Page
         try
         {
             var result = await _windowsUpdateService.ApplyPolicyAsync(mode);
-            ResultBar.Title = result.Success ? "Configuración aplicada" : "No se pudo aplicar la configuración";
+            ResultBar.Title = result.Success ? I18n.T("Configuración aplicada") : I18n.T("No se pudo aplicar la configuración");
             ResultBar.Message = result.Success
-                ? result.Message + (result.RestartRecommended ? " Reinicia el equipo para completar todos los cambios." : string.Empty)
-                : result.Message;
+                ? I18n.T(result.Message) + (result.RestartRecommended ? " " + I18n.T("Reinicia el equipo para completar todos los cambios.") : string.Empty)
+                : I18n.T(result.Message);
             ResultBar.Severity = result.Success ? InfoBarSeverity.Success : InfoBarSeverity.Error;
             ResultBar.IsOpen = true;
 
             if (!string.IsNullOrWhiteSpace(result.Details))
             {
-                ResultBar.Message += " Algunos componentes informaron advertencias; consulta el registro de WHPO para más detalles.";
+                ResultBar.Message += " " + I18n.T("Algunos componentes informaron advertencias; consulta el registro de WHPO para más detalles.");
             }
 
             RefreshCurrentPolicy();
         }
         catch (Exception ex)
         {
-            ResultBar.Title = "Error inesperado";
+            ResultBar.Title = I18n.T("Error inesperado");
             ResultBar.Message = ex.Message;
             ResultBar.Severity = InfoBarSeverity.Error;
             ResultBar.IsOpen = true;
@@ -136,10 +131,10 @@ public sealed partial class ActualizacionesPage : Page
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "¿Desactivar Windows Update?",
-            Content = "Esto detendrá los servicios y tareas de actualización, borrará su caché y dejarás de recibir actualizaciones de seguridad. Podrás revertirlo con Predeterminado de Windows o Recomendado.",
-            PrimaryButtonText = "Desactivar",
-            CloseButtonText = "Cancelar",
+            Title = I18n.T("¿Desactivar Windows Update?"),
+            Content = I18n.T("Esto detendrá los servicios y tareas de actualización, borrará su caché y dejarás de recibir actualizaciones de seguridad. Podrás revertirlo con Predeterminado de Windows o Recomendado."),
+            PrimaryButtonText = I18n.T("Desactivar"),
+            CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Close
         };
 

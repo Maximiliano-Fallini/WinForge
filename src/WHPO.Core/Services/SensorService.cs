@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using LibreHardwareMonitor.Hardware;
 using WHPO.Core.Services.Interfaces;
 
@@ -139,7 +140,7 @@ public class SensorService : ISensorService
             }
 
             category.Sensors.Add(new SensorReadingInfo(
-                Name: sensor.Name,
+                Name: DisplayNameFor(sensor),
                 Current: value.HasValue ? (double)value.Value : (double?)null,
                 Min: sensor.Min.HasValue ? (double)sensor.Min.Value : (double?)null,
                 Max: sensor.Max.HasValue ? (double)sensor.Max.Value : (double?)null,
@@ -161,6 +162,26 @@ public class SensorService : ISensorService
             else
                 target.Add(src);
         }
+    }
+
+    // LHM nombra con genéricos "Temperature #N" los canales del chip SuperIO de la
+    // placa (en el BIOS suelen ser CPU/System/VRM…). Sin más información, esos canales
+    // son lo más parecido a la temperatura de los núcleos que expone el hardware: la
+    // grilla muestra "Core #N" en vez del nombre genérico, igual que los sensores de
+    // núcleo que ya nombra LHM ("Core #1", "CPU Core #1", ...).
+    private static readonly Regex GenericTemperatureRegex = new(
+        @"^Temperature\s*#\s*(\d+)$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static string DisplayNameFor(ISensor sensor)
+    {
+        if (sensor.SensorType == SensorType.Temperature)
+        {
+            var m = GenericTemperatureRegex.Match(sensor.Name);
+            if (m.Success)
+                return $"Core #{m.Groups[1].Value}";
+        }
+        return sensor.Name;
     }
 
     // Agrupación en categorías: los sensores de temperatura de Intel que miden el
@@ -248,5 +269,15 @@ public class SensorService : ISensorService
                 _loggingService.LogWarning($"SensorService: LibreHardwareMonitor no disponible: {ex.Message}");
             }
         }
+    }
+
+    public void Dispose()
+    {
+        if (_computer != null)
+        {
+            try { _computer.Close(); } catch { }
+            _computer = null;
+        }
+        GC.SuppressFinalize(this);
     }
 }

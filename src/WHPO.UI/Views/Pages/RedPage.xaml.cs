@@ -1,14 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Microsoft.Extensions.DependencyInjection;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Controls;
+using WHPO_UI.Services;
 
 namespace WHPO_UI.Views.Pages;
 
@@ -19,18 +23,22 @@ public sealed partial class RedPage : Page
     private readonly ILoggingService _loggingService;
     private bool _dataLoaded;
 
-    // Las cards creadas en código (DNS, adaptadores) se mantienen oscuras en ambos temas
-    // (paneles oscuros), por eso su texto lleva un claro explícito y siempre legible.
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush LightTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush = new(Windows.UI.Color.FromArgb(255, 0x26, 0x2A, 0x31));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush MutedTextBrush = new(Windows.UI.Color.FromArgb(255, 180, 180, 180));
+    // Las cards creadas en código (DNS, adaptadores) acompañan al tema de la app.
+    // Pinceles desde los recursos de tema (claro/oscuro), resueltos con el tema
+    // EFECTIVO (ThemeBrushes), no con el del sistema.
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush MutedTextBrush => ThemeBrushes.Get("MutedBrush");
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush LatencyErrorBrush = new(Windows.UI.Color.FromArgb(255, 255, 100, 100));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 106, 200, 133));
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 255, 193, 7));
+    // Amarillo del badge "(BETA)" (color fijo deliberado: no depende del tema).
+    // Color como struct (seguro en campo estático): el pincel se crea al usarlo, en
+    // el hilo de la UI, para no instanciar objetos XAML en el .cctor.
+    private static readonly Windows.UI.Color BetaColor = Windows.UI.Color.FromArgb(255, 255, 212, 0);
 
     // Color del anillo de tiempo del packet loss test (azul)
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush TimeRingBrush = new(Windows.UI.Color.FromArgb(255, 138, 180, 248));
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush TimeRingBrush => ThemeBrushes.Get("AccentBrush");
 
     // Lista de proveedores DNS preestablecidos
     private static readonly List<DnsPreset> DnsPresets = new()
@@ -93,6 +101,42 @@ public sealed partial class RedPage : Page
     private int _liveSent;
     private int _liveReceived;
 
+    private readonly ISettingsService _settingsService;
+    private WlanOptimizerService? _wlan;
+    private TcpService.TcpState? _tcpCurrent;
+    private bool _wlanBlockOn;
+    private bool _wlanStreamOn;
+    private bool _buildingWlan;
+
+    // Controles de la card TCP (se reconstruyen en cada carga / cambio de idioma)
+    private TextBlock? _tcpStatusText;
+    private TextBlock? _tcpApplyResultText;
+    private ToggleSwitch? _tcpNagleToggle;
+    private ComboBox? _tcpCongestionCombo;
+    private ToggleSwitch? _tcpEcnToggle;
+    private ToggleSwitch? _tcpTimestampsToggle;
+    private ToggleSwitch? _tcpRssToggle;
+    private ToggleSwitch? _tcpFastOpenToggle;
+    private TextBlock? _tcpActualNagle;
+    private TextBlock? _tcpActualCongestion;
+    private TextBlock? _tcpActualEcn;
+    private TextBlock? _tcpActualTimestamps;
+    private TextBlock? _tcpActualRss;
+    private TextBlock? _tcpActualFastOpen;
+    private TextBlock? _tcpAutoTuningText;
+    private Button? _tcpAutoTuningFixButton;
+    private TextBlock? _tcpMtuText;
+    private Button? _tcpApplyButton;
+
+    // Controles del optimizador WLAN (inline en la card del adaptador Wi-Fi)
+    private TextBlock? _wlanStatusText;
+    private ToggleSwitch? _wlanBlockToggle;
+    private ToggleSwitch? _wlanStreamToggle;
+    private Button? _wlanScanButton;
+    private WlanOptimizerService.WlanAdapterInfo? _wlanAdapter;
+
+    private const string TcpBackupKey = "red.tcp.backup";
+
     public RedPage()
     {
         try
@@ -102,6 +146,22 @@ public sealed partial class RedPage : Page
             _networkService = App.Services.GetRequiredService<INetworkService>();
             _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
             _loggingService = App.Services.GetRequiredService<ILoggingService>();
+            _settingsService = App.Services.GetRequiredService<ISettingsService>();
+            // Singleton: el keep-alive del optimizador WLAN vive en DI y sobrevive a
+            // la navegación entre pestañas. Los toggles arrancan con el estado real
+            // (si el bloqueo quedó activo al salir de la página, sigue activo).
+            _wlan = App.Services.GetRequiredService<WlanOptimizerService>();
+            _wlanBlockOn = _wlan.BlockScanActive;
+            _wlanStreamOn = _wlan.StreamingActive;
+
+            // Título del packet loss test con el badge "(BETA)" en amarillo.
+            ApplyPacketLossTitle();
+
+            // Las cards (adaptadores, DNS) se construyen en código con I18n.T: al
+            // cambiar idioma estando en la página hay que reconstruirlas. La página
+            // se recrea en cada navegación (cache Disabled), así que se desuscribe
+            // en OnNavigatedFrom para no acumular handlers.
+            I18n.LanguageChanged += OnLanguageChanged;
         }
         catch (Exception ex)
         {
@@ -110,6 +170,36 @@ public sealed partial class RedPage : Page
             // La excepción se propagará al sistema de navegación
             throw;
         }
+    }
+
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        I18n.LanguageChanged -= OnLanguageChanged;
+        // NO detener el keep-alive del optimizador WLAN aquí: el servicio es singleton
+        // y el bloqueo de escaneo debe seguir activo al navegar a otra pestaña
+        // (igual que el original WLAN Optimizer mientras la app corre). Se restaura
+        // al cerrar la app (ver MainWindow "Salir" / App.OnWindowClosed).
+    }
+
+    /// <summary>Título "Packet Loss Test (BETA)" con el badge en amarillo.</summary>
+    private void ApplyPacketLossTitle()
+    {
+        PacketLossTitleText.Inlines.Clear();
+        PacketLossTitleText.Inlines.Add(new Run { Text = I18n.T("Packet Loss Test") + " " });
+        PacketLossTitleText.Inlines.Add(new Run { Text = I18n.T("(BETA)"), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(BetaColor) });
+    }
+
+    private void OnLanguageChanged()
+    {
+        ApplyPacketLossTitle();
+        if (!_dataLoaded) return;
+        // Reconstruir las cards con el idioma nuevo (mismo flujo que la carga inicial).
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            try { await LoadDataAsync(); }
+            catch (Exception ex) { _loggingService.LogError($"Error re-traduciendo RedPage: {ex.Message}", ex); }
+        });
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -171,21 +261,43 @@ public sealed partial class RedPage : Page
             InitializePacketLossServerCombo();
             InitializeRingGauges();
 
-            // Adaptadores (al final de la página)
+            // Adaptadores (al final de la página). El optimizador WLAN se despliega
+            // inline en la card del adaptador Wi-Fi (primero conectado / primero), en
+            // vez de tener su propia sección.
             _loggingService.LogInfo("RedPage: cargando adaptadores...");
             var adapters = await Task.Run(() => _systemInfoService.GetNetworkInfo());
             if (AdaptersPanel != null)
             {
                 AdaptersPanel.Children.Clear();
+                var wlanHosts = _wlan?.GetAdapters() ?? new List<WlanOptimizerService.WlanAdapterInfo>();
+                var wlanHost = wlanHosts.FirstOrDefault(a => a.State == 1) ?? wlanHosts.FirstOrDefault();
+                bool optimizerAttached = false;
                 foreach (var a in adapters)
                 {
-                    var card = BuildTextCard(
-                        $"{a.Name}",
-                        $"{a.Description}\nMAC {a.MacAddress} | IP {a.IpAddress}\n" +
-                        $"{a.ConnectionType} | {a.SpeedMbps:F0} Mbps | Conectado {(a.IsConnected ? "Sí" : "No")}");
+                    // Título = nombre de la interfaz ("Ethernet"/"Wi-Fi"). En WMI,
+                    // Name y Description del adaptador suelen ser idénticos (nombre del
+                    // hardware): usar NetConnectionId evita que el nombre se repita.
+                    string title = string.IsNullOrWhiteSpace(a.NetConnectionId) ? a.Name : a.NetConnectionId;
+                    var desc = $"{a.Description}\nMAC {a.MacAddress} | IP {a.IpAddress}\n" +
+                               $"{a.ConnectionType} | {a.SpeedMbps:F0} Mbps | {I18n.T("Conectado: {0}", a.IsConnected ? I18n.T("Sí") : I18n.T("No"))}";
+                    bool isWifi = a.ConnectionType == "WiFi";
+                    Border card;
+                    if (isWifi && wlanHost != null && !optimizerAttached)
+                    {
+                        optimizerAttached = true;
+                        _wlanAdapter = wlanHost;
+                        card = BuildWlanAdapterCard(title, desc, wlanHost);
+                    }
+                    else
+                    {
+                        card = BuildTextCard(title, desc);
+                    }
                     AdaptersPanel.Children.Add(card);
                 }
             }
+
+            // TCP avanzado (card propia, patrón "Consultando...")
+            await BuildTcpAdvancedCardAsync();
 
             _loggingService.LogInfo("RedPage: datos cargados");
         }
@@ -221,7 +333,7 @@ public sealed partial class RedPage : Page
                 PacketLossDurationSlider.StepFrequency = 5;
                 PacketLossDurationSlider.Value = 10;
                 _packetLossDurationSeconds = 10;
-                PacketLossDurationText.Text = "10 segundos";
+                PacketLossDurationText.Text = I18n.T("10 segundos");
             }
 
             // Configurar slider de paquetes por segundo
@@ -235,9 +347,9 @@ public sealed partial class RedPage : Page
                 PacketLossRateText.Text = "10 pps";
             }
 
-            _sentGauge = new RingGauge { Label = "Enviados" };
-            _timeGauge = new RingGauge { Label = "Tiempo", ProgressBrush = TimeRingBrush };
-            _receivedGauge = new RingGauge { Label = "Recibidos" };
+            _sentGauge = new RingGauge { Label = I18n.T("Enviados") };
+            _timeGauge = new RingGauge { Label = I18n.T("Tiempo"), ProgressBrush = TimeRingBrush };
+            _receivedGauge = new RingGauge { Label = I18n.T("Recibidos") };
 
             if (SentRingHost != null)
                 SentRingHost.Children.Add(_sentGauge);
@@ -259,7 +371,7 @@ public sealed partial class RedPage : Page
             _packetLossDurationSeconds = (int)e.NewValue;
             if (PacketLossDurationText != null)
             {
-                PacketLossDurationText.Text = $"{_packetLossDurationSeconds} segundos";
+                PacketLossDurationText.Text = I18n.T("{0} segundos", _packetLossDurationSeconds);
             }
         }
         catch (Exception ex)
@@ -321,8 +433,8 @@ public sealed partial class RedPage : Page
             var cts = _packetLossCts;
             _liveSent = 0;
             _liveReceived = 0;
-            PacketLossStartButton.Content = "Detener test";
-            Feedback.Running(PacketLossStatusText, $"Probando {server.Name} ({server.Host})...", persistent: true);
+            PacketLossStartButton.Content = I18n.T("Detener test");
+            Feedback.Running(PacketLossStatusText, I18n.T("Probando {0} ({1})...", server.Name, server.Host), persistent: true);
             
             if (PacketLossResultsPanel != null)
                 PacketLossResultsPanel.Visibility = Visibility.Collapsed;
@@ -388,7 +500,7 @@ public sealed partial class RedPage : Page
                     {
                         _timeGauge!.Value = $"{elapsed:F1}s";
                         _timeGauge.Progress = progress;
-                        PacketLossStatusText.Text = $"Enviados: {_liveSent} | Recibidos: {_liveReceived} | Perdidos: {liveLost}  ·  {elapsed:F1}s / {_packetLossDurationSeconds}s";
+                        PacketLossStatusText.Text = I18n.T("Enviados: {0} | Recibidos: {1} | Perdidos: {2}  ·  {3}s / {4}s", _liveSent, _liveReceived, liveLost, $"{elapsed:F1}", _packetLossDurationSeconds);
                     }
                 });
             }, null, 0, 100);
@@ -497,19 +609,18 @@ public sealed partial class RedPage : Page
 
             PacketLossResultsPanel.Visibility = Visibility.Visible;
             PacketLossDetailText.Text =
-                $"Servidor: {server.Name} ({server.Host}) | Enviados: {sent} | Recibidos: {received} | Perdidos: {lost} ({packetLossPercent:F1}%) | " +
-                $"Tasa: {_packetLossRatePps} pps pedidos / {effectivePps} pps efectivos | Late (> {_latePacketThresholdMs} ms): {late} | Alta latencia (> 100 ms): {highLatency} | " +
-                $"Avg: {avgLatency:F1} ms | Max: {maxLatency} ms\n" +
-                "Nota: el ping ICMP mide la ida y vuelta completa; la pérdida de carga y de descarga no se puede separar, por eso ambas muestran la pérdida total.";
+                I18n.T("Servidor: {0} ({1}) | Enviados: {2} | Recibidos: {3} | Perdidos: {4} ({5}%) | Tasa: {6} pps pedidos / {7} pps efectivos | Late (> {8} ms): {9} | Alta latencia (> 100 ms): {10} | Avg: {11} ms | Max: {12} ms",
+                    server.Name, server.Host, sent, received, lost, $"{packetLossPercent:F1}", _packetLossRatePps, effectivePps, _latePacketThresholdMs, late, highLatency, $"{avgLatency:F1}", maxLatency) +
+                "\n" + I18n.T("Nota: el ping ICMP mide la ida y vuelta completa; la pérdida de carga y de descarga no se puede separar, por eso ambas muestran la pérdida total.");
             PacketLossDetailText.Visibility = Visibility.Visible;
 
             if (cts.IsCancellationRequested)
             {
-                Feedback.Warning(PacketLossStatusText, $"Test detenido por el usuario. Resultados parciales: {lost} de {sent} paquetes perdidos ({packetLossPercent:F1}%).");
+                Feedback.Warning(PacketLossStatusText, I18n.T("Test detenido por el usuario. Resultados parciales: {0} de {1} paquetes perdidos ({2}%).", lost, sent, $"{packetLossPercent:F1}"));
             }
             else
             {
-                var packetLossMessage = $"Test completado: {packetLossPercent:F1}% de pérdida ({lost} de {sent} paquetes perdidos).";
+                var packetLossMessage = I18n.T("Test completado: {0}% de pérdida ({1} de {2} paquetes perdidos).", $"{packetLossPercent:F1}", lost, sent);
                 if (packetLossPercent < 1)
                     Feedback.Success(PacketLossStatusText, packetLossMessage);
                 else if (packetLossPercent < 5)
@@ -530,7 +641,7 @@ public sealed partial class RedPage : Page
             _timerTicker = null;
             _packetLossCts?.Dispose();
             _packetLossCts = null;
-            PacketLossStartButton.Content = "Iniciar test";
+            PacketLossStartButton.Content = I18n.T("Iniciar test");
         }
     }
 
@@ -545,7 +656,7 @@ public sealed partial class RedPage : Page
             {
                 // ComboBoxItem (como en el resto de la app): el Content directo evita que
                 // el popup mida mal con DisplayMemberPath al abrirse por primera vez.
-                DnsProviderCombo.Items.Add(new ComboBoxItem { Content = preset.Name, Tag = preset });
+                DnsProviderCombo.Items.Add(new ComboBoxItem { Content = I18n.T(preset.Name), Tag = preset });
             }
 
             // La opción "Personalizado" es la primera y la seleccionada por defecto,
@@ -554,7 +665,7 @@ public sealed partial class RedPage : Page
 
             // Cargar valores actuales en los textboxes (mostrar DHCP si está vacío)
             if (PrimaryDnsTextBox != null)
-                PrimaryDnsTextBox.Text = string.IsNullOrEmpty(_currentPrimaryDns) ? "(Automático DHCP)" : _currentPrimaryDns;
+                PrimaryDnsTextBox.Text = string.IsNullOrEmpty(_currentPrimaryDns) ? I18n.T("(Automático DHCP)") : _currentPrimaryDns;
             if (SecondaryDnsTextBox != null)
                 SecondaryDnsTextBox.Text = string.IsNullOrEmpty(_currentSecondaryDns) ? "" : _currentSecondaryDns;
 
@@ -721,7 +832,7 @@ public sealed partial class RedPage : Page
             {
                 UpdateCurrentDns(primaryDns, secondaryDns);
                 var applied = string.IsNullOrEmpty(secondaryDns) ? primaryDns : $"{primaryDns} / {secondaryDns}";
-                Feedback.Success(ApplyDnsResultText, $"DNS aplicado: {applied}. {message}");
+                Feedback.Success(ApplyDnsResultText, I18n.T("DNS aplicado: {0}. {1}", applied, message));
             }
             else
             {
@@ -775,13 +886,13 @@ public sealed partial class RedPage : Page
         {
             _loggingService.LogError("No se pudo encontrar ningún adaptador de red activo.");
             FallbackToNcpaCpl();
-            return (false, "No se encontró ningún adaptador de red activo. Se abrirá la configuración de red.");
+            return (false, I18n.T("No se encontró ningún adaptador de red activo. Se abrirá la configuración de red."));
         }
 
         var result = await _networkService.SetDnsServersAsync(adapterName, primaryDns, secondaryDns);
         return (result.Success, result.Success
-            ? "Servidores DNS configurados correctamente."
-            : $"Error al configurar DNS: {result.Output}");
+            ? I18n.T("Servidores DNS configurados correctamente.")
+            : I18n.T("Error al configurar DNS: {0}", result.Output));
     }
 
     /// <summary>
@@ -836,7 +947,7 @@ public sealed partial class RedPage : Page
                 Margin = new Thickness(0, 2, 0, 2)
             };
             var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            panel.Children.Add(new TextBlock { Text = dns, VerticalAlignment = VerticalAlignment.Center, Foreground = LightTextBrush });
+            panel.Children.Add(new TextBlock { Text = dns, VerticalAlignment = VerticalAlignment.Center });
             var removeBtn = new Button { Content = "×", Width = 24, Height = 24, Padding = new Thickness(0), FontSize = 14 };
             removeBtn.Click += (s, e) => { _manualDnsList.Remove(dns); UpdateManualDnsList(); };
             panel.Children.Add(removeBtn);
@@ -898,12 +1009,12 @@ public sealed partial class RedPage : Page
                 return;
             }
 
-            Feedback.Running(DnsTestStatusText, $"Aplicando {best.Name} ({best.Primary})...", persistent: true);
+            Feedback.Running(DnsTestStatusText, I18n.T("Aplicando {0} ({1})...", best.Name, best.Primary), persistent: true);
             var (success, message) = await ApplyDnsToActiveAdapterAsync(best.Primary, best.Secondary);
             if (success)
             {
                 UpdateCurrentDns(best.Primary, best.Secondary);
-                Feedback.Success(DnsTestStatusText, $"✓ Aplicado {best.Name} ({best.Primary}) · {best.BestLatency:F0} ms", persistent: true);
+                Feedback.Success(DnsTestStatusText, I18n.T("✓ Aplicado {0} ({1}) · {2} ms", best.Name, best.Primary, $"{best.BestLatency:F0}"), persistent: true);
             }
             else
             {
@@ -962,7 +1073,7 @@ public sealed partial class RedPage : Page
         // Probar DNS manuales agregados
         foreach (var manualDns in _manualDnsList)
         {
-            Feedback.Running(DnsTestStatusText, $"Probando DNS manual ({manualDns})...", persistent: true);
+            Feedback.Running(DnsTestStatusText, I18n.T("Probando DNS manual ({0})...", manualDns), persistent: true);
             var latency = await _networkService.TestDnsLatencyAsync(manualDns);
             entries.Add(new DnsTestEntry("Manual", manualDns, "", BestDnsLatency(latency, -1)));
             AddDnsResultCard("Manual", manualDns, "", latency, -1);
@@ -974,7 +1085,7 @@ public sealed partial class RedPage : Page
         foreach (var preset in presets)
         {
             tested++;
-            Feedback.Running(DnsTestStatusText, $"Probando ({tested}/{presets.Count}): {preset.Name}...", persistent: true);
+            Feedback.Running(DnsTestStatusText, I18n.T("Probando ({0}/{1}): {2}...", tested, presets.Count, preset.Name), persistent: true);
             double primaryLatency = -1, secondaryLatency = -1;
 
             if (!string.IsNullOrEmpty(preset.PrimaryDns))
@@ -1058,16 +1169,16 @@ public sealed partial class RedPage : Page
         cardGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var panel = new StackPanel { Spacing = 6 };
-        var header = new TextBlock { Text = name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 14, Foreground = LightTextBrush };
+        var header = new TextBlock { Text = name, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 14 };
         panel.Children.Add(header);
 
         // DNS Primario
         if (!string.IsNullOrEmpty(primary))
         {
             var primaryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            primaryPanel.Children.Add(new TextBlock { Text = "Primario:", Foreground = MutedTextBrush, VerticalAlignment = VerticalAlignment.Center });
-            primaryPanel.Children.Add(new TextBlock { Text = primary, FontWeight = Microsoft.UI.Text.FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center, Foreground = LightTextBrush });
-            var primaryLatencyText = primaryLatency >= 0 ? $"{primaryLatency:F0} ms" : "Sin respuesta";
+            primaryPanel.Children.Add(new TextBlock { Text = I18n.T("Primario:"), Foreground = MutedTextBrush, VerticalAlignment = VerticalAlignment.Center });
+            primaryPanel.Children.Add(new TextBlock { Text = primary, FontWeight = Microsoft.UI.Text.FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center });
+            var primaryLatencyText = primaryLatency >= 0 ? $"{primaryLatency:F0} ms" : I18n.T("Sin respuesta");
             primaryPanel.Children.Add(new TextBlock { Text = primaryLatencyText, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Foreground = primaryLatency >= 0 ? AccentBrush : LatencyErrorBrush, VerticalAlignment = VerticalAlignment.Center });
             panel.Children.Add(primaryPanel);
         }
@@ -1076,9 +1187,9 @@ public sealed partial class RedPage : Page
         if (!string.IsNullOrEmpty(secondary))
         {
             var secondaryPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            secondaryPanel.Children.Add(new TextBlock { Text = "Secundario:", Foreground = MutedTextBrush, VerticalAlignment = VerticalAlignment.Center });
-            secondaryPanel.Children.Add(new TextBlock { Text = secondary, FontWeight = Microsoft.UI.Text.FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center, Foreground = LightTextBrush });
-            var secondaryLatencyText = secondaryLatency >= 0 ? $"{secondaryLatency:F0} ms" : "Sin respuesta";
+            secondaryPanel.Children.Add(new TextBlock { Text = I18n.T("Secundario:"), Foreground = MutedTextBrush, VerticalAlignment = VerticalAlignment.Center });
+            secondaryPanel.Children.Add(new TextBlock { Text = secondary, FontWeight = Microsoft.UI.Text.FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center });
+            var secondaryLatencyText = secondaryLatency >= 0 ? $"{secondaryLatency:F0} ms" : I18n.T("Sin respuesta");
             secondaryPanel.Children.Add(new TextBlock { Text = secondaryLatencyText, FontWeight = Microsoft.UI.Text.FontWeights.Bold, Foreground = secondaryLatency >= 0 ? AccentBrush : LatencyErrorBrush, VerticalAlignment = VerticalAlignment.Center });
             panel.Children.Add(secondaryPanel);
         }
@@ -1089,7 +1200,7 @@ public sealed partial class RedPage : Page
         // Botón "Aplicar": aplica este DNS al sistema directamente
         var applyButton = new Button
         {
-            Content = "Aplicar",
+            Content = I18n.T("Aplicar"),
             FontSize = 12,
             Padding = new Thickness(10, 4, 10, 4),
             CornerRadius = new CornerRadius(4),
@@ -1100,31 +1211,31 @@ public sealed partial class RedPage : Page
         {
             if (string.IsNullOrEmpty(primary))
             {
-                Feedback.Error(ApplyDnsResultText, $"\"{name}\" no tiene DNS primario para aplicar.");
+                Feedback.Error(ApplyDnsResultText, I18n.T("\"{0}\" no tiene DNS primario para aplicar.", name));
                 return;
             }
 
             applyButton.IsEnabled = false;
-            applyButton.Content = "Aplicando...";
+            applyButton.Content = I18n.T("Aplicando...");
             try
             {
                 var (success, message) = await ApplyDnsToActiveAdapterAsync(primary, secondary);
                 if (success)
                 {
                     UpdateCurrentDns(primary, secondary);
-                    Feedback.Success(ApplyDnsResultText, $"{name}: {message}");
+                    Feedback.Success(ApplyDnsResultText, I18n.T("{0}: {1}", name, message));
                 }
                 else
                 {
-                    Feedback.Error(ApplyDnsResultText, $"{name}: {message}");
+                    Feedback.Error(ApplyDnsResultText, I18n.T("{0}: {1}", name, message));
                 }
-                applyButton.Content = success ? "✓ Aplicado" : "Error";
+                applyButton.Content = success ? I18n.T("✓ Aplicado") : I18n.T("Error");
             }
             catch (Exception ex)
             {
-                Feedback.Error(ApplyDnsResultText, $"{name}: no se pudo aplicar: {ex.Message}");
+                Feedback.Error(ApplyDnsResultText, I18n.T("{0}: no se pudo aplicar: {1}", name, ex.Message));
                 _loggingService.LogError($"Error aplicando DNS desde resultado ({name})", ex);
-                applyButton.Content = "Error";
+                applyButton.Content = I18n.T("Error");
             }
             finally
             {
@@ -1162,6 +1273,553 @@ public sealed partial class RedPage : Page
         }
     }
 
+    // ===================== TCP / Red avanzado =====================
+
+    private async Task BuildTcpAdvancedCardAsync()
+    {
+        if (TcpAdvancedPanel == null) return;
+        TcpAdvancedPanel.Children.Clear();
+
+        var card = new Border
+        {
+            Background = CardBrush,
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16)
+        };
+        var panel = new StackPanel { Spacing = 12 };
+        card.Child = panel;
+        TcpAdvancedPanel.Children.Add(card);
+
+        _tcpStatusText = new TextBlock { Text = I18n.T("Consultando estado TCP..."), FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+        panel.Children.Add(_tcpStatusText);
+        Feedback.Running(_tcpStatusText, I18n.T("Consultando estado TCP..."), persistent: true);
+
+        var state = await TcpService.GetStateAsync();
+        _tcpCurrent = state ?? new TcpService.TcpState();
+        if (state == null)
+            Feedback.Error(_tcpStatusText, I18n.T("No se pudo leer el estado TCP: {0}", "netsh"));
+
+        // Presets primero (antes de las opciones): un clic aplica todo el perfil
+        var presetsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        var gamingBtn = new Button { Content = I18n.T("Óptimo para juegos"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        gamingBtn.Click += async (s, e) => ApplyTcpPreset(gaming: true);
+        var defaultBtn = new Button { Content = I18n.T("Valores por defecto (Windows)"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        defaultBtn.Click += async (s, e) => ApplyTcpPreset(gaming: false);
+        presetsRow.Children.Add(gamingBtn);
+        presetsRow.Children.Add(defaultBtn);
+        panel.Children.Add(presetsRow);
+
+        // Desactivar Nagle (TCPNoDelay + TcpAckFrequency en la interfaz activa)
+        _tcpNagleToggle = NewToggle();
+        _tcpNagleToggle.IsOn = _tcpCurrent.NagleDisabled;
+        var (nagleRow, nagleActual) = BuildSettingRow(
+            I18n.T("Desactivar Nagle"), I18n.T("TCPNoDelay + TcpAckFrequency"), ActualText(_tcpCurrent.NagleDisabled), _tcpNagleToggle, TtNagle);
+        _tcpActualNagle = nagleActual;
+        panel.Children.Add(nagleRow);
+
+        // Algoritmo de congestión (CUBIC / CTCP)
+        _tcpCongestionCombo = new ComboBox { MinWidth = 170, HorizontalAlignment = HorizontalAlignment.Stretch };
+        _tcpCongestionCombo.Items.Add(new ComboBoxItem { Content = I18n.T("CUBIC (predeterminado)"), Tag = "cubic" });
+        _tcpCongestionCombo.Items.Add(new ComboBoxItem { Content = I18n.T("CTCP (menor latencia)"), Tag = "ctcp" });
+        _tcpCongestionCombo.SelectedIndex = _tcpCurrent.CongestionProvider == "ctcp" ? 1 : 0;
+        var (congestionRow, congestionActual) = BuildSettingRow(
+            I18n.T("Algoritmo de congestión"), null, CongestionActual(_tcpCurrent.CongestionProvider), _tcpCongestionCombo, TtCongestion);
+        _tcpActualCongestion = congestionActual;
+        panel.Children.Add(congestionRow);
+
+        // ECN
+        _tcpEcnToggle = NewToggle();
+        _tcpEcnToggle.IsOn = _tcpCurrent.EcnEnabled;
+        var (ecnRow, ecnActual) = BuildSettingRow(
+            I18n.T("ECN (Notificación de congestión explícita)"), null, ActualText(_tcpCurrent.EcnEnabled), _tcpEcnToggle, TtEcn);
+        _tcpActualEcn = ecnActual;
+        panel.Children.Add(ecnRow);
+
+        // Timestamps
+        _tcpTimestampsToggle = NewToggle();
+        _tcpTimestampsToggle.IsOn = _tcpCurrent.TimestampsEnabled;
+        var (timestampsRow, timestampsActual) = BuildSettingRow(
+            I18n.T("Timestamps TCP (RFC 1323)"), null, ActualText(_tcpCurrent.TimestampsEnabled), _tcpTimestampsToggle, TtTimestamps);
+        _tcpActualTimestamps = timestampsActual;
+        panel.Children.Add(timestampsRow);
+
+        // RSS
+        _tcpRssToggle = NewToggle();
+        _tcpRssToggle.IsOn = _tcpCurrent.RssEnabled;
+        var (rssRow, rssActual) = BuildSettingRow(
+            I18n.T("RSS (Receive Side Scaling)"), null, ActualText(_tcpCurrent.RssEnabled), _tcpRssToggle, TtRss);
+        _tcpActualRss = rssActual;
+        panel.Children.Add(rssRow);
+
+        // Fast Open
+        _tcpFastOpenToggle = NewToggle();
+        _tcpFastOpenToggle.IsOn = _tcpCurrent.FastOpenEnabled;
+        var (fastOpenRow, fastOpenActual) = BuildSettingRow(
+            I18n.T("TCP Fast Open"), null, ActualText(_tcpCurrent.FastOpenEnabled), _tcpFastOpenToggle, TtFastOpen);
+        _tcpActualFastOpen = fastOpenActual;
+        panel.Children.Add(fastOpenRow);
+
+        panel.Children.Add(new Rectangle { Height = 1, Fill = ThemeBrushes.Get("CardBorderBrush"), Margin = new Thickness(0, 4, 0, 4) });        // Autotuning: solo lectura + botón "recomendado" si no está en Normal
+        var autotuningPanel = new StackPanel { Spacing = 4 };
+        autotuningPanel.Children.Add(BuildInfoTitle(I18n.T("Ajuste automático de la ventana TCP"), TtAutoTuning));
+        _tcpAutoTuningText = new TextBlock { Text = AutoTuningActual(_tcpCurrent.AutoTuningLevel), FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+        autotuningPanel.Children.Add(_tcpAutoTuningText);
+        if (!_tcpCurrent.AutoTuningLevel.Equals("normal", StringComparison.OrdinalIgnoreCase))
+        {
+            _tcpAutoTuningFixButton = new Button { Content = I18n.T("Restaurar a Normal"), Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left };
+            _tcpAutoTuningFixButton.Click += async (s, e) =>
+            {
+                var d = ReadTcpDesired();
+                d.AutoTuningLevel = "normal";
+                await ApplyTcpAsync(I18n.T("Ajuste automático restaurado a Normal."), d, includeAutoTuning: true);
+            };
+            ToolTipService.SetToolTip(_tcpAutoTuningFixButton, I18n.T(TtAutoTuning));
+            autotuningPanel.Children.Add(_tcpAutoTuningFixButton);
+        }
+        panel.Children.Add(autotuningPanel);
+
+        // MTU real por interfaz
+        var mtuPanel = new StackPanel { Spacing = 4 };
+        mtuPanel.Children.Add(BuildInfoTitle(I18n.T("MTU"), TtMtu));
+        _tcpMtuText = new TextBlock { Text = MtuActual(_tcpCurrent), FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+        mtuPanel.Children.Add(_tcpMtuText);
+        panel.Children.Add(mtuPanel);
+
+        // Acciones (los presets ya están arriba, antes de las opciones)
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        _tcpApplyButton = new Button { Content = I18n.T("Aplicar"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        _tcpApplyButton.Click += async (s, e) => await ApplyTcpAsync(I18n.T("TCP aplicado correctamente."));
+        var restoreBtn = new Button { Content = I18n.T("Restaurar todo"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        restoreBtn.Click += async (s, e) => await RestoreTcpAsync();
+        buttons.Children.Add(_tcpApplyButton);
+        buttons.Children.Add(restoreBtn);
+        panel.Children.Add(buttons);
+
+        _tcpApplyResultText = new TextBlock { Text = "", FontSize = 12, Visibility = Visibility.Collapsed, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+        panel.Children.Add(_tcpApplyResultText);
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = I18n.T("Solo se incluyen ajustes con efecto real y reversibles. El ajuste automático de ventana TCP se mantiene en Normal para no afectar la descarga."),
+            FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
+        });
+
+        if (state != null)
+        {
+            Feedback.Set(_tcpStatusText, null);
+            _tcpStatusText.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private TcpService.TcpState ReadTcpDesired()
+    {
+        var d = new TcpService.TcpState();
+        if (_tcpCongestionCombo?.SelectedItem is ComboBoxItem { Tag: string tag }) d.CongestionProvider = tag;
+        d.EcnEnabled = _tcpEcnToggle?.IsOn ?? false;
+        d.TimestampsEnabled = _tcpTimestampsToggle?.IsOn ?? false;
+        d.RssEnabled = _tcpRssToggle?.IsOn ?? false;
+        d.FastOpenEnabled = _tcpFastOpenToggle?.IsOn ?? false;
+        d.NagleDisabled = _tcpNagleToggle?.IsOn ?? false;
+        return d;
+    }
+
+    /// <summary>
+    /// Carga un preset en los controles (NO lo aplica): el usuario revisa los valores
+    /// contra el estado actual y decide si toca "Aplicar".
+    /// </summary>
+    private void ApplyTcpPreset(bool gaming)
+    {
+        if (_tcpNagleToggle == null || _tcpCongestionCombo == null) return;
+        _tcpNagleToggle.IsOn = gaming;                        // off en gaming
+        _tcpCongestionCombo.SelectedIndex = gaming ? 1 : 0;   // CTCP / CUBIC
+        if (_tcpEcnToggle != null) _tcpEcnToggle.IsOn = false;
+        if (_tcpTimestampsToggle != null) _tcpTimestampsToggle.IsOn = !gaming;
+        if (_tcpRssToggle != null) _tcpRssToggle.IsOn = true;
+        if (_tcpFastOpenToggle != null) _tcpFastOpenToggle.IsOn = true;
+        var name = gaming ? I18n.T("Óptimo para juegos") : I18n.T("Valores por defecto (Windows)");
+        if (_tcpApplyResultText != null)
+        {
+            _tcpApplyResultText.Visibility = Visibility.Visible;
+            Feedback.Info(_tcpApplyResultText, I18n.T("Preset cargado: {0} — revisá los valores y toca Aplicar.", name));
+        }
+    }
+
+    private async Task ApplyTcpAsync(string successMessage, TcpService.TcpState? desiredOverride = null, bool includeAutoTuning = false)
+    {
+        if (_tcpApplyResultText == null) return;
+        _tcpApplyResultText.Visibility = Visibility.Visible;
+        if (_tcpApplyButton != null) _tcpApplyButton.IsEnabled = false;
+        Feedback.Running(_tcpApplyResultText, I18n.T("Aplicando TCP..."));
+        try
+        {
+            SaveTcpBackup(_tcpCurrent);
+            var desired = desiredOverride ?? ReadTcpDesired();
+            var (ok, msg) = await TcpService.ApplyAsync(desired, includeAutoTuning);
+            if (ok) Feedback.Success(_tcpApplyResultText, successMessage);
+            else Feedback.Error(_tcpApplyResultText, I18n.T("Error aplicando TCP: {0}", msg));
+            await RefreshTcpAsync();
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(_tcpApplyResultText, ex.Message);
+            _loggingService.LogError("Error aplicando TCP", ex);
+        }
+        finally
+        {
+            if (_tcpApplyButton != null) _tcpApplyButton.IsEnabled = true;
+        }
+    }
+
+    private async Task RestoreTcpAsync()
+    {
+        var backup = LoadTcpBackup();
+        if (backup == null)
+        {
+            if (_tcpApplyResultText != null)
+            {
+                _tcpApplyResultText.Visibility = Visibility.Visible;
+                Feedback.Info(_tcpApplyResultText, I18n.T("No hay backup guardado todavía."));
+            }
+            return;
+        }
+        await ApplyTcpAsync(I18n.T("Estado TCP anterior restaurado."), backup);
+    }
+
+    private async Task RefreshTcpAsync()
+    {
+        var state = await TcpService.GetStateAsync();
+        if (state == null) return;
+        _tcpCurrent = state;
+
+        // Actualizar etiquetas "Actual:" en el lugar (no se reconstruye la card,
+        // así el mensaje de resultado queda visible).
+        if (_tcpActualNagle != null) _tcpActualNagle.Text = ActualText(state.NagleDisabled);
+        if (_tcpActualCongestion != null) _tcpActualCongestion.Text = CongestionActual(state.CongestionProvider);
+        if (_tcpActualEcn != null) _tcpActualEcn.Text = ActualText(state.EcnEnabled);
+        if (_tcpActualTimestamps != null) _tcpActualTimestamps.Text = ActualText(state.TimestampsEnabled);
+        if (_tcpActualRss != null) _tcpActualRss.Text = ActualText(state.RssEnabled);
+        if (_tcpActualFastOpen != null) _tcpActualFastOpen.Text = ActualText(state.FastOpenEnabled);
+        if (_tcpAutoTuningText != null) _tcpAutoTuningText.Text = AutoTuningActual(state.AutoTuningLevel);
+        if (_tcpAutoTuningFixButton != null)
+            _tcpAutoTuningFixButton.Visibility = state.AutoTuningLevel.Equals("normal", StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Collapsed : Visibility.Visible;
+        if (_tcpMtuText != null) _tcpMtuText.Text = MtuActual(state);
+
+        // Sincronizar los controles con el estado real aplicado
+        if (_tcpNagleToggle != null) _tcpNagleToggle.IsOn = state.NagleDisabled;
+        if (_tcpCongestionCombo != null) _tcpCongestionCombo.SelectedIndex = state.CongestionProvider == "ctcp" ? 1 : 0;
+        if (_tcpEcnToggle != null) _tcpEcnToggle.IsOn = state.EcnEnabled;
+        if (_tcpTimestampsToggle != null) _tcpTimestampsToggle.IsOn = state.TimestampsEnabled;
+        if (_tcpRssToggle != null) _tcpRssToggle.IsOn = state.RssEnabled;
+        if (_tcpFastOpenToggle != null) _tcpFastOpenToggle.IsOn = state.FastOpenEnabled;
+    }
+
+    private void SaveTcpBackup(TcpService.TcpState? state)
+    {
+        if (state == null) return;
+        var dto = new TcpBackupDto
+        {
+            Congestion = state.CongestionProvider,
+            Ecn = state.EcnEnabled,
+            Timestamps = state.TimestampsEnabled,
+            Rss = state.RssEnabled,
+            FastOpen = state.FastOpenEnabled,
+            NagleDisabled = state.NagleDisabled
+        };
+        try
+        {
+            _settingsService.Set(TcpBackupKey, JsonSerializer.Serialize(dto));
+            _settingsService.Save();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error guardando backup TCP", ex);
+        }
+    }
+
+    private TcpService.TcpState? LoadTcpBackup()
+    {
+        try
+        {
+            var json = _settingsService.Get<string>(TcpBackupKey, "");
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            var dto = JsonSerializer.Deserialize<TcpBackupDto>(json);
+            if (dto == null) return null;
+            return new TcpService.TcpState
+            {
+                CongestionProvider = dto.Congestion ?? "cubic",
+                EcnEnabled = dto.Ecn,
+                TimestampsEnabled = dto.Timestamps,
+                RssEnabled = dto.Rss,
+                FastOpenEnabled = dto.FastOpen,
+                NagleDisabled = dto.NagleDisabled
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string ActualText(bool value)
+        => I18n.T("Actual: {0}", value ? I18n.T("Activado") : I18n.T("Desactivado"));
+
+    private static string CongestionActual(string provider)
+        => I18n.T("Actual: {0}", provider == "ctcp" ? "CTCP" : I18n.T("CUBIC (predeterminado)"));
+
+    private static string AutoTuningActual(string level)
+    {
+        string label = level switch
+        {
+            "disabled" => I18n.T("Deshabilitado"),
+            "highlyrestricted" => I18n.T("Muy restringido"),
+            "restricted" => I18n.T("Restringido"),
+            "experimental" => I18n.T("Experimental"),
+            _ => I18n.T("Normal (recomendado)")
+        };
+        var text = I18n.T("Actual: {0}", label);
+        if (level == "disabled")
+            text += " · " + I18n.T("Aviso: desactivar el ajuste automático puede reducir la velocidad de descarga. Se recomienda dejarlo en Normal.");
+        return text;
+    }
+
+    private static string MtuActual(TcpService.TcpState state)
+    {
+        if (state.MtuList.Count == 0) return I18n.T("MTU: {0}", "--");
+        return I18n.T("MTU: {0}", string.Join(", ", state.MtuList.Select(m => $"{m.Name} {m.Mtu}")));
+    }
+
+    /// <summary>
+    /// Fila de ajuste: título + subtítulo/actual a la izquierda, control a la derecha.
+    /// tooltip: texto (clave de traducción) que explica qué hace y cuándo conviene ON/OFF.
+    /// Al lado del título se muestra un botón "?" con el mismo estilo que Optimizaciones:
+    /// tooltip custom (título en negrita + descripción), colocado abajo del botón.
+    /// </summary>
+    private static (Grid Row, TextBlock Actual) BuildSettingRow(string title, string? subtitle, string? actual, FrameworkElement control, string? tooltip = null)
+    {
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var left = new StackPanel { Spacing = 2 };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        titleRow.Children.Add(new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        if (!string.IsNullOrEmpty(tooltip))
+            titleRow.Children.Add(BuildInfoButton(title, tooltip));
+        left.Children.Add(titleRow);
+        if (!string.IsNullOrEmpty(subtitle))
+            left.Children.Add(new TextBlock { Text = subtitle, FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap });
+        TextBlock? actualTb = null;
+        if (!string.IsNullOrEmpty(actual))
+        {
+            actualTb = new TextBlock { Text = actual, FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+            left.Children.Add(actualTb);
+        }
+        grid.Children.Add(left);
+        Grid.SetColumn(control, 1);
+        control.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(control);
+        return (grid, actualTb ?? new TextBlock());
+    }
+
+    /// <summary>Título con botón "?" de info (estilo Optimizaciones).</summary>
+    private static StackPanel BuildInfoTitle(string text, string tooltip)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        row.Children.Add(new TextBlock { Text = text, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        row.Children.Add(BuildInfoButton(text, tooltip));
+        return row;
+    }
+
+    /// <summary>
+    /// Botón "?" chico con tooltip custom: título en negrita arriba, descripción abajo
+    /// (mismo estilo que BuildInfoButton de OptimizacionesPage).
+    /// </summary>
+    private static Button BuildInfoButton(string title, string tooltipBody)
+    {
+        var infoButton = new Button
+        {
+            Content = "?",
+            FontSize = 11,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            MinWidth = 22,
+            MaxWidth = 22,
+            Height = 22,
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            Foreground = MutedTextBrush,
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var content = new StackPanel { Spacing = 6, MaxWidth = 420 };
+        content.Children.Add(new TextBlock
+        {
+            Text = title,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = I18n.T(tooltipBody),
+            FontSize = 12,
+            Foreground = MutedTextBrush,
+            TextWrapping = TextWrapping.Wrap
+        });
+
+        ToolTipService.SetToolTip(infoButton, new ToolTip
+        {
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Bottom,
+            Content = content
+        });
+        return infoButton;
+    }
+
+    // ===== Tooltips: qué hace cada ajuste y cuándo conviene ON/OFF =====
+    private const string TtNagle = "Nagle agrupa paquetes pequeños para reducir el overhead de red. Desactivarlo (TCPNoDelay + TcpAckFrequency = 1) baja la latencia de apps que envían muchos paquetes chicos: juegos online, RDP, SSH, voz. Costo: un poco más de overhead. → ON (desactivar) para juegos; OFF si solo navegás o descargás.";
+    private const string TtCongestion = "Cómo reacciona el stack TCP a la congestión. CUBIC: el default moderno de Windows, buen balance. CTCP (Compound TCP): más agresivo en redes con pérdida, el clásico 'gamer'. → Probá CTCP si notás latencia o pérdida en juegos; CUBIC para uso general.";
+    private const string TtEcn = "Marca los paquetes congestionados en vez de descartarlos. Desactivarlo evita problemas con routers o ISPs viejos que lo manejan mal (jitter o pérdida de paquetes). → OFF para juegos; ON solo si sabés que tu router lo soporta bien.";
+    private const string TtTimestamps = "Agregan un timestamp a los paquetes para medir el RTT. Desactivarlos reduce un poco el overhead del stack y el tamaño de cada paquete. → OFF en juegos (ganancia marginal); ON en descargas masivas.";
+    private const string TtRss = "Distribuye el procesamiento de paquetes entre varios núcleos de CPU. → ON si tu adaptador lo soporta (mejor throughput multihilo); los adaptadores viejos lo ignoran.";
+    private const string TtFastOpen = "Permite enviar datos en el primer SYN: el handshake es más corto y baja la latencia de conexiones nuevas (juegos, navegación). → ON recomendado en general.";
+    private const string TtAutoTuning = "Windows ajusta solo el tamaño de la ventana TCP. 'Normal' es lo recomendado: desactivarlo puede bajar la latencia con routers malos, pero suele reducir la velocidad de descarga.";
+    private const string TtMtu = "Tamaño máximo de paquete. 1500 es el estándar Ethernet; con PPPoE (fibra con login) lo correcto es 1492. Un MTU incorrecto causa fragmentación o pérdida de paquetes.";
+    private const string TtWlanBlock = "Windows escanea redes Wi-Fi periódicamente aunque estés conectado, y eso causa micro-picos de latencia en juegos y streaming. Este toggle lo bloquea y se re-aplica cada 5 s mientras la app está abierta. → ON para juegos/streaming por Wi-Fi; OFF si necesitás roaming o la lista de redes siempre fresca.";
+    private const string TtWlanStream = "Reduce aún más los escaneos del adaptador priorizando la conexión activa. Algunos drivers no lo soportan (la app avisa). → ON para streaming o juegos si tu driver lo permite.";
+    private const string TtWlanScan = "El bloqueo deja la lista de redes desactualizada; este botón fuerza un escaneo manual para refrescarla.";
+
+    private static ToggleSwitch NewToggle()
+        => new() { OnContent = "", OffContent = "" };
+
+    private sealed class TcpBackupDto
+    {
+        public string? Congestion { get; set; }
+        public bool Ecn { get; set; }
+        public bool Timestamps { get; set; }
+        public bool Rss { get; set; }
+        public bool FastOpen { get; set; }
+        public bool NagleDisabled { get; set; }
+    }
+
+    // ===================== Optimizador WLAN (inline en la card Wi-Fi) =====================
+
+    private Border BuildWlanAdapterCard(string title, string desc, WlanOptimizerService.WlanAdapterInfo adapter)
+    {
+        _buildingWlan = true;
+        try
+        {
+            var card = new Border
+            {
+                Background = CardBrush,
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(12)
+            };
+            var panel = new StackPanel { Spacing = 10 };
+            card.Child = panel;
+
+            var textPanel = new StackPanel { Spacing = 4 };
+            textPanel.Children.Add(new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            textPanel.Children.Add(new TextBlock { Text = desc, TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(textPanel);
+
+            panel.Children.Add(new Rectangle { Height = 1, Fill = ThemeBrushes.Get("CardBorderBrush"), Margin = new Thickness(0, 2, 0, 2) });
+
+            _wlanStatusText = new TextBlock { Text = "", FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+            panel.Children.Add(_wlanStatusText);
+
+            _wlanBlockToggle = NewToggle();
+            _wlanBlockToggle.IsOn = _wlanBlockOn;
+            _wlanBlockToggle.Toggled += WlanBlockToggle_Toggled;
+            panel.Children.Add(BuildSettingRow(I18n.T("Bloquear escaneo de fondo"), null, null, _wlanBlockToggle, TtWlanBlock).Row);
+
+            _wlanStreamToggle = NewToggle();
+            _wlanStreamToggle.IsOn = _wlanStreamOn;
+            _wlanStreamToggle.Toggled += WlanStreamToggle_Toggled;
+            panel.Children.Add(BuildSettingRow(I18n.T("Modo streaming"), I18n.T("Reduce aún más los escaneos del adaptador"), null, _wlanStreamToggle, TtWlanStream).Row);
+
+            _wlanScanButton = new Button { Content = I18n.T("Escanear ahora"), HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(16, 8, 16, 8), CornerRadius = new CornerRadius(6) };
+            _wlanScanButton.Click += WlanScanButton_Click;
+            ToolTipService.SetToolTip(_wlanScanButton, I18n.T(TtWlanScan));
+            panel.Children.Add(_wlanScanButton);
+
+            if (_wlanBlockOn) SetWlanStatusActive();
+            else SetWlanStatusInactive();
+            return card;
+        }
+        finally
+        {
+            _buildingWlan = false;
+        }
+    }
+
+    private void WlanBlockToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_buildingWlan || _wlanBlockToggle == null || _wlanAdapter == null) return;
+        _wlanBlockOn = _wlanBlockToggle.IsOn;
+        var adapter = _wlanAdapter;
+        if (_wlanBlockOn)
+        {
+            _wlan!.StartKeepAlive(adapter.Guid, true, _wlanStreamOn);
+            SetWlanStatusActive();
+        }
+        else
+        {
+            _wlan!.StopKeepAlive();
+            _wlan!.SetBackgroundScan(adapter.Guid, true);
+            _wlanStreamOn = false;
+            if (_wlanStreamToggle != null) _wlanStreamToggle.IsOn = false;
+            SetWlanStatusInactive();
+        }
+    }
+
+    private void WlanStreamToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_buildingWlan || _wlanStreamToggle == null || _wlanAdapter == null) return;
+        _wlanStreamOn = _wlanStreamToggle.IsOn;
+        var adapter = _wlanAdapter;
+        if (_wlanBlockOn)
+        {
+            _wlan!.StartKeepAlive(adapter.Guid, true, _wlanStreamOn);
+            SetWlanStatusActive();
+        }
+        else
+        {
+            _wlan!.SetMediaStreaming(adapter.Guid, _wlanStreamOn);
+        }
+        WarnIfStreamingUnsupported();
+    }
+
+    private void WarnIfStreamingUnsupported()
+    {
+        // Algunos drivers (ej: RTL8811AU USB) rechazan el opcode de media streaming
+        // con ERROR_INVALID_PARAMETER: avisar una vez en vez de dejar el toggle mudo.
+        if (_wlan != null && !_wlan.MediaStreamingSupported && _wlanStreamOn && _wlanStatusText != null)
+            Feedback.Warning(_wlanStatusText, I18n.T("Este adaptador no soporta el modo streaming."), persistent: true);
+    }
+
+    private void WlanScanButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_wlanAdapter == null) return;
+        var adapter = _wlanAdapter;
+        if (_wlan!.ScanNow(adapter.Guid) && _wlanStatusText != null)
+            Feedback.Success(_wlanStatusText, I18n.T("Escaneo solicitado."));
+        else if (_wlanStatusText != null)
+            Feedback.Error(_wlanStatusText, I18n.T("Error configurando WLAN: {0}", "WlanScan"));
+    }
+
+    private void SetWlanStatusActive()
+    {
+        if (_wlanStatusText != null)
+            Feedback.Success(_wlanStatusText, I18n.T("Estado: {0}", I18n.T("Activo (re-aplicación cada 5 s)")), persistent: true);
+    }
+
+    private void SetWlanStatusInactive()
+    {
+        if (_wlanStatusText != null)
+            Feedback.Info(_wlanStatusText, I18n.T("Estado: {0}", I18n.T("Inactivo")), persistent: true);
+    }
+
     private Border BuildTextCard(string title, string description)
     {
         var border = new Border
@@ -1172,8 +1830,8 @@ public sealed partial class RedPage : Page
         };
 
         var panel = new StackPanel { Spacing = 4 };
-        var titleBlock = new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = LightTextBrush };
-        var descBlock = new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap, Foreground = LightTextBrush };
+        var titleBlock = new TextBlock { Text = title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var descBlock = new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap };
         panel.Children.Add(titleBlock);
         panel.Children.Add(descBlock);
         border.Child = panel;

@@ -5,10 +5,11 @@
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
     Title="WinForge">
 
-    <!-- El fondo del navbar (panel) se fuerza a negro (oscuro) / blanco (claro) con
-         recursos a nivel del propio NavigationView: el key NavigationViewDefaultPaneBackground
-         también lo define WinUI y, si se define solo a nivel de app, el override no gana
-         y el panel queda con el gris por defecto. -->
+    <!-- El fondo del navbar vive en los recursos de tema de la app (App.xaml +
+         AccentOverrides.xaml): el key NavigationViewDefaultPaneBackground también
+         lo define WinUI, y por eso se redefine en un diccionario mergeado DESPUÉS
+         de XamlControlsResources para que el override gane (si se define solo en
+         el raíz de App.xaml, el panel queda con el AcrylicBrush por defecto). -->
     <muxc:NavigationView
         x:Name="NavigationViewControl"
         PaneDisplayMode="Left"
@@ -20,23 +21,15 @@
         Padding="0,0,0,0"
         Background="{ThemeResource NavigationViewDefaultPaneBackground}">
 
-        <muxc:NavigationView.Resources>
-            <ResourceDictionary>
-                <ResourceDictionary.ThemeDictionaries>
-                    <ResourceDictionary x:Key="Dark">
-                        <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF1F242C"/>
-                    </ResourceDictionary>
-                    <ResourceDictionary x:Key="Light">
-                        <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
-                    </ResourceDictionary>
-                </ResourceDictionary.ThemeDictionaries>
-            </ResourceDictionary>
-        </muxc:NavigationView.Resources>
-
         <muxc:NavigationView.MenuItems>
             <muxc:NavigationViewItem Content="Sistema" Tag="sistema">
                 <muxc:NavigationViewItem.Icon>
                     <muxc:SymbolIcon Symbol="AllApps" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Monitor de sensores" Tag="sensores">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE957;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Red" Tag="red">
@@ -59,7 +52,22 @@
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE950;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Teclado" Tag="teclado">
+            <muxc:NavigationViewItem Content="Overlay de métricas" Tag="overlay">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE95A;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Biblioteca de juegos" Tag="procesos">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE7FC;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Gestión de procesos" Tag="procesosvivos">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE21D;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Teclado y Macros" Tag="teclado">
                 <muxc:NavigationViewItem.Icon>
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE765;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
@@ -74,14 +82,14 @@
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE9D2;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Monitor de sensores" Tag="sensores">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE957;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Optimizaciones" Tag="optimizaciones">
                 <muxc:NavigationViewItem.Icon>
                     <muxc:SymbolIcon Symbol="Repair" />
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Debloat" Tag="debloat">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE74D;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Herramientas y funciones" Tag="herramientas">
@@ -113,6 +121,29 @@
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
         </muxc:NavigationView.FooterMenuItems>
+
+        <!-- Selector de idiomas: DENTRO del navbar, en la misma fila del botón ☰ de
+             achicar, pegado al extremo derecho del panel. PaneHeader se dibuja en la
+             fila superior del panel (columna estirable a la derecha del ☰) y el
+             template del control lo colapsa solo cuando el panel queda compacto
+             (achicado): ahí el botón de idiomas desaparece, como pediste. -->
+        <muxc:NavigationView.PaneHeader>
+            <Grid Margin="0,0,12,0">
+                <Button x:Name="LanguageButton"
+                        Click="LanguageButton_Click"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Center"
+                        CornerRadius="10"
+                        Padding="10,6"
+                        Background="Transparent"
+                        BorderThickness="0">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Image x:Name="LanguageFlagImage" Width="24" Height="16" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="LanguageNameText" FontSize="12" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </muxc:NavigationView.PaneHeader>
 
         <muxc:NavigationView.Content>
             <muxc:Frame x:Name="ContentFrame" Margin="0,0,0,0" />

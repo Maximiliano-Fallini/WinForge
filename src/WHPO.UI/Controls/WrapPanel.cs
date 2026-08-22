@@ -13,6 +13,19 @@ namespace WHPO_UI.Controls
     /// </summary>
     public sealed class WrapPanel : Panel
     {
+        public static readonly DependencyProperty SpacingProperty = DependencyProperty.Register(
+            nameof(Spacing), typeof(double), typeof(WrapPanel),
+            new PropertyMetadata(0.0, OnSpacingChanged));
+
+        public double Spacing
+        {
+            get => (double)GetValue(SpacingProperty);
+            set => SetValue(SpacingProperty, value);
+        }
+
+        private static void OnSpacingChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+            => ((WrapPanel)d).InvalidateMeasure();
+
         protected override Size MeasureOverride(Size availableSize)
         {
             var constraint = new Size(double.IsInfinity(availableSize.Width) ? double.PositiveInfinity : availableSize.Width,
@@ -22,6 +35,7 @@ namespace WHPO_UI.Controls
             double totalHeight = 0;
             double rowWidth = 0;
             double rowHeight = 0;
+            double spacing = Spacing;
 
             foreach (var child in Children)
             {
@@ -32,12 +46,12 @@ namespace WHPO_UI.Controls
                 {
                     // Salta a la siguiente fila
                     totalWidth = Math.Max(totalWidth, rowWidth);
-                    totalHeight += rowHeight;
+                    totalHeight += rowHeight + spacing;
                     rowWidth = 0;
                     rowHeight = 0;
                 }
 
-                rowWidth += childSize.Width;
+                rowWidth += childSize.Width + (rowWidth > 0 ? spacing : 0);
                 rowHeight = Math.Max(rowHeight, childSize.Height);
             }
 
@@ -53,6 +67,7 @@ namespace WHPO_UI.Controls
             double y = 0;
             double rowHeight = 0;
             double availableWidth = finalSize.Width;
+            double spacing = Spacing;
 
             foreach (var child in Children)
             {
@@ -60,12 +75,12 @@ namespace WHPO_UI.Controls
                 if (x + childSize.Width > availableWidth && x > 0)
                 {
                     x = 0;
-                    y += rowHeight;
+                    y += rowHeight + spacing;
                     rowHeight = 0;
                 }
 
                 child.Arrange(new Rect(x, y, childSize.Width, childSize.Height));
-                x += childSize.Width;
+                x += childSize.Width + spacing;
                 rowHeight = Math.Max(rowHeight, childSize.Height);
             }
 

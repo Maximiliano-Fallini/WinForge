@@ -53,6 +53,12 @@ public interface ISystemInfoService
     OsInfo GetOsInfo();
 
     /// <summary>
+    /// Obtiene el estado de las funciones de seguridad del firmware:
+    /// TPM (presente/activado y versión de especificación), Secure Boot e IOMMU.
+    /// </summary>
+    SecurityFeatures GetSecurityFeatures();
+
+    /// <summary>
     /// Inicia la monitorización periódica.
     /// </summary>
     void StartMonitoring(int intervalMs = 1000);
@@ -129,6 +135,18 @@ public interface ISystemInfoService
     double GetGpuTemperature();
 
     /// <summary>
+    /// Obtiene el consumo actual de la GPU en watts (sensor de potencia de
+    /// LibreHardwareMonitor). Devuelve 0 si el hardware no expone el sensor.
+    /// </summary>
+    double GetGpuPower();
+
+    /// <summary>
+    /// Obtiene la frecuencia de núcleo actual de la GPU en MHz (sensor de reloj de
+    /// LibreHardwareMonitor). Devuelve 0 si el hardware no expone el sensor.
+    /// </summary>
+    double GetGpuClockMHz();
+
+    /// <summary>
     /// Evento que se dispara cuando hay nuevos datos de métricas.
     /// </summary>
     event Action<SystemMetrics> OnMetricsUpdated;
@@ -173,11 +191,15 @@ public record MemoryInfo(
 );
 
 /// <summary>
-/// Modo de canal y velocidad de los módulos de memoria física.
+/// Modo de canal, velocidad y configuración física (cantidad × tamaño) de los
+/// módulos de memoria. <see cref="ModuleSizeBytes"/> es el tamaño por módulo
+/// (el máximo si los módulos son de distinta capacidad).
 /// </summary>
 public record MemoryModuleInfo(
     string ChannelMode,
-    int SpeedMHz
+    int SpeedMHz,
+    int ModuleCount,
+    long ModuleSizeBytes
 );
 
 /// <summary>
@@ -222,7 +244,8 @@ public record NetworkAdapterInfo(
     double ReceiveSpeedMBps,
     double TransmitSpeedMBps,
     bool IsConnected,
-    string ConnectionType
+    string ConnectionType,
+    string NetConnectionId = ""   // nombre de la interfaz en Conexiones de red ("Ethernet", "Wi-Fi")
 );
 
 /// <summary>
@@ -302,4 +325,17 @@ public record OsInfo(
     string InstallDate,
     string LastBootTime,
     string ComputerName
+);
+
+/// <summary>
+/// Estado de las funciones de seguridad del firmware (TPM, Secure Boot, IOMMU).
+/// UefiFirmware es true cuando el sistema arrancó en UEFI (Secure Boot solo aplica ahí).
+/// </summary>
+public record SecurityFeatures(
+    bool TpmPresent,
+    bool TpmEnabled,
+    string TpmSpecVersion,
+    bool UefiFirmware,
+    bool SecureBootEnabled,
+    bool IommuPresent
 );

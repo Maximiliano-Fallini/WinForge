@@ -11,28 +11,27 @@
         <StackPanel Spacing="16" Margin="24">
 
             <!-- ==================== GRÁFICO: USO DE CPU ==================== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                         <CheckBox x:Name="UsageChartCheck" VerticalAlignment="Center"
                                   Checked="ChartCheck_Changed" Unchecked="ChartCheck_Changed">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE950;" FontSize="15" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xE950;" FontSize="15" Foreground="{ThemeResource MetricUsageBrush}" VerticalAlignment="Center"/>
                                 <TextBlock Text="Uso de CPU" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </CheckBox>
                         <TextBlock x:Name="UsageValueText" Grid.Column="1" Text="--%" FontSize="14" FontWeight="SemiBold"
-                                   Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                                   Foreground="{ThemeResource MetricUsageBrush}" VerticalAlignment="Center"/>
                     </Grid>
                     <Grid x:Name="UsageChartArea" ColumnDefinitions="40,*" ColumnSpacing="10">
-                        <Canvas x:Name="UsageYAxis" Width="40" Height="160" VerticalAlignment="Top" Background="#FF0D141E"/>
+                        <Canvas x:Name="UsageYAxis" Width="40" Height="160" VerticalAlignment="Top" Background="{ThemeResource ChartBackgroundBrush}"/>
                         <Grid Grid.Column="1">
                             <ScrollViewer x:Name="UsageScroll" HorizontalScrollBarVisibility="Auto"
                                           VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled"
                                           VerticalScrollMode="Disabled" ZoomMode="Disabled">
                                 <Grid x:Name="UsageInner" Width="1200" Height="160">
-                                    <Canvas x:Name="UsagePlot" Width="1200" Height="160" Background="#FF0D141E"/>
+                                    <Canvas x:Name="UsagePlot" Width="1200" Height="160" Background="{ThemeResource ChartBackgroundBrush}"/>
                                     <!-- Capa de hover: cruz + etiqueta con valor exacto y hora -->
                                     <Canvas x:Name="UsageHover" Width="1200" Height="160" IsHitTestVisible="False"/>
                                 </Grid>
@@ -43,28 +42,27 @@
             </Border>
 
             <!-- ==================== GRÁFICO: TEMPERATURA ==================== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                         <CheckBox x:Name="TempChartCheck" VerticalAlignment="Center"
                                   Checked="ChartCheck_Changed" Unchecked="ChartCheck_Changed">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE9CA;" FontSize="15" Foreground="#FF4CC257" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xE9CA;" FontSize="15" Foreground="{ThemeResource MetricTempBrush}" VerticalAlignment="Center"/>
                                 <TextBlock Text="Temperatura del CPU" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </CheckBox>
                         <TextBlock x:Name="TempValueText" Grid.Column="1" Text="--°C" FontSize="14" FontWeight="SemiBold"
-                                   Foreground="#FF4CC257" VerticalAlignment="Center"/>
+                                   Foreground="{ThemeResource MetricTempBrush}" VerticalAlignment="Center"/>
                     </Grid>
                     <Grid x:Name="TempChartArea" ColumnDefinitions="40,*" ColumnSpacing="10">
-                        <Canvas x:Name="TempYAxis" Width="40" Height="160" VerticalAlignment="Top" Background="#FF0D141E"/>
+                        <Canvas x:Name="TempYAxis" Width="40" Height="160" VerticalAlignment="Top" Background="{ThemeResource ChartBackgroundBrush}"/>
                         <Grid Grid.Column="1">
                             <ScrollViewer x:Name="TempScroll" HorizontalScrollBarVisibility="Auto"
                                           VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled"
                                           VerticalScrollMode="Disabled" ZoomMode="Disabled">
                                 <Grid x:Name="TempInner" Width="1200" Height="160">
-                                    <Canvas x:Name="TempPlot" Width="1200" Height="160" Background="#FF0D141E"/>
+                                    <Canvas x:Name="TempPlot" Width="1200" Height="160" Background="{ThemeResource ChartBackgroundBrush}"/>
                                     <Canvas x:Name="TempHover" Width="1200" Height="160" IsHitTestVisible="False"/>
                                 </Grid>
                             </ScrollViewer>
@@ -74,28 +72,27 @@
             </Border>
 
             <!-- ==================== GRÁFICO: POTENCIA (W) ==================== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                         <CheckBox x:Name="PowerChartCheck" VerticalAlignment="Center"
                                   Checked="ChartCheck_Changed" Unchecked="ChartCheck_Changed">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xEC4A;" FontSize="15" Foreground="#FFFFC93C" VerticalAlignment="Center"/>
+                                <FontIcon Glyph="&#xEC4A;" FontSize="15" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                                 <TextBlock Text="Potencia del CPU (W)" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </CheckBox>
                         <TextBlock x:Name="PowerValueText" Grid.Column="1" Text="-- W" FontSize="14" FontWeight="SemiBold"
-                                   Foreground="#FFFFC93C" VerticalAlignment="Center"/>
+                                   Foreground="{ThemeResource MetricPowerBrush}" VerticalAlignment="Center"/>
                     </Grid>
                     <Grid x:Name="PowerChartArea" ColumnDefinitions="40,*" ColumnSpacing="10">
-                        <Canvas x:Name="PowerYAxis" Width="40" Height="160" VerticalAlignment="Top" Background="#FF0D141E"/>
+                        <Canvas x:Name="PowerYAxis" Width="40" Height="160" VerticalAlignment="Top" Background="{ThemeResource ChartBackgroundBrush}"/>
                         <Grid Grid.Column="1">
                             <ScrollViewer x:Name="PowerScroll" HorizontalScrollBarVisibility="Auto"
                                           VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled"
                                           VerticalScrollMode="Disabled" ZoomMode="Disabled">
                                 <Grid x:Name="PowerInner" Width="1200" Height="160">
-                                    <Canvas x:Name="PowerPlot" Width="1200" Height="160" Background="#FF0D141E"/>
+                                    <Canvas x:Name="PowerPlot" Width="1200" Height="160" Background="{ThemeResource ChartBackgroundBrush}"/>
                                     <Canvas x:Name="PowerHover" Width="1200" Height="160" IsHitTestVisible="False"/>
                                 </Grid>
                             </ScrollViewer>
@@ -105,11 +102,10 @@
             </Border>
 
             <!-- ==================== CONFIGURACIÓN DEL TEST ==================== -->
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
-                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE9D2;" FontSize="16" Foreground="#FF4CC2C9" VerticalAlignment="Center"/>
+                        <FontIcon Glyph="&#xE9D2;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Test de estabilidad" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
                     <TextBlock Text="Pone todos los núcleos al 100% con la carga elegida mientras se monitorean uso, temperatura, potencia y frecuencia. El test termina solo al cumplirse la duración o al presionar Detener."
@@ -128,13 +124,12 @@
                     </Grid>
 
                     <!-- Tiempo restante + estado -->
-                    <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14"
-                            BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14">
                         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                             <StackPanel Spacing="2" VerticalAlignment="Center">
                                 <TextBlock Text="Tiempo restante" FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 <TextBlock x:Name="RemainingTimeText" Text="00:30.000" FontSize="30" FontWeight="Bold"
-                                           FontFamily="Consolas" Foreground="#FF4CC2C9"/>
+                                           FontFamily="Consolas" Foreground="{ThemeResource AccentBrush}"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                                 <TextBlock x:Name="TestStatusText" Text="Listo para iniciar" FontSize="12"
@@ -147,11 +142,11 @@
 
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <Button x:Name="StartTestButton" Content="Empezar test" Click="StartTestButton_Click"
-                                Background="{StaticResource AccentBrush}" Foreground="{StaticResource AccentForegroundBrush}"
+                                Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}"
                                 FontWeight="SemiBold" CornerRadius="6" Padding="20,9" MinWidth="140"/>
                         <Button x:Name="StopTestButton" Content="Detener test" Click="StopTestButton_Click"
                                 IsEnabled="False" CornerRadius="6" Padding="20,9" MinWidth="140"
-                                Background="#FFF0616D" Foreground="White" FontWeight="SemiBold"/>
+                                Background="{ThemeResource ErrorBrush}" Foreground="White" FontWeight="SemiBold"/>
                     </StackPanel>
                 </StackPanel>
             </Border>

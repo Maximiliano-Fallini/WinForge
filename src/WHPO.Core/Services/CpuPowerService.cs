@@ -640,7 +640,8 @@ public class CpuPowerService : ICpuPowerService
             }
 
             _loggingService.LogInfo($"Plan renombrado: {planGuid} -> {newName}");
-            return new CommandResult(true, $"Plan renombrado a \"{newName}\".");
+            return new CommandResult(true, $"Plan renombrado a \"{newName}\".",
+                "Plan renombrado a \"{0}\".", new object?[] { newName });
         }
         catch (Exception ex)
         {
@@ -671,6 +672,88 @@ public class CpuPowerService : ICpuPowerService
             _loggingService.LogError("Error borrando plan de energía", ex);
             return new CommandResult(false, ex.Message);
         }
+    }
+
+    // ===================== Instalar planes (oficiales y custom) =====================
+
+    public async Task<CommandResult> InstallBuiltInSchemeAsync(string schemeGuid)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(schemeGuid))
+                return new CommandResult(false, "No se proporcionó un plan válido.");
+
+            var output = await Task.Run(() => RunPowerCfg($"/duplicatescheme {schemeGuid}"));
+            if (ContainsPowerCfgError(output))
+            {
+                _loggingService.LogWarning($"Error instalando plan {schemeGuid}: {output.Trim()}");
+                return new CommandResult(false, output.Trim());
+            }
+
+            var newGuid = ExtractGuid(output);
+            _loggingService.LogInfo($"Plan oficial instalado: {schemeGuid} -> {newGuid}");
+            return new CommandResult(true, "Plan de energía instalado correctamente.", "Plan de energía instalado correctamente.", null);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error instalando plan de energía", ex);
+            return new CommandResult(false, ex.Message);
+        }
+    }
+
+    public async Task<CommandResult> CreateCustomPowerPlanAsync(string name, string baseSchemeGuid, IReadOnlyList<PowerPlanTuning> tunings)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(baseSchemeGuid))
+                return new CommandResult(false, "Se necesita el nombre y el plan base.");
+
+            // 1) Duplicar el plan base: powercfg devuelve el GUID del nuevo plan.
+            var dup = await Task.Run(() => RunPowerCfg($"/duplicatescheme {baseSchemeGuid}"));
+            var newGuid = ExtractGuid(dup);
+            if (string.IsNullOrEmpty(newGuid))
+            {
+                _loggingService.LogWarning($"No se pudo crear el plan base {baseSchemeGuid}: {dup.Trim()}");
+                return new CommandResult(false, "No se pudo crear el plan base.");
+            }
+
+            // 2) Renombrar.
+            var rename = await Task.Run(() => RunPowerCfg($"/setname {newGuid} \"{name}\""));
+            if (ContainsPowerCfgError(rename))
+            {
+                _loggingService.LogWarning($"Error renombrando plan custom {newGuid}: {rename.Trim()}");
+                return new CommandResult(false, rename.Trim());
+            }
+
+            // 3) Aplicar los ajustes AC/DC.
+            foreach (var t in tunings)
+            {
+                await Task.Run(() =>
+                {
+                    RunPowerCfg($"/setacvalueindex {newGuid} {t.SubgroupGuid} {t.SettingGuid} {t.AcValue}");
+                    RunPowerCfg($"/setdcvalueindex {newGuid} {t.SubgroupGuid} {t.SettingGuid} {t.DcValue}");
+                });
+            }
+
+            // 4) Activar para que los valores queden efectivos.
+            await Task.Run(() => RunPowerCfg($"/setactive {newGuid}"));
+
+            _loggingService.LogInfo($"Plan custom creado: {name} ({newGuid})");
+            return new CommandResult(true, $"Plan \"{name}\" instalado correctamente.", "Plan \"{0}\" instalado correctamente.", new object?[] { name });
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error creando plan de energía custom", ex);
+            return new CommandResult(false, ex.Message);
+        }
+    }
+
+    /// <summary>Extrae el primer GUID de la salida de powercfg (p. ej. del -duplicatescheme).</summary>
+    private static string ExtractGuid(string output)
+    {
+        var match = Regex.Match(output ?? string.Empty,
+            @"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+        return match.Success ? match.Groups[1].Value : string.Empty;
     }
 
     private static bool ContainsPowerCfgError(string output)

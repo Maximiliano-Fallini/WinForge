@@ -44,7 +44,6 @@ public sealed class KeyboardService : IKeyboardService
     // el "SET" sea en realidad una lectura: devuelve True pero no aplica nada.
     private const uint SPI_SETFILTERKEYS = 0x0033;
     private const uint SPI_GETFILTERKEYS = 0x0032;
-    private const uint SPIF_UPDATEINIFILE = 0x0001;
     private const uint SPIF_SENDCHANGE = 0x0002;
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -140,6 +139,12 @@ public sealed class KeyboardService : IKeyboardService
                 WriteValues(ignoreUnderMs, repeatDelayMs, repeatRateMs, 0 /* bounce siempre apagado */, FlagsApply);
             // Aplica en vivo al instante (SPI_SETFILTERKEYS), igual que FilterKeysSetter.
             ApplyLive(ignoreSpi, delaySpi, rateSpi, 0, FlagsApply);
+            // Re-escribir el registro con los valores EXACTOS del usuario: la llamada
+            // SPI exige un mínimo de 1 ms y Windows podía persistir el valor clampado
+            // (un 0 quedaba como 1 en "Aplicados actualmente"). El registro lo escribe
+            // la app, no Windows.
+            if (saveToRegistry)
+                WriteValues(ignoreUnderMs, repeatDelayMs, repeatRateMs, 0 /* bounce siempre apagado */, FlagsApply);
             return true;
         }
         catch (Exception ex)
@@ -193,7 +198,10 @@ public sealed class KeyboardService : IKeyboardService
             iRepeatMSec = (uint)Math.Max(0, rate),
             iBounceMSec = (uint)Math.Max(0, bounce)
         };
-        if (!SystemParametersInfo(SPI_SETFILTERKEYS, (uint)Marshal.SizeOf<FILTERKEYS>(), ref fk, SPIF_SENDCHANGE | SPIF_UPDATEINIFILE))
+        // Solo SPIF_SENDCHANGE (sin SPIF_UPDATEINIFILE): la persistencia la maneja la
+        // app escribiendo el registro con los valores exactos. Con esa flag, Windows
+        // sobrescribía el registro con los valores clampados de la llamada (mínimo 1 ms).
+        if (!SystemParametersInfo(SPI_SETFILTERKEYS, (uint)Marshal.SizeOf<FILTERKEYS>(), ref fk, SPIF_SENDCHANGE))
             throw new InvalidOperationException(
                 $"Windows no aplicó el cambio en vivo (error {Marshal.GetLastWin32Error()}). Quedó guardado en el registro.");
     }

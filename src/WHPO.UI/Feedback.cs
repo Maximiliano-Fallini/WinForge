@@ -2,6 +2,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using WHPO.Core.Services.Interfaces;
 
 namespace WHPO_UI;
 
@@ -14,12 +15,15 @@ namespace WHPO_UI;
 /// </summary>
 public static class Feedback
 {
-    // Paleta estándar (misma en toda la app, legible en tema claro y oscuro)
-    public static readonly SolidColorBrush AccentBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xC2, 0xFF));
-    public static readonly SolidColorBrush SuccessBrush = new(Windows.UI.Color.FromArgb(255, 0x4C, 0xAF, 0x50));
-    public static readonly SolidColorBrush WarningBrush = new(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07));
-    public static readonly SolidColorBrush ErrorBrush = new(Windows.UI.Color.FromArgb(255, 0xF0, 0x61, 0x6D));
-    public static readonly SolidColorBrush MutedBrush = new(Windows.UI.Color.FromArgb(255, 0x9A, 0xA0, 0xA6));
+    // Los pinceles viven en los recursos de la app (ThemeResource): se resuelven en
+    // el tema actual, así los feedbacks acompañan al tema sin duplicar colores.
+    // AccentBrush y MutedBrush están en los ThemeDictionaries (claro/oscuro): se
+    // resuelven con el tema EFECTIVO de la app, no con el del sistema.
+    public static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    public static SolidColorBrush SuccessBrush => (SolidColorBrush)Application.Current.Resources["SuccessBrush"];
+    public static SolidColorBrush WarningBrush => (SolidColorBrush)Application.Current.Resources["WarningBrush"];
+    public static SolidColorBrush ErrorBrush => (SolidColorBrush)Application.Current.Resources["ErrorBrush"];
+    public static SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
 
     // Prefijos estándar
     public const string RunningPrefix = "▶";
@@ -39,6 +43,7 @@ public static class Feedback
     /// Muestra un mensaje con color opcional. Con texto vacío (o nulo) colapsa el
     /// elemento para no dejar espacio muerto en la card. Salvo persistent: true,
     /// el mensaje se oculta solo a los 4 segundos.
+    /// El texto se traduce al idioma actual (I18n.T): si no hay traducción queda igual.
     /// </summary>
     public static void Set(TextBlock tb, string? text, SolidColorBrush? brush = null, bool persistent = false)
     {
@@ -51,7 +56,7 @@ public static class Feedback
         tb.Visibility = Visibility.Visible;
         if (brush != null)
             tb.Foreground = brush;
-        tb.Text = text;
+        tb.Text = I18n.T(text);
 
         if (persistent)
             CancelDismiss(tb);
@@ -60,19 +65,49 @@ public static class Feedback
     }
 
     /// <summary>Operación en curso (azul).</summary>
-    public static void Running(TextBlock tb, string message, bool persistent = false) => Set(tb, $"{RunningPrefix} {message}", AccentBrush, persistent);
+    public static void Running(TextBlock tb, string message, bool persistent = false) => Set(tb, WithPrefix(RunningPrefix, I18n.T(message)), AccentBrush, persistent);
 
     /// <summary>Éxito (verde).</summary>
-    public static void Success(TextBlock tb, string message, bool persistent = false) => Set(tb, $"{SuccessPrefix} {message}", SuccessBrush, persistent);
+    public static void Success(TextBlock tb, string message, bool persistent = false) => Set(tb, WithPrefix(SuccessPrefix, I18n.T(message)), SuccessBrush, persistent);
 
     /// <summary>Error (rojo).</summary>
-    public static void Error(TextBlock tb, string message, bool persistent = false) => Set(tb, $"{ErrorPrefix} {message}", ErrorBrush, persistent);
+    public static void Error(TextBlock tb, string message, bool persistent = false) => Set(tb, WithPrefix(ErrorPrefix, I18n.T(message)), ErrorBrush, persistent);
 
     /// <summary>Aviso (ámbar, con signo de alerta).</summary>
-    public static void Warning(TextBlock tb, string message, bool persistent = false) => Set(tb, $"{WarningPrefix} {message}", WarningBrush, persistent);
+    public static void Warning(TextBlock tb, string message, bool persistent = false) => Set(tb, WithPrefix(WarningPrefix, I18n.T(message)), WarningBrush, persistent);
 
     /// <summary>Información / sugerencia (ámbar).</summary>
-    public static void Info(TextBlock tb, string message, bool persistent = false) => Set(tb, $"{InfoPrefix} {message}", WarningBrush, persistent);
+    public static void Info(TextBlock tb, string message, bool persistent = false) => Set(tb, WithPrefix(InfoPrefix, I18n.T(message)), WarningBrush, persistent);
+
+    /// <summary>
+    /// Muestra el resultado de un comando del sistema (Core). Si el resultado trae
+    /// plantilla de traducción (mensajes con valores interpolados), se traduce con
+    /// I18n.T(plantilla, args); si no, se traduce el texto directo cuando tenga clave.
+    /// </summary>
+    public static void Result(TextBlock tb, CommandResult result, bool persistent = false)
+    {
+        var message = result.MessageTemplate != null
+            ? I18n.T(result.MessageTemplate, result.MessageArgs ?? Array.Empty<object?>())
+            : I18n.T(result.Output);
+        if (result.Success)
+            Success(tb, message, persistent);
+        else
+            Error(tb, message, persistent);
+    }
+
+    /// <summary>
+    /// Agrega el prefijo de estado al mensaje SOLO si el mensaje no lo trae ya
+    /// (algunas claves del diccionario incluyen el símbolo: "✓ Detenido...").
+    /// Sin esto, los mensajes duplicaban el símbolo ("✓ ✓ Aplicado...").
+    /// </summary>
+    private static string WithPrefix(string prefix, string message)
+    {
+        if (string.IsNullOrEmpty(message))
+            return message;
+        if (message.StartsWith(prefix, StringComparison.Ordinal))
+            return message;
+        return $"{prefix} {message}";
+    }
 
     // ===================== Autodesvanecido =====================
 

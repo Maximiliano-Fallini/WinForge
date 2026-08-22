@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
+using WHPO.Core.Services.Overlay;
 
 namespace WHPO.Core;
 
@@ -44,7 +45,15 @@ public static class ServiceConfiguration
         services.AddSingleton<IWinUtilService, WinUtilService>();
         services.AddSingleton<IStabilityService, StabilityService>();
         services.AddSingleton<IKeyboardService, KeyboardService>();
+        services.AddSingleton<IMacroService, MacroService>();
         services.AddSingleton<IAutoClickerService, AutoClickerService>();
+        services.AddSingleton<IProcessService, ProcessService>();
+        services.AddSingleton<IInstalledGamesService, InstalledGamesService>();
+        services.AddSingleton<IGameBoostService, GameBoostService>();
+
+        // Overlay de métricas de juegos (FPS por ETW + muestreo de hardware)
+        services.AddSingleton<IFpsMonitor, FpsMonitor>();
+        services.AddSingleton<IOverlayMetricsService, OverlayMetricsService>();
 
         return services;
     }

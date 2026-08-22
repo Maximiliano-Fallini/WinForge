@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Management;
 using System.IO;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using System.Threading;
@@ -60,6 +61,32 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetLogicalProcessorInformationEx(int relationshipType, IntPtr buffer, ref int returnedLength);
+
+    // Lee la tabla de firmware ACPI por su firma (p. ej. 'DMAR' de Intel VT-d o
+    // 'IVRS' de AMD-Vi). Devuelve 0 si la tabla no existe y el tamaño si existe.
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint GetSystemFirmwareTable(uint firmwareTableProviderSignature, uint firmwareTableID, IntPtr pFirmwareTableBuffer, uint bufferSize);
+
+    // Memoria en vivo SIN WMI: GlobalMemoryStatusEx es nativa de kernel32, instantánea
+    // y no toca el servicio winmgmt, a diferencia de Win32_OperatingSystem (que antes
+    // se consultaba en cada tick del monitor — una consulta WMI por segundo).
+    [StructLayout(LayoutKind.Sequential)]
+    private sealed class MemoryStatusEx
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx(MemoryStatusEx lpBuffer);
 
     public SystemInfoService(ILoggingService loggingService)
     {
@@ -929,7 +956,12 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         double power = GetCpuPowerViaLhm();
 
         lock (_cpuPowerLock)
-            _cpuPowerCache["cpu"] = (power, DateTime.Now);
+        {
+            // No cachear 0: si la lectura falló (SMU ocupado, sensor en 0), el próximo
+            // consumidor vuelve a intentar en vez de recibir 0 W durante 5 s.
+            if (power > 0)
+                _cpuPowerCache["cpu"] = (power, DateTime.Now);
+        }
 
         return power;
     }
@@ -942,24 +974,16 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         {
             lock (_lhmLock)
             {
-                foreach (var hardware in _computer.Hardware)
-                {
-                    if (hardware.HardwareType != HardwareType.Cpu) continue;
-                    hardware.Update();
+                double power = ReadCpuPowerSensor(_computer);
+                if (power > 0) return power;
 
-                    // Preferir el sensor de potencia que mejor representa el consumo
-                    // total del CPU: "CPU Package Power" > "Package Power" > "CPU Power".
-                    var sensors = hardware.Sensors
-                        .Where(s => s.SensorType == SensorType.Power)
-                        .OrderByDescending(s => ScoreCpuPowerSensor(s.Name))
-                        .ToList();
-
-                    foreach (var sensor in sensors)
-                    {
-                        if (sensor.Value is float f && f > 0 && f < 2000)
-                            return f;
-                    }
-                }
+                // En AMD el sensor de potencia viene del SMU, que durante o justo
+                // después de una carga pesada (test de estabilidad) puede estar
+                // ocupado y devolver 0 momentáneamente. Reintentar una vez tras un
+                // breve respiro antes de declarar que no hay lectura.
+                Thread.Sleep(120);
+                power = ReadCpuPowerSensor(_computer);
+                if (power > 0) return power;
             }
         }
         catch (Exception ex)
@@ -968,6 +992,32 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             {
                 _cpuPowerReadErrorLogged = true;
                 _loggingService.LogWarning($"Error leyendo potencia CPU via LibreHardwareMonitor: {ex.Message}");
+            }
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Lee el sensor de potencia del CPU de LHM, prefiriendo el que mejor representa
+    /// el consumo total del CPU: "CPU Package Power" > "Package Power" > "CPU Power".
+    /// Devuelve 0 si ningún sensor reporta un valor válido.
+    /// </summary>
+    private double ReadCpuPowerSensor(Computer computer)
+    {
+        foreach (var hardware in computer.Hardware)
+        {
+            if (hardware.HardwareType != HardwareType.Cpu) continue;
+            hardware.Update();
+
+            var sensors = hardware.Sensors
+                .Where(s => s.SensorType == SensorType.Power)
+                .OrderByDescending(s => ScoreCpuPowerSensor(s.Name))
+                .ToList();
+
+            foreach (var sensor in sensors)
+            {
+                if (sensor.Value is float f && f > 0 && f < 2000)
+                    return f;
             }
         }
         return 0;
@@ -1400,6 +1450,109 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return 0;
     }
 
+    // ===== Potencia y reloj GPU (para el overlay de métricas) =====
+
+    /// <summary>
+    /// Consumo actual de la GPU en watts (sensor de potencia de LHM, con prioridad
+    /// a "GPU Package Power"). Devuelve 0 si el hardware no expone el sensor.
+    /// </summary>
+    public double GetGpuPower()
+    {
+        try
+        {
+            return ReadGpuSensor(SensorType.Power, ScoreGpuPowerSensor);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error obteniendo potencia GPU: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Frecuencia de núcleo actual de la GPU en MHz (sensor de reloj de LHM,
+    /// con prioridad a "GPU Core"). Devuelve 0 si el hardware no expone el sensor.
+    /// </summary>
+    public double GetGpuClockMHz()
+    {
+        try
+        {
+            return ReadGpuSensor(SensorType.Clock, ScoreGpuClockSensor);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error obteniendo reloj GPU: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Lee el mejor sensor del tipo pedido de la primera GPU con lectura válida
+    /// (incluye los sub-hardware de la GPU, donde viven los sensores en algunas).
+    /// </summary>
+    private double ReadGpuSensor(SensorType type, Func<string, int> score)
+    {
+        EnsureLhmInitialized();
+        if (_computer == null) return 0;
+        lock (_lhmLock)
+        {
+            var gpus = _computer.Hardware
+                .Where(h => h.HardwareType == HardwareType.GpuNvidia ||
+                            h.HardwareType == HardwareType.GpuAmd ||
+                            h.HardwareType == HardwareType.GpuIntel)
+                .ToList();
+
+            foreach (var gpu in gpus)
+            {
+                try { gpu.Update(); } catch { continue; }
+                foreach (var sub in gpu.SubHardware)
+                {
+                    try { sub.Update(); } catch { }
+                    var v = ReadBestGpuSensor(sub, type, score);
+                    if (v > 0) return v;
+                }
+                var v2 = ReadBestGpuSensor(gpu, type, score);
+                if (v2 > 0) return v2;
+            }
+        }
+        return 0;
+    }
+
+    private static double ReadBestGpuSensor(IHardware hw, SensorType type, Func<string, int> score)
+    {
+        var sensors = hw.Sensors
+            .Where(s => s.SensorType == type)
+            .OrderByDescending(s => score(s.Name))
+            .ToList();
+        foreach (var sensor in sensors)
+        {
+            if (sensor.Value is float f && f > 0 && f < 10000)
+                return f;
+        }
+        return 0;
+    }
+
+    private static int ScoreGpuPowerSensor(string sensorName)
+    {
+        var n = sensorName.ToLowerInvariant();
+        if (n.Contains("package")) return 100;                 // GPU Package Power
+        if (n.Contains("gpu") && n.Contains("power")) return 90;
+        if (n.Contains("core") && n.Contains("power")) return 80;
+        if (n.Contains("power")) return 70;
+        return 0;
+    }
+
+    private static int ScoreGpuClockSensor(string sensorName)
+    {
+        var n = sensorName.ToLowerInvariant();
+        if (n.Contains("gpu core")) return 100;                // GPU Core
+        if (n.Contains("core clock")) return 95;
+        if (n.Contains("core")) return 90;
+        if (n.Contains("gpu") && n.Contains("clock")) return 85;
+        if (n.Contains("gpu")) return 80;
+        return 0;
+    }
+
     private double QueryGpuTemperature(string gpuName)
     {
         var gpuNameLower = gpuName.ToLowerInvariant();
@@ -1742,27 +1895,17 @@ public class SystemInfoService : ISystemInfoService, IDisposable
 
     public MemoryInfo GetMemoryInfo()
     {
-        try
+        // GlobalMemoryStatusEx devuelve total/available físicos al instante (sin WMI).
+        // Misma forma de salida que la consulta WMI anterior, pero sin tocar winmgmt.
+        var status = new MemoryStatusEx { dwLength = (uint)Marshal.SizeOf<MemoryStatusEx>() };
+        if (GlobalMemoryStatusEx(status))
         {
-            using var searcher = new ManagementObjectSearcher("SELECT TotalVisibleMemorySize, FreePhysicalMemory FROM Win32_OperatingSystem");
-            foreach (ManagementObject obj in searcher.Get())
-            {
-                var totalKB = Convert.ToInt64(obj["TotalVisibleMemorySize"] ?? 0);
-                var freeKB = Convert.ToInt64(obj["FreePhysicalMemory"] ?? 0);
-                var totalBytes = totalKB * 1024;
-                var freeBytes = freeKB * 1024;
-                var usedBytes = totalBytes - freeBytes;
-                var usagePercent = totalBytes > 0 ? (double)usedBytes / totalBytes * 100 : 0;
-
-                _loggingService.LogInfo($"Memoria detectada: Total={FormatBytes(totalBytes)}, Usada={FormatBytes(usedBytes)}, %={usagePercent:F1}");
-                return new MemoryInfo(totalBytes, freeBytes, usedBytes, usagePercent, 0, usedBytes);
-            }
+            var totalBytes = (long)status.ullTotalPhys;
+            var freeBytes = (long)status.ullAvailPhys;
+            var usedBytes = totalBytes - freeBytes;
+            var usagePercent = totalBytes > 0 ? (double)usedBytes / totalBytes * 100 : 0;
+            return new MemoryInfo(totalBytes, freeBytes, usedBytes, usagePercent, 0, usedBytes);
         }
-        catch (Exception ex)
-        {
-            _loggingService.LogError("Error obteniendo info de memoria", ex);
-        }
-
         return new MemoryInfo(0, 0, 0, 0, 0, 0);
     }
 
@@ -1772,8 +1915,9 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         {
             var channelTokens = new List<string>();
             var speeds = new List<int>();
+            var capacities = new List<long>();
             using var searcher = new ManagementObjectSearcher(
-                "SELECT DeviceLocator, BankLabel, Speed, ConfiguredClockSpeed FROM Win32_PhysicalMemory");
+                "SELECT DeviceLocator, BankLabel, Speed, ConfiguredClockSpeed, Capacity FROM Win32_PhysicalMemory");
             foreach (ManagementObject obj in searcher.Get())
             {
                 var bankLabel = obj["BankLabel"]?.ToString() ?? "";
@@ -1782,10 +1926,11 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 var configured = Convert.ToInt32(obj["ConfiguredClockSpeed"] ?? 0);
                 var rated = Convert.ToInt32(obj["Speed"] ?? 0);
                 speeds.Add(configured > 0 ? configured : rated);
+                capacities.Add(Convert.ToInt64(obj["Capacity"] ?? 0));
             }
 
             if (channelTokens.Count == 0)
-                return new MemoryModuleInfo("N/A", 0);
+                return new MemoryModuleInfo("N/A", 0, 0, 0);
 
             // Velocidad en vivo: la configurada actualmente, o la nominal como respaldo
             var speedMHz = speeds.Where(s => s > 0).DefaultIfEmpty(0).Max();
@@ -1801,12 +1946,13 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             };
 
             _loggingService.LogInfo($"Memoria módulos: {channelTokens.Count} módulo(s), {mode}, {speedMHz} MHz");
-            return new MemoryModuleInfo(mode, speedMHz);
+            return new MemoryModuleInfo(mode, speedMHz,
+                capacities.Count, capacities.Count > 0 ? capacities.Max() : 0);
         }
         catch (Exception ex)
         {
             _loggingService.LogError("Error obteniendo módulos de memoria", ex);
-            return new MemoryModuleInfo("N/A", 0);
+            return new MemoryModuleInfo("N/A", 0, 0, 0);
         }
     }
 
@@ -2033,6 +2179,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             {
                 var name = obj["Name"]?.ToString()?.Trim() ?? "";
                 var description = obj["Description"]?.ToString()?.Trim() ?? "";
+                var netConnectionId = obj["NetConnectionID"]?.ToString()?.Trim() ?? "";
                 var mac = obj["MACAddress"]?.ToString()?.Replace(":", "-") ?? "";
                 var speedBps = Convert.ToDouble(obj["Speed"] ?? 0);
                 var speedMbps = speedBps / 1_000_000;
@@ -2084,7 +2231,8 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                     ReceiveSpeedMBps: rxSpeed,
                     TransmitSpeedMBps: txSpeed,
                     IsConnected: isConnected,
-                    ConnectionType: connectionType
+                    ConnectionType: connectionType,
+                    NetConnectionId: netConnectionId
                 ));
 
                 _loggingService.LogInfo($"Red detectada: {name} - IP: {ip} - Vel: {speedMbps:F0} Mbps - Conectado: {isConnected}");
@@ -2163,6 +2311,75 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return new BiosInfo("Unknown", "Unknown", "Unknown", "Unknown");
     }
 
+    public SecurityFeatures GetSecurityFeatures()
+    {
+        // --- TPM: WMI Win32_Tpm (namespace MicrosoftTpm). Si la clase no existe
+        // (equipo sin TPM, o fTPM oculto por el firmware), la consulta lanza o
+        // devuelve vacío, y se reporta como "no detectado".
+        bool tpmPresent = false, tpmEnabled = false;
+        string tpmSpecVersion = "";
+        try
+        {
+            var scope = new ManagementScope(@"\\.\root\cimv2\Security\MicrosoftTpm");
+            using var searcher = new ManagementObjectSearcher(scope,
+                new ObjectQuery("SELECT SpecVersion, IsEnabled_InitialValue, IsActivated_InitialValue FROM Win32_Tpm"));
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                tpmPresent = true;
+                try
+                {
+                    if (obj["SpecVersion"] is string spec && !string.IsNullOrWhiteSpace(spec))
+                    {
+                        // Formato "Major.Minor, RevisionLevel" (ej. "2.0, 1.16") → "2.0"
+                        var comma = spec.IndexOf(',');
+                        tpmSpecVersion = (comma > 0 ? spec.Substring(0, comma) : spec).Trim();
+                    }
+                    if (obj["IsEnabled_InitialValue"] != null)
+                        tpmEnabled = Convert.ToBoolean(obj["IsEnabled_InitialValue"]);
+                    if (obj["IsActivated_InitialValue"] != null && !Convert.ToBoolean(obj["IsActivated_InitialValue"]))
+                        tpmEnabled = false;
+                }
+                catch { }
+                break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"TPM no detectado vía WMI: {ex.Message}");
+        }
+
+        // --- Secure Boot: valor UEFISecureBootEnabled del registro (la misma
+        // fuente que usa msinfo32). La clave solo existe en sistemas UEFI, así
+        // que su presencia indica firmware UEFI (Secure Boot no aplica en BIOS).
+        bool uefiFirmware = false, secureBootEnabled = false;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
+            uefiFirmware = key != null;
+            secureBootEnabled = key?.GetValue("UEFISecureBootEnabled") is int v && v == 1;
+        }
+        catch { }
+
+        // --- IOMMU: presencia de la tabla ACPI DMAR (Intel VT-d) o IVRS (AMD-Vi)
+        bool iommuPresent = HasAcpiTable(0x52414D44 /* 'DMAR' */) || HasAcpiTable(0x53525649 /* 'IVRS' */);
+
+        return new SecurityFeatures(tpmPresent, tpmEnabled, tpmSpecVersion, uefiFirmware, secureBootEnabled, iommuPresent);
+    }
+
+    /// <summary>
+    /// Detecta si el firmware expone una tabla ACPI con la firma dada (provider
+    /// 'ACPI'): 'DMAR' (Intel VT-d) o 'IVRS' (AMD-Vi) para IOMMU.
+    /// </summary>
+    private static bool HasAcpiTable(uint tableId)
+    {
+        try
+        {
+            uint size = GetSystemFirmwareTable(0x41435049 /* 'ACPI' */, tableId, IntPtr.Zero, 0);
+            return size > 0 && size != uint.MaxValue;
+        }
+        catch { return false; }
+    }
+
     public OsInfo GetOsInfo()
     {
         try
@@ -2223,6 +2440,16 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     }
 
     private SystemMetrics? _cachedMetrics;
+    // Guard de reentrada: el tick es de 1 s pero una actualización puede tardar más
+    // (refresco WMI de datos estáticos cada 30 s). Sin esto, los ticks se solapan y
+    // se leen WMI/LHM en paralelo con carreras sobre _cachedMetrics.
+
+    // Los datos estáticos (CPU, discos, GPU, red) casi no cambian con la app corriendo,
+    // y cada refresco dispara ~6-9 consultas WMI (el pico de CPU periódico). 30 s en
+    // vez de 10 s conserva los datos frescos y reduce la frecuencia de los picos a un
+    // tercio. El espacio libre de disco (que sí cambia lento) se actualiza con esto.
+    private const double StaticDataRefreshSeconds = 30;
+    private int _metricsUpdating;
     public async Task<SystemMetrics> GetCachedMetricsAsync()
     {
         if (_cachedMetrics == null)
@@ -2242,14 +2469,17 @@ public class SystemInfoService : ISystemInfoService, IDisposable
 
     /// <summary>
     /// Actualización ligera de métricas: solo lee contadores de rendimiento (sin WMI).
-    /// Los datos estáticos (nombre CPU, discos, GPU, red) se cachean y se refrescan cada 10 segundos.
+    /// Los datos estáticos (nombre CPU, discos, GPU, red) se cachean y se refrescan cada 30 segundos.
     /// </summary>
     private async Task UpdateMetricsAsync()
     {
+        // Ticks solapados: si la corrida anterior aún no terminó, este tick se descarta
+        // (la próxima actualización ya viene en camino y evita WMI/LHM en paralelo).
+        if (Interlocked.CompareExchange(ref _metricsUpdating, 1, 0) != 0) return;
         try
         {
-            // Refrescar datos estáticos cada 10 segundos (no cada segundo)
-            bool needFullRefresh = (DateTime.Now - _lastFullRefresh).TotalSeconds > 10
+            // Refrescar datos estáticos cada 30 segundos (no cada segundo)
+            bool needFullRefresh = (DateTime.Now - _lastFullRefresh).TotalSeconds > StaticDataRefreshSeconds
                 || _cachedCpuInfo == null || _cachedDiskInfo == null;
 
             if (needFullRefresh)
@@ -2378,6 +2608,10 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         catch (Exception ex)
         {
             _loggingService.LogError("Error actualizando métricas", ex);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _metricsUpdating, 0);
         }
     }
 

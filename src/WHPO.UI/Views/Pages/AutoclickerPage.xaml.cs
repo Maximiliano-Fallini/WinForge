@@ -143,11 +143,15 @@ public sealed partial class AutoclickerPage : Page
         _clicker.Start(interval.Value, limit, duration, TimeSpan.FromSeconds(3), DoubleClickSwitch.IsOn, CornerStopSwitch.IsOn, x, y);
 
         var extra = new System.Text.StringBuilder();
-        if (limit.HasValue) extra.Append($", máx {limit} clics");
-        if (duration.HasValue) extra.Append($", tiempo límite {FormatInterval(duration.Value)}");
-        if (DoubleClickSwitch.IsOn) extra.Append(", doble click");
-        if (CornerStopSwitch.IsOn) extra.Append(", corner stop");
-        Feedback.Set(StatusText, $"▶ Iniciando en 3 segundos — clics cada {FormatInterval(interval.Value)}{(x.HasValue ? $" en ({x},{y})" : "")}{extra}. Posicioná el mouse y presioná {HotkeyName()} para cancelar.", Feedback.AccentBrush, persistent: true);
+        if (limit.HasValue) extra.Append($", {I18n.T("máx {0} clics", limit)}");
+        if (duration.HasValue) extra.Append($", {I18n.T("tiempo límite {0}", FormatInterval(duration.Value))}");
+        if (DoubleClickSwitch.IsOn) extra.Append($", {I18n.T("Doble click")}");
+        if (CornerStopSwitch.IsOn) extra.Append($", {I18n.T("Parada en esquina")}");
+        Feedback.Set(StatusText, I18n.T("▶ Iniciando en 3 segundos — clics cada {0}{1}{2}. Posicioná el mouse y presioná {3} para cancelar.",
+            FormatInterval(interval.Value),
+            x.HasValue ? I18n.T(" en ({0},{1})", x, y) : "",
+            extra,
+            HotkeyName()), Feedback.AccentBrush, persistent: true);
     }
 
     private void UseCurrentPositionButton_Click(object sender, RoutedEventArgs e)
@@ -156,7 +160,7 @@ public sealed partial class AutoclickerPage : Page
         {
             PosXBox.Text = pt.X.ToString(CultureInfo.InvariantCulture);
             PosYBox.Text = pt.Y.ToString(CultureInfo.InvariantCulture);
-            Feedback.Set(CurrentPosText, $"Posición actual capturada: X={pt.X} · Y={pt.Y}", Feedback.SuccessBrush);
+            Feedback.Set(CurrentPosText, I18n.T("Posición actual capturada: X={0} · Y={1}", pt.X, pt.Y), Feedback.SuccessBrush);
         }
         else
         {
@@ -190,11 +194,11 @@ public sealed partial class AutoclickerPage : Page
                 _limitReached = false;
                 // Ya arrancó a generar clics (terminó el delay de 3 s): avisar.
                 if (_clicker.Clicks == 1)
-                    Feedback.Set(StatusText, $"✓ Generando clics... {_clicker.Clicks} generado — presioná {HotkeyName()} para detener.", Feedback.AccentBrush, persistent: true);
+                    Feedback.Set(StatusText, I18n.T("✓ Generando clics... {0} generado — presioná {1} para detener.", _clicker.Clicks, HotkeyName()), Feedback.AccentBrush, persistent: true);
             }
             else if (!_limitReached && _clicker.Clicks > 0)
             {
-                Feedback.Set(StatusText, $"✓ Detenido — {_clicker.Clicks} clics generados.", Feedback.SuccessBrush);
+                Feedback.Set(StatusText, I18n.T("✓ Detenido — {0} clics generados.", _clicker.Clicks), Feedback.SuccessBrush);
             }
         });
     }
@@ -204,11 +208,11 @@ public sealed partial class AutoclickerPage : Page
         if (StartStopButton == null) return;
         if (_clicker.IsRunning)
         {
-            StartStopButton.Content = $"Detener ({HotkeyName()})";
+            StartStopButton.Content = I18n.T("Detener ({0})", HotkeyName());
         }
         else
         {
-            StartStopButton.Content = $"Iniciar ({HotkeyName()})";
+            StartStopButton.Content = I18n.T("Iniciar ({0})", HotkeyName());
         }
     }
 
@@ -279,7 +283,7 @@ public sealed partial class AutoclickerPage : Page
     private void HotkeyBox_GotFocus(object sender, RoutedEventArgs e)
     {
         _capturingKey = true;
-        HotkeyBox.Text = "Presioná una tecla...";
+        HotkeyBox.Text = I18n.T("Presioná una tecla...");
     }
 
     private void HotkeyBox_LostFocus(object sender, RoutedEventArgs e)
@@ -294,14 +298,14 @@ public sealed partial class AutoclickerPage : Page
     private void UpdateHotkeyUi()
     {
         if (HotkeyStatusText == null) return;
-        HotkeyStatusText.Text = $"Hotkey activa: {HotkeyName()} — funciona desde cualquier aplicación";
+        HotkeyStatusText.Text = I18n.T("Hotkey activa: {0} — funciona desde cualquier aplicación", HotkeyName());
     }
 
     private void RegisterHotkey()
     {
         var ok = _clicker.RegisterHotKey((uint)_hkKey, _hkAlt, _hkCtrl, _hkShift, _hkWin);
         if (!ok)
-            Feedback.Warning(StatusText, $"No se pudo registrar {HotkeyName()}: puede estar en uso por otra aplicación.");
+            Feedback.Warning(StatusText, I18n.T("No se pudo registrar {0}: puede estar en uso por otra aplicación.", HotkeyName()));
     }
 
     // ===================== P/Invoke =====================

@@ -22,10 +22,24 @@ public sealed partial class MemoriaPage : Page
     private DispatcherQueueTimer? _memoryStatsTimer;
 
     // Cards de log oscuras en ambos temas (paneles oscuros) con texto claro explícito.
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush LightTextBrush = new(Windows.UI.Color.FromArgb(255, 0xE8, 0xEA, 0xED));
-    private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush = new(Windows.UI.Color.FromArgb(255, 0x26, 0x2A, 0x31));
+    // Pinceles desde los recursos de tema de la app (claro/oscuro).
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
 
     private DateTime? _lastCleanupTime;
+
+    // Preajustes de la limpieza automática (desplegable "Preajuste").
+    private enum AutoCleanupPreset { Liviano, Normal, Agresivo }
+
+    private ComboBoxItem _presetLightItem = null!;
+    private ComboBoxItem _presetNormalItem = null!;
+    private ComboBoxItem _presetAggressiveItem = null!;
+    // Ítem "Personalizado": estado del combo cuando los umbrales se editaron a mano
+    // y no coinciden con ningún preajuste (seleccionarlo no aplica nada).
+    private ComboBoxItem _presetCustomItem = null!;
+
+    // Mientras se inicializa el combo (o se restauran valores guardados) no se
+    // aplica ningún preajuste: los umbrales ya cargados mandan.
+    private bool _suppressPresetApply;
 
     public MemoriaPage()
     {
@@ -65,8 +79,13 @@ public sealed partial class MemoriaPage : Page
     {
         _loggingService.LogInfo("MemoriaPage: cargando datos...");
 
-        // Inicializar ComboBox de tasa de sondeo
+        // Inicializar ComboBox de tasa de sondeo y de preajuste
         InitializePollIntervalCombo();
+        InitializePresetCombo();
+
+        // Los ítems del desplegable de preajuste se crean en código: se re-traducen
+        // al cambiar de idioma (la página queda en caché, no hace falta desuscribirse).
+        I18n.LanguageChanged += OnLanguageChanged;
 
         // Cargar estadísticas de memoria
         await RefreshMemoryStatsAsync();
@@ -103,6 +122,92 @@ public sealed partial class MemoriaPage : Page
         PollIntervalCombo.SelectedIndex = 3; // 1000 ms por defecto
     }
 
+    private void InitializePresetCombo()
+    {
+        PresetCombo.Items.Clear();
+        _presetLightItem = new ComboBoxItem { Content = "Liviano", Tag = AutoCleanupPreset.Liviano };
+        _presetNormalItem = new ComboBoxItem { Content = "Normal", Tag = AutoCleanupPreset.Normal };
+        _presetAggressiveItem = new ComboBoxItem { Content = "Agresivo", Tag = AutoCleanupPreset.Agresivo };
+        _presetCustomItem = new ComboBoxItem { Content = "Personalizado", Tag = null };
+        PresetCombo.Items.Add(_presetLightItem);
+        PresetCombo.Items.Add(_presetNormalItem);
+        PresetCombo.Items.Add(_presetAggressiveItem);
+        PresetCombo.Items.Add(_presetCustomItem);
+
+        // Normal por defecto. No aplica nada: se respetan los valores guardados.
+        _suppressPresetApply = true;
+        PresetCombo.SelectedIndex = 1;
+        _suppressPresetApply = false;
+    }
+
+    // Los ComboBoxItem no se realizan en el árbol visual hasta abrir el desplegable,
+    // así que el recorrido de I18n no los alcanza: se traducen por código (mismo
+    // patrón que los ítems del tema en Configuración).
+    private void OnLanguageChanged()
+    {
+        _presetLightItem.Content = I18n.T("Liviano");
+        _presetNormalItem.Content = I18n.T("Normal");
+        _presetAggressiveItem.Content = I18n.T("Agresivo");
+        _presetCustomItem.Content = I18n.T("Personalizado");
+    }
+
+    private void PresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressPresetApply) return;
+        if (PresetCombo.SelectedItem is not ComboBoxItem { Tag: AutoCleanupPreset preset }) return;
+        ApplyPreset(preset);
+    }
+
+    // Los umbrales cambiaron (a mano o al aplicar un preajuste): el combo refleja
+    // si los valores actuales coinciden con algún preajuste o si son personalizados.
+    private void ThresholdTextChanged(object sender, TextChangedEventArgs e)
+        => RefreshPresetComboFromValues();
+
+    /// <summary>
+    /// Fuente de verdad del desplegable: compara los umbrales actuales con los de
+    /// cada preajuste (según la RAM instalada). Si coinciden, selecciona ese preajuste
+    /// (sin re-aplicar); si no, selecciona "Personalizado". Sin esto, editar los
+    /// valores a mano dejaba el combo mostrando el último preajuste elegido.
+    /// </summary>
+    private void RefreshPresetComboFromValues()
+    {
+        if (PresetCombo == null || PresetCombo.Items.Count == 0) return;
+        if (!double.TryParse(MinStandbyTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double min) ||
+            !double.TryParse(MaxFreeTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double max))
+            return;
+
+        double totalRamMB;
+        try
+        {
+            var stats = _memoryService.GetMemoryStats();
+            totalRamMB = Math.Max(8192, (int)Math.Round((double)stats.TotalPhysicalMB, MidpointRounding.AwayFromZero));
+        }
+        catch { return; }
+
+        ComboBoxItem target = _presetCustomItem;
+        foreach (var (preset, item) in new[]
+        {
+            (AutoCleanupPreset.Liviano, _presetLightItem),
+            (AutoCleanupPreset.Normal, _presetNormalItem),
+            (AutoCleanupPreset.Agresivo, _presetAggressiveItem)
+        })
+        {
+            var (pm, pf) = GetPresetValues(totalRamMB, preset);
+            if (Math.Abs(min - pm) < 0.001 && Math.Abs(max - pf) < 0.001)
+            {
+                target = item;
+                break;
+            }
+        }
+
+        if (!ReferenceEquals(PresetCombo.SelectedItem, target))
+        {
+            _suppressPresetApply = true;
+            PresetCombo.SelectedIndex = PresetCombo.Items.IndexOf(target);
+            _suppressPresetApply = false;
+        }
+    }
+
     private void LoadSavedSettings()
     {
         // Cargar configuración de limpieza automática
@@ -122,13 +227,17 @@ public sealed partial class MemoriaPage : Page
         if (pollIndex >= 0)
             PollIntervalCombo.SelectedIndex = pollIndex;
 
+        // El desplegable se restaura solo: los TextChanged de los umbrales disparan
+        // RefreshPresetComboFromValues, que selecciona el preajuste que coincide con
+        // los valores guardados (o "Personalizado" si se editaron a mano).
+
         // Si la limpieza quedó iniciada en la sesión anterior, reflejarlo en la UI
         // (MainWindow ya la reinició al arrancar la app).
         if (_settingsService.Get("memory.autoStart", false))
         {
             _autoCleanupActive = true;
             SetAutoCleanupButtonState(true);
-            Feedback.Success(AutoCleanupStatusText, $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)", persistent: true);
+            Feedback.Success(AutoCleanupStatusText, I18n.T("Activo (standby ≥ {0} MB y libre ≤ {1} MB)", $"{minStandby:F0}", $"{maxFree:F0}"), persistent: true);
         }
         UpdateInputsEnabled();
     }
@@ -182,10 +291,9 @@ public sealed partial class MemoriaPage : Page
             };
             var logText = new TextBlock
             {
-                Text = $"[{e.Timestamp:HH:mm:ss}] {(e.IsAutomatic ? "Automática" : "Manual")}: {e.FreedMB:F1} MB liberados",
+                Text = I18n.T("[{0}] {1}: {2} MB liberados", e.Timestamp.ToString("HH:mm:ss"), e.IsAutomatic ? I18n.T("Automática") : I18n.T("Manual"), $"{e.FreedMB:F1}"),
                 FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = LightTextBrush
+                TextWrapping = TextWrapping.Wrap
             };
             logEntry.Child = logText;
             AutoCleanupLogPanel.Children.Insert(0, logEntry);
@@ -211,15 +319,15 @@ public sealed partial class MemoriaPage : Page
     // valor menor y se avisa cuáles son los mínimos (300 y 300 MB).
     private const double MinThresholdMB = 300;
 
-    // Los parámetros de la limpieza automática (umbrales, frecuencia y Autoajustar)
-    // no se pueden modificar mientras está iniciada.
+    // Los parámetros de la limpieza automática (umbrales, frecuencia y preajuste) no
+    // se pueden modificar mientras está iniciada.
     private void UpdateInputsEnabled()
     {
         bool editable = !_autoCleanupActive;
         MinStandbyTextBox.IsEnabled = editable;
         MaxFreeTextBox.IsEnabled = editable;
         PollIntervalCombo.IsEnabled = editable;
-        AutoConfigureButton.IsEnabled = editable;
+        PresetCombo.IsEnabled = editable;
     }
 
     private async void CleanStandbyButton_Click(object sender, RoutedEventArgs e)
@@ -232,9 +340,9 @@ public sealed partial class MemoriaPage : Page
             var result = await _memoryService.CleanStandbyListAsync();
 
             if (result.Success)
-                Feedback.Success(CleanStandbyResultText, result.Output);
+                Feedback.Result(CleanStandbyResultText, result);
             else
-                Feedback.Error(CleanStandbyResultText, result.Output);
+                Feedback.Result(CleanStandbyResultText, result);
 
             await RefreshMemoryStatsAsync();
         }
@@ -253,28 +361,30 @@ public sealed partial class MemoriaPage : Page
         }
     }
 
-    private void AutoConfigureButton_Click(object sender, RoutedEventArgs e)
+    // Aplica un preajuste: rellena los umbrales según el tamaño de RAM instalada.
+    // No inicia la limpieza: el usuario le da Iniciar después (igual que Autoajustar).
+    private void ApplyPreset(AutoCleanupPreset preset)
     {
         try
         {
             var stats = _memoryService.GetMemoryStats();
             var totalRamMB = (int)Math.Round((double)stats.TotalPhysicalMB, MidpointRounding.AwayFromZero);
 
-            var (recommendedMinStandby, recommendedMaxFree) = GetRecommendedValues(totalRamMB);
+            var (minStandby, maxFree) = GetPresetValues(totalRamMB, preset);
 
-            MinStandbyTextBox.Text = $"{recommendedMinStandby:F0}";
-            MaxFreeTextBox.Text = $"{recommendedMaxFree:F0}";
+            MinStandbyTextBox.Text = $"{minStandby:F0}";
+            MaxFreeTextBox.Text = $"{maxFree:F0}";
 
-            Feedback.Success(AutoCleanupStatusText, $"Autoajuste listo: caché {recommendedMinStandby:F0} MB, RAM libre {recommendedMaxFree:F0} MB.");
+            Feedback.Success(AutoCleanupStatusText, I18n.T("Preajuste aplicado: caché {0} MB, RAM libre {1} MB.", $"{minStandby:F0}", $"{maxFree:F0}"));
         }
         catch (Exception ex)
         {
-            Feedback.Error(AutoCleanupStatusText, $"Autoajuste falló: {ex.Message}");
-            _loggingService.LogError("Error en AutoConfigureButton_Click", ex);
+            Feedback.Error(AutoCleanupStatusText, I18n.T("Autoajuste falló: {0}", ex.Message));
+            _loggingService.LogError("Error al aplicar preajuste de limpieza automática", ex);
         }
     }
 
-    // Valores recomendados por tamaño de RAM (Autoajustar): caché mínima a partir de
+    // Valores recomendados por tamaño de RAM (base = Normal): caché mínima a partir de
     // la cual limpiar y RAM libre máxima por debajo de la cual limpiar.
     private static readonly (int RamMB, double MinStandby, double MaxFree)[] RecommendedTiers =
     {
@@ -292,6 +402,21 @@ public sealed partial class MemoriaPage : Page
         var tier = RecommendedTiers.LastOrDefault(t => t.RamMB <= totalRamMB);
         if (tier.RamMB == 0) tier = RecommendedTiers[0];
         return (tier.MinStandby, tier.MaxFree);
+    }
+
+    // Umbrales según el preajuste, escalados al tamaño de RAM instalada. La base es
+    // la recomendación actual (Normal): Liviano limpia poco seguido (caché alta y RAM
+    // muy baja) y Agresivo limpia seguido (caché baja y RAM libre alta).
+    private static (double MinStandby, double MaxFree) GetPresetValues(double totalRamMB, AutoCleanupPreset preset)
+    {
+        var (baseMin, baseMax) = GetRecommendedValues(totalRamMB);
+        double Cap(double v) => Math.Round(Math.Max(MinThresholdMB, v), MidpointRounding.AwayFromZero);
+        return preset switch
+        {
+            AutoCleanupPreset.Liviano => (Cap(baseMin * 2), Cap(baseMax * 0.5)),
+            AutoCleanupPreset.Agresivo => (Cap(baseMin * 0.5), Cap(baseMax * 2)),
+            _ => (Cap(baseMin), Cap(baseMax))
+        };
     }
 
     // Estado del botón Iniciar/Detener de la limpieza automática: Detener usa rojo
@@ -333,12 +458,12 @@ public sealed partial class MemoriaPage : Page
             // no se arranca y se avisan los mínimos (300 y 300 MB).
             if (!double.TryParse(MinStandbyTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double minStandby) || minStandby < MinThresholdMB)
             {
-                Feedback.Error(AutoCleanupStatusText, $"No se pudo iniciar: los valores mínimos son {MinThresholdMB:F0} MB (lista en espera) y {MinThresholdMB:F0} MB (RAM libre).");
+                Feedback.Error(AutoCleanupStatusText, I18n.T("No se pudo iniciar: los valores mínimos son {0} MB (lista en espera) y {0} MB (RAM libre).", $"{MinThresholdMB:F0}"));
                 return;
             }
             if (!double.TryParse(MaxFreeTextBox.Text, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out double maxFree) || maxFree < MinThresholdMB)
             {
-                Feedback.Error(AutoCleanupStatusText, $"No se pudo iniciar: los valores mínimos son {MinThresholdMB:F0} MB (lista en espera) y {MinThresholdMB:F0} MB (RAM libre).");
+                Feedback.Error(AutoCleanupStatusText, I18n.T("No se pudo iniciar: los valores mínimos son {0} MB (lista en espera) y {0} MB (RAM libre).", $"{MinThresholdMB:F0}"));
                 return;
             }
 
@@ -361,7 +486,7 @@ public sealed partial class MemoriaPage : Page
             _autoCleanupActive = true;
             SetAutoCleanupButtonState(true);
             UpdateInputsEnabled();
-            Feedback.Success(AutoCleanupStatusText, $"Activo (standby ≥ {minStandby:F0} MB y libre ≤ {maxFree:F0} MB)", persistent: true);
+            Feedback.Success(AutoCleanupStatusText, I18n.T("Activo (standby ≥ {0} MB y libre ≤ {1} MB)", $"{minStandby:F0}", $"{maxFree:F0}"), persistent: true);
         }
         catch (Exception ex)
         {

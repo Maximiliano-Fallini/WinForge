@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Win32;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Dispatching;
@@ -11,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
+using WHPO_UI.Services;
 using WHPO_UI.Views.Pages;
 using WinFormsApp = System.Windows.Forms.Application;
 using DrawingImage = System.Drawing.Image;
@@ -26,12 +28,14 @@ public sealed partial class MainWindow : Window
     private readonly ISystemInfoService _systemInfoService;
     private readonly IMemoryService _memoryService;
     private readonly INetworkService _networkService;
+    private readonly IProcessService _processService;
+    private readonly IInstalledGamesService _installedGamesService;
+    private readonly IGameBoostService? _gameBoostService;
     
     private NotifyIcon? _notifyIcon;
     private DispatcherQueueTimer? _trayTooltipTimer;
     private PerformanceCounter? _cpuCounter;
     private PerformanceCounter? _gpuCounter;
-    private bool _isMinimizingToTray = false;
     private bool _centeredOnFirstActivation;
     // Últimos valores logueados del tooltip para no escribir en cada tick (2-5 s).
     private double _lastLoggedCpu = double.NaN;
@@ -55,6 +59,14 @@ public sealed partial class MainWindow : Window
         _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
         _memoryService = App.Services.GetRequiredService<IMemoryService>();
         _networkService = App.Services.GetRequiredService<INetworkService>();
+        _processService = App.Services.GetRequiredService<IProcessService>();
+        _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
+        _gameBoostService = App.Services.GetService<IGameBoostService>();
+
+        // Overlay de métricas de juegos: si quedó activado se reanuda desde el arranque
+        // (ventana, hotkeys y muestreo). Se construye acá, en el hilo de UI, para que
+        // OverlayService capture el DispatcherQueue correcto para su ventana WinForms.
+        App.Services.GetRequiredService<WHPO_UI.Services.OverlayService>().EnsureStarted();
 
         // Configurar ThemeApplier con esta ventana
         var themeApplier = App.Services.GetRequiredService<IThemeApplier>();
@@ -62,6 +74,17 @@ public sealed partial class MainWindow : Window
         {
             ta.SetMainWindow(this);
         }
+
+        // Traducciones: cargar el idioma guardado ANTES de navegar a la primera
+        // página (el recorrido del árbol se hace al navegar).
+        I18n.Initialize(_settingsService);
+        ContentFrame.Navigated += OnFrameNavigated;
+        I18n.LanguageChanged += OnLanguageChanged;
+        // El botón de idiomas vive en el PaneHeader (misma fila que el botón de
+        // achicar el navbar, al extremo derecho del panel): el template del control
+        // lo oculta solo cuando el panel queda compacto (achicado).
+        Flags.EnsureGenerated();
+        ApplyLanguageButton();
 
         // Configurar NavigationView
         NavigationViewControl.SelectedItem = NavigationViewControl.MenuItems[0];
@@ -76,11 +99,15 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("memoria", typeof(MemoriaPage));
             ns.RegisterPage("temporizador", typeof(TemporizadorPage));
             ns.RegisterPage("nucleos", typeof(NucleosPage));
+            ns.RegisterPage("procesos", typeof(GestionarProcesosPage));
+            ns.RegisterPage("procesosvivos", typeof(ProcesosPage));
             ns.RegisterPage("teclado", typeof(TecladoPage));
             ns.RegisterPage("autoclicker", typeof(AutoclickerPage));
             ns.RegisterPage("estabilidad", typeof(EstabilidadPage));
             ns.RegisterPage("sensores", typeof(SensoresPage));
+            ns.RegisterPage("overlay", typeof(OverlayPage));
             ns.RegisterPage("optimizaciones", typeof(OptimizacionesPage));
+            ns.RegisterPage("debloat", typeof(DebloatPage));
             ns.RegisterPage("herramientas", typeof(HerramientasPage));
             ns.RegisterPage("panelwindows", typeof(PanelWindowsPage));
             ns.RegisterPage("reparacion", typeof(ReparacionPage));
@@ -88,12 +115,28 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("configuracion", typeof(ConfiguracionPage));
         }
 
+        // Aplicar la selección de pestañas hecha en el instalador (una sola vez).
+        ApplyInstallerTabSelection();
+
         // Aplicar la visibilidad de apartados según la configuración (claves "nav.*").
         ApplyNavigationVisibility();
+
+        // Botón "⋮" al extremo derecho de cada pestaña: menú con "Ocultar" para
+        // esconder la pestaña sin pasar por Configuración. Se agrega ANTES de
+        // TranslateNavbar para capturar el texto fuente en español del XAML.
+        AttachNavItemMenus();
 
         // Navegar directamente a la página de Sistema (sin título de cabecera)
         _navigationService.NavigateTo("sistema");
         NavigationViewControl.SelectedItem = NavigationViewControl.MenuItems[0];
+
+        // Traducir el navbar iterando MenuItems (lógico, sin depender de que el
+        // template visual esté realizado): el recorrido del árbol visual con
+        // VisualTreeHelper no garantiza llegar a los ítems del NavigationView,
+        // que se realizan de forma perezosa — por eso el navbar no cambiaba de
+        // idioma. Los ítems del XAML conservan el texto español como fuente y acá
+        // se captura y se traduce al idioma guardado.
+        TranslateNavbar();
 
         // Configurar minimize to tray
         this.Closed += MainWindow_Closed;
@@ -110,6 +153,7 @@ public sealed partial class MainWindow : Window
             {
                 _centeredOnFirstActivation = true;
                 RestoreOrCenterWindow();
+                TranslateNavbar();
             }
         };
 
@@ -173,80 +217,44 @@ public sealed partial class MainWindow : Window
             // Tooltip estático: las métricas en bandeja se reemplazaron por "Optimizar Rendimiento".
             UpdateTrayStatus();
 
-            // Menú contextual visualmente más limpio: renderer oscuro propio (el color
-            // table del sistema usa el tema claro → hover blanco + texto blanco ilegible)
-            // y esquinas redondeadas vía DWM (Win11).
+            // Menú contextual de la bandeja: renderer oscuro propio (el color table del
+            // sistema usa el tema claro → hover blanco + texto blanco ilegible), esquinas
+            // redondeadas vía DWM (Win11), emojis a la izquierda de cada botón y buen
+            // margen. Se reconstruye en cada apertura (Opening) para que la lista de
+            // favoritos esté siempre al día.
             var contextMenu = new ContextMenuStrip
             {
                 // OJO: RenderMode NO se puede setear a 'Custom' directamente (WinForms lanza
                 // NotSupportedException); se asigna el Renderer abajo y eso lo pone en Custom.
-                ShowImageMargin = false,
+                // El emoji va como Image en la columna de imagen; el texto se centra en
+                // vertical con el override OnRenderItemText del DarkMenuRenderer (el layout
+                // nativo con Image deja el texto pegado arriba).
+                ShowImageMargin = true,
                 ShowCheckMargin = false,
-                Font = new Font("Segoe UI", 9F),
+                Font = new Font("Segoe UI", 10F),
                 BackColor = Color.FromArgb(24, 24, 24),
                 ForeColor = Color.White,
-                Padding = new Padding(8),
-                ImageScalingSize = new Size(16, 16),
+                Padding = new Padding(6),
+                // Columna de imagen más ancha (30 px): los emojis/íconos quedan con
+                // más aire horizontal. Los bitmaps se generan de 30×20 con el glifo
+                // centrado, así no se estiran.
+                ImageScalingSize = new Size(30, 20),
                 AutoClose = true,
                 Margin = new Padding(0)
             };
 
             contextMenu.Renderer = new DarkMenuRenderer();
             contextMenu.HandleCreated += (s, e) => ApplyRoundedMenuCorners(contextMenu.Handle);
-
-            // Item: Mostrar ventana
-            var showItem = new ToolStripMenuItem("Mostrar ventana")
+            // Esperar los nombres/íconos de los favoritos antes de armar el menú:
+            // si no, la primera apertura muestra los nombres crudos del exe
+            // ("Hemingway" en vez de "SMITE 2"). Después de la primera vez la caché
+            // de juegos ya está cargada y el refresco es instantáneo.
+            contextMenu.Opening += async (s, e) =>
             {
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9F, FontStyle.Regular),
-                Padding = new Padding(16, 9, 16, 9),
-                Margin = new Padding(0),
-                AutoSize = false,
-                Width = 200
+                await RefreshTrayFavNamesAsync();
+                BuildTrayMenu(contextMenu);
             };
-            showItem.Click += (s, e) => ShowWindow();
-            contextMenu.Items.Add(showItem);
-
-            // Separador
-            contextMenu.Items.Add(new ToolStripSeparator());
-
-            // Item: Configuración
-            var settingsItem = new ToolStripMenuItem("Configuración")
-            {
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9F, FontStyle.Regular),
-                Padding = new Padding(16, 9, 16, 9),
-                Margin = new Padding(0),
-                AutoSize = false,
-                Width = 200
-            };
-            settingsItem.Click += (s, e) =>
-            {
-                _navigationService.NavigateTo("configuracion");
-                ShowWindow();
-            };
-            contextMenu.Items.Add(settingsItem);
-
-            // Separador
-            contextMenu.Items.Add(new ToolStripSeparator());
-
-            // Item: Salir
-            var exitItem = new ToolStripMenuItem("Salir")
-            {
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9F, FontStyle.Regular),
-                Padding = new Padding(16, 9, 16, 9),
-                Margin = new Padding(0),
-                AutoSize = false,
-                Width = 200
-            };
-            exitItem.Click += (s, e) =>
-            {
-                _isMinimizingToTray = false;
-                _notifyIcon?.Dispose();
-                WinUIApp.Current.Exit();
-            };
-            contextMenu.Items.Add(exitItem);
+            BuildTrayMenu(contextMenu);
 
             _notifyIcon.ContextMenuStrip = contextMenu;
         }
@@ -254,6 +262,436 @@ public sealed partial class MainWindow : Window
         {
             _loggingService.LogError("Error configurando tray icon", ex);
         }
+    }
+
+    // ===== Menú contextual de la bandeja =====
+
+    /// <summary>
+    /// Arma el menú completo de la bandeja. Se llama al crear el menú y en cada
+    /// apertura (evento Opening) para que los favoritos estén siempre al día.
+    /// </summary>
+    private void BuildTrayMenu(ContextMenuStrip menu)
+    {
+        menu.Items.Clear();
+
+        // Sistema: abre la app en la pestaña Sistema.
+        menu.Items.Add(MakeTrayItem(EmojiGlyph(0x1F5A5, 0xFE0F), I18n.T("Sistema"), (s, e) =>
+        {
+            _navigationService.NavigateTo("sistema");
+            ShowWindow();
+        }));
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Limpiar cache en RAM: purga la lista standby (memoria en caché).
+        menu.Items.Add(MakeTrayItem(EmojiGlyph(0x1F9F9), I18n.T("Limpiar Cache en Ram"), async (s, e) =>
+        {
+            try { await _memoryService.CleanStandbyListAsync(); }
+            catch (Exception ex) { _loggingService.LogWarning($"Bandeja: limpiar cache en RAM: {ex.Message}"); }
+        }));
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Biblioteca de juegos: abre la app en la pestaña de la biblioteca (como Sistema).
+        menu.Items.Add(MakeTrayItem(EmojiGlyph(0x1F3AE), I18n.T("Biblioteca de juegos"), (s, e) =>
+        {
+            _navigationService.NavigateTo("procesos");
+            ShowWindow();
+        }));
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Juegos favoritos (ya refrescados por el evento Opening antes de armar el menú).
+        var favorites = _processService.GetFavorites();
+        if (favorites.Count == 0)
+        {
+            var none = MakeTrayItem(EmojiGlyph(0x2B50), I18n.T("Sin juegos favoritos"), null);
+            none.Enabled = false;
+            none.ForeColor = Color.FromArgb(140, 140, 140);
+            menu.Items.Add(none);
+        }
+        else
+        {
+            foreach (var exe in favorites)
+            {
+                string label = _favNames.TryGetValue(exe, out var n) && !string.IsNullOrEmpty(n)
+                    ? n
+                    : Path.GetFileNameWithoutExtension(exe);
+                // Ícono: primero el del exe REAL del juego (ya resuelto saltándose
+                // stubs/instaladores/crash handlers), después el banner oficial
+                // cacheado por la biblioteca y, si no, emoji. La resolución del exe
+                // es la que evita los logos genéricos (Fall Guys → RunFallGuys.exe,
+                // Phasmophobia → Phasmophobia.exe); el banner es solo respaldo.
+                var img = _favPaths.TryGetValue(exe, out var p) && File.Exists(p)
+                    ? FavIconImage(p)
+                    : _favBanners.TryGetValue(exe, out var b) && File.Exists(b)
+                        ? FavBannerImage(b)
+                        : EmojiGlyph(0x1F3AE);
+                string favExe = exe;
+                menu.Items.Add(MakeTrayItem(img, label, async (s, e) => await LaunchFavoriteFromTrayAsync(favExe)));
+            }
+        }
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Configuración (engranaje nítido de Segoe MDL2, el mismo del XAML de la app).
+        menu.Items.Add(MakeTrayItem(EmojiGlyph(0xE713, null, "Segoe MDL2 Assets", 15f), I18n.T("Configuración"), (s, e) =>
+        {
+            _navigationService.NavigateTo("configuracion");
+            ShowWindow();
+        }));
+
+        menu.Items.Add(new ToolStripSeparator());
+
+        // Salir (ícono de encendido/apagado ⏻).
+        menu.Items.Add(MakeTrayItem(EmojiGlyph(0x23FB, 0xFE0F), I18n.T("Salir"), (s, e) =>
+        {
+            // Restaurar el escaneo Wi-Fi si el optimizador WLAN quedó activo, así
+            // el bloqueo de fondo / modo streaming no queda aplicado tras cerrar la app.
+            try
+            {
+                var wlan = App.Services.GetService<WHPO_UI.Services.WlanOptimizerService>();
+                if (wlan != null && (wlan.BlockScanActive || wlan.StreamingActive))
+                {
+                    foreach (var a in wlan.GetAdapters())
+                        wlan.RestoreDefaults(a.Guid);
+                }
+            }
+            catch { }
+            _notifyIcon?.Dispose();
+            WinUIApp.Current.Exit();
+        }));
+    }
+
+    /// <summary>
+    /// Lanza un juego favorito desde el menú de la bandeja con la misma lógica que
+    /// el botón "Iniciar" de la biblioteca (GameLauncher). Sin registro en la caché
+    /// de la biblioteca (entrada manual o caché vieja) se lanza el exe resuelto
+    /// directamente.
+    /// </summary>
+    private async Task LaunchFavoriteFromTrayAsync(string exe)
+    {
+        try
+        {
+            if (!_favGames.TryGetValue(exe, out var game))
+            {
+                // Entrada manual o caché vieja: lanzar el exe resuelto directamente.
+                string? direct = _favPaths.TryGetValue(exe, out var p) ? p : null;
+                if (string.IsNullOrEmpty(direct))
+                {
+                    _loggingService.LogWarning($"Bandeja: no se pudo lanzar {exe} — ejecutable no encontrado.");
+                    return;
+                }
+                await GameLauncher.LaunchGameAsync(_gameBoostService, _processService, _loggingService,
+                    direct, "", null, null, exe, null, TrayLaunchStatus);
+                return;
+            }
+
+            // Mismo armado de parámetros que la biblioteca (ver BuildGameCard).
+            string? exePath = _favPaths.TryGetValue(exe, out var pp) ? pp : null;
+            bool steam = game.Launcher == "Steam" && !string.IsNullOrEmpty(game.AppId);
+            bool riot = game.Launcher == "Riot" && !string.IsNullOrEmpty(game.AppId);
+            string? blizzardCode = game.Launcher == "Blizzard"
+                ? (string.IsNullOrEmpty(game.AppId) ? GameLauncher.GetBlizzardProductCode(exe) : game.AppId)
+                : null;
+
+            string launchFile, launchArgs;
+            if (steam)
+            {
+                launchFile = $"steam://rungameid/{game.AppId}";
+                launchArgs = "";
+            }
+            else if (game.Launcher == "Epic" && !string.IsNullOrEmpty(game.EpicAppName))
+            {
+                launchFile = $"com.epicgames.launcher://apps/{game.EpicAppName}?action=launch&silent=true";
+                launchArgs = "";
+            }
+            else if (game.Launcher == "Xbox" && !string.IsNullOrEmpty(game.AppId))
+            {
+                launchFile = $"shell:AppsFolder\\{game.AppId}";
+                launchArgs = "";
+            }
+            else if (riot)
+            {
+                launchFile = GameLauncher.FindRiotLauncher() ?? "";
+                launchArgs = $"--launch-product={game.AppId} --launch-patchline=live";
+            }
+            else
+            {
+                launchFile = exePath ?? "";
+                launchArgs = "";
+            }
+
+            await GameLauncher.LaunchGameAsync(_gameBoostService, _processService, _loggingService,
+                launchFile, launchArgs, blizzardCode, game.InstallPath, exe, game.Launcher, TrayLaunchStatus);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Bandeja: lanzar {exe}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Estado del lanzamiento desde la bandeja: sin UI, solo log.</summary>
+    private void TrayLaunchStatus(string message, LaunchStatusKind kind)
+    {
+        if (kind == LaunchStatusKind.Hide || string.IsNullOrEmpty(message)) return;
+        _loggingService.LogInfo($"Bandeja: {message}");
+    }
+
+    private static ToolStripMenuItem MakeTrayItem(DrawingImage? image, string text, EventHandler? onClick)
+    {
+        var item = new ToolStripMenuItem(text)
+        {
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Regular),
+            Padding = new Padding(14, 4, 18, 4),
+            Margin = new Padding(0),
+            AutoSize = true,
+            Image = image,
+            ImageAlign = ContentAlignment.MiddleLeft,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        if (onClick != null) item.Click += onClick;
+        return item;
+    }
+
+    // Emojis renderizados a bitmap (GDI+ pinta emoji en color; el TextRenderer de
+    // WinForms los pinta monocromo). Se cachean: una sola vez por glifo.
+    // Para íconos monocromos de la app (ej. el engranaje E713 de Segoe MDL2) se
+    // puede pasar otra fuente: quedan mucho más nítidos que el emoji de tuerca.
+    private static readonly Dictionary<string, DrawingImage> _emojiCache = new();
+    private static DrawingImage EmojiGlyph(int codepoint, int? variation = null,
+        string fontName = "Segoe UI Emoji", float fontSize = 12f)
+    {
+        string s = char.ConvertFromUtf32(codepoint)
+            + (variation.HasValue ? char.ConvertFromUtf32(variation.Value) : "");
+        string key = fontName + "|" + fontSize + "|" + s;
+        if (_emojiCache.TryGetValue(key, out var cached)) return cached;
+
+        var bmp = new Bitmap(30, 20);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            using var font = new Font(fontName, fontSize);
+            g.DrawString(s, font, Brushes.White, new RectangleF(0, -1, 30, 22),
+                new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center });
+        }
+        _emojiCache[key] = bmp;
+        return bmp;
+    }
+
+    // Ícono del exe de un juego favorito (extraído una vez y cacheado). Se dibuja
+    // 16×16 centrado en la misma caja de 30×20 que los emojis. Si falla, cae al
+    // emoji de juego.
+    private static readonly Dictionary<string, DrawingImage> _favIconCache = new(StringComparer.OrdinalIgnoreCase);
+    private static DrawingImage FavIconImage(string exePath)
+    {
+        if (_favIconCache.TryGetValue(exePath, out var cached)) return cached;
+        DrawingImage result = EmojiGlyph(0x1F3AE);
+        try
+        {
+            // Ícono propio del juego (.ico de la carpeta): los juegos viejos suelen
+            // tenerlo aunque el exe no traiga recurso de ícono (o solo 16/32 px).
+            Bitmap? iconBmp = null;
+            var local = IconExtractor.FindConfidentLocalIcon(exePath);
+            if (local != null)
+            {
+                using var ico = new System.Drawing.Icon(local);
+                iconBmp = ico.ToBitmap();
+            }
+            else
+            {
+                using var ico = System.Drawing.Icon.ExtractAssociatedIcon(exePath);
+                iconBmp = ico?.ToBitmap();
+            }
+            if (iconBmp != null)
+            {
+                var bmp = new Bitmap(30, 20);
+                using (var g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.Transparent);
+                    using (iconBmp)
+                        g.DrawImage(iconBmp, (30 - 20) / 2f, (20 - 20) / 2f, 20, 20);
+                }
+                result = bmp;
+            }
+        }
+        catch { }
+        _favIconCache[exePath] = result;
+        return result;
+    }
+
+    // Nombres legibles de los favoritos (exe → nombre del juego), ruta del exe
+    // (exe → ruta completa, para extraer el ícono) y banner oficial (exe → archivo
+    // de banner ya cacheado por la biblioteca), desde la caché de la biblioteca.
+    // Fallback del nombre: exe sin extensión.
+    private readonly Dictionary<string, string> _favNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _favPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _favBanners = new(StringComparer.OrdinalIgnoreCase);
+    // exe → juego instalado (para lanzar desde la bandeja con la misma lógica que la biblioteca).
+    private readonly Dictionary<string, InstalledGame> _favGames = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Ruta del banner ya descargado por la biblioteca (misma caché en disco):
+    /// Steam/Battle.net → {appId}.jpg, Epic → epic-{ns}-{id}.jpg. Si la biblioteca
+    /// todavía no lo descargó, devuelve null (se cae al ícono del exe).
+    /// </summary>
+    private static string? GetCachedBannerPath(InstalledGame g)
+    {
+        try
+        {
+            string dir = GestionarProcesosPage.BannerCacheDir;
+            if (string.IsNullOrEmpty(g.AppId)) return null;
+            if (!string.IsNullOrEmpty(g.BannerUrl))
+            {
+                var f = Path.Combine(dir, g.AppId + ".jpg");
+                return File.Exists(f) ? f : null;
+            }
+            if (string.Equals(g.Launcher, "Epic", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrEmpty(g.ArtNamespace))
+            {
+                var f = Path.Combine(dir, $"epic-{g.ArtNamespace}-{g.AppId}.jpg");
+                return File.Exists(f) ? f : null;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    // Banner del juego renderizado a ícono de bandeja: recorte cuadrado del centro
+    // (los banners son 16:9 y el logo va al centro) escalado a 20×20 en la misma
+    // caja de 30×20 que los emojis/íconos. Cacheado por archivo.
+    private static readonly Dictionary<string, DrawingImage> _favBannerCache = new(StringComparer.OrdinalIgnoreCase);
+    private static DrawingImage FavBannerImage(string bannerFile)
+    {
+        if (_favBannerCache.TryGetValue(bannerFile, out var cached)) return cached;
+        DrawingImage result = EmojiGlyph(0x1F3AE);
+        try
+        {
+            using var src = DrawingImage.FromFile(bannerFile);
+            int side = Math.Min(src.Width, src.Height);
+            int x = (src.Width - side) / 2;
+            int y = (src.Height - side) / 2;
+            var bmp = new Bitmap(30, 20);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(src,
+                    new RectangleF((30 - 20) / 2f, 0, 20, 20),
+                    new RectangleF(x, y, side, side),
+                    GraphicsUnit.Pixel);
+            }
+            result = bmp;
+        }
+        catch { }
+        _favBannerCache[bannerFile] = result;
+        return result;
+    }
+
+    private async Task RefreshTrayFavNamesAsync()
+    {
+        try
+        {
+            var games = await _installedGamesService.GetInstalledGamesAsync();
+            _favGames.Clear();
+            foreach (var g in games)
+            {
+                if (string.IsNullOrEmpty(g.ExeFileName)) continue;
+                _favGames[g.ExeFileName] = g;
+                if (!string.IsNullOrEmpty(g.Name)) _favNames[g.ExeFileName] = g.Name;
+                if (string.IsNullOrEmpty(g.InstallPath)) continue;
+
+                // Ícono del exe REAL del juego, no del stub de anti-cheat/consola
+                // (ej. start_protected_game.exe de EAC → Hemingway-Win64-Shipping.exe;
+                // vconsole2.exe de CS2 → cs2.exe). Se prefiere el exe CONOCIDO de la
+                // biblioteca (el que inicia la app) siempre que NO sea un stub, y
+                // FindBestGameExePath queda solo como respaldo: antes se elegía
+                // SIEMPRE el más grande de la carpeta y en BlueStacks 5 ganaba
+                // BlueStacksAI.exe (32,56 MB vs 32,52 MB de HD-Player.exe),
+                // mostrando el ícono de otro ejecutable en vez del que arranca la app.
+                var known = FindExePath(g.InstallPath, g.ExeFileName);
+                var p = known != null && !GameExeResolver.IsStubExe(known)
+                    ? known
+                    : (GameExeResolver.FindBestGameExePath(g.InstallPath) ?? known);
+                if (p != null) _favPaths[g.ExeFileName] = p;
+
+                // Banner oficial para el ícono de bandeja (si ya está cacheado).
+                var banner = GetCachedBannerPath(g);
+                if (banner != null) _favBanners[g.ExeFileName] = banner;
+
+                // Alias: los favoritos guardados con el nombre del stub (antes de los
+                // fixes globales, o si la caché aún no se re-escaneó) siguen mostrando
+                // el nombre y el ícono correctos.
+                foreach (var stub in GameExeResolver.FindStubExePaths(g.InstallPath))
+                {
+                    var stubName = Path.GetFileName(stub);
+                    if (string.IsNullOrEmpty(stubName)) continue;
+                    if (!_favNames.ContainsKey(stubName) && !string.IsNullOrEmpty(g.Name))
+                        _favNames[stubName] = g.Name;
+                    if (!_favPaths.ContainsKey(stubName) && p != null)
+                        _favPaths[stubName] = p;
+                    if (!_favGames.ContainsKey(stubName))
+                        _favGames[stubName] = g;
+                }
+            }
+
+            // Entradas manuales: también aportan ruta.
+            try
+            {
+                foreach (var (exe, _, installPath) in _processService.GetManualEntries())
+                {
+                    if (string.IsNullOrEmpty(exe)) continue;
+                    if (!string.IsNullOrEmpty(installPath))
+                    {
+                        var p = FindExePath(installPath, exe);
+                        if (p != null) _favPaths[exe] = p;
+                    }
+                    else if (File.Exists(exe))
+                        _favPaths[Path.GetFileName(exe)] = exe;
+                }
+            }
+            catch { }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Busca el exe real del juego: primero directo en la carpeta de instalación y,
+    /// si no, recursivo hasta 4 niveles (los exes modernos van anidados, ej.
+    /// CS2\game\bin\win64\cs2.exe). Misma lógica que la biblioteca de juegos.
+    /// </summary>
+    private static string? FindExePath(string installPath, string exeFileName)
+    {
+        if (string.IsNullOrEmpty(installPath) || string.IsNullOrEmpty(exeFileName)) return null;
+        string direct = Path.Combine(installPath, exeFileName);
+        if (File.Exists(direct)) return direct;
+        try
+        {
+            int budget = 800;
+            return FindFileInTree(installPath, exeFileName, 0, ref budget);
+        }
+        catch { return null; }
+    }
+
+    private static string? FindFileInTree(string dir, string fileName, int depth, ref int budget)
+    {
+        if (depth > 4 || budget <= 0) return null;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, fileName, SearchOption.TopDirectoryOnly))
+            {
+                if (budget-- <= 0) return null;
+                return f;
+            }
+            foreach (var d in Directory.EnumerateDirectories(dir))
+            {
+                if (budget-- <= 0) return null;
+                var r = FindFileInTree(d, fileName, depth + 1, ref budget);
+                if (r != null) return r;
+            }
+        }
+        catch { }
+        return null;
     }
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -295,7 +733,6 @@ public sealed partial class MainWindow : Window
         {
             appWindow.Hide();
         }
-        _isMinimizingToTray = true;
 
         // Detener monitoreo del sistema para evitar picos de CPU en background
         _systemInfoService.StopMonitoring();
@@ -323,7 +760,6 @@ public sealed partial class MainWindow : Window
             // la última posición/tamaño (o se centra si aún no hay guardados).
             RestoreOrCenterWindow();
         }
-        _isMinimizingToTray = false;
 
         // Reanudar monitoreo solo si la página activa es Sistema (evita timers sin suscriptores)
         if (ContentFrame.Content is SistemaPage)
@@ -350,7 +786,7 @@ public sealed partial class MainWindow : Window
         if (optimize)
         {
             StopTrayMetrics();
-            _notifyIcon.Text = IsWindowVisible ? "WinForge" : "WinForge — Optimizando rendimiento";
+            _notifyIcon.Text = IsWindowVisible ? "WinForge" : $"WinForge — {I18n.T("Optimizando rendimiento")}";
             if (!IsWindowVisible)
                 TrimProcessMemory();
         }
@@ -465,11 +901,20 @@ public sealed partial class MainWindow : Window
             var cpuTempPart = cpuTemp > 0 ? $" · {cpuTemp:F0}°C" : "";
             var gpuTempPart = gpuTemp > 0 ? $" · {gpuTemp:F0}°C" : "";
 
+            // Estado de funciones con interruptor (macros / limpiador de lista en espera),
+            // leído en vivo del settings para que el tooltip se actualice al cambiarlas.
+            string on = I18n.T("On");
+            string off = I18n.T("Off");
+            string macrosState = _settingsService.Get("macrosEnabled", true) ? on : off;
+            string slcState = _settingsService.Get("memory.autoStart", false) ? on : off;
+
             var tooltip = $"CPU: {cpuUsage:F0}%{cpuTempPart}\r\n" +
                 $"GPU: {gpuUsage:F0}%{gpuTempPart}\r\n" +
                 $"RAM: {memStats.UsedPercent:F0}% ({memStats.UsedMB:F0} MB)\r\n" +
                 $"Cache: {cacheMB:F0} MB\r\n" +
-                $"TR: {trMs:F2} ms";
+                $"TR: {trMs:F2} ms\r\n" +
+                $"{I18n.T("Macro")}: {macrosState}\r\n" +
+                $"{I18n.T("SLC (standby list cleaner)")}: {slcState}";
 
             _notifyIcon.Text = tooltip;
             LogTooltipIfChanged(cpuUsage, memStats.UsedPercent);
@@ -620,6 +1065,31 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Borra la posición/tamaño guardados de la ventana (window.x/y/width/height) y
+    /// la re-centra al instante en el área de trabajo. Útil si quedó fuera de
+    /// pantalla tras cambiar de monitor o si se quiere volver al comportamiento
+    /// por defecto (1400x800 centrado).
+    /// </summary>
+    public void ResetWindowPosition()
+    {
+        try
+        {
+            _settingsService.Remove("window.x");
+            _settingsService.Remove("window.y");
+            _settingsService.Remove("window.width");
+            _settingsService.Remove("window.height");
+            _settingsService.Save();
+            // Sin posición guardada, RestoreOrCenterWindow la centra sola.
+            RestoreOrCenterWindow();
+            _loggingService.LogInfo("Posición de la ventana restablecida (re-centrada)");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo restablecer la posición de la ventana: {ex.Message}");
+        }
+    }
+
     private AppWindow? GetAppWindow()
     {
         var hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
@@ -664,6 +1134,46 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ===== Selección de pestañas del instalador =====
+
+    /// <summary>
+    /// Aplica una sola vez la selección de pestañas elegida en el instalador
+    /// (HKLM\Software\WinForge\InstallTabs\&lt;tag&gt;, escrita por el MSI: "1" =
+    /// visible, vacío = oculto). Las pestañas obligatorias (Sistema, Red, Memoria,
+    /// Núcleos y Plan de energía, Teclado y Macros, Configuración) quedan siempre
+    /// visibles. Después de la primera aplicación, el usuario controla la
+    /// visibilidad desde Configuración → Menú de navegación.
+    /// </summary>
+    private void ApplyInstallerTabSelection()
+    {
+        try
+        {
+            // Solo se aplica en el primer arranque tras la instalación.
+            if (_settingsService.Get("installer.tabsApplied", false)) return;
+
+            using var key = Registry.LocalMachine.OpenSubKey(@"Software\WinForge\InstallTabs");
+            if (key != null)
+            {
+                foreach (var name in key.GetValueNames())
+                {
+                    bool visible = key.GetValue(name) as string == "1";
+                    // Pestañas obligatorias: siempre visibles, sin importar el instalador.
+                    if (name is "sistema" or "red" or "memoria" or "nucleos" or "teclado" or "configuracion")
+                        visible = true;
+                    _settingsService.Set("nav." + name, visible);
+                }
+            }
+
+            // Marcar como aplicada para no pisar cambios posteriores del usuario.
+            _settingsService.Set("installer.tabsApplied", true);
+            _settingsService.Save();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error aplicando selección de pestañas del instalador: {ex.Message}");
+        }
+    }
+
     // ===== Visibilidad de apartados del menú lateral =====
 
     /// <summary>
@@ -695,6 +1205,232 @@ public sealed partial class MainWindow : Window
             return;
         }
         item.Visibility = _settingsService.Get("nav." + tag, true) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // ===== Traducciones: navbar + páginas =====
+
+    private void OnFrameNavigated(object sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        if (e.Content is FrameworkElement fe)
+        {
+            I18n.ApplyToVisualTree(fe);
+            if (fe is Page page)
+            {
+                // El recorrido en Navigated puede correr antes de que la página llene
+                // su árbol (Loaded): recorrer de nuevo cuando termine de cargar.
+                page.Loaded -= Page_Loaded_Translate;
+                page.Loaded += Page_Loaded_Translate;
+            }
+        }
+    }
+
+    private static void Page_Loaded_Translate(object sender, RoutedEventArgs e)
+    {
+        I18n.ApplyToVisualTree((FrameworkElement)sender);
+    }
+
+    private void OnLanguageChanged()
+    {
+        ApplyLanguageButton();
+        TranslateNavbar();
+        if (ContentFrame.Content is FrameworkElement fe)
+            I18n.ApplyToVisualTree(fe);
+    }
+
+    // ===== Navbar: traducción determinista por colección lógica =====
+
+    // tag → texto fuente en español (capturado la primera vez que se ve el ítem,
+    // antes de cualquier traducción). Siempre se traduce desde ese texto fuente.
+    private readonly Dictionary<string, string> _navEsByTag = new(StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<NavigationViewItem> AllNavItems()
+    {
+        foreach (var item in NavigationViewControl.MenuItems.OfType<NavigationViewItem>())
+            yield return item;
+        foreach (var item in NavigationViewControl.FooterMenuItems.OfType<NavigationViewItem>())
+            yield return item;
+    }
+
+    private void TranslateNavbar()
+    {
+        try
+        {
+            foreach (var item in AllNavItems())
+            {
+                if (item.Tag is not string tag) continue;
+                if (!_navEsByTag.TryGetValue(tag, out var es))
+                {
+                    if (item.Content is not string s) continue;
+                    _navEsByTag[tag] = s;
+                    es = s;
+                }
+                var translated = I18n.T(es);
+                if (item.Content is string cur)
+                {
+                    if (!string.Equals(translated, cur, StringComparison.Ordinal))
+                        item.Content = translated;
+                }
+                else if (FindNavTextBlock(item.Content) is TextBlock tb)
+                {
+                    // Content ya es el Grid del botón ⋮: traducir el TextBlock interno.
+                    if (!string.Equals(translated, tb.Text, StringComparison.Ordinal))
+                        tb.Text = translated;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error traduciendo el navbar: {ex.Message}");
+        }
+    }
+
+    /// <summary>Busca el TextBlock del nombre dentro del Content (Grid del botón ⋮).</summary>
+    private static TextBlock? FindNavTextBlock(object? content)
+        => content is Grid g ? g.Children.OfType<TextBlock>().FirstOrDefault() : null;
+
+    /// <summary>
+    /// Reemplaza el Content (texto) de cada pestaña por un Grid: nombre a la
+    /// izquierda + botón "⋮" al extremo derecho. El botón abre un menú con
+    /// "Ocultar" que esconde la pestaña (misma clave "nav.&lt;tag&gt;" que la
+    /// opción de Configuración). La pestaña Configuración no lleva botón (no se
+    /// puede ocultar).
+    /// </summary>
+    private void AttachNavItemMenus()
+    {
+        foreach (var item in AllNavItems())
+        {
+            if (item.Tag is not string tag) continue;
+            if (tag == "configuracion") continue;
+            if (item.Content is not string s) continue; // ya transformado
+            _navEsByTag[tag] = s;
+
+            var tb = new TextBlock
+            {
+                Text = s,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            // Botón ⋮ compacto (glyph E712 "More" de Segoe MDL2, los tres puntitos
+            // estándar de Windows): sin fondo ni borde, pegado al extremo derecho.
+            // Se muestra SOLO al pasar el mouse sobre la pestaña (PointerEntered).
+            var moreBtn = new Microsoft.UI.Xaml.Controls.Button
+            {
+                Content = new FontIcon
+                {
+                    Glyph = "\uE712",
+                    FontSize = 12,
+                    VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center
+                },
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+                BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+                // Sin padding derecho: el glyph queda lo más pegado posible al borde.
+                Padding = new Microsoft.UI.Xaml.Thickness(2, 0, 0, 0),
+                CornerRadius = new Microsoft.UI.Xaml.CornerRadius(4),
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Right,
+                VerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+                MinWidth = 20,
+                MinHeight = 22,
+                Tag = tag,
+                // Opacity 0 (no Collapsed): el botón siempre ocupa su lugar a la
+                // derecha, así el texto no se corre al aparecer/desaparecer.
+                Opacity = 0,
+                IsHitTestVisible = false
+            };
+            // Tapped (no Click/PointerPressed): TappedRoutedEventArgs permite marcar
+            // Handled para que el tap en ⋮ no navegue a la pestaña, y el menú se abre
+            // después del release completo (con PointerPressed el flyout se cerraba
+            // apenas se soltaba el botón).
+            moreBtn.Tapped += NavItemMore_Tapped;
+
+            // El ContentPresenter del NavigationViewItem alinea a la izquierda por
+            // defecto: con HorizontalContentAlignment=Stretch el contenido ocupa todo
+            // el ancho de la pestaña (el estilo por defecto ya lo deja en Stretch).
+            item.HorizontalContentAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch;
+            var grid = new Microsoft.UI.Xaml.Controls.Grid
+            {
+                HorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment.Stretch,
+                // El template de WinUI envuelve el contenido en un ContentGrid con
+                // Margin="0,0,14,0" fijo (espacio para el chevron/scrollbar): margen
+                // derecho negativo para recuperar esos 14px y que el botón ⋮ quede
+                // pegado a la pared del navbar en vez de flotar 18px antes.
+                Margin = new Microsoft.UI.Xaml.Thickness(0, 0, -14, 0)
+            };
+            grid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = new Microsoft.UI.Xaml.GridLength(1, Microsoft.UI.Xaml.GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new Microsoft.UI.Xaml.Controls.ColumnDefinition { Width = Microsoft.UI.Xaml.GridLength.Auto });
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(tb, 0);
+            Microsoft.UI.Xaml.Controls.Grid.SetColumn(moreBtn, 1);
+            grid.Children.Add(tb);
+            grid.Children.Add(moreBtn);
+            // Hover: el ⋮ aparece (opacidad 1) al entrar el mouse a la pestaña y
+            // desaparece al salir. Cuando está oculto no recibe clics.
+            void ShowMore(bool show)
+            {
+                moreBtn.Opacity = show ? 1 : 0;
+                moreBtn.IsHitTestVisible = show;
+            }
+            item.PointerEntered += (s, e) => ShowMore(true);
+            item.PointerExited += (s, e) => ShowMore(false);
+            moreBtn.PointerEntered += (s, e) => ShowMore(true);
+            moreBtn.PointerExited += (s, e) => ShowMore(false);
+            item.Content = grid;
+        }
+    }
+
+    /// <summary>Menú del botón ⋮ de una pestaña: "Ocultar" esconde la pestaña.</summary>
+    private void NavItemMore_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        e.Handled = true; // que el tap no navegue a la pestaña
+        if (sender is not Microsoft.UI.Xaml.Controls.Button btn || btn.Tag is not string tag) return;
+        var menu = new MenuFlyout();
+        var hide = new MenuFlyoutItem { Text = I18n.T("Ocultar") };
+        hide.Click += (s, e2) =>
+        {
+            try
+            {
+                _settingsService.Set("nav." + tag, false);
+                _settingsService.Save();
+                ApplyNavigationVisibility();
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"Error ocultando pestaña {tag}: {ex.Message}");
+            }
+        };
+        menu.Items.Add(hide);
+        menu.ShowAt(btn);
+    }
+
+    private void ApplyLanguageButton()
+    {
+        LanguageFlagImage.Source = Flags.GetImage(I18n.Current)?.Source;
+        LanguageNameText.Text = I18n.Current;
+    }
+
+    private void LanguageButton_Click(object sender, RoutedEventArgs e)
+    {
+        var flyout = new MenuFlyout();
+        foreach (var code in I18n.Languages)
+        {
+            var item = new MenuFlyoutItem
+            {
+                Text = code,
+                Tag = code,
+                Icon = Flags.GetIcon(code)
+            };
+            if (code == I18n.Current)
+            {
+                // Check de idioma activo junto a la bandera.
+                item.KeyboardAcceleratorTextOverride = "✓";
+            }
+            var selected = code;
+            item.Click += (s, args) =>
+            {
+                if (s is MenuFlyoutItem { Tag: string c })
+                    I18n.SetLanguage(c, _settingsService);
+            };
+            flyout.Items.Add(item);
+        }
+        LanguageButton.Flyout = flyout;
+        flyout.ShowAt(LanguageButton);
     }
 
     private void NavigationViewControl_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
@@ -792,13 +1528,13 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Colorea la barra de título: negra con botones claros (tema oscuro) o
-    /// blanca con botones oscuros (tema claro).
+    /// Colorea la barra de título con el color del navbar: #151517 (oscuro) o
+    /// blanco (claro), para que la ventana sea un solo bloque con el menú lateral.
     /// </summary>
     private static void ApplyTitleBarColors(AppWindow appWindow, bool dark)
     {
         var tb = appWindow.TitleBar;
-        var bg = Windows.UI.Color.FromArgb(255, dark ? (byte)0 : (byte)245, dark ? (byte)0 : (byte)246, dark ? (byte)0 : (byte)248);
+        var bg = Windows.UI.Color.FromArgb(255, dark ? (byte)0x15 : (byte)0xFF, dark ? (byte)0x15 : (byte)0xFF, dark ? (byte)0x17 : (byte)0xFF);
         var fg = Windows.UI.Color.FromArgb(255, dark ? (byte)255 : (byte)16, dark ? (byte)255 : (byte)20, dark ? (byte)255 : (byte)24);
         var inactiveFg = Windows.UI.Color.FromArgb(255, dark ? (byte)128 : (byte)96, dark ? (byte)128 : (byte)100, dark ? (byte)128 : (byte)104);
         var hover = Windows.UI.Color.FromArgb(255, dark ? (byte)45 : (byte)224, dark ? (byte)45 : (byte)228, dark ? (byte)45 : (byte)232);
@@ -842,6 +1578,21 @@ internal class DarkMenuRenderer : ToolStripProfessionalRenderer
             return;
         }
         base.OnRenderMenuItemBackground(e);
+    }
+
+    protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+    {
+        // El layout nativo de ToolStripMenuItem con Image deja el texto pegado
+        // arriba (bug conocido de WinForms): se fuerza el centrado vertical real
+        // del texto dentro del item, ignorando el rect que calcula el layout.
+        try
+        {
+            var size = TextRenderer.MeasureText(e.Text, e.TextFont);
+            int y = Math.Max(0, (e.Item.Height - size.Height) / 2);
+            e.TextRectangle = new Rectangle(e.TextRectangle.X, y, e.TextRectangle.Width, size.Height);
+        }
+        catch { }
+        base.OnRenderItemText(e);
     }
 
     protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)

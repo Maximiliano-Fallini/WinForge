@@ -36,36 +36,15 @@ public sealed partial class PanelWindowsPage : Page
 
     private const string DefaultGlyph = "\uE770";
 
-    // ---- Pinceles por tema (mismos colores que los ThemeResource de la app) ----
-    private static readonly Dictionary<ElementTheme, SolidColorBrush> CardBrushes = new()
-    {
-        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x26, 0x2A, 0x31)),
-        [ElementTheme.Light] = new(Color.FromArgb(255, 0xFF, 0xFF, 0xFF))
-    };
-    private static readonly Dictionary<ElementTheme, SolidColorBrush> CardHoverBrushes = new()
-    {
-        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x2E, 0x33, 0x3B)),
-        [ElementTheme.Light] = new(Color.FromArgb(255, 0xF4, 0xF6, 0xF8))
-    };
-    private static readonly Dictionary<ElementTheme, SolidColorBrush> BorderBrushes = new()
-    {
-        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x34, 0x3A, 0x45)),
-        [ElementTheme.Light] = new(Color.FromArgb(255, 0xD8, 0xDD, 0xE3))
-    };
-    private static readonly Dictionary<ElementTheme, SolidColorBrush> MutedBrushes = new()
-    {
-        [ElementTheme.Dark] = new(Color.FromArgb(255, 0x8A, 0x94, 0xA6)),
-        [ElementTheme.Light] = new(Color.FromArgb(255, 0x5C, 0x64, 0x70))
-    };
-
-    private static readonly SolidColorBrush AccentBrush = new(Color.FromArgb(255, 0x8A, 0xB4, 0xF8));
-    private static readonly SolidColorBrush AccentTintBrush = new(Color.FromArgb(0x22, 0x8A, 0xB4, 0xF8));
-
-    private bool IsLight => ActualTheme == ElementTheme.Light;
-    private SolidColorBrush CardBrush => CardBrushes[IsLight ? ElementTheme.Light : ElementTheme.Dark];
-    private SolidColorBrush CardHoverBrush => CardHoverBrushes[IsLight ? ElementTheme.Light : ElementTheme.Dark];
-    private SolidColorBrush BorderBrush => BorderBrushes[IsLight ? ElementTheme.Light : ElementTheme.Dark];
-    private SolidColorBrush MutedBrush => MutedBrushes[IsLight ? ElementTheme.Light : ElementTheme.Dark];
+    // ---- Pinceles desde los recursos de tema de la app: al cambiar de variante la
+    // app reinicia y estas propiedades resuelven los colores nuevos (las cards se
+    // reconstruyen en ActualThemeChanged al cambiar claro/oscuro). ----
+    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static SolidColorBrush CardHoverBrush => ThemeBrushes.Get("CardHoverBrush");
+    private static SolidColorBrush MutedBrush => ThemeBrushes.Get("SecondaryTextBrush");
+    private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
+    private static SolidColorBrush AccentTintBrush => ThemeBrushes.Get("AccentTintBrush");
+    private static readonly SolidColorBrush TransparentBrush = new(Windows.UI.Color.FromArgb(0, 0, 0, 0));
 
     public PanelWindowsPage()
     {
@@ -75,8 +54,12 @@ public sealed partial class PanelWindowsPage : Page
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         Loaded += OnLoaded;
 
-        // Al cambiar el tema, reconstruir las cards con los colores nuevos.
+        // Al cambiar el tema o el idioma, reconstruir las cards con los colores/textos nuevos.
         ActualThemeChanged += (s, e) =>
+        {
+            if (_dataLoaded) BuildPanels();
+        };
+        I18n.LanguageChanged += () =>
         {
             if (_dataLoaded) BuildPanels();
         };
@@ -101,9 +84,9 @@ public sealed partial class PanelWindowsPage : Page
         PanelsHost.Children.Clear();
         var panels = _winUtilService.GetPanels();
 
-        // Cuadrícula responsive de 3 columnas: cada fila es un Grid de estrellas,
-        // así las cards ocupan todo el ancho y quedan del mismo alto por fila.
-        const int columns = 3;
+        // Cuadrícula de 2 columnas: cada fila es un Grid de estrellas, así las
+        // cards ocupan todo el ancho y quedan del mismo alto por fila.
+        const int columns = 2;
         for (int i = 0; i < panels.Count; i += columns)
         {
             var row = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 0, 0, 12) };
@@ -143,7 +126,7 @@ public sealed partial class PanelWindowsPage : Page
 
         var nameText = new TextBlock
         {
-            Text = panel.Name,
+            Text = I18n.T(panel.Name),
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             FontSize = 13.5,
             TextWrapping = TextWrapping.Wrap,
@@ -152,7 +135,7 @@ public sealed partial class PanelWindowsPage : Page
 
         var descText = new TextBlock
         {
-            Text = panel.Description,
+            Text = I18n.T(panel.Description),
             FontSize = 11.5,
             Foreground = MutedBrush,
             TextWrapping = TextWrapping.Wrap,
@@ -172,11 +155,14 @@ public sealed partial class PanelWindowsPage : Page
 
         var button = new Button
         {
+            // Sin reborde (mismo estilo de cards que Reparación): solo fondo de card.
+            // BorderThickness 0 explícito: si se omite, el template por defecto del
+            // Button dibuja su propio borde (ButtonBorderBrush) aunque el fondo sea de card.
             Content = content,
             Background = CardBrush,
-            BorderBrush = BorderBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
+            BorderBrush = TransparentBrush,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(12),
             Padding = new Thickness(14, 12, 14, 12),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Left,

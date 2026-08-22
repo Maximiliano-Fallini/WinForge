@@ -48,7 +48,7 @@ public sealed class WindowsUpdateService : IWindowsUpdateService
                 return new WindowsUpdatePolicyState(
                     WindowsUpdateMode.Disabled,
                     "Actualizaciones desactivadas",
-                    "Windows Update, sus servicios y tareas relacionadas estan desactivados.");
+                    "Windows Update, sus servicios y tareas relacionadas están desactivados.");
             }
 
             var isRecommended =
@@ -70,13 +70,13 @@ public sealed class WindowsUpdateService : IWindowsUpdateService
                                 GetDword(WindowsUpdatePolicyPath, "ExcludeWUDriversInQualityUpdate") is not null;
 
             return hasWhpoPolicy
-                ? new WindowsUpdatePolicyState(WindowsUpdateMode.Custom, "Configuracion personalizada", "Se detectaron politicas de Windows Update distintas de los tres perfiles de WHPO.")
-                : new WindowsUpdatePolicyState(WindowsUpdateMode.Default, "Predeterminado de Windows", "Windows administra las actualizaciones con su configuracion habitual.");
+                ? new WindowsUpdatePolicyState(WindowsUpdateMode.Custom, "Configuración personalizada", "Se detectaron políticas de Windows Update distintas de los tres perfiles de WHPO.")
+                : new WindowsUpdatePolicyState(WindowsUpdateMode.Default, "Predeterminado de Windows", "Windows administra las actualizaciones con su configuración habitual.");
         }
         catch (Exception ex)
         {
             _loggingService.LogError("No se pudo detectar la politica actual de Windows Update.", ex);
-            return new WindowsUpdatePolicyState(WindowsUpdateMode.Custom, "Estado no disponible", "No fue posible leer las politicas locales de Windows Update.");
+            return new WindowsUpdatePolicyState(WindowsUpdateMode.Custom, "Estado no disponible", "No fue posible leer las políticas locales de Windows Update.");
         }
     }
 
@@ -94,7 +94,7 @@ public sealed class WindowsUpdateService : IWindowsUpdateService
     {
         if (!OperatingSystem.IsWindows())
         {
-            return new WindowsUpdatePolicyResult(false, "Esta funcion solo esta disponible en Windows.", RestartRecommended: false);
+            return new WindowsUpdatePolicyResult(false, "Esta función solo está disponible en Windows.", RestartRecommended: false);
         }
 
         var warnings = new List<string>();
@@ -116,7 +116,7 @@ public sealed class WindowsUpdateService : IWindowsUpdateService
             var title = mode switch
             {
                 WindowsUpdateMode.Default => "Se restauraron los valores predeterminados de Windows Update.",
-                WindowsUpdateMode.Recommended => "Se aplico el perfil recomendado de Windows Update.",
+                WindowsUpdateMode.Recommended => "Se aplicó el perfil recomendado de Windows Update.",
                 WindowsUpdateMode.Disabled => "Windows Update fue desactivado.",
                 _ => ""
             };

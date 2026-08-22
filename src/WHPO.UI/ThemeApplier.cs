@@ -1,3 +1,4 @@
+using System;
 using Microsoft.UI.Xaml;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
@@ -57,4 +58,5 @@ public class ThemeApplier : IThemeApplier
             ? AppTheme.Dark
             : AppTheme.Light;
     }
+
 }
