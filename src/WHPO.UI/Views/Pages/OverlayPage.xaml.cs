@@ -621,7 +621,9 @@ public sealed partial class OverlayPage : Page
         var badge = new Border
         {
             Width = BadgeWidth,
-            Background = ThemeBrushes.Get("CardHoverBrush"),
+            Background = isCore
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 220, 120)) // Amarillo cálido para core
+                : ThemeBrushes.Get("CardHoverBrush"),
             CornerRadius = new CornerRadius(14),
             Padding = new Thickness(12, 4, 10, 4),
             Child = content
@@ -674,22 +676,24 @@ public sealed partial class OverlayPage : Page
 
     private void UpdateBadgeVisuals()
     {
+        // Amarillo cálido para badges core (CPU %, GPU %, RAM MB, FPS)
+        var coreBg = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 220, 120));
+        var disabledBg = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+
         foreach (var (id, badge, _) in _metricBadges)
         {
+            bool isCore = OverlayWindow.IsCoreMetric(id);
             bool enabled = _enabledMetrics.Contains(id);
             badge.Opacity = enabled ? 1.0 : 0.45;
-            // El borde SIEMPRE mide 1px (transparente si está activo): si pasara de
-            // 0 a 1, el alto/ancho deseado del badge cambia 2px y la fila entera se
-            // agranda/achica al switchear (el bug que reportaste).
             badge.BorderThickness = new Thickness(1);
             if (enabled)
             {
-                badge.Background = ThemeBrushes.Get("CardHoverBrush");
+                badge.Background = isCore ? coreBg : ThemeBrushes.Get("CardHoverBrush");
                 badge.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
             }
             else
             {
-                badge.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+                badge.Background = disabledBg;
                 var c = ((SolidColorBrush)ThemeBrushes.Get("SecondaryTextBrush")).Color;
                 badge.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(130, c.R, c.G, c.B));
             }
