@@ -66,8 +66,8 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <img src="https://img.shields.io/badge/self_contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self contained"/>
   &nbsp;
   <img src="https://img.shields.io/badge/ejecutar-como_administrador-e3b341?style=flat-square" alt="Como administrador"/>
-  <br/>
-  <sub>(23/8/2026 15:24 UTC)</sub>
+    <br/>
+  <small>(23/8/2026 15:24 UTC)</small>
   <br/>
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
 </p>
