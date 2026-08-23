@@ -5,6 +5,10 @@
 
 **WinForge** es un **optimizador competitivo para Windows**, pensado para gamers y usuarios avanzados que quieren sacar el máximo provecho de su equipo. Una sola app para monitorear tu PC, optimizarla al jugar, gestionar tus juegos y ajustar Windows a tu medida.
 
+<p align="center">
+  💯 <b>100% Gratuito</b> — todas las funciones de optimización son completamente gratis, sin premium ni límites.
+</p>
+
 <h2 align="center">🌐 Multilenguaje</h2>
 
 <p align="center">
@@ -65,6 +69,19 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <br/>
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
 </p>
+
+## ⭐ Apoyá el proyecto
+
+<div align="center">
+
+<b>Todas las funciones de optimización son 100% gratuitas.</b><br/>
+Si te gusta WinForge, dejá una ⭐ para mostrar apoyo — es gratis y ayuda muchísimo a que el proyecto siga creciendo.
+
+<a href="https://github.com/Maximiliano-Fallini/WinForge/stargazers">
+    <img src="https://img.shields.io/badge/%E2%AD%90_Dej%C3%A1_una_estrella-ffdd00?style=for-the-badge&logo=github&logoColor=black" alt="Dejá una estrella en GitHub"/>
+  </a>
+
+</div>
 
 ## 🧱 Tecnología
 
