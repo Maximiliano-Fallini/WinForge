@@ -51,12 +51,12 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.1/WinForge-0.1.1.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.1_MSI_~85_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.1.1 MSI"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.3/WinForge-0.1.3.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.3_MSI_~85_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.1.3 MSI"/>
   </a>
   <br/><br/>
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.1">
-    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.1_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.3">
+    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.3_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
   </a>
   &nbsp;
   <img src="https://img.shields.io/badge/self_contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self contained"/>

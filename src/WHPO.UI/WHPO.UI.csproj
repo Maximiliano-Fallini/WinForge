@@ -2,9 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
-    <!-- Versión 0.1.1 beta: coincide con la del instalador (WinForge-0.1.1.msi) -->
-    <Version>0.1.1</Version>
-    <InformationalVersion>0.1.1-beta</InformationalVersion>
+    <!-- Versión 0.1.3 beta: coincide con la del instalador (WinForge-0.1.3.msi) -->
+    <Version>0.1.3</Version>
+    <InformationalVersion>0.1.3-beta</InformationalVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>WHPO_UI</RootNamespace>
     <!-- El ejecutable se llama WinForge.exe (no WHPO.UI.exe) -->
