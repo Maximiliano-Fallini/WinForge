@@ -152,6 +152,13 @@ public sealed partial class GestionarProcesosPage : Page
     {
         UpdateGameBoostLabel();
         RebuildCards();
+        // Re-traducir el contador de juegos instalados: es texto dinámico seteado
+        // con I18n.T, el walker no puede re-traducirlo solo (la clave es con {0}).
+        if (InstalledCountText.Visibility == Visibility.Visible)
+            InstalledCountText.Text = I18n.T("Juegos instalados: {0}", _installed.Count);
+        // El placeholder del buscador también se re-aplica por si cambió de idioma
+        // antes de que la página navegara acá.
+        SearchBox.PlaceholderText = I18n.T("Buscar juegos...");
     }
 
     private void GameBoostSwitch_Toggled(object sender, RoutedEventArgs e)

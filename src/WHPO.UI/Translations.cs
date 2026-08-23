@@ -1010,6 +1010,7 @@ public static class Translations
         ["Añadir manual"] = ("Add manually", "Adicionar manual", "Manuell hinzufügen", "Ajouter manuellement"),
         ["Ocultar"] = ("Hide", "Ocultar", "Ausblenden", "Masquer"),
         ["Vista:"] = ("View:", "Visualização:", "Ansicht:", "Affichage :"),
+        ["Buscar juegos..."] = ("Search games...", "Pesquisar jogos...", "Spiele suchen...", "Rechercher des jeux..."),
         ["3 columnas"] = ("3 columns", "3 colunas", "3 Spalten", "3 colonnes"),
         ["5 columnas"] = ("5 columns", "5 colunas", "5 Spalten", "5 colonnes"),
         ["Juegos instalados: {0}"] = ("Installed games: {0}", "Jogos instalados: {0}", "Installierte Spiele: {0}", "Jeux installés : {0}"),
