@@ -319,13 +319,15 @@ public sealed partial class OverlayPage : Page
         MetricBadgePanel.Children.Clear();
 
         // Orden clásico (mismo criterio que BuildDefaultMetricOrder, pero con las
-        // 4 métricas de hardware fijas): CPU → GPU → RAM → FPS → lows, en filas de 4.
+        // 4 métricas de hardware fijas): CPU → GPU → RAM → FPS, en filas de 4.
+        // Los lows 1% y 0.1% NO se agrupan con el FPS: cada uno va en su propia
+        // línea (uno arriba del otro), como orden por defecto del overlay.
         var order = new List<string>
         {
             "cpuUsage", "cpuMhz", "cpuTemp", "cpuWatts",
             "gpuUsage", "gpuMhz", "gpuTemp", "gpuWatts",
             "ramMb", "ramMhz",
-            "fps", "low1", "low01"
+            "fps"
         };
         _enabledMetrics.UnionWith(enabled);
         foreach (var rowIds in ChunkRows(order))
@@ -333,6 +335,8 @@ public sealed partial class OverlayPage : Page
             AddRow(rowIds.Select(id => MetricBadgeDefs.First(d => d.Id == id))
                 .Select(def => (def.Id, def.Label)).ToList());
         }
+        AddRow(new List<(string Id, string Label)> { (MetricBadgeDefs.First(d => d.Id == "low1").Id, "1% low") });
+        AddRow(new List<(string Id, string Label)> { (MetricBadgeDefs.First(d => d.Id == "low01").Id, "0.1% low") });
         UpdateBadgeVisuals();
         SaveMetricOrder();
     }
@@ -408,9 +412,11 @@ public sealed partial class OverlayPage : Page
         else if (!_settings.Contains("overlay.metricEnabled"))
         {
             // Primera corrida: desde los switches viejos (orden clásico), partido
-            // en filas de a 4 (la grilla es fija).
+            // en filas de a 4 (la grilla es fija) y con los lows 1% / 0.1% en
+            // líneas SEPARADAS (cada uno arriba del otro, por defecto).
             enabled = BuildDefaultMetricOrder();
             rows = ChunkRows(enabled);
+            rows = SplitLowsIntoOwnRows(rows);
         }
         else
         {
@@ -450,6 +456,20 @@ public sealed partial class OverlayPage : Page
 
     /// <summary>Máximo de badges por línea (la grilla de la config es fija).</summary>
     private const int MaxBadgesPerRow = 4;
+
+    /// <summary>
+    /// Separa los lows 1% / 0.1% en filas PROPIAS (cada uno en su línea, uno
+    /// arriba del otro) para el orden por defecto; el resto se mantiene en sus
+    /// filas de a 4.
+    /// </summary>
+    private static List<List<string>> SplitLowsIntoOwnRows(List<List<string>> rows)
+    {
+        var keep = rows.Select(r => r.Where(id => id is not ("low1" or "low01")).ToList())
+                       .Where(r => r.Count > 0).ToList();
+        if (rows.Any(r => r.Contains("low1"))) keep.Add(new List<string> { "low1" });
+        if (rows.Any(r => r.Contains("low01"))) keep.Add(new List<string> { "low01" });
+        return keep;
+    }
 
     /// <summary>Ancho fijo de cada badge (la grilla es estable, no depende del ancho de la ventana).</summary>
     private const double BadgeWidth = 150;

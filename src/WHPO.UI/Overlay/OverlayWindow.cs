@@ -628,12 +628,15 @@ public sealed class OverlayWindow : Form
             using var gpuBrush = new SolidBrush(_config.GpuColor);
             using var ramBrush = new SolidBrush(_config.RamColor);
 
-            // Fondo: panel RECTANGULAR (sin esquinas redondeadas) — las esquinas
-            // redondeadas quedaban transparentes y sobre contenido brillante (el
-            // juego) se veían puntas blancas. La opacidad controla SOLO el fondo;
-            // el texto se dibuja siempre al 100%.
+            // Fondo: panel con ESQUINAS REDONDEADAS. La opacidad controla SOLO el
+            // fondo; el texto se dibuja siempre al 100%. Antes eran rectangulares
+            // porque Color.Transparent dejaba "puntas blancas"; hoy el buffer es
+            // transparente NEGRO (FromArgb(0,0,0,0)) y PaintLayered copia los
+            // píxeles premultiplicados tal cual, así las esquinas fuera del path
+            // quedan realmente transparentes.
             int bgAlpha = (int)(_config.Opacity * 255);
-            using (var path = RoundedRect(new Rectangle(0, 0, _buffer!.Width, _buffer.Height), 0))
+            int radius = (int)MathF.Max(6f, 12f * (float)_config.FontScale);
+            using (var path = RoundedRect(new Rectangle(0, 0, _buffer!.Width, _buffer.Height), radius))
             using (var bgBrush = new SolidBrush(Color.FromArgb(bgAlpha, 15, 15, 18)))
             {
                 g.FillPath(bgBrush, path);
@@ -648,12 +651,15 @@ public sealed class OverlayWindow : Form
                 g.SmoothingMode = prevSmoothing;
 
                 // Borde visible alrededor del panel: línea fina gris claro dibujada
-                // 1px ADENTRO del rectángulo (así no se recorta en el borde de la
-                // ventana). Sigue la opacidad del fondo: a opacidad 0 desaparece
-                // junto con el panel.
+                // 1px ADENTRO y SIGUIENDO el path redondeado (así no se recorta en
+                // el borde de la ventana). Sigue la opacidad del fondo: a opacidad
+                // 0 desaparece junto con el panel.
                 using (var borderPen = new Pen(
                            Color.FromArgb((int)(190 * _config.Opacity), 185, 190, 200), 1f))
-                    g.DrawRectangle(borderPen, 1, 1, _buffer!.Width - 2, _buffer.Height - 2);
+                {
+                    var borderRect = new Rectangle(1, 1, _buffer!.Width - 3, _buffer.Height - 3);
+                    g.DrawPath(borderPen, RoundedRect(borderRect, Math.Max(1, radius - 1)));
+                }
             }
 
             float y = S(8);
@@ -699,10 +705,18 @@ public sealed class OverlayWindow : Form
                     {
                         // RAM: el nombre es "RAM" seguido de la configuración de
                         // módulos (RAM 2x16 GB), después el uso en MB y la velocidad.
+                        // El nombre se recorta al ancho disponible para que nunca
+                        // invada y pise los "xx MB" de la derecha.
+                        float firstRamValueRight = row.Ids.Contains("ramMb") ? ColUsageRight
+                            : row.Ids.Contains("ramMhz") && metrics.RamMhz > 0 ? ColMhzRight
+                            : ColUsageRight;
+                        float maxRamLabelWidth = S(firstRamValueRight) - S(12) - S(10);
+                        if (maxRamLabelWidth < S(40)) maxRamLabelWidth = S(40);
+
                         string ramName = string.IsNullOrWhiteSpace(metrics.RamConfig)
                             ? "RAM"
                             : "RAM " + metrics.RamConfig;
-                        g.DrawString(ramName, LineFont, ramBrush, S(12), y);
+                        g.DrawString(FitText(g, ramName, LineFont, maxRamLabelWidth), LineFont, ramBrush, S(12), y);
                         if (row.Ids.Contains("ramMb"))
                             DrawRight(g, $"{metrics.RamUsedMb:F0} MB", LineFont, ramBrush, S(ColUsageRight), y);
                         if (row.Ids.Contains("ramMhz") && metrics.RamMhz > 0)
@@ -734,14 +748,24 @@ public sealed class OverlayWindow : Form
     /// <summary>
     /// Línea de hardware en grilla: nombre en la columna 1, y cada valor en su
     /// columna fija (alineado a la derecha). Mostrar/ocultar un valor NO mueve
-    /// a los demás.
+    /// a los demás. El nombre se recorta al ancho disponible para no pisar los
+    /// valores de las columnas de la derecha.
     /// </summary>
     private float DrawHardwareLine(Graphics g, string label,
         double usage, double mhz, double temp, double watts,
         bool showUsage, bool showMhz, bool showTemp, bool showWatts,
         Brush brush, float y)
     {
-        g.DrawString(string.IsNullOrWhiteSpace(label) ? "—" : label, LineFont, brush, S(12), y);
+        // Primera columna de valor visible: hasta ahí puede llegar el nombre.
+        float firstValueRight = showUsage ? ColUsageRight
+            : showMhz && mhz > 0 ? ColMhzRight
+            : showTemp && temp > 0 ? ColTempRight
+            : ColWattsRight;
+        float maxLabelWidth = S(firstValueRight) - S(12) - S(10);
+        if (maxLabelWidth < S(40)) maxLabelWidth = S(40);
+
+        string text = string.IsNullOrWhiteSpace(label) ? "—" : label;
+        g.DrawString(FitText(g, text, LineFont, maxLabelWidth), LineFont, brush, S(12), y);
         if (showUsage) DrawRight(g, $"{usage:F0}%", LineFont, brush, S(ColUsageRight), y);
         if (showMhz && mhz > 0) DrawRight(g, $"{mhz:F0} MHz", LineFont, brush, S(ColMhzRight), y);
         if (showTemp && temp > 0) DrawRight(g, $"{temp:F0}°C", LineFont, brush, S(ColTempRight), y);
@@ -750,10 +774,12 @@ public sealed class OverlayWindow : Form
     }
 
     /// <summary>
-    /// Bloque de FPS alineado a la IZQUIERDA: número grande + etiqueta "FPS {api}"
-    /// y, debajo, los lows 1% / 0.1% habilitados (todos en la columna izquierda,
-    /// igual que las líneas de hardware). Solo se dibuja si algún badge del bloque
-    /// (fps/low1/low01) está activo.
+    /// Bloque de FPS: número grande con la etiqueta "FPS {api}" AL LADO (misma
+    /// línea, para no romper la grilla vertical) y, debajo, los lows 1% / 0.1%
+    /// habilitados. Cada métrica dibuja su texto desde la MISMA coordenada Y que
+    /// las líneas de hardware, así todo queda alineado como si estuviese en una
+    /// grilla. Solo se dibuja si algún badge del bloque (fps/low1/low01) está
+    /// activo.
     /// </summary>
     private float DrawFpsBlock(Graphics g, WHPO.Core.Services.Interfaces.OverlayMetrics? metrics,
         bool haveFps, List<string> ids, Brush fpsBrush, float y)
@@ -763,21 +789,25 @@ public sealed class OverlayWindow : Form
         bool showLow01 = ids.Contains("low01");
         if (!showFps && !showLow1 && !showLow01) return y;
 
-        y += S(4);
         float left = S(12);
         if (showFps)
         {
             string fpsText = haveFps ? metrics!.Fps.ToString("F0") : "--";
             g.DrawString(fpsText, FpsFont, fpsBrush, left, y - S(2));
 
-            // Etiqueta "FPS" + API gráfica en pequeño (DX11/DX12/Unity/Vulkan).
+            // Etiqueta "FPS" + API gráfica en pequeño, al lado derecho del número
+            // y verticalmente centrada en la misma línea (no debajo): así la fila
+            // no ocupa doble alto y el resto de la grilla no se desacomoda.
             string api = metrics?.GfxApi ?? "";
             string fpsLabel = api.Length > 0 ? $"FPS {api}" : "FPS";
-            g.DrawString(fpsLabel, LowFont, fpsBrush, left, y + S(26));
-            y += S(46);
+            float numW = g.MeasureString(fpsText, FpsFont).Width;
+            g.DrawString(fpsLabel, LowFont, fpsBrush, left + numW + S(6), y + S(3));
+            y += S(34);
         }
 
-        // 1% low / 0.1% low (chico, debajo del FPS, alineados a la izquierda también).
+        // 1% low / 0.1% low (chico, sobre la MISMA base vertical que las filas de
+        // hardware). Cuando están en filas propias de badges (default) cada fila
+        // dibuja su línea; si comparten fila con el FPS quedan debajo del número.
         var lows = new List<string>();
         if (showLow1 && metrics != null && metrics.FpsLow1 > 0)
             lows.Add($"1% {metrics.FpsLow1:F0}");
@@ -863,6 +893,19 @@ public sealed class OverlayWindow : Form
         _ => ""
     };
 
+    /// <summary>Recorta un texto con elipsis si excede el ancho disponible.</summary>
+    private static string FitText(Graphics g, string text, Font font, float maxWidth)
+    {
+        if (string.IsNullOrEmpty(text) || maxWidth <= 0) return text;
+        if (g.MeasureString(text, font).Width <= maxWidth) return text;
+
+        const string ellipsis = "…";
+        var t = text;
+        while (t.Length > 1 && g.MeasureString(t + ellipsis, font).Width > maxWidth)
+            t = t[..^1];
+        return t + ellipsis;
+    }
+
     /// <summary>Dibuja texto alineado a la derecha en la columna indicada.</summary>
     private void DrawRight(Graphics g, string text, Font font, Brush brush, float rightX, float y)
     {
@@ -883,8 +926,7 @@ public sealed class OverlayWindow : Form
             switch (row.Family)
             {
                 case "fps":
-                    y += S(4);
-                    if (row.Ids.Contains("fps")) y += S(46);
+                    if (row.Ids.Contains("fps")) y += S(34);
                     if (row.Ids.Contains("low1") || row.Ids.Contains("low01")) y += S(24);
                     break;
                 case "ram":
