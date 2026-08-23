@@ -554,7 +554,14 @@ public sealed class OverlayWindow : Form
             if (low1) metricOrder.Add("low1");
             if (low01) metricOrder.Add("low01");
             metricRows = GroupByFamily(metricOrder);
+            // Orden por defecto: FPS y lows en filas propias (FPS abajo de todo).
+            metricRows = SplitFpsAndLows(metricRows);
         }
+
+        // Invariante de grupos: una sola familia por fila, core primero al inicio
+        // de su grupo y grupos en orden cpu → gpu → ram → fps. Separa filas
+        // mezcladas de configs viejas y devuelve métricas mal ubicadas a su grupo.
+        metricRows = NormalizeRows(metricRows);
 
         // La grilla de la config es fija: ninguna línea pasa de 4 métricas.
         metricRows = metricRows.SelectMany(ChunkRows).ToList();
@@ -892,6 +899,100 @@ public sealed class OverlayWindow : Form
         _ when id.StartsWith("ram", StringComparison.Ordinal) => "ram",
         _ => ""
     };
+
+    /// <summary>Grupo de una métrica: "cpu", "gpu", "ram" o "fps".</summary>
+    public static string GroupOf(string id) => FamilyOf(id);
+
+    /// <summary>Métrica core que define la línea de un grupo (no se puede mover).
+    /// null si el grupo no existe.</summary>
+    public static string? CoreOf(string group) => group switch
+    {
+        "cpu" => "cpuUsage",
+        "gpu" => "gpuUsage",
+        "ram" => "ramMb",
+        "fps" => "fps",
+        _ => null
+    };
+
+    /// <summary>¿Es la métrica core de su grupo (la %, por ej. CPU %)?</summary>
+    public static bool IsCoreMetric(string id) => id == CoreOf(GroupOf(id));
+
+    /// <summary>
+    /// Normaliza las filas de métricas a la invariante del overlay:
+    ///  - cada fila es de UN solo grupo (cpu/gpu/ram/fps),
+    ///  - los grupos aparecen en orden fijo cpu → gpu → ram → fps,
+    ///  - la métrica core (la %) encabeza la primera fila de su grupo,
+    ///  - las sub-filas del grupo siguen a la fila core (preservando el orden).
+    /// Separa filas mezcladas de configs viejas y corrige métricas mal ubicadas
+    /// (ej. cpuUsage que quedó "abajo" en la zona de la GPU se devuelve arriba).
+    /// </summary>
+    public static List<List<string>> NormalizeRows(List<List<string>> rows)
+    {
+        var order = new[] { "cpu", "gpu", "ram", "fps" };
+        var byGroup = new Dictionary<string, List<(string Id, int R, int C)>>();
+        foreach (var g in order) byGroup[g] = new List<(string, int, int)>();
+        for (int r = 0; r < rows.Count; r++)
+            for (int c = 0; c < rows[r].Count; c++)
+            {
+                var id = rows[r][c];
+                if (!IsValidMetricId(id)) continue;
+                byGroup[GroupOf(id)].Add((id, r, c));
+            }
+
+        var result = new List<List<string>>();
+        foreach (var g in order)
+        {
+            var items = byGroup[g];
+            if (items.Count == 0) continue;
+            items.Sort((a, b) => a.R != b.R ? a.R.CompareTo(b.R) : a.C.CompareTo(b.C));
+
+            // El grupo FPS no se reordena con el core adelante: se respeta el
+            // orden de filas configurado (por defecto el FPS queda debajo de
+            // todo, después de los lows). Solo se garantiza una familia por fila.
+            if (g == "fps")
+            {
+                foreach (var grp in items.GroupBy(i => i.R).OrderBy(k => k.Key))
+                    result.Add(grp.Select(i => i.Id).ToList());
+                continue;
+            }
+
+            var core = CoreOf(g);
+            if (core != null && items.Any(i => i.Id == core))
+            {
+                var coreItem = items.First(i => i.Id == core);
+                // Primera fila: el core primero + los que estaban en su misma fila.
+                var first = new List<string> { core };
+                foreach (var it in items)
+                    if (it.R == coreItem.R && it.Id != core) first.Add(it.Id);
+                result.Add(first);
+                // Sub-filas: el resto, agrupado por su fila original en orden.
+                foreach (var grp in items.Where(i => i.R != coreItem.R)
+                                        .GroupBy(i => i.R).OrderBy(k => k.Key))
+                    result.Add(grp.Select(i => i.Id).ToList());
+                continue;
+            }
+
+            // Sin core (grupo sin su métrica principal): filas planas de a 4.
+            var flat = items.Select(i => i.Id).ToList();
+            for (int i = 0; i < flat.Count; i += 4)
+                result.Add(flat.Skip(i).Take(4).ToList());
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Separa FPS, 1% low y 0.1% low en filas propias (orden por defecto): el
+    /// FPS queda debajo de todo y cada low arriba de él.
+    /// </summary>
+    public static List<List<string>> SplitFpsAndLows(List<List<string>> rows)
+    {
+        var keep = rows.Select(r => r.Where(id => id is not ("fps" or "low1" or "low01")).ToList())
+                       .Where(r => r.Count > 0).ToList();
+        if (rows.Any(r => r.Contains("low1"))) keep.Add(new List<string> { "low1" });
+        if (rows.Any(r => r.Contains("low01"))) keep.Add(new List<string> { "low01" });
+        if (rows.Any(r => r.Contains("fps"))) keep.Add(new List<string> { "fps" });
+        return keep;
+    }
 
     /// <summary>Recorta un texto con elipsis si excede el ancho disponible.</summary>
     private static string FitText(Graphics g, string text, Font font, float maxWidth)

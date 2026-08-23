@@ -308,36 +308,30 @@ public sealed partial class OverlayPage : Page
 
     // ===== Métricas como badges (arrastrar = ordenar, switch = mostrar/ocultar) =====
 
-    /// <summary>Restaura el orden clásico de las métricas (CPU → GPU → RAM → FPS → lows).</summary>
+    /// <summary>Restaura el orden por defecto de las métricas: cada grupo (CPU/GPU/RAM)
+    /// en su propia línea con la métrica core (la %) al inicio, y FPS, 1% low y
+    /// 0.1% low en líneas separadas al final (el FPS debajo de todo).</summary>
     private void ResetOrderButton_Click(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
         var enabled = new HashSet<string>(_enabledMetrics, StringComparer.Ordinal);
 
-        _metricBadges.Clear();
         _enabledMetrics.Clear();
-        MetricBadgePanel.Children.Clear();
 
-        // Orden clásico (mismo criterio que BuildDefaultMetricOrder, pero con las
-        // 4 métricas de hardware fijas): CPU → GPU → RAM → FPS, en filas de 4.
-        // Los lows 1% y 0.1% NO se agrupan con el FPS: cada uno va en su propia
-        // línea (uno arriba del otro), como orden por defecto del overlay.
-        var order = new List<string>
+        // Orden por defecto: una fila por grupo, core primero; FPS y lows cada uno
+        // en su propia línea, con el FPS abajo de todos.
+        _rows = new List<List<string>>
         {
-            "cpuUsage", "cpuMhz", "cpuTemp", "cpuWatts",
-            "gpuUsage", "gpuMhz", "gpuTemp", "gpuWatts",
-            "ramMb", "ramMhz",
-            "fps"
+            new() { "cpuUsage", "cpuMhz", "cpuTemp", "cpuWatts" },
+            new() { "gpuUsage", "gpuMhz", "gpuTemp", "gpuWatts" },
+            new() { "ramMb", "ramMhz" },
+            new() { "low1" },
+            new() { "low01" },
+            new() { "fps" }
         };
+        _rows = OverlayWindow.NormalizeRows(_rows);
         _enabledMetrics.UnionWith(enabled);
-        foreach (var rowIds in ChunkRows(order))
-        {
-            AddRow(rowIds.Select(id => MetricBadgeDefs.First(d => d.Id == id))
-                .Select(def => (def.Id, def.Label)).ToList());
-        }
-        AddRow(new List<(string Id, string Label)> { (MetricBadgeDefs.First(d => d.Id == "low1").Id, "1% low") });
-        AddRow(new List<(string Id, string Label)> { (MetricBadgeDefs.First(d => d.Id == "low01").Id, "0.1% low") });
-        UpdateBadgeVisuals();
+        RebuildPanel();
         SaveMetricOrder();
     }
 
@@ -362,6 +356,11 @@ public sealed partial class OverlayPage : Page
     private readonly List<(string Id, Border Badge, ToggleSwitch Toggle)> _metricBadges = new();
     private readonly HashSet<string> _enabledMetrics = new(StringComparer.Ordinal);
 
+    // Modelo lógico de filas de badges (cada fila = una línea del overlay). El
+    // panel visual se reconstruye desde acá y NormalizeRows garantiza la
+    // invariante de grupos (una familia por fila, core primero, cpu→gpu→ram→fps).
+    private List<List<string>> _rows = new();
+
     private Border? _dragBadge;
     private bool _dragActive;
     private bool _dragMoved;
@@ -369,6 +368,7 @@ public sealed partial class OverlayPage : Page
     private double _dragStartY;
     private int _dragTargetRow = -1;
     private int _dragTargetCol = -1;
+    private bool _dragTargetNewRow;
 
     // "Skeleton" de drop: un hueco fantasma que muestra DÓNDE caería el badge
     // arrastrado si se suelta. La vista previa se arma reconstruyendo las filas
@@ -411,12 +411,11 @@ public sealed partial class OverlayPage : Page
         }
         else if (!_settings.Contains("overlay.metricEnabled"))
         {
-            // Primera corrida: desde los switches viejos (orden clásico), partido
-            // en filas de a 4 (la grilla es fija) y con los lows 1% / 0.1% en
-            // líneas SEPARADAS (cada uno arriba del otro, por defecto).
+            // Primera corrida: desde los switches viejos (orden clásico), con FPS
+            // y lows 1% / 0.1% en líneas separadas por defecto (FPS abajo de todo).
             enabled = BuildDefaultMetricOrder();
             rows = ChunkRows(enabled);
-            rows = SplitLowsIntoOwnRows(rows);
+            rows = OverlayWindow.SplitFpsAndLows(rows);
         }
         else
         {
@@ -426,50 +425,36 @@ public sealed partial class OverlayPage : Page
             var savedEnabled = _settings.Get("overlay.metricEnabled", new List<string>());
             if (savedEnabled != null) enabled.AddRange(savedEnabled.Where(IsValidMetricId));
             rows = OverlayWindow.GroupByFamily(flat);
+            rows = OverlayWindow.SplitFpsAndLows(rows);
         }
 
-        // Garantizar la invariante de la grilla: ninguna fila pasa de 4 badges
-        // (los guardados de versiones anteriores podrían tener filas más largas).
+        // Invariante de grupos: NormalizeRows separa filas mezcladas (una familia
+        // por fila), ordena cpu → gpu → ram → fps y ubica el core (el %) al inicio
+        // de su grupo. Corrige configs viejas con métricas en el grupo equivocado.
+        rows = OverlayWindow.NormalizeRows(rows);
         rows = rows.SelectMany(ChunkRows).ToList();
 
-        // Completar con los ids que falten (al final de la última fila, sin pasar
-        // de 4 por línea — se crea fila nueva si la última está llena).
+        // Completar con los badges que falten: cada uno en una fila propia y
+        // NormalizeRows lo re-ubica dentro de su grupo (nunca se mezcla con otros).
         foreach (var def in MetricBadgeDefs)
         {
-            bool exists = rows.Any(r => r.Contains(def.Id));
-            if (exists) continue;
-            if (rows.Count == 0 || rows[^1].Count >= MaxBadgesPerRow)
-                rows.Add(new List<string>());
-            rows[^1].Add(def.Id);
+            if (rows.Any(r => r.Contains(def.Id))) continue;
+            rows.Add(new List<string> { def.Id });
         }
+        rows = OverlayWindow.NormalizeRows(rows);
 
+        _rows = rows;
         _enabledMetrics.UnionWith(enabled);
-        foreach (var rowIds in rows)
-        {
-            AddRow(rowIds.Select(id => MetricBadgeDefs.First(d => d.Id == id))
-                .Select(def => (def.Id, def.Label)).ToList());
-        }
-        UpdateBadgeVisuals();
-        SyncSeparators();
+        RebuildPanel();
+        if (migrated) SaveMetricOrder();
         return migrated;
     }
 
     /// <summary>Máximo de badges por línea (la grilla de la config es fija).</summary>
     private const int MaxBadgesPerRow = 4;
 
-    /// <summary>
-    /// Separa los lows 1% / 0.1% en filas PROPIAS (cada uno en su línea, uno
-    /// arriba del otro) para el orden por defecto; el resto se mantiene en sus
-    /// filas de a 4.
-    /// </summary>
-    private static List<List<string>> SplitLowsIntoOwnRows(List<List<string>> rows)
-    {
-        var keep = rows.Select(r => r.Where(id => id is not ("low1" or "low01")).ToList())
-                       .Where(r => r.Count > 0).ToList();
-        if (rows.Any(r => r.Contains("low1"))) keep.Add(new List<string> { "low1" });
-        if (rows.Any(r => r.Contains("low01"))) keep.Add(new List<string> { "low01" });
-        return keep;
-    }
+    // Los lows/FPS en filas propias ahora se resuelven con OverlayWindow.SplitFpsAndLows
+    // (compartido con el render del overlay), por eso ya no hay helper local.
 
     /// <summary>Ancho fijo de cada badge (la grilla es estable, no depende del ancho de la ventana).</summary>
     private const double BadgeWidth = 150;
@@ -556,15 +541,27 @@ public sealed partial class OverlayPage : Page
         }
     }
 
-    private void AddRow(List<(string Id, string Label)> badges)
+    /// <summary>
+    /// Reconstruye el panel de badges desde el modelo lógico _rows (cada fila =
+    /// una línea del overlay). Crea los badges de nuevo y re-sincroniza
+    /// separadores y visuales.
+    /// </summary>
+    private void RebuildPanel()
     {
-        var row = CreateRowPanel();
-        for (int i = 0; i < badges.Count && i < MaxBadgesPerRow; i++)
+        _metricBadges.Clear();
+        MetricBadgePanel.Children.Clear();
+        foreach (var rowIds in _rows)
         {
-            var badge = AddBadge(badges[i].Id, badges[i].Label, _enabledMetrics.Contains(badges[i].Id));
-            row.Children.Add(badge);
+            var row = CreateRowPanel();
+            foreach (var id in rowIds.Take(MaxBadgesPerRow))
+            {
+                var def = MetricBadgeDefs.First(d => d.Id == id);
+                row.Children.Add(AddBadge(def.Id, def.Label, _enabledMetrics.Contains(def.Id)));
+            }
+            MetricBadgePanel.Children.Add(row);
         }
-        MetricBadgePanel.Children.Add(row);
+        SyncSeparators();
+        UpdateBadgeVisuals();
     }
 
     private Border AddBadge(string id, string label, bool enabled)
@@ -610,6 +607,8 @@ public sealed partial class OverlayPage : Page
             Padding = new Thickness(12, 4, 10, 4),
             Child = content
         };
+        if (OverlayWindow.IsCoreMetric(id))
+            ToolTipService.SetToolTip(badge, I18n.T("Métrica principal de la línea (no se puede mover)"));
         badge.PointerPressed += OnBadgePressed;
         _metricBadges.Add((id, badge, toggle));
         return badge;
@@ -685,7 +684,9 @@ public sealed partial class OverlayPage : Page
     /// </summary>
     private void SaveMetricOrder()
     {
-        var rows = ComputeRows();
+        var rows = _rows.Select(r => r.ToList()).ToList();
+        rows = OverlayWindow.NormalizeRows(rows);
+        _rows = rows;
         _settings.Set("overlay.metricRows", rows);
         _settings.Set("overlay.metricOrder", rows.SelectMany(r => r).ToList());
         _settings.Set("overlay.metricEnabled", _enabledMetrics.ToList());
@@ -712,16 +713,67 @@ public sealed partial class OverlayPage : Page
 
     // ===== Drag para reordenar (mantener el clic y arrastrar) =====
 
+    /// <summary>Grupo de la fila n del panel (el de su primer badge; ignora el skeleton).</summary>
+    private string RowGroupAt(int rowIndex)
+    {
+        var row = RowAt(rowIndex);
+        if (row != null)
+        {
+            var first = row.Children.OfType<Border>()
+                .FirstOrDefault(b => !ReferenceEquals(b, _dropSkeleton));
+            if (first != null) return OverlayWindow.GroupOf(BadgeId(first));
+        }
+        return "";
+    }
+
+    /// <summary>Índice de la primera fila que pertenece al grupo (panel visual).</summary>
+    private int FirstRowIndexOfGroup(string group)
+    {
+        int idx = 0;
+        foreach (var child in MetricBadgePanel.Children)
+        {
+            if (child is StackPanel sp)
+            {
+                var first = sp.Children.OfType<Border>()
+                    .FirstOrDefault(b => !ReferenceEquals(b, _dropSkeleton));
+                if (first != null && OverlayWindow.GroupOf(BadgeId(first)) == group) return idx;
+                idx++;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>Índice de la primera fila del grupo en un modelo lógico (lista de ids).</summary>
+    private static int FirstRowOfGroupIn(List<List<string>> model, string group)
+    {
+        for (int i = 0; i < model.Count; i++)
+            if (model[i].Count > 0 && OverlayWindow.GroupOf(model[i][0]) == group) return i;
+        return -1;
+    }
+
     private void OnBadgePressed(object sender, PointerRoutedEventArgs e)
     {
         // El badge es superficie de arrastre: el switch tiene IsHitTestVisible
         // false, así que el puntero siempre llega acá. Clic corto = toggle;
         // arrastre = reordenar (en 2D: puede cambiar de fila).
         _dragBadge = (Border)sender;
+        if (OverlayWindow.IsCoreMetric(BadgeId(_dragBadge)))
+        {
+            // Métricas core (CPU %, GPU %, RAM MB, FPS): definen la línea y no se
+            // pueden mover. El clic corto sigue alternando mostrar/ocultar.
+            _dragActive = false;
+            _dragMoved = false;
+            _dragTargetRow = -1;
+            _dragTargetCol = -1;
+            _dragTargetNewRow = false;
+            e.Handled = true;
+            return;
+        }
         _dragActive = true;
         _dragMoved = false;
         _dragTargetRow = -1;
         _dragTargetCol = -1;
+        _dragTargetNewRow = false;
         var start = e.GetCurrentPoint(MetricBadgePanel).Position;
         _dragStartX = start.X;
         _dragStartY = start.Y;
@@ -758,20 +810,24 @@ public sealed partial class OverlayPage : Page
 
         // Feedback en vivo: el badge se desplaza junto al puntero (X e Y).
         _dragBadge.RenderTransform = new TranslateTransform { X = pt.X - _dragStartX, Y = pt.Y - _dragStartY };
-        (_dragTargetRow, _dragTargetCol) = ComputeInsertSlot(pt.X, pt.Y);
-        UpdateDropSkeleton(_dragTargetRow, _dragTargetCol);
+        (_dragTargetRow, _dragTargetCol, _dragTargetNewRow) = ComputeInsertSlot(pt.X, pt.Y);
+        UpdateDropSkeleton(_dragTargetRow, _dragTargetCol, _dragTargetNewRow);
         e.Handled = true;
     }
 
     /// <summary>
     /// Posición destino del badge arrastrado en 2D: (fila, columna) donde cae el
-    /// puntero. La fila se ubica por Y (los rects reales de los Grids fila) y la
-    /// columna por X dentro de esa fila. Si el puntero cae debajo de la última
-    /// fila, devuelve una fila nueva (índice = cantidad de filas). Al soltar,
-    /// ApplyReorder mueve el badge a esa fila/columna, creando fila si hace falta.
+    /// puntero. La métrica SOLO puede soltarse en filas de SU PROPIO grupo
+    /// (cpu/gpu/ram/fps): si el puntero cae sobre filas de otro grupo, se ajusta
+    /// a la fila más cercana del grupo (el drag no mezcla grupos). Si el puntero
+    /// cae claramente debajo del panel, devuelve una fila NUEVA al final (al
+    /// guardar, NormalizeRows la ubica dentro del grupo). En la fila core (la %)
+    /// la columna mínima es 1: no se puede insertar antes del core.
     /// </summary>
-    private (int Row, int Col) ComputeInsertSlot(double x, double y)
+    private (int Row, int Col, bool NewRow) ComputeInsertSlot(double x, double y)
     {
+        var group = OverlayWindow.GroupOf(BadgeId(_dragBadge!));
+
         // Detectar filas IGNORANDO separadores: no son filas y no deben contar
         // para la posición del puntero.
         var rows = new List<(double Y, double H, int Index)>();
@@ -785,29 +841,24 @@ public sealed partial class OverlayPage : Page
             rowCount++;
         }
 
-        // Fila del puntero: la que lo contiene, o la más cercana; debajo de la
-        // última → fila nueva.
-        int rowIdx = rows.Count;
-        if (rows.Count > 0)
+        // Fila válida más cercana DENTRO del grupo del badge arrastrado.
+        int bestRow = -1;
+        double bestDist = double.MaxValue;
+        for (int r = 0; r < rows.Count; r++)
         {
-            double best = double.MaxValue;
-            for (int r = 0; r < rows.Count; r++)
-            {
-                var row = rows[r];
-                double dist = y < row.Y ? row.Y - y : (y > row.Y + row.H ? y - (row.Y + row.H) : 0);
-                if (dist < best) { best = dist; rowIdx = row.Index; }
-            }
-            // Si el puntero quedó claramente debajo de la última fila (más allá de
-            // la mitad del hueco), crear fila nueva.
-            if (rowIdx == rows.Count - 1 && y > rows[^1].Y + rows[^1].H + 6)
-                rowIdx = rows.Count;
+            if (RowGroupAt(rows[r].Index) != group) continue;
+            var row = rows[r];
+            double dist = y < row.Y ? row.Y - y : (y > row.Y + row.H ? y - (row.Y + row.H) : 0);
+            if (dist < bestDist) { bestDist = dist; bestRow = row.Index; }
         }
 
-        // Columna dentro de la fila destino (si la fila existe). Se excluyen el
-        // badge arrastrado y el skeleton: sus centros no cuentan, o la inserción
-        // queda desplazada.
+        // Si el puntero quedó claramente debajo de la última fila, crear fila
+        // nueva al final (NormalizeRows la ubica dentro del grupo al guardar).
+        bool newRow = bestRow < 0 ||
+                      (rows.Count > 0 && y > rows[^1].Y + rows[^1].H + 6);
+
         int col = 0;
-        if (RowAt(rowIdx) is { } targetRow)
+        if (!newRow && RowAt(bestRow) is { } targetRow)
         {
             foreach (var child in targetRow.Children)
             {
@@ -817,17 +868,33 @@ public sealed partial class OverlayPage : Page
                     .TransformPoint(new Windows.Foundation.Point(0, 0));
                 if (x > origin.X + el.ActualWidth / 2) col++;
             }
+            // Fila core del grupo: el badge core (la %) es el primero y no se mueve.
+            if (bestRow == FirstRowIndexOfGroup(group)) col = Math.Max(col, 1);
         }
-        return (rowIdx, col);
+        return (bestRow, col, newRow);
     }
 
     private void OnBadgeReleased(object sender, PointerRoutedEventArgs e)
     {
-        if (!_dragActive) return;
+        if (_dragBadge == null) { e.Handled = true; return; }
         var badge = _dragBadge;
-        bool moved = _dragMoved;
+        var moved = _dragMoved;
+
+        if (!_dragActive)
+        {
+            // Clic sobre un badge core (CPU %, GPU %, RAM MB, FPS): no hay drag,
+            // solo toggle mostrar/ocultar.
+            _dragBadge = null;
+            badge.RenderTransform = null;
+            Canvas.SetZIndex(badge, 0);
+            BadgeToggle(badge).IsOn = !BadgeToggle(badge).IsOn;
+            e.Handled = true;
+            return;
+        }
+
         int row = _dragTargetRow;
         int col = _dragTargetCol;
+        bool newRow = _dragTargetNewRow;
         RemoveDropSkeleton();
         _dragActive = false;
         _dragBadge = null;
@@ -843,7 +910,7 @@ public sealed partial class OverlayPage : Page
                 // el snapshot del press para que el reorden final sea determinista
                 // y no arrastre mutaciones de la vista previa.
                 RestoreSnapshot();
-                ApplyReorder(badge, row, col);
+                ApplyReorder(badge, row, col, newRow);
                 SaveMetricOrder();
             }
             else
@@ -881,16 +948,17 @@ public sealed partial class OverlayPage : Page
     /// pasará al soltar. No se reconstruye el panel completo durante el move — eso
     /// rompía la card (COMException al remover/agregar el árbol en cada evento).
     /// </summary>
-    private void UpdateDropSkeleton(int row, int col)
+    private void UpdateDropSkeleton(int row, int col, bool newRow)
     {
         if (_dropSkeleton == null) return;
         try
         {
             // Quita el skeleton del árbol pero CONSERVA la referencia del campo:
             // ComputeInsertSlot lo excluye del cálculo de columna mientras dura
-            // el drag, y se reinserta en cada move.
+            // el drag, y se reinserta en cada move. Para filas nuevas (NewRow)
+            // no hay preview: el badge simplemente sigue al puntero.
             RemoveDropSkeleton();
-            if (row < 0) return;
+            if (newRow || row < 0) return;
             PreviewInsert(EnsureRow(row), _dropSkeleton, col, row);
         }
         catch (Exception ex)
@@ -1023,73 +1091,46 @@ public sealed partial class OverlayPage : Page
     }
 
     /// <summary>
-    /// Aplica el reorden al soltar: mueve el badge a la fila/columna destino,
-    /// creando una fila nueva si hace falta y respetando el máximo de 4 por línea
-    /// (un badge que sobra en una fila llena fluye a la fila siguiente).
+    /// Aplica el reorden al soltar sobre el SNAPSHOT (no sobre el árbol mutado
+    /// por la vista previa): mueve el badge a la fila/columna destino del MISMO
+    /// grupo, creando una fila nueva si hace falta (NewRow). Después normaliza
+    /// los grupos (NormalizeRows) y reconstruye el panel.
     /// </summary>
-    private void ApplyReorder(Border badge, int targetRow, int targetCol)
+    private void ApplyReorder(Border badge, int targetRow, int targetCol, bool newRow)
     {
         try
         {
-            // Quitar el badge de su fila actual (el StackPanel re-fluye solo: sin
-            // columnas que reasignar, los demás quedan corridos a la izquierda).
-            foreach (var child in MetricBadgePanel.Children)
+            string id = BadgeId(badge);
+            var model = _dragSnapshot.Select(r => r.ToList()).ToList();
+
+            // Quitar el badge de su fila actual y limpiar filas vacías.
+            foreach (var r in model) r.Remove(id);
+            model.RemoveAll(r => r.Count == 0);
+
+            if (newRow)
             {
-                if (child is not StackPanel sp) continue;
-                if (sp.Children.Contains(badge))
-                {
-                    sp.Children.Remove(badge);
-                    break;
-                }
+                // Fila nueva al final: NormalizeRows la ubica dentro del grupo.
+                model.Add(new List<string> { id });
+            }
+            else
+            {
+                if (targetRow < 0) targetRow = 0;
+                while (model.Count <= targetRow) model.Add(new List<string>());
+                var row = model[targetRow];
+                int col = Math.Clamp(targetCol, 0, row.Count);
+                // Fila core del grupo: no insertar antes del badge core (la %).
+                if (targetRow == FirstRowOfGroupIn(model, OverlayWindow.GroupOf(id)))
+                    col = Math.Max(col, 1);
+                row.Insert(col, id);
             }
 
-            // Crear filas hasta llegar a la destino.
-            EnsureRow(targetRow);
-            InsertIntoRow(RowAt(targetRow)!, badge, targetCol, targetRow);
-
-            // Limpiar filas que quedaron vacías (por el flujo de overflow o al
-            // vaciar la fila de origen).
-            for (int r = MetricBadgePanel.Children.Count - 1; r >= 0; r--)
-            {
-                if (MetricBadgePanel.Children[r] is StackPanel sp && sp.Children.Count == 0)
-                    MetricBadgePanel.Children.RemoveAt(r);
-            }
-
-            // Separadores alineados con las filas que quedaron.
-            SyncSeparators();
+            _rows = OverlayWindow.NormalizeRows(model);
+            RebuildPanel();
         }
         catch (Exception ex)
         {
             _log.LogWarning($"OverlayPage: no se pudo reordenar badge: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Inserta un badge en una fila por POSICIÓN (el orden de Children ES la
-    /// posición en el StackPanel). Si quedan más de 4, el último fluye a la fila
-    /// siguiente — la misma regla que usa la vista previa del drag.
-    /// </summary>
-    private void InsertIntoRow(StackPanel row, Border badge, int col, int rowIndex)
-    {
-        var items = row.Children.OfType<Border>().ToList();
-        items.Insert(Math.Clamp(col, 0, items.Count), badge);
-
-        if (items.Count <= MaxBadgesPerRow)
-        {
-            row.Children.Clear();
-            for (int i = 0; i < items.Count; i++)
-                row.Children.Add(items[i]);
-            return;
-        }
-
-        // Overflow: el último badge de la fila fluye a la fila siguiente.
-        var overflow = items[^1];
-        items.RemoveAt(items.Count - 1);
-        row.Children.Clear();
-        for (int i = 0; i < items.Count; i++)
-            row.Children.Add(items[i]);
-
-        InsertIntoRow(EnsureRow(rowIndex + 1), overflow, 0, rowIndex + 1);
     }
 
     /// <summary>Muestra/oculta una métrica desde el switch de su badge (en vivo).</summary>
