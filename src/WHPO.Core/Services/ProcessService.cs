@@ -2078,4 +2078,44 @@ public sealed class ProcessService : IProcessService
             _settings.Save();
         }
     }
+
+    public void UnhideExe(string exe)
+    {
+        var hidden = GetHiddenExes();
+        if (hidden.RemoveAll(h => string.Equals(h, exe, StringComparison.OrdinalIgnoreCase)) > 0)
+        {
+            _settings.Set("process.hidden", hidden);
+            _settings.Save();
+        }
+    }
+
+    public void ClearHiddenExes()
+    {
+        if (GetHiddenExes().Count == 0) return;
+        _settings.Set("process.hidden", new List<string>());
+        _settings.Save();
+    }
+
+    // ===== Eliminados de la biblioteca (vuelven con Re-detectar) =====
+
+    public List<string> GetDeletedGames()
+        => _settings.Get("process.deleted", new List<string>()) ?? new();
+
+    public void DeleteGame(string exe)
+    {
+        var list = GetDeletedGames();
+        if (!list.Contains(exe, StringComparer.OrdinalIgnoreCase))
+        {
+            list.Add(exe);
+            _settings.Set("process.deleted", list);
+            _settings.Save();
+        }
+    }
+
+    public void ClearDeletedGames()
+    {
+        if (GetDeletedGames().Count == 0) return;
+        _settings.Set("process.deleted", new List<string>());
+        _settings.Save();
+    }
 }

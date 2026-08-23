@@ -163,9 +163,19 @@ public interface IProcessService
     void AddManualExe(string exe, string? displayName = null, string? installPath = null);
     void RemoveManualExe(string exe);
 
-    // ===== Ocultos (juegos eliminados de la biblioteca; no se re-detectan) =====
+    // ===== Ocultos (juegos que no se muestran en la biblioteca) =====
     List<string> GetHiddenExes();
     void HideExe(string exe);
+    /// <summary>Deja de ocultar un ejecutable: vuelve a aparecer en la biblioteca.</summary>
+    void UnhideExe(string exe);
+    /// <summary>Quita TODOS los ocultados (Re-detectar vuelve a mostrar todo).</summary>
+    void ClearHiddenExes();
+
+    // ===== Eliminados de la biblioteca (no se muestran en ningún lado; vuelven con Re-detectar) =====
+    List<string> GetDeletedGames();
+    void DeleteGame(string exe);
+    /// <summary>Quita TODOS los eliminados (Re-detectar los muestra de nuevo).</summary>
+    void ClearDeletedGames();
 
     int ProcessorCount { get; }
 }

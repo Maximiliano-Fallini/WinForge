@@ -54,6 +54,8 @@ public sealed partial class GestionarProcesosPage : Page
 
     private List<InstalledGame> _installed = new();
     private List<(string Exe, string? Name, string? InstallPath)> _manual = new();
+    // Estado del desplegable de juegos ocultos (se conserva entre rebuilds).
+    private bool _hiddenSectionExpanded;
     private HashSet<string> _runningExes = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(Border card, Border banner)> _cards = new();
     // Contenedor del skeleton (filas de cards placeholder): se agrega/remueve del
@@ -1037,7 +1039,14 @@ public sealed partial class GestionarProcesosPage : Page
 
     // Re-detectar: re-escanea los launchers a propósito y actualiza la caché
     // (por si se instaló/desinstaló un juego desde la última visita).
-    private void RedetectButton_Click(object sender, RoutedEventArgs e) => _ = RefreshAsync(showSkeleton: false, refreshCache: true);
+    private void RedetectButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Re-detectar muestra TODOS los juegos: limpia ocultos Y eliminados para
+        // que vuelvan a aparecer los que se habían escondido o borrado (ej. Fortnite).
+        _processService.ClearHiddenExes();
+        _processService.ClearDeletedGames();
+        _ = RefreshAsync(showSkeleton: false, refreshCache: true);
+    }
 
     // ===== Añadir manual (seleccionar el exe del juego) =====
 
@@ -1219,13 +1228,14 @@ public sealed partial class GestionarProcesosPage : Page
         _skeletonPanel = null; // el skeleton (si estaba) se fue con el clear del panel
 
         var hidden = _processService.GetHiddenExes();
+        var deleted = _processService.GetDeletedGames();
         var items = new List<(InstalledGame? game, string exe, string? name, bool isManual, string? installPath)>();
         string q = _searchQuery.Trim();
         foreach (var g in _installed)
-            if (!hidden.Contains(g.ExeFileName))
+            if (!hidden.Contains(g.ExeFileName) && !deleted.Contains(g.ExeFileName))
                 items.Add((g, g.ExeFileName, g.Name, false, g.InstallPath));
         foreach (var (exe, name, path) in _manual)
-            if (!hidden.Contains(exe) && !items.Any(i => string.Equals(i.exe, exe, StringComparison.OrdinalIgnoreCase)))
+            if (!hidden.Contains(exe) && !deleted.Contains(exe) && !items.Any(i => string.Equals(i.exe, exe, StringComparison.OrdinalIgnoreCase)))
                 items.Add((null, exe, name ?? exe, true, path));
         // Búsqueda por nombre (case-insensitive, parcial): vacío muestra todo.
         if (q.Length > 0)
@@ -1260,6 +1270,57 @@ public sealed partial class GestionarProcesosPage : Page
         else
         {
             LibraryPanel.Children.Add(BuildWrapPanel(others));
+        }
+
+        // ===== Sección de JUEGOS OCULTOS (desplegable, colapsada por defecto) =====
+        // Los juegos "ocultados" no desaparecen: viven acá y se restauran con
+        // clic derecho → Mostrar en la biblioteca. Los ELIMINADOS no se listan.
+        var hiddenItems = new List<(InstalledGame? game, string exe, string? name, bool isManual, string? installPath)>();
+        foreach (var hExe in _processService.GetHiddenExes())
+        {
+            if (deleted.Contains(hExe)) continue;
+            var g = _installed.FirstOrDefault(x => string.Equals(x.ExeFileName, hExe, StringComparison.OrdinalIgnoreCase));
+            if (g != null)
+            {
+                hiddenItems.Add((g, g.ExeFileName, g.Name, false, g.InstallPath));
+                continue;
+            }
+            var m = _manual.FirstOrDefault(mm => string.Equals(mm.Exe, hExe, StringComparison.OrdinalIgnoreCase));
+            hiddenItems.Add((null, hExe, m.Name ?? hExe, m.Exe != null, m.InstallPath));
+        }
+        if (hiddenItems.Count > 0)
+        {
+            LibraryPanel.Children.Add(BuildSectionDivider());
+
+            var headerStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            headerStack.Children.Add(new FontIcon
+            {
+                Glyph = "\uED1A", // Hide
+                FontSize = 14,
+                Foreground = ThemeBrushes.Get("SecondaryTextBrush")
+            });
+            headerStack.Children.Add(new TextBlock
+            {
+                Text = I18n.T("Ocultos ({0})", hiddenItems.Count),
+                FontSize = 14,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var hiddenExpander = new Expander
+            {
+                Header = headerStack,
+                Content = BuildWrapPanel(hiddenItems),
+                IsExpanded = _hiddenSectionExpanded,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(0)
+            };
+            // WinUI 3 no tiene eventos Expanded/Collapsed: escuchar el cambio del DP.
+            hiddenExpander.RegisterPropertyChangedCallback(
+                Expander.IsExpandedProperty,
+                (_, _) => _hiddenSectionExpanded = hiddenExpander.IsExpanded);
+            LibraryPanel.Children.Add(hiddenExpander);
         }
 
         // Mensaje distinto cuando el buscador no encuentra nada (vs. biblioteca vacía).
@@ -2806,6 +2867,57 @@ public sealed partial class GestionarProcesosPage : Page
         };
         menu.Items.Add(resetItem);
 
+        // Ocultar / Mostrar: reversible. Los juegos ocultos se listan en la sección
+        // "Ocultos" al final de la biblioteca y vuelven con "Mostrar" o re-detectando.
+        bool isHidden = _processService.GetHiddenExes()
+            .Contains(exe, StringComparer.OrdinalIgnoreCase);
+        if (!isHidden)
+        {
+            var hideItem = new MenuFlyoutItem
+            {
+                Text = I18n.T("Ocultar de la biblioteca")
+            };
+            hideItem.Click += async (s, e) =>
+            {
+                var dialog = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = I18n.T("Ocultar de la biblioteca"),
+                    Content = I18n.T("¿Ocultar {0}? Podés volver a mostrarlo desde la sección Ocultos.", name),
+                    PrimaryButtonText = I18n.T("Ocultar"),
+                    CloseButtonText = I18n.T("Cancelar"),
+                    DefaultButton = ContentDialogButton.Close
+                };
+                if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                {
+                    _processService.HideExe(exe);
+                    _processService.ClearSessionRule(exe);
+                    await RefreshAsync();
+                }
+            };
+            menu.Items.Add(hideItem);
+        }
+        else
+        {
+            var showItem = new MenuFlyoutItem
+            {
+                Text = I18n.T("Mostrar en la biblioteca"),
+                Foreground = Feedback.SuccessBrush
+            };
+            showItem.Click += async (s, e) =>
+            {
+                _processService.UnhideExe(exe);
+                StatusText.Text = I18n.T("{0} volvió a la biblioteca.", name);
+                StatusText.Foreground = Feedback.MutedBrush;
+                StatusText.Visibility = Visibility.Visible;
+                await RefreshAsync();
+            };
+            menu.Items.Add(showItem);
+        }
+
+        // Eliminar: saca el juego de TODA la biblioteca (ni ocultos lo lista).
+        // No es definitivo: «Re-detectar» lo vuelve a mostrar.
+        menu.Items.Add(new MenuFlyoutSeparator());
         var deleteItem = new MenuFlyoutItem
         {
             Text = I18n.T("Eliminar de la biblioteca"),
@@ -2817,17 +2929,17 @@ public sealed partial class GestionarProcesosPage : Page
             {
                 XamlRoot = XamlRoot,
                 Title = I18n.T("Eliminar de la biblioteca"),
-                Content = I18n.T("¿Eliminar {0} de la biblioteca? El juego no se desinstala.", name),
+                Content = I18n.T("¿Eliminar {0} de la biblioteca? No se desinstala y vuelve a aparecer con «Re-detectar».", name),
                 PrimaryButtonText = I18n.T("Eliminar"),
                 CloseButtonText = I18n.T("Cancelar"),
                 DefaultButton = ContentDialogButton.Close
             };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
-                if (_processService.GetManualEntries().Any(m => string.Equals(m.Exe, exe, StringComparison.OrdinalIgnoreCase)))
-                    _processService.RemoveManualExe(exe);
-                _processService.ClearSessionRule(exe);
-                _processService.HideExe(exe);
+                _processService.DeleteGame(exe);
+                StatusText.Text = I18n.T("{0} eliminado de la biblioteca. «Re-detectar» lo vuelve a mostrar.", name);
+                StatusText.Foreground = Feedback.MutedBrush;
+                StatusText.Visibility = Visibility.Visible;
                 await RefreshAsync();
             }
         };
