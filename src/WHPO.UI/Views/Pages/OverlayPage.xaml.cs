@@ -378,6 +378,11 @@ public sealed partial class OverlayPage : Page
     private Border? _dropSkeleton;
     private List<List<string>> _dragSnapshot = new();
 
+    // Indicador de LÍNEA NUEVA: barra fina horizontal que aparece en el hueco
+    // entre filas cuando el destino del drag es crear una línea ahí (no hay
+    // skeleton porque la fila todavía no existe).
+    private Border? _dropLineIndicator;
+
     /// <summary>
     /// Arma las FILAS de badges desde la configuración guardada. Formato actual:
     /// "overlay.metricRows" = lista de filas (cada fila es una lista de ids; la
@@ -428,20 +433,18 @@ public sealed partial class OverlayPage : Page
             rows = OverlayWindow.SplitFpsAndLows(rows);
         }
 
-        // Invariante de grupos: NormalizeRows separa filas mezcladas (una familia
-        // por fila), ordena cpu → gpu → ram → fps y ubica el core (el %) al inicio
-        // de su grupo. Corrige configs viejas con métricas en el grupo equivocado.
-        rows = OverlayWindow.NormalizeRows(rows);
+        // Solo partir filas que pasen de 4 (ChunkRows). NO NormalizeRows:
+        // respetar el orden exacto guardado por el usuario.
         rows = rows.SelectMany(ChunkRows).ToList();
 
-        // Completar con los badges que falten: cada uno en una fila propia y
-        // NormalizeRows lo re-ubica dentro de su grupo (nunca se mezcla con otros).
+        // Completar badges que falten: cada uno en su propia fila al final.
         foreach (var def in MetricBadgeDefs)
         {
             if (rows.Any(r => r.Contains(def.Id))) continue;
             rows.Add(new List<string> { def.Id });
         }
-        rows = OverlayWindow.NormalizeRows(rows);
+        // Solo ChunkRows de nuevo por si la fila nueva pasó de 4.
+        rows = rows.SelectMany(ChunkRows).ToList();
 
         _rows = rows;
         _enabledMetrics.UnionWith(enabled);
@@ -621,9 +624,7 @@ public sealed partial class OverlayPage : Page
         var badge = new Border
         {
             Width = BadgeWidth,
-            Background = isCore
-                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 220, 120)) // Amarillo cálido para core
-                : ThemeBrushes.Get("CardHoverBrush"),
+            Background = ThemeBrushes.Get("CardHoverBrush"),
             CornerRadius = new CornerRadius(14),
             Padding = new Thickness(12, 4, 10, 4),
             Child = content
@@ -676,9 +677,9 @@ public sealed partial class OverlayPage : Page
 
     private void UpdateBadgeVisuals()
     {
-        // Amarillo cálido para badges core (CPU %, GPU %, RAM MB, FPS)
-        var coreBg = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 220, 120));
         var disabledBg = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        // Acento cálido MUY SUTIL solo en el BORDE de badges core (sin fondo amarillo)
+        var coreAccent = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 245, 195, 110));
 
         foreach (var (id, badge, _) in _metricBadges)
         {
@@ -686,10 +687,12 @@ public sealed partial class OverlayPage : Page
             bool enabled = _enabledMetrics.Contains(id);
             badge.Opacity = enabled ? 1.0 : 0.45;
             badge.BorderThickness = new Thickness(1);
+
             if (enabled)
             {
-                badge.Background = isCore ? coreBg : ThemeBrushes.Get("CardHoverBrush");
-                badge.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+                // Fondo normal para TODOS; solo el BORDE tiene acento cálido sutil en core
+                badge.Background = ThemeBrushes.Get("CardHoverBrush");
+                badge.BorderBrush = isCore ? coreAccent : new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
             }
             else
             {
@@ -708,7 +711,9 @@ public sealed partial class OverlayPage : Page
     private void SaveMetricOrder()
     {
         var rows = _rows.Select(r => r.ToList()).ToList();
-        rows = OverlayWindow.NormalizeRows(rows);
+        // Guardar el orden EXACTO del usuario (sin NormalizeRows que reordena por grupos).
+        // Solo asegurar máx 4 por fila con ChunkRows por si acaso.
+        rows = rows.SelectMany(ChunkRows).ToList();
         _rows = rows;
         _settings.Set("overlay.metricRows", rows);
         _settings.Set("overlay.metricOrder", rows.SelectMany(r => r).ToList());
@@ -834,7 +839,18 @@ public sealed partial class OverlayPage : Page
         // Feedback en vivo: el badge se desplaza junto al puntero (X e Y).
         _dragBadge.RenderTransform = new TranslateTransform { X = pt.X - _dragStartX, Y = pt.Y - _dragStartY };
         (_dragTargetRow, _dragTargetCol, _dragTargetNewRow) = ComputeInsertSlot(pt.X, pt.Y);
-        UpdateDropSkeleton(_dragTargetRow, _dragTargetCol, _dragTargetNewRow);
+        if (_dragTargetNewRow)
+        {
+            // Destino = LÍNEA NUEVA: sin skeleton (la fila no existe todavía);
+            // mostrar la barra de inserción en el hueco correspondiente.
+            RemoveDropSkeleton();
+            ShowDropSlotIndicator(_dragTargetRow);
+        }
+        else
+        {
+            RemoveDropSlotIndicator();
+            UpdateDropSkeleton(_dragTargetRow, _dragTargetCol, _dragTargetNewRow);
+        }
         e.Handled = true;
     }
 
@@ -951,6 +967,7 @@ public sealed partial class OverlayPage : Page
         int col = _dragTargetCol;
         bool newRow = _dragTargetNewRow;
         RemoveDropSkeleton();
+        RemoveDropSlotIndicator();
         _dragActive = false;
         _dragBadge = null;
         try { MetricBadgePanel.ReleasePointerCapture(e.Pointer); } catch { }
@@ -992,6 +1009,7 @@ public sealed partial class OverlayPage : Page
         }
         // Cancelación (Esc / pérdida de captura): volver al estado original.
         RestoreSnapshot();
+        RemoveDropSlotIndicator();
         _dragActive = false;
         _dragBadge = null;
         _dropSkeleton = null;
@@ -1011,7 +1029,7 @@ public sealed partial class OverlayPage : Page
             // Quita el skeleton del árbol pero CONSERVA la referencia del campo:
             // ComputeInsertSlot lo excluye del cálculo de columna mientras dura
             // el drag, y se reinserta en cada move. Para filas nuevas (NewRow)
-            // no hay preview: el badge simplemente sigue al puntero.
+            // no hay skeleton: se usa la barra de inserción (indicador).
             RemoveDropSkeleton();
             if (newRow || row < 0) return;
             PreviewInsert(EnsureRow(row), _dropSkeleton, col, row);
@@ -1023,6 +1041,38 @@ public sealed partial class OverlayPage : Page
         }
     }
 
+    /// <summary>Quita el indicador de línea nueva del árbol (si está visible).</summary>
+    private void RemoveDropSlotIndicator()
+    {
+        if (_dropLineIndicator == null) return;
+        MetricBadgePanel.Children.Remove(_dropLineIndicator);
+        _dropLineIndicator = null;
+    }
+
+    /// <summary>
+    /// Muestra una BARRA FINA horizontal en el hueco donde se crearía la línea
+    /// nueva (feedback visual del drag cuando el destino es una fila que todavía
+    /// no existe). slotIndex = cantidad de filas por encima del hueco; la posición
+    /// física en el panel [fila, sep, fila, sep, ...] es 2*slotIndex.
+    /// </summary>
+    private void ShowDropSlotIndicator(int slotIndex)
+    {
+        RemoveDropSlotIndicator();
+        _dropLineIndicator ??= new Border
+        {
+            Height = 4,
+            Margin = new Thickness(2, 3, 2, 3),
+            CornerRadius = new CornerRadius(2),
+            Background = ThemeBrushes.Get("AccentBrush"),
+            Opacity = 0.85,
+            IsHitTestVisible = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        int physical = Math.Min(2 * Math.Max(slotIndex, 0), MetricBadgePanel.Children.Count);
+        MetricBadgePanel.Children.Insert(physical, _dropLineIndicator);
+    }
+
     /// <summary>
     /// Inserta un elemento (el skeleton) en una fila por columna, reasignando las
     /// columnas de esa fila; si se pasa de 4, el excedente fluye a la fila
@@ -1030,12 +1080,29 @@ public sealed partial class OverlayPage : Page
     /// </summary>
     private void PreviewInsert(StackPanel row, Border el, int col, int rowIndex)
     {
-        // Nunca reconstruir la fila que contiene al badge arrastrado: al sacarlo
-        // de los items el badge perdería su padre y desaparecería durante el drag.
-        // En su propia fila, el badge mismo (transformado al puntero) indica la
-        // posición — el skeleton solo aplica cuando caés en OTRA fila.
-        if (ReferenceEquals(el, _dropSkeleton) && row.Children.Contains(_dragBadge)) return;
+        // ¿Es la MISMA fila donde está el badge arrastrado?
+        if (row.Children.Contains(_dragBadge))
+        {
+            // MISMA fila: NO se puede reconstruir (al sacar el badge del árbol
+            // perdería su padre y desaparecería durante el drag). Se inserta el
+            // skeleton DIRECTO entre los hijos, sin tocar al badge arrastrado:
+            // el StackPanel re-fluye solo y los demás badges se corren, dando
+            // feedback visible de dónde caería.
+            int insertAt = row.Children.Count;
+            int seen = 0;
+            for (int i = 0; i < row.Children.Count; i++)
+            {
+                if (row.Children[i] is not FrameworkElement fe) continue;
+                if (ReferenceEquals(fe, _dragBadge) || ReferenceEquals(fe, _dropSkeleton)) continue;
+                if (seen == col) { insertAt = i; break; }
+                seen++;
+            }
+            row.Children.Insert(Math.Min(insertAt, row.Children.Count), el);
+            return;
+        }
 
+        // Otra fila: reconstruir sus items con el skeleton insertado; si se pasa
+        // de 4, el excedente fluye a la fila siguiente (misma regla que al soltar).
         var items = row.Children.OfType<Border>().ToList();
         items.Insert(Math.Clamp(col, 0, items.Count), el);
 

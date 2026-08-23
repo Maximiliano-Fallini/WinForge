@@ -558,12 +558,8 @@ public sealed class OverlayWindow : Form
             metricRows = SplitFpsAndLows(metricRows);
         }
 
-        // Invariante de grupos: una sola familia por fila, core primero al inicio
-        // de su grupo y grupos en orden cpu → gpu → ram → fps. Separa filas
-        // mezcladas de configs viejas y devuelve métricas mal ubicadas a su grupo.
-        metricRows = NormalizeRows(metricRows);
-
-        // La grilla de la config es fija: ninguna línea pasa de 4 métricas.
+        // Respetar el orden exacto de filas del usuario (overlay.metricRows).
+        // Solo partir filas que pasen de 4 métricas (ChunkRows).
         metricRows = metricRows.SelectMany(ChunkRows).ToList();
 
         var allIds = metricRows.SelectMany(r => r).ToList();
@@ -712,22 +708,16 @@ public sealed class OverlayWindow : Form
                     {
                         // RAM: el nombre es "RAM" seguido de la configuración de
                         // módulos (RAM 2x16 GB), después el uso en MB y la velocidad.
-                        // El nombre se recorta al ancho disponible para que nunca
-                        // invada y pise los "xx MB" de la derecha.
-                        float firstRamValueRight = row.Ids.Contains("ramMb") ? ColUsageRight
-                            : row.Ids.Contains("ramMhz") && metrics.RamMhz > 0 ? ColMhzRight
-                            : ColUsageRight;
-                        float maxRamLabelWidth = S(firstRamValueRight) - S(12) - S(10);
-                        if (maxRamLabelWidth < S(40)) maxRamLabelWidth = S(40);
+                        var ramValues = new List<(string Text, float RightX)>();
+                        if (row.Ids.Contains("ramMb"))
+                            ramValues.Add(($"{metrics.RamUsedMb:F0} MB", S(ColUsageRight)));
+                        if (row.Ids.Contains("ramMhz") && metrics.RamMhz > 0)
+                            ramValues.Add(($"{metrics.RamMhz:F0} MHz", S(ColMhzRight)));
 
                         string ramName = string.IsNullOrWhiteSpace(metrics.RamConfig)
                             ? "RAM"
                             : "RAM " + metrics.RamConfig;
-                        g.DrawString(FitText(g, ramName, LineFont, maxRamLabelWidth), LineFont, ramBrush, S(12), y);
-                        if (row.Ids.Contains("ramMb"))
-                            DrawRight(g, $"{metrics.RamUsedMb:F0} MB", LineFont, ramBrush, S(ColUsageRight), y);
-                        if (row.Ids.Contains("ramMhz") && metrics.RamMhz > 0)
-                            DrawRight(g, $"{metrics.RamMhz:F0} MHz", LineFont, ramBrush, S(ColMhzRight), y);
+                        DrawLabeledLine(g, ramName, ramBrush, y, ramValues);
                         y += S(25);
                         break;
                     }
@@ -755,29 +745,48 @@ public sealed class OverlayWindow : Form
     /// <summary>
     /// Línea de hardware en grilla: nombre en la columna 1, y cada valor en su
     /// columna fija (alineado a la derecha). Mostrar/ocultar un valor NO mueve
-    /// a los demás. El nombre se recorta al ancho disponible para no pisar los
-    /// valores de las columnas de la derecha.
+    /// a los demás.
     /// </summary>
     private float DrawHardwareLine(Graphics g, string label,
         double usage, double mhz, double temp, double watts,
         bool showUsage, bool showMhz, bool showTemp, bool showWatts,
         Brush brush, float y)
     {
-        // Primera columna de valor visible: hasta ahí puede llegar el nombre.
-        float firstValueRight = showUsage ? ColUsageRight
-            : showMhz && mhz > 0 ? ColMhzRight
-            : showTemp && temp > 0 ? ColTempRight
-            : ColWattsRight;
-        float maxLabelWidth = S(firstValueRight) - S(12) - S(10);
-        if (maxLabelWidth < S(40)) maxLabelWidth = S(40);
+        var values = new List<(string Text, float RightX)>();
+        if (showUsage) values.Add(($"{usage:F0}%", S(ColUsageRight)));
+        if (showMhz && mhz > 0) values.Add(($"{mhz:F0} MHz", S(ColMhzRight)));
+        if (showTemp && temp > 0) values.Add(($"{temp:F0}°C", S(ColTempRight)));
+        if (showWatts && watts > 0) values.Add(($"{watts:F0} W", S(ColWattsRight)));
 
         string text = string.IsNullOrWhiteSpace(label) ? "—" : label;
-        g.DrawString(FitText(g, text, LineFont, maxLabelWidth), LineFont, brush, S(12), y);
-        if (showUsage) DrawRight(g, $"{usage:F0}%", LineFont, brush, S(ColUsageRight), y);
-        if (showMhz && mhz > 0) DrawRight(g, $"{mhz:F0} MHz", LineFont, brush, S(ColMhzRight), y);
-        if (showTemp && temp > 0) DrawRight(g, $"{temp:F0}°C", LineFont, brush, S(ColTempRight), y);
-        if (showWatts && watts > 0) DrawRight(g, $"{watts:F0} W", LineFont, brush, S(ColWattsRight), y);
+        DrawLabeledLine(g, text, brush, y, values);
         return y + S(25);
+    }
+
+    /// <summary>
+    /// Dibuja un nombre a la izquierda + valores en columnas fijas alineados a
+    /// la derecha. El nombre se recorta según dónde EMPIEZA el valor más a la
+    /// izquierda (sus glifos, no el borde de su columna): así nunca hay texto
+    /// encima de los valores, ni siquiera con nombres largos de RAM/CPU/GPU.
+    /// </summary>
+    private void DrawLabeledLine(Graphics g, string label, Brush brush, float y,
+        List<(string Text, float RightX)> values)
+    {
+        float maxLabelWidth = float.MaxValue;
+        if (values.Count > 0)
+        {
+            // Borde izquierdo del valor más a la izquierda de la línea.
+            float minStart = float.MaxValue;
+            foreach (var (text, rightX) in values)
+                minStart = Math.Min(minStart, rightX - g.MeasureString(text, LineFont).Width);
+
+            maxLabelWidth = minStart - S(12) - S(8);
+            if (maxLabelWidth < S(24)) maxLabelWidth = S(24);
+        }
+
+        g.DrawString(FitText(g, label, LineFont, maxLabelWidth), LineFont, brush, S(12), y);
+        foreach (var (text, rightX) in values)
+            DrawRight(g, text, LineFont, brush, rightX, y);
     }
 
     /// <summary>
