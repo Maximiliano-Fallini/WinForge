@@ -590,14 +590,33 @@ public sealed partial class OverlayPage : Page
         };
         toggle.Toggled += (_, _) => OnBadgeSwitchToggled(id, toggle.IsOn);
 
-        // Contenido en grilla: etiqueta a la izquierda, switch a la derecha.
+        bool isCore = OverlayWindow.IsCoreMetric(id);
+
+        // Contenido en grilla: etiqueta a la izquierda, [candado si core], switch a la derecha.
         var content = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (isCore)
+            content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // candado
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // switch
         Grid.SetColumn(text, 0);
-        Grid.SetColumn(toggle, 1);
+        Grid.SetColumn(toggle, isCore ? 2 : 1);
         content.Children.Add(text);
         content.Children.Add(toggle);
+
+        if (isCore)
+        {
+            var lockIcon = new FontIcon
+            {
+                Glyph = "\uE1F6", // Lock icon
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 180, 180, 180)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 4, 0)
+            };
+            Grid.SetColumn(lockIcon, 1);
+            ToolTipService.SetToolTip(lockIcon, I18n.T("Métrica principal de la línea (no se puede mover)"));
+            content.Children.Add(lockIcon);
+        }
 
         var badge = new Border
         {
@@ -607,7 +626,7 @@ public sealed partial class OverlayPage : Page
             Padding = new Thickness(12, 4, 10, 4),
             Child = content
         };
-        if (OverlayWindow.IsCoreMetric(id))
+        if (isCore)
             ToolTipService.SetToolTip(badge, I18n.T("Métrica principal de la línea (no se puede mover)"));
         badge.PointerPressed += OnBadgePressed;
         _metricBadges.Add((id, badge, toggle));
@@ -818,11 +837,11 @@ public sealed partial class OverlayPage : Page
     /// <summary>
     /// Posición destino del badge arrastrado en 2D: (fila, columna) donde cae el
     /// puntero. La métrica SOLO puede soltarse en filas de SU PROPIO grupo
-    /// (cpu/gpu/ram/fps): si el puntero cae sobre filas de otro grupo, se ajusta
-    /// a la fila más cercana del grupo (el drag no mezcla grupos). Si el puntero
-    /// cae claramente debajo del panel, devuelve una fila NUEVA al final (al
-    /// guardar, NormalizeRows la ubica dentro del grupo). En la fila core (la %)
-    /// la columna mínima es 1: no se puede insertar antes del core.
+    /// (cpu/gpu/ram/fps) O en un HUECO ENTRE FILAS del mismo grupo (para crear
+    /// una nueva línea). Si el puntero cae sobre filas de otro grupo, se ajusta
+    /// a la fila/hueco más cercano del grupo. Si cae claramente debajo del panel,
+    /// devuelve una fila NUEVA al final. En la fila core (la %) la columna mínima
+    /// es 1: no se puede insertar antes del core.
     /// </summary>
     private (int Row, int Col, bool NewRow) ComputeInsertSlot(double x, double y)
     {
@@ -841,21 +860,53 @@ public sealed partial class OverlayPage : Page
             rowCount++;
         }
 
-        // Fila válida más cercana DENTRO del grupo del badge arrastrado.
+        // Filtrar solo las filas de NUESTRO grupo + sus huecos.
+        var groupRows = rows.Where(r => RowGroupAt(r.Index) == group).ToList();
+
+        // Si no hay filas del grupo (primera métrica del grupo), permitir crear
+        // al final del panel (newRow=true).
+        if (groupRows.Count == 0)
+            return (-1, 0, true);
+
+        // Calcular huecos entre filas del mismo grupo: (Y superior, Y inferior, índice fila ANTES del hueco)
+        var gaps = new List<(double Top, double Bottom, int AfterRow)>();
+        for (int i = 0; i < groupRows.Count - 1; i++)
+        {
+            double gapTop = groupRows[i].Y + groupRows[i].H;
+            double gapBottom = groupRows[i + 1].Y;
+            if (gapBottom > gapTop + 2) // hueco real > 2px
+                gaps.Add((gapTop, gapBottom, groupRows[i].Index));
+        }
+        // Hueco después de la última fila del grupo
+        if (rows.Count > 0)
+            gaps.Add((groupRows[^1].Y + groupRows[^1].H, double.MaxValue, groupRows[^1].Index));
+
+        // 1) ¿Puntero está en un hueco del grupo?
+        foreach (var gap in gaps)
+        {
+            if (y >= gap.Top && y <= gap.Bottom)
+            {
+                // Hueco detectado: crear fila nueva DESPUÉS de gap.AfterRow
+                return (gap.AfterRow + 1, 0, true);
+            }
+        }
+
+        // 2) Puntero sobre una fila del grupo: insertar en esa fila
         int bestRow = -1;
         double bestDist = double.MaxValue;
-        for (int r = 0; r < rows.Count; r++)
+        for (int i = 0; i < groupRows.Count; i++)
         {
-            if (RowGroupAt(rows[r].Index) != group) continue;
-            var row = rows[r];
+            var row = groupRows[i];
             double dist = y < row.Y ? row.Y - y : (y > row.Y + row.H ? y - (row.Y + row.H) : 0);
             if (dist < bestDist) { bestDist = dist; bestRow = row.Index; }
         }
 
-        // Si el puntero quedó claramente debajo de la última fila, crear fila
-        // nueva al final (NormalizeRows la ubica dentro del grupo al guardar).
-        bool newRow = bestRow < 0 ||
-                      (rows.Count > 0 && y > rows[^1].Y + rows[^1].H + 6);
+        // 3) Puntero claramente debajo de todo → al final
+        bool newRow = false;
+        if (bestRow < 0)
+            newRow = true;
+        else if (y > rows[^1].Y + rows[^1].H + 6)
+            newRow = true;
 
         int col = 0;
         if (!newRow && RowAt(bestRow) is { } targetRow)
