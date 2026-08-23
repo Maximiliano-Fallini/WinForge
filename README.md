@@ -58,9 +58,8 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.3/WinForge-0.1.3.msi">
     <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.3_MSI_~85_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.1.3 MSI"/>
   </a>
-  <br/>
-  <p align="center"><sub>(23/8/2026 15:24 UTC)</sub></p>
-  <br/><br/>
+    <br/>
+  <p align="center"><sub>(23/8/2026 15:24 UTC)</sub><br/><br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.3">
     <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.3_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
   </a>
@@ -70,7 +69,7 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <img src="https://img.shields.io/badge/ejecutar-como_administrador-e3b341?style=flat-square" alt="Como administrador"/>
   <br/>
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
-</p>
+  </p>
 
 ## ⭐ Apoyá el proyecto
 
