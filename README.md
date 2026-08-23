@@ -1,6 +1,7 @@
-<h1 align="center">
-  <img src="src/WHPO.UI/logos/WinForge.png" height="44" alt="Ícono de WinForge"/> WinForge
-</h1>
+<p align="center">
+  <img src="src/WHPO.UI/logos/WinForge.png" height="44" alt="Ícono de WinForge"/>
+</p>
+<h1 align="center">WinForge</h1>
 
 **WinForge** es un **optimizador competitivo para Windows**, pensado para gamers y usuarios avanzados que quieren sacar el máximo provecho de su equipo. Una sola app para monitorear tu PC, optimizarla al jugar, gestionar tus juegos y ajustar Windows a tu medida.
 
