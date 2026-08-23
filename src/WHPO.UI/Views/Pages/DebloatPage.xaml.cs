@@ -116,6 +116,11 @@ public sealed partial class DebloatPage : Page
         if (PageSkeleton == null) return;
         PageSkeleton.Visibility = Visibility.Collapsed;
         PageContent.Visibility = Visibility.Visible;
+
+        // Forzar layout del contenedor visible para que WinUI construya el árbol
+        // visual interno — sin esto, ApplyToVisualTree recorre paneles vacíos.
+        PageContent.UpdateLayout();
+        I18n.ApplyToVisualTree(this);
     }
 
     // Seguridad: si la detección de apps tarda más de 8 s (PowerShell lento o

@@ -153,12 +153,12 @@ public sealed partial class NucleosPage : Page
         };
         // La página no se cachea: desuscribirse al desmontar para no filtrar memoria
         // (el evento de idioma es estático y vive toda la app).
-        I18n.LanguageChanged += ReapplyLanguageToCores;
+        I18n.LanguageChanged += OnLanguageChanged;
 
         Unloaded += (s, e) =>
         {
             StopSampling();
-            I18n.LanguageChanged -= ReapplyLanguageToCores;
+            I18n.LanguageChanged -= OnLanguageChanged;
         };
     }
 
@@ -221,12 +221,64 @@ public sealed partial class NucleosPage : Page
         _samplingTimer?.Stop();
     }
 
-    private void ReapplyLanguageToCores()
+    private void OnLanguageChanged()
     {
         if (_coreBars.Count > 0)
         {
             RebuildCoreBars(_coreBars.Count);
             UpdateCoreBars(_lastUsages, _lastCoreTemps, _lastParked);
+        }
+
+        // Las filas de planes guardan textos traducidos al crearse. Reconstruirlas
+        // desde la fuente actual evita conservar el idioma anterior cuando la página
+        // ya estaba abierta.
+        if (_manageLoaded)
+        {
+            _ = LoadManagePlansAsync();
+            _ = LoadInstallPresetsAsync();
+        }
+
+        // El marcador "(activo)" se forma al crear cada ComboBoxItem; recargarlo
+        // asegura que el selector no conserve el idioma anterior.
+        _ = LoadPowerPlansAsync();
+        UpdateColorButtons();
+        ApplyLanguageAfterLayout();
+    }
+
+    private void ApplyLanguageAfterLayout()
+    {
+        ApplyLanguageToPage();
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (PageContent.Visibility == Visibility.Visible) PageContent.UpdateLayout();
+                if (GestionarTab.Visibility == Visibility.Visible) GestionarTab.UpdateLayout();
+                if (CompararTab.Visibility == Visibility.Visible) CompararTab.UpdateLayout();
+            }
+            catch { }
+
+            ApplyLanguageToPage();
+            DispatcherQueue.TryEnqueue(ApplyLanguageToPage);
+        });
+    }
+
+    private void ApplyLanguageToPage()
+    {
+        I18n.ApplyToVisualTree(this);
+
+        // Estos controles pueden no tener template visual realizado todavía.
+        PowerPlanCombo.PlaceholderText = I18n.T("Cargando planes...");
+        ComparePlanACombo.PlaceholderText = I18n.T("Seleccioná un plan");
+        ComparePlanBCombo.PlaceholderText = I18n.T("Seleccioná un plan");
+
+        if (PlanTabs != null)
+        {
+            foreach (var item in PlanTabs.Items.OfType<SelectorBarItem>())
+            {
+                if (item.Text is string s && Translations.TryGetSource(s, out var source))
+                    item.Text = I18n.T(source);
+            }
         }
     }
 
@@ -250,6 +302,14 @@ public sealed partial class NucleosPage : Page
         PageSkeleton.Visibility = Visibility.Collapsed;
         ApplyTabVisibility();
         LazyLoadTab(_selectedTabIndex);
+
+        // Forzar layout del contenedor visible para que WinUI construya sus árboles
+        // visuales internos — sin esto, ApplyToVisualTree recorre paneles vacíos.
+        if (PageContent.Visibility == Visibility.Visible) PageContent.UpdateLayout();
+        if (GestionarTab.Visibility == Visibility.Visible) GestionarTab.UpdateLayout();
+        if (CompararTab.Visibility == Visibility.Visible) CompararTab.UpdateLayout();
+
+        ApplyLanguageAfterLayout();
     }
 
     // Seguridad: si el primer sample tarda más de 4s (sensor lento), el skeleton
@@ -281,6 +341,12 @@ public sealed partial class NucleosPage : Page
         PageContent.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         GestionarTab.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
         CompararTab.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+
+        // Traducir la pestaña Comparar cuando se hace visible
+        if (_selectedTabIndex == 2)
+        {
+            TranslateCompareTab();
+        }
     }
 
     private void LazyLoadTab(int index)
@@ -1110,6 +1176,9 @@ public sealed partial class NucleosPage : Page
                 ManagePlanStatusText.Visibility = Visibility.Visible;
                 Feedback.Warning(ManagePlanStatusText, "No se detectaron planes de energía.");
             }
+
+            // Traducir el contenido recién creado cuando sus templates ya existen.
+            ApplyLanguageAfterLayout();
         }
         catch (Exception ex)
         {
@@ -1381,6 +1450,9 @@ public sealed partial class NucleosPage : Page
                     : plans.Any(p => string.Equals(p.Name, preset.Name, StringComparison.OrdinalIgnoreCase));
                 InstallPlansList.Items.Add(BuildInstallRow(preset, installed));
             }
+
+            // Traducir el contenido recién creado cuando sus templates ya existen.
+            ApplyLanguageAfterLayout();
         }
         catch (Exception ex)
         {
@@ -1520,6 +1592,13 @@ public sealed partial class NucleosPage : Page
         });
     }
 
+    private void TranslateCompareTab()
+    {
+        // Traducir el contenido de la pestaña Comparar cuando se hace visible.
+        if (CompararTab != null && CompararTab.Visibility == Visibility.Visible)
+            ApplyLanguageAfterLayout();
+    }
+
     private static string? SelectedPlanGuid(ComboBox combo)
         => (combo.SelectedItem as ComboBoxItem)?.Tag as string;
 
@@ -1590,7 +1669,7 @@ public sealed partial class NucleosPage : Page
             Background = new SolidColorBrush(color),
             VerticalAlignment = VerticalAlignment.Center
         });
-        content.Children.Add(new TextBlock { Text = label, FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = I18n.T(label), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
         button.Content = content;
     }
 
@@ -1663,6 +1742,9 @@ public sealed partial class NucleosPage : Page
 
         CompareScroll.Visibility = Visibility.Visible;
         CompareActionsPanel.Visibility = Visibility.Visible;
+
+        // Traducir el contenido de comparación recién creado cuando sus templates ya existen.
+        ApplyLanguageAfterLayout();
     }
 
     private void ExpandAllButton_Click(object sender, RoutedEventArgs e) => SetAllExpandersExpanded(true);

@@ -268,6 +268,9 @@ public sealed partial class SistemaPage : Page
         await RevealCardAsync(OsSkeleton, OsContent);
 
         _loggingService.LogInfo("SistemaPage: datos cargados");
+
+        // Traducir todo el contenido ahora que las cards están visibles
+        I18n.ApplyToVisualTree(this);
     }
 
     // ===== Skeleton de carga por tarjeta =====

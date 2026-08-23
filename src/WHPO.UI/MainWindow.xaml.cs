@@ -1213,11 +1213,13 @@ public sealed partial class MainWindow : Window
     {
         if (e.Content is FrameworkElement fe)
         {
+            // El árbol puede estar parcialmente realizado durante Navigated, pero
+            // traducir lo disponible evita que el idioma inicial dependa del timing.
             I18n.ApplyToVisualTree(fe);
             if (fe is Page page)
             {
-                // El recorrido en Navigated puede correr antes de que la página llene
-                // su árbol (Loaded): recorrer de nuevo cuando termine de cargar.
+                // Repetir al terminar el primer layout cubre controles perezosos y
+                // páginas que crean contenido durante Loaded.
                 page.Loaded -= Page_Loaded_Translate;
                 page.Loaded += Page_Loaded_Translate;
             }
@@ -1226,7 +1228,9 @@ public sealed partial class MainWindow : Window
 
     private static void Page_Loaded_Translate(object sender, RoutedEventArgs e)
     {
-        I18n.ApplyToVisualTree((FrameworkElement)sender);
+        var element = (FrameworkElement)sender;
+        I18n.ApplyToVisualTree(element);
+        element.DispatcherQueue.TryEnqueue(() => I18n.ApplyToVisualTree(element));
     }
 
     private void OnLanguageChanged()

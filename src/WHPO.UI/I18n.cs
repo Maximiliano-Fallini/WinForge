@@ -197,6 +197,9 @@ public static class I18n
                 ApplyText(pwd, PasswordBox.PlaceholderTextProperty, pwd.PlaceholderText);
                 ApplyHeader(pwd, PasswordBox.HeaderProperty, pwd.Header);
                 break;
+            case ComboBox combo:
+                ApplyText(combo, ComboBox.PlaceholderTextProperty, combo.PlaceholderText);
+                break;
             case Button btn:
                 ApplyObject(btn, Button.ContentProperty, btn.Content);
                 break;

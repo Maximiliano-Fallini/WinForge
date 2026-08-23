@@ -839,6 +839,8 @@ public sealed partial class GestionarProcesosPage : Page
             // para que el efecto de carga se aprecie aunque el escaneo sea veloz.
             await EnsureMinSkeletonVisibleAsync();
             RebuildCards();
+            // Traducir el contenido ahora que los elementos reales están en el árbol visual
+            I18n.ApplyToVisualTree(this);
             InstalledCountText.Text = I18n.T("Juegos instalados: {0}", _installed.Count);
             InstalledCountText.Visibility = Visibility.Visible;
             _counterStatusVisible = true;
