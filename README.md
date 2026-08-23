@@ -6,7 +6,7 @@
 **WinForge** es un **optimizador competitivo para Windows**, pensado para gamers y usuarios avanzados que quieren sacar el máximo provecho de su equipo. Una sola app para monitorear tu PC, optimizarla al jugar, gestionar tus juegos y ajustar Windows a tu medida.
 
 <p align="center">
-  💯 <b>100% Gratuito</b> — todas las funciones de optimización son completamente gratis, sin premium ni límites.
+   <b>100% Gratuito</b> — todas las funciones de optimización son completamente gratis, sin límites.
 </p>
 
 <h2 align="center">🌐 Multilenguaje</h2>
