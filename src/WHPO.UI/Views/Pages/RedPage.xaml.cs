@@ -698,6 +698,45 @@ public sealed partial class RedPage : Page
         return (PrimaryDnsTextBox.Text.Trim(), SecondaryDnsTextBox.Text.Trim());
     }
 
+    /// <summary>
+    /// Al elegir un proveedor predefinido, refleja sus servidores en los campos
+    /// Primario/Secundario para que el usuario vea qué se va a aplicar (y pueda editarlos).
+    /// "Personalizado" y "DNS de fábrica (router)" muestran el DNS actual del sistema.
+    /// </summary>
+    private void DnsProviderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        try
+        {
+            if (DnsProviderCombo.SelectedItem is ComboBoxItem { Tag: DnsPreset preset })
+            {
+                string primary, secondary;
+                if (!string.IsNullOrEmpty(preset.PrimaryDns))
+                {
+                    primary = preset.PrimaryDns;
+                    secondary = preset.SecondaryDns;
+                }
+                else
+                {
+                    // "Personalizado" / "DNS de fábrica (router)": mostrar lo que hay aplicado
+                    primary = _currentPrimaryDns;
+                    secondary = _currentSecondaryDns;
+                }
+
+                if (PrimaryDnsTextBox != null)
+                    PrimaryDnsTextBox.Text = string.IsNullOrEmpty(primary) ? I18n.T("(Automático DHCP)") : primary;
+                if (SecondaryDnsTextBox != null)
+                    SecondaryDnsTextBox.Text = string.IsNullOrEmpty(secondary) ? "" : secondary;
+
+                // El test de DNS y el historial manual usan estos campos cuando no hay preset
+                UpdateManualDnsList();
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService?.LogError($"Error en DnsProviderCombo_SelectionChanged: {ex.Message}", ex);
+        }
+    }
+
     private void OpenNetworkAdapterPropertiesButton_Click(object sender, RoutedEventArgs e)
     {
         try

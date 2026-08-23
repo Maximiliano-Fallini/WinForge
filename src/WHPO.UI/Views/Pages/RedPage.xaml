@@ -15,7 +15,7 @@
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <TextBlock Text="Proveedor DNS" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    <ComboBox x:Name="DnsProviderCombo" HorizontalAlignment="Stretch" PlaceholderText="Seleccioná un proveedor" DropDownOpened="DnsProviderCombo_DropDownOpened"/>
+                    <ComboBox x:Name="DnsProviderCombo" HorizontalAlignment="Stretch" PlaceholderText="Seleccioná un proveedor" SelectionChanged="DnsProviderCombo_SelectionChanged" DropDownOpened="DnsProviderCombo_DropDownOpened"/>
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowSpacing="12">
                         <TextBox x:Name="PrimaryDnsTextBox" Header="DNS Primario" PlaceholderText="Ej: 8.8.8.8" BeforeTextChanging="DnsTextBox_BeforeTextChanging"/>
                         <TextBox Grid.Column="1" x:Name="SecondaryDnsTextBox" Header="DNS Secundario" PlaceholderText="Ej: 8.8.4.4" BeforeTextChanging="DnsTextBox_BeforeTextChanging"/>
