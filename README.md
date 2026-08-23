@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/WHPO.UI/logos/WinForge.png" height="44" alt="Ícono de WinForge"/>
+  <img src="src/WHPO.UI/logos/WinForge.png" height="128" alt="Ícono de WinForge"/>
 </p>
 <h1 align="center">WinForge</h1>
 
