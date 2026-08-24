@@ -112,6 +112,11 @@
                     <muxc:SymbolIcon Symbol="Download" />
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
+            <muxc:NavigationViewItem Content="Limpieza del dispositivo" Tag="limpieza">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE74D;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
         </muxc:NavigationView.MenuItems>
 
         <muxc:NavigationView.FooterMenuItems>
@@ -129,19 +134,36 @@
              (achicado): ahí el botón de idiomas desaparece, como pediste. -->
         <muxc:NavigationView.PaneHeader>
             <Grid Margin="0,0,12,0">
-                <Button x:Name="LanguageButton"
-                        Click="LanguageButton_Click"
-                        HorizontalAlignment="Right"
-                        VerticalAlignment="Center"
-                        CornerRadius="10"
-                        Padding="10,6"
-                        Background="Transparent"
-                        BorderThickness="0">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Image x:Name="LanguageFlagImage" Width="24" Height="16" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="LanguageNameText" FontSize="12" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </Button>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <!-- Botón de actualización de la app: aparece con un chequear al
+                         abrir (MainWindow.BeginUpdateCheck). Con versión más nueva en el
+                         repo muestra el ícono de descarga con tooltip "Actualizar a vX";
+                         si la build está adelantada al repo (en desarrollo) muestra el
+                         ícono de info con "Versión X en desarrollo". -->
+                    <Button x:Name="UpdateButton"
+                            Click="UpdateButton_Click"
+                            Visibility="Collapsed"
+                            VerticalAlignment="Center"
+                            CornerRadius="10"
+                            Padding="10,6"
+                            Margin="0,0,4,0"
+                            Background="Transparent"
+                            BorderThickness="0">
+                        <FontIcon x:Name="UpdateButtonIcon" Glyph="&#xE896;" FontSize="16"/>
+                    </Button>
+                    <Button x:Name="LanguageButton"
+                            Click="LanguageButton_Click"
+                            VerticalAlignment="Center"
+                            CornerRadius="10"
+                            Padding="10,6"
+                            Background="Transparent"
+                            BorderThickness="0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Image x:Name="LanguageFlagImage" Width="24" Height="16" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="LanguageNameText" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Grid>
         </muxc:NavigationView.PaneHeader>
 

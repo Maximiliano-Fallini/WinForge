@@ -31,7 +31,12 @@ public sealed partial class MainWindow : Window
     private readonly IProcessService _processService;
     private readonly IInstalledGamesService _installedGamesService;
     private readonly IGameBoostService? _gameBoostService;
-    
+    private readonly IAppUpdateService _appUpdateService;
+
+    // Último chequeo de actualizaciones (para el botón del navbar) y si ya se lanzó.
+    private AppUpdateInfo? _latestUpdate;
+    private bool _updateCheckStarted;
+
     private NotifyIcon? _notifyIcon;
     private DispatcherQueueTimer? _trayTooltipTimer;
     private PerformanceCounter? _cpuCounter;
@@ -62,6 +67,7 @@ public sealed partial class MainWindow : Window
         _processService = App.Services.GetRequiredService<IProcessService>();
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
         _gameBoostService = App.Services.GetService<IGameBoostService>();
+        _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
 
         // Overlay de métricas de juegos: si quedó activado se reanuda desde el arranque
         // (ventana, hotkeys y muestreo). Se construye acá, en el hilo de UI, para que
@@ -112,6 +118,7 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("panelwindows", typeof(PanelWindowsPage));
             ns.RegisterPage("reparacion", typeof(ReparacionPage));
             ns.RegisterPage("actualizaciones", typeof(ActualizacionesPage));
+            ns.RegisterPage("limpieza", typeof(LimpiezaPage));
             ns.RegisterPage("configuracion", typeof(ConfiguracionPage));
         }
 
@@ -1237,8 +1244,161 @@ public sealed partial class MainWindow : Window
     {
         ApplyLanguageButton();
         TranslateNavbar();
+        ApplyUpdateIndicator();
         if (ContentFrame.Content is FrameworkElement fe)
             I18n.ApplyToVisualTree(fe);
+    }
+
+    // ===== Actualizaciones de la app (navbar) =====
+
+    /// <summary>
+    /// Chequeo de actualizaciones al abrir la app. Asíncrono y silencioso: si hay
+    /// versión más nueva en el repo muestra el ícono "Actualizar a vX" en el
+    /// navbar; si la build está adelantada al repo (en desarrollo) muestra
+    /// "Versión X en desarrollo".
+    /// </summary>
+    public void BeginUpdateCheck()
+    {
+        if (_updateCheckStarted) return;
+        _updateCheckStarted = true;
+        _ = CheckUpdatesAsync();
+    }
+
+    private async Task CheckUpdatesAsync()
+    {
+        try
+        {
+            var info = await Task.Run(() => _appUpdateService.CheckForUpdatesAsync());
+            _latestUpdate = info;
+            ApplyUpdateIndicator();
+        }
+        catch (Exception ex)
+        {
+            // El fallo del chequeo no debe molestar al arranque: solo se loguea.
+            _loggingService.LogWarning($"MainWindow: chequeo de actualizaciones falló: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Aplica el estado del último chequeo al botón del navbar (ícono + tooltip
+    /// + visibilidad). Se re-aplica al cambiar de idioma para retraducir el tooltip.
+    /// </summary>
+    private void ApplyUpdateIndicator()
+    {
+        try
+        {
+            var info = _latestUpdate;
+            if (info == null)
+            {
+                UpdateButton.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            switch (info.Status)
+            {
+                case AppUpdateStatus.UpdateAvailable:
+                    UpdateButtonIcon.Glyph = "\uE896"; // Descargar
+                    UpdateButtonIcon.Foreground = ThemeBrushes.Get("AccentBrush");
+                    ToolTipService.SetToolTip(UpdateButton, I18n.T("Actualizar a {0}", $"v{info.LatestVersion}"));
+                    UpdateButton.Visibility = Visibility.Visible;
+                    break;
+
+                case AppUpdateStatus.DevelopmentBuild:
+                    UpdateButtonIcon.Glyph = "\uE946"; // Info
+                    UpdateButtonIcon.Foreground = ThemeBrushes.Get("MutedBrush");
+                    ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"));
+                    UpdateButton.Visibility = Visibility.Visible;
+                    break;
+
+                default:
+                    UpdateButton.Visibility = Visibility.Collapsed;
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: indicador de actualización: {ex.Message}");
+        }
+    }
+
+    private async void UpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var info = _latestUpdate;
+        if (info == null || UpdateButton.XamlRoot == null) return;
+
+        // Build en desarrollo: no hay nada que instalar, solo informar.
+        if (info.Status == AppUpdateStatus.DevelopmentBuild)
+        {
+            var devDialog = new ContentDialog
+            {
+                XamlRoot = UpdateButton.XamlRoot,
+                Title = I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"),
+                Content = I18n.T("Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio.", $"v{info.CurrentVersion}"),
+                CloseButtonText = I18n.T("Cerrar"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            await devDialog.ShowAsync();
+            return;
+        }
+
+        if (info.Status != AppUpdateStatus.UpdateAvailable) return;
+
+        if (string.IsNullOrWhiteSpace(info.DownloadUrl))
+        {
+            var noInstaller = new ContentDialog
+            {
+                XamlRoot = UpdateButton.XamlRoot,
+                Title = I18n.T("Actualizar WinForge"),
+                Content = I18n.T("No se encontró el instalador en la release. Descargalo manualmente desde el repositorio."),
+                CloseButtonText = I18n.T("Cerrar"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            await noInstaller.ShowAsync();
+            return;
+        }
+
+        var confirm = new ContentDialog
+        {
+            XamlRoot = UpdateButton.XamlRoot,
+            Title = I18n.T("Actualizar WinForge"),
+            Content = I18n.T("Se descargará la versión {0} y la app se cerrará para instalarla. ¿Continuar?", info.LatestVersion),
+            PrimaryButtonText = I18n.T("Actualizar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+        await InstallUpdateAsync(info);
+    }
+
+    /// <summary>
+    /// Flujo de instalación compartido (navbar y Configuración): guarda la línea
+    /// de relanzamiento, descarga el MSI en background y lanza la instalación
+    /// silenciosa. La app se cierra sola (el MSI la mata al reemplazar archivos
+    /// y el CustomAction la reabre al terminar). Devuelve false si falló la descarga.
+    /// </summary>
+    public async Task<bool> InstallUpdateAsync(AppUpdateInfo info)
+    {
+        if (string.IsNullOrWhiteSpace(info.DownloadUrl)) return false;
+        try
+        {
+            var restartArg = App.Services.GetRequiredService<IPostUpdateRestartService>().PrepareRestartArg();
+            bool launched = await Task.Run(() =>
+                _appUpdateService.DownloadAndLaunchInstaller(info.DownloadUrl!, AppUpdateService.MsiPath, restartArg));
+
+            if (launched)
+            {
+                // El MSI cierra WinForge con taskkill al reemplazar archivos.
+                await Task.Delay(500);
+                Close();
+            }
+            return launched;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: actualizar: {ex.Message}");
+            return false;
+        }
     }
 
     // ===== Navbar: traducción determinista por colección lógica =====

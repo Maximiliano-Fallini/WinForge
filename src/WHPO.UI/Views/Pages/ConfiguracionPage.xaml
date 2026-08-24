@@ -3,17 +3,27 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
-        <ScrollViewer Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-            <Grid Margin="32,28,32,40" HorizontalAlignment="Stretch">
-                <StackPanel HorizontalAlignment="Stretch" Spacing="12">
-                    <StackPanel Spacing="4" Margin="0,0,0,8">
-                        <TextBlock Text="Configuración" FontSize="28" FontWeight="SemiBold"/>
-                        <TextBlock Text="Personaliza el comportamiento de WHPO. Los cambios se guardan automáticamente."
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
-                    </StackPanel>
+    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
-                    <TextBlock Text="Apariencia" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,0"/>
+        <!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación ====== -->
+        <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+            <SelectorBar x:Name="ConfigTabs"
+                         Margin="20,10,20,4"
+                         Background="Transparent"
+                         SelectionChanged="ConfigTabs_SelectionChanged">
+                <SelectorBarItem Text="Inicio" IsSelected="True"/>
+                <SelectorBarItem Text="Actualizaciones"/>
+                <SelectorBarItem Text="Caché"/>
+                <SelectorBarItem Text="Navegación"/>
+            </SelectorBar>
+        </Border>
+
+        <Grid Grid.Row="1">
+
+            <!-- ============ PESTAÑA: INICIO ============ -->
+            <ScrollViewer x:Name="HomeTab" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
+
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
@@ -33,7 +43,6 @@
                         </Grid>
                     </Border>
 
-                    <TextBlock Text="Aplicación" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,0"/>
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
@@ -87,61 +96,6 @@
                     </Border>
 
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
-                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock Text="Logs de desarrollo" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock
-                                    Text="Registra la actividad de la app en un archivo (app.log). Apagado (predeterminado): no se generan logs. Útil solo para depurar problemas."
-                                    FontSize="13"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    TextWrapping="Wrap"/>
-                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-                                    <TextBlock x:Name="DeveloperLogsSizeText" Text="" FontSize="12"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                               VerticalAlignment="Center"/>
-                                    <Button x:Name="DeleteLogsButton" Content="Borrar logs" FontSize="12"
-                                            Padding="12,4" VerticalAlignment="Center" Click="DeleteLogsButton_Click"/>
-                                    <Button x:Name="OpenLogsFolderButton" Content="Abrir carpeta de logs" FontSize="12"
-                                            Padding="12,4" VerticalAlignment="Center" Click="OpenLogsFolderButton_Click"/>
-                                    <TextBlock x:Name="DeleteLogsFeedbackText" Text="" FontSize="12"
-                                               VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </StackPanel>
-                            <ToggleSwitch
-                                x:Name="DeveloperLogsToggle"
-                                Grid.Column="1"
-                                Style="{StaticResource CompactToggleSwitchStyle}"
-                                IsOn="False"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center"/>
-                        </Grid>
-                    </Border>
-
-                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>
-                            <TextBlock
-                                Text="Borra los banners e íconos de juegos descargados y la biblioteca cacheada. Se regeneran solos la próxima vez. No borra configuración ni logs."
-                                FontSize="13"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextWrapping="Wrap"/>
-                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-                                <TextBlock x:Name="CacheSizeText" Text="" FontSize="12"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           VerticalAlignment="Center"/>
-                                <Button x:Name="ClearCacheButton" Content="Limpiar caché" FontSize="12"
-                                        Padding="12,4" VerticalAlignment="Center" Click="ClearCacheButton_Click"/>
-                                <TextBlock x:Name="ClearCacheFeedbackText" Text="" FontSize="12"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <StackPanel Spacing="4">
                             <TextBlock Text="Posición de la ventana" FontSize="16" FontWeight="SemiBold"/>
                             <TextBlock
@@ -166,7 +120,7 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="Iniciar con Windows" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock Text="Abre WHPO automáticamente cuando inicias sesión en este equipo."
+                                <TextBlock Text="Abre WHPO automáticamente cuando iniciás sesión en este equipo."
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="StartupFeedbackText" Text="" FontSize="12"
                                            TextWrapping="Wrap" Visibility="Collapsed"/>
@@ -200,30 +154,215 @@
                         </Grid>
                     </Border>
 
-                    <!-- ============ MENÚ DE NAVEGACIÓN (desplegable) ============ -->
-                    <Border Style="{StaticResource CardStyle}" Padding="0" CornerRadius="12" HorizontalAlignment="Stretch">
-                        <Expander x:Name="NavMenuExpander"
-                                  IsExpanded="False"
-                                  HorizontalAlignment="Stretch"
-                                  HorizontalContentAlignment="Stretch"
-                                  Background="Transparent"
-                                  BorderThickness="0"
-                                  CornerRadius="12"
-                                  Padding="0">
-                            <Expander.Header>
-                                <StackPanel Spacing="2" Padding="16,12">
-                                    <TextBlock Text="Menú de navegación" FontSize="16" FontWeight="SemiBold"/>
-                                    <TextBlock x:Name="NavMenuSummaryText" Text=""
-                                               FontSize="12"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ============ PESTAÑA: ACTUALIZACIONES ============ -->
+            <ScrollViewer x:Name="UpdatesTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
+
+                    <!-- Card hero de estado de la actualización -->
+                    <Border Style="{StaticResource CardStyle}" CornerRadius="20" Padding="28">
+                        <StackPanel Spacing="16">
+                            <Grid ColumnSpacing="20">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Badge de estado (círculo con ícono) -->
+                                <Border x:Name="UpdateBadge" Width="64" Height="64" CornerRadius="32"
+                                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                        VerticalAlignment="Center">
+                                    <FontIcon x:Name="UpdateStateIcon" Glyph="&#xE896;" FontSize="30"
+                                              Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                </Border>
+
+                                <!-- Información principal -->
+                                <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                    <TextBlock Text="Actualizaciones de WinForge" FontSize="20" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="UpdateStatusText" Text="Comprobando actualizaciones..." FontSize="13"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="UpdateDetailText" Text="" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap" Visibility="Collapsed"/>
                                 </StackPanel>
-                            </Expander.Header>
-                            <StackPanel x:Name="NavItemsPanel" Spacing="2" Padding="20,10,20,16"/>
-                        </Expander>
+
+                                <!-- Acciones -->
+                                <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Center">
+                                    <Button x:Name="InstallUpdateButton" Content="Instalar actualización"
+                                            Style="{StaticResource AccentButtonStyle}" FontSize="13" FontWeight="SemiBold"
+                                            Padding="18,10" Click="InstallUpdateButton_Click" Visibility="Collapsed"/>
+                                    <Button x:Name="CheckUpdatesButton" Content="Buscar actualizaciones" FontSize="12"
+                                            Padding="14,8" Click="CheckUpdatesButton_Click" HorizontalAlignment="Right"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock x:Name="UpdateFeedbackText" Text="" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Card de versiones -->
+                    <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="20">
+                        <StackPanel Spacing="14">
+                            <TextBlock Text="Versiones" FontSize="15" FontWeight="SemiBold"/>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <!-- Versión instalada -->
+                                <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="14">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Versión instalada" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock x:Name="InstalledVersionValue" Text="—" FontSize="20" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Border>
+                                <!-- Última publicada -->
+                                <Border Grid.Column="1" Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="14">
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Última publicada" FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <TextBlock x:Name="LatestVersionValue" Text="—" FontSize="20" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                            <TextBlock Text="La app se actualiza sola desde las releases del repositorio de GitHub. Al instalar, WinForge se cierra y se vuelve a abrir automáticamente."
+                                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                            <HyperlinkButton x:Name="ReleaseNotesHref" FontSize="12" Content="Ver las releases en GitHub" HorizontalAlignment="Left"/>
+                        </StackPanel>
                     </Border>
 
                 </StackPanel>
-            </Grid>
-        </ScrollViewer>
+            </ScrollViewer>
+
+            <!-- ============ PESTAÑA: CACHÉ (caché de la app + logs de desarrollo) ============ -->
+            <ScrollViewer x:Name="CacheTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
+
+                    <!-- Caché de la aplicación -->
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock
+                                Text="Borra los banners e íconos de juegos descargados y la biblioteca cacheada. Se regeneran solos la próxima vez. No borra configuración ni logs."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                <TextBlock x:Name="CacheSizeText" Text="" FontSize="13"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           VerticalAlignment="Center"/>
+                                <Button x:Name="ClearCacheButton" Content="Limpiar caché" FontSize="12"
+                                        Padding="12,4" VerticalAlignment="Center" Click="ClearCacheButton_Click"/>
+                                <TextBlock x:Name="ClearCacheFeedbackText" Text="" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Logs de desarrollo -->
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Logs de desarrollo" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="Registra la actividad de la app en un archivo (app.log). Apagado (predeterminado): no se generan logs. Útil solo para depurar problemas."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                    <TextBlock x:Name="DeveloperLogsSizeText" Text="" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <Button x:Name="DeleteLogsButton" Content="Borrar logs" FontSize="12"
+                                            Padding="12,4" VerticalAlignment="Center" Click="DeleteLogsButton_Click"/>
+                                    <Button x:Name="OpenLogsFolderButton" Content="Abrir carpeta de logs" FontSize="12"
+                                            Padding="12,4" VerticalAlignment="Center" Click="OpenLogsFolderButton_Click"/>
+                                    <TextBlock x:Name="DeleteLogsFeedbackText" Text="" FontSize="12"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="DeveloperLogsToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="False"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ============ PESTAÑA: NAVEGACIÓN ============ -->
+            <ScrollViewer x:Name="NavTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
+
+                    <!-- Card hero: estado del menú lateral -->
+                    <Border Style="{StaticResource CardStyle}" CornerRadius="20" Padding="28">
+                        <StackPanel Spacing="14">
+                            <Grid ColumnSpacing="20">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <!-- Badge con ícono de menú -->
+                                <Border x:Name="NavBadge" Width="56" Height="56" CornerRadius="16"
+                                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                        VerticalAlignment="Center">
+                                    <FontIcon x:Name="NavBadgeIcon" Glyph="&#xE73E;" FontSize="24"
+                                              Foreground="{ThemeResource AccentBrush}"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Text="Personalizá tu menú lateral" FontSize="20" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Mostrá u ocultá las secciones de la barra de navegación. Podés dejar solo lo que usás para tener un menú más limpio."
+                                               FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- Progreso: cuántas pestañas están visibles -->
+                            <StackPanel Spacing="6">
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="NavMenuSummaryText" Text="" FontSize="13"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <TextBlock x:Name="NavMenuCountText" Grid.Column="1" Text="" FontSize="13" FontWeight="SemiBold"/>
+                                </Grid>
+                                <ProgressBar x:Name="NavProgressBar" Maximum="1" Value="1"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
+                                <Button x:Name="ShowAllNavButton" Content="Mostrar todo" FontSize="12"
+                                        Padding="12,6" Click="ShowAllNavButton_Click"/>
+                                <Button x:Name="HideAllNavButton" Content="Ocultar todo" FontSize="12"
+                                        Padding="12,6" Click="HideAllNavButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Lista de secciones agrupadas por categoría -->
+                    <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="20">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Secciones del menú" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="Desactivá las que no quieras ver en la barra lateral."
+                                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <StackPanel x:Name="NavItemsPanel" Spacing="2" Margin="0,6,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+        </Grid>
     </Grid>
 </Page>

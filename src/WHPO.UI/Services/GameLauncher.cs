@@ -46,7 +46,7 @@ public static class GameLauncher
         bool gog = string.Equals(launcher, "GOG", StringComparison.OrdinalIgnoreCase);
         bool xbox = string.Equals(launcher, "Xbox", StringComparison.OrdinalIgnoreCase);
 
-        // Optimización de procesos al iniciar un juego (BETA): no hace nada si el
+        // Modo juego de WinForge (BETA): no hace nada si el
         // switch está desactivado. Se ejecuta en background para no retrasar el juego.
         if (gameBoost != null) _ = gameBoost.ApplyAsync();
 

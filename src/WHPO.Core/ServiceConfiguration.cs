@@ -50,6 +50,12 @@ public static class ServiceConfiguration
         services.AddSingleton<IProcessService, ProcessService>();
         services.AddSingleton<IInstalledGamesService, InstalledGamesService>();
         services.AddSingleton<IGameBoostService, GameBoostService>();
+        services.AddSingleton<IAppUpdateService, AppUpdateService>();
+        services.AddSingleton<IPostUpdateRestartService, PostUpdateRestartService>();
+        services.AddSingleton<ICleanupService, CleanupService>();
+        services.AddSingleton<IDuplicateFinderService, DuplicateFinderService>();
+        services.AddSingleton<IDriveWatcherService, DriveWatcherService>();
+        services.AddSingleton<IStartupManagerService, StartupManagerService>();
 
         // Overlay de métricas de juegos (FPS por ETW + muestreo de hardware)
         services.AddSingleton<IFpsMonitor, FpsMonitor>();

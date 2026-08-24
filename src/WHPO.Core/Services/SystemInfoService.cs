@@ -318,32 +318,9 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 if (obj["L2CacheSize"] != null) l2CacheKB = Convert.ToInt32(obj["L2CacheSize"]);
                 if (obj["L3CacheSize"] != null) l3CacheKB = Convert.ToInt32(obj["L3CacheSize"]);
 
-                var dataWidth = Convert.ToInt32(obj["DataWidth"] ?? 0);
-                var architecture = dataWidth == 64 ? "x64" : "x86";
-
                 bool virtualizationEnabled = false;
                 if (obj["VirtualizationFirmwareEnabled"] != null)
                     virtualizationEnabled = Convert.ToBoolean(obj["VirtualizationFirmwareEnabled"]);
-
-                bool smtEnabled = logicalProcessors > physicalCores && physicalCores > 0;
-
-                string cpuId = "", stepping = "", model = "", family = "";
-                try
-                {
-                    using var idSearcher = new ManagementObjectSearcher("SELECT ProcessorId, Stepping, Model, Family FROM Win32_Processor");
-                    foreach (ManagementObject idObj in idSearcher.Get())
-                    {
-                        cpuId = idObj["ProcessorId"]?.ToString() ?? "";
-                        stepping = idObj["Stepping"]?.ToString() ?? "";
-                        model = idObj["Model"]?.ToString() ?? "";
-                        family = idObj["Family"]?.ToString() ?? "";
-                    }
-                }
-                catch { }
-
-                string instructionSet = DetectCpuInstructionFlags();
-                double busSpeedMHz = 100;
-                double coreVoltageVID = 0;
 
                 var currentFreq = GetCurrentCpuFrequency();
                 var cpuTemp = GetCpuTemperature();
@@ -359,16 +336,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                     L2CacheKB: l2CacheKB,
                     L3CacheKB: l3CacheKB,
                     VirtualizationEnabled: virtualizationEnabled,
-                    Architecture: architecture,
-                    SmtEnabled: smtEnabled,
-                    InstructionSet: instructionSet,
-                    CoreVoltageVID: coreVoltageVID,
-                    CurrentFreqMHz: currentFreq,
-                    BusSpeedMHz: busSpeedMHz,
-                    CpuId: cpuId,
-                    Stepping: stepping,
-                    Model: model,
-                    Family: family
+                    CurrentFreqMHz: currentFreq
                 );
             }
         }
@@ -377,7 +345,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             _loggingService.LogError("Error obteniendo info de CPU", ex);
         }
 
-        return new CpuInfo("Unknown", 0, 0, 0, 0, 0, 0, 0, 0, false, "Unknown", false, "Unknown", 0, 0, 0, "", "", "", "");
+        return new CpuInfo("Unknown", 0, 0, 0, 0, 0, 0, 0, 0, false, 0);
     }
 
     private string? _cachedInstructionSet;

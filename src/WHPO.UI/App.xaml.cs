@@ -165,6 +165,10 @@ public partial class App : Application
 
         _window.Activate();
 
+        // Chequeo de actualizaciones al abrir la app (async, no bloquea el arranque):
+        // muestra el ícono "Actualizar a vX" / "Versión X en desarrollo" en el navbar.
+        MainWindowInstance?.BeginUpdateCheck();
+
         var settingsService = Services.GetRequiredService<ISettingsService>();
         var startupService = Services.GetRequiredService<IStartupService>();
 
@@ -266,7 +270,7 @@ public partial class App : Application
         }
         catch { }
 
-        // Restaurar el "optimizador de procesos al iniciar un juego (BETA)" si quedó
+        // Restaurar el "Modo juego de WinForge (BETA)" si quedó
         // activo: si el usuario cierra WinForge con un juego corriendo, los servicios
         // detenidos y las prioridades bajadas deben volver a su estado previo. Se
         // espera la restauración (con tope) antes de terminar el proceso: si se

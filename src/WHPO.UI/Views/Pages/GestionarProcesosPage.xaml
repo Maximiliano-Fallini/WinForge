@@ -70,7 +70,7 @@
                               Margin="12,0,0,0"
                               IsHitTestVisible="False"/>
                 </Grid>
-                <!-- Optimización de procesos al iniciar un juego (BETA) -->
+                <!-- Modo juego de WinForge (BETA) -->
                 <!-- Tapped en todo el panel: el ToggleSwitch de WinUI es chico (barrita +
                      círculo) y el texto lo supera en área, así que los clics que caen en la
                      etiqueta "no agarraban" el switch. Acá toda la fila togglea. -->

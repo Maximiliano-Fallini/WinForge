@@ -1,0 +1,374 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="WHPO_UI.Views.Pages.LimpiezaPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:controls="using:WHPO_UI.Controls"
+    mc:Ignorable="d">
+
+    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
+
+        <!-- ====== NAVBAR INTERNO: Chequeo / Limpieza personalizada / Buscador de duplicados / Admin. de inicio ====== -->
+        <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+            <SelectorBar x:Name="LimpiezaTabs"
+                         Margin="20,10,20,4"
+                         Background="Transparent"
+                         SelectionChanged="LimpiezaTabs_SelectionChanged">
+                <SelectorBarItem Text="Chequeo" IsSelected="True"/>
+                <SelectorBarItem Text="Limpieza personalizada"/>
+                <SelectorBarItem Text="Buscador de duplicados"/>
+                <SelectorBarItem Text="Administración de inicio"/>
+            </SelectorBar>
+        </Border>
+
+        <Grid Grid.Row="1">
+
+            <!-- ==================== PESTAÑA 1: CHEQUEO (estilo CCleaner) ==================== -->
+            <ScrollViewer x:Name="ChequeoTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Border x:Name="ChequeoContentFrame"
+                        Padding="24,16,24,24">
+                    <Grid x:Name="ChequeoContentRoot"
+                          MinHeight="{Binding ActualHeight, ElementName=ChequeoTab}">
+
+                    <!-- Botón central de Analizar (antes de escanear) -->
+                    <StackPanel x:Name="ChequeoStartPanel"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Spacing="12"
+                                Margin="0">
+                        <TextBlock Text="Hacé clic en Analizar para buscar datos basura en el sistema y los navegadores."
+                                   FontSize="13"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   MaxWidth="400"/>
+                        <Button x:Name="ChequeoAnalyzeButton"
+                                Content="Analizar"
+                                Click="ChequeoAnalyzeButton_Click"
+                                HorizontalAlignment="Center"
+                                CornerRadius="8"
+                                Padding="24,12"
+                                FontSize="15"
+                                FontWeight="SemiBold"
+                                MinWidth="160"
+                                MinHeight="44"/>
+                    </StackPanel>
+
+                    <!-- Progreso del escaneo -->
+                    <StackPanel x:Name="ChequeoProgressPanel" Spacing="12" Visibility="Collapsed"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Width="260">
+                        <!-- Velocímetro de progreso del análisis -->
+                        <controls:SpeedometerGauge x:Name="ChequeoRing"
+                                                   HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="ChequeoProgressText"
+                                   Text="Preparando..."
+                                   FontSize="12"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   HorizontalAlignment="Center"/>
+                        <Button x:Name="ChequeoCancelButton"
+                                Content="Cancelar"
+                                Click="ChequeoCancelButton_Click"
+                                HorizontalAlignment="Center"
+                                CornerRadius="6"
+                                Padding="16,8"
+                                FontWeight="SemiBold"
+                                MinWidth="120"/>
+                    </StackPanel>
+
+                    <!-- Área de resultados (aparece después de escanear) -->
+                    <StackPanel x:Name="ChequeoResultsPanel" Spacing="20" Visibility="Collapsed"
+                                VerticalAlignment="Top">
+
+                        <!-- ===== Sección 1: Navegadores ===== -->
+                        <StackPanel x:Name="ChequeoBrowserSection" Spacing="10" Visibility="Collapsed">
+                            <TextBlock Text="Archivos temporales de internet, cookies e historial"
+                                       FontSize="15" FontWeight="SemiBold"/>
+                            <StackPanel x:Name="ChequeoBrowsersHost" Spacing="8"/>
+                            <TextBlock x:Name="ChequeoBrowserTotal" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+
+                        <!-- ===== Sección 2: Sistema ===== -->
+                        <StackPanel x:Name="ChequeoSystemSection" Spacing="10" Visibility="Collapsed">
+                            <TextBlock Text="Archivos temporales del sistema"
+                                       FontSize="15" FontWeight="SemiBold"/>
+                            <StackPanel x:Name="ChequeoSystemHost" Spacing="6"/>
+                            <TextBlock x:Name="ChequeoSystemTotal" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+
+                        <!-- ===== Sección 3: Caché de aplicaciones ===== -->
+                        <StackPanel x:Name="ChequeoAppCacheSection" Spacing="10" Visibility="Collapsed">
+                            <TextBlock Text="Memoria caché de aplicaciones"
+                                       FontSize="15" FontWeight="SemiBold"/>
+                            <StackPanel x:Name="ChequeoAppCacheHost" Spacing="6"/>
+                            <TextBlock x:Name="ChequeoAppCacheTotal" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+
+                        <!-- ===== Sección 4: Papelera ===== -->
+                        <StackPanel x:Name="ChequeoRecycleSection" Spacing="10" Visibility="Collapsed">
+                            <TextBlock Text="Papelera de reciclaje"
+                                       FontSize="15" FontWeight="SemiBold"/>
+                            <StackPanel x:Name="ChequeoRecycleHost" Spacing="6"/>
+                            <TextBlock x:Name="ChequeoRecycleTotal" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+
+                        <!-- ===== Barra inferior: total + limpiar ===== -->
+                        <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                    <TextBlock x:Name="ChequeoTotalsText"
+                                               Text=""
+                                               FontSize="13"
+                                               Foreground="{ThemeResource SecondaryTextBrush}"
+                                               VerticalAlignment="Center"
+                                               Visibility="Collapsed"/>
+                                    <Button x:Name="CleanBrowsersButton"
+                                            Grid.Column="1"
+                                            Content="Limpiar"
+                                            IsEnabled="False"
+                                            Click="ChequeoCleanButton_Click"
+                                            CornerRadius="6"
+                                            Padding="16,8"
+                                            FontWeight="SemiBold"
+                                            MinWidth="110"/>
+                                </Grid>
+                                <TextBlock x:Name="ChequeoFeedbackText" Text="" FontSize="12"
+                                           Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                                           Visibility="Collapsed"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    </Grid>
+                </Border>
+            </ScrollViewer>
+
+            <!-- ==================== PESTAÑA 2: LIMPIEZA PERSONALIZADA ==================== -->
+            <Grid x:Name="CustomTab" Visibility="Collapsed">
+                <ScrollViewer x:Name="CustomScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <!-- Mismo patrón que Chequeo: el Grid se estira al alto del viewport
+                         y el panel de inicio se centra vertical+horizontalmente -->
+                    <Grid MinHeight="{Binding ActualHeight, ElementName=CustomScroll}" Margin="20,16,20,24">
+
+                        <!-- Botón central de Analizar (antes de escanear), como Chequeo -->
+                        <StackPanel x:Name="CustomStartPanel"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="12">
+                            <TextBlock Text="Hacé clic en Analizar para medir el espacio de cada categoría de limpieza. Después podés desmarcar lo que no quieras borrar."
+                                       FontSize="13"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"
+                                       TextAlignment="Center"
+                                       MaxWidth="440"/>
+                            <Button x:Name="CustomStartButton"
+                                    Content="Analizar"
+                                    Click="CustomStartButton_Click"
+                                    HorizontalAlignment="Center"
+                                    CornerRadius="8"
+                                    Padding="24,12"
+                                    FontSize="15"
+                                    FontWeight="SemiBold"
+                                    MinWidth="160"
+                                    MinHeight="44"/>
+                        </StackPanel>
+
+                        <!-- Contenido: aparece después de analizar -->
+                        <StackPanel x:Name="CustomContentPanel" Spacing="16" Visibility="Collapsed"
+                                    VerticalAlignment="Top">
+
+                            <StackPanel x:Name="CategoriesHost" Spacing="12"/>
+
+                            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="14">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <TextBlock x:Name="CustomTotals"
+                                           Text=""
+                                           FontSize="13"
+                                           Foreground="{ThemeResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center"
+                                           Visibility="Collapsed"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="AnalyzeCustomButton"
+                                            Content="Analizar"
+                                            Click="AnalyzeCustomButton_Click"
+                                            CornerRadius="6"
+                                            Padding="16,8"
+                                            FontWeight="SemiBold"
+                                            MinWidth="110"/>
+                                    <Button x:Name="CleanCustomButton"
+                                            Content="Limpiar"
+                                            IsEnabled="False"
+                                            Click="CleanCustomButton_Click"
+                                            CornerRadius="6"
+                                            Padding="16,8"
+                                            FontWeight="SemiBold"
+                                            MinWidth="110"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock x:Name="CustomFeedbackText" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                                       Visibility="Collapsed"/>
+                            </StackPanel>
+                        </Border>
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ==================== PESTAÑA 3: BUSCADOR DE DUPLICADOS ==================== -->
+            <ScrollViewer x:Name="DupTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="16" Margin="24,16,24,24">
+
+                    <!-- Configuración: unidad o carpeta a escanear + scan -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                        <StackPanel Spacing="10">
+                            <TextBlock Text="Unidad o carpeta a escanear" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="Elegí un disco (incluidos los USB) o examiná una carpeta. Solo se revisan archivos de entre 1 KB y 500 MB."
+                                       FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <ComboBox x:Name="DupDrivePicker"
+                                          HorizontalAlignment="Stretch"
+                                          SelectionChanged="DupDrivePicker_SelectionChanged">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <FontIcon Glyph="&#xE7C3;" FontSize="14"
+                                                          Foreground="{ThemeResource AccentBrush}"
+                                                          VerticalAlignment="Center"/>
+                                                <TextBlock Text="{Binding}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <!-- Oculto: la lógica de scan sigue leyendo de acá -->
+                                <TextBox x:Name="DupPathBox" Visibility="Collapsed"/>
+                                <Button x:Name="DupScanButton"
+                                        Grid.Column="1"
+                                        Content="Escanear"
+                                        Click="DupScanButton_Click"
+                                        CornerRadius="6"
+                                        Padding="16,8"
+                                        FontWeight="SemiBold"
+                                        MinWidth="100"/>
+                            </Grid>
+
+                            <!-- Papelera opcional (estilo CCleaner): por defecto activada,
+                                 los borrados quedan recuperables -->
+                            <CheckBox x:Name="DupRecycleToggle"
+                                      Content="Enviar los borrados a la papelera de reciclaje (recuperable)"
+                                      FontSize="12"
+                                      IsChecked="True"/>
+
+                            <!-- Progreso del escaneo: anillo + carpeta actual + cancelar -->
+                            <StackPanel x:Name="DupProgressPanel"
+                                        Spacing="10"
+                                        HorizontalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <!-- Velocímetro de progreso del escaneo -->
+                                <controls:SpeedometerGauge x:Name="DupRing"
+                                                           HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="DupProgressText" Text="" FontSize="12"
+                                           Foreground="{ThemeResource SecondaryTextBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxWidth="420"
+                                           HorizontalAlignment="Center"/>
+                                <Button x:Name="DupCancelButton"
+                                        Content="Cancelar"
+                                        Click="DupCancelButton_Click"
+                                        HorizontalAlignment="Center"
+                                        CornerRadius="6"
+                                        Padding="16,8"
+                                        FontWeight="SemiBold"
+                                        MinWidth="120"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Resultados -->
+                    <Border x:Name="DupResultsCard" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" Visibility="Collapsed">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <StackPanel>
+                                    <TextBlock x:Name="DupSummaryText" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="DupDetailText" FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <Button x:Name="DupDeleteButton"
+                                        Grid.Column="1"
+                                        Content="Borrar seleccionados"
+                                        Click="DupDeleteButton_Click"
+                                        CornerRadius="6"
+                                        Padding="16,8"
+                                        FontWeight="SemiBold"
+                                        MinWidth="140"/>
+                            </Grid>
+                            <StackPanel x:Name="DupGroupsHost" Spacing="8"/>
+                            <Button x:Name="DupShowMoreButton"
+                                    Content="Mostrar más grupos"
+                                    Click="DupShowMoreButton_Click"
+                                    HorizontalAlignment="Center"
+                                    CornerRadius="6"
+                                    Padding="16,8"
+                                    FontWeight="SemiBold"
+                                    Visibility="Collapsed"/>
+                            <TextBlock x:Name="DupFeedbackText" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ==================== PESTAÑA 4: ADMINISTRACIÓN DE INICIO ==================== -->
+            <ScrollViewer x:Name="StartupTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="14" Margin="24,16,24,24">
+
+                    <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                        <StackPanel Spacing="10">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="Programas que se ejecutan al iniciar sesión" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <Button x:Name="StartupRefreshButton"
+                                        Content="Actualizar"
+                                        Click="StartupRefreshButton_Click"
+                                        CornerRadius="6"
+                                        Padding="10,4"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"/>
+                            </StackPanel>
+                            <TextBlock Text="Activá o desactivá las entradas. La app que tildes como desactivada deja de arrancar al iniciar sesión sin borrarla."
+                                       FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+
+                            <!-- Cabecera de columnas -->
+                            <Grid ColumnDefinitions="Auto,1.6*,0.5*,0.5*" ColumnSpacing="8" Padding="4,2,4,4">
+                                <TextBlock Text="" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="1" Text="Comando" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="2" Text="Estado" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}" HorizontalAlignment="Center"/>
+                                <TextBlock Grid.Column="3"/>
+                            </Grid>
+
+                            <StackPanel x:Name="StartupEntriesHost" Spacing="2"/>
+
+                            <TextBlock x:Name="StartupFeedbackText" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>

@@ -28,14 +28,6 @@ public sealed partial class SistemaPage : Page
     private static readonly System.Diagnostics.Stopwatch SkeletonWatch = System.Diagnostics.Stopwatch.StartNew();
     private const int MinSkeletonVisibleMs = 550;
 
-    // Brush reutilizable para chips: desde los recursos de tema, resuelto con el tema
-    // EFECTIVO (ThemeBrushes), no con el del sistema.
-    private static Microsoft.UI.Xaml.Media.SolidColorBrush ChipBrush => ThemeBrushes.Get("ChipBackgroundBrush");
-
-    // Datos de los chips para poder reconstruirlos al cambiar el tema.
-    private string[] _instructionChips = Array.Empty<string>();
-    private string _cpuArchitecture = "";
-
     // Estado de seguridad del firmware (TPM / Secure Boot / IOMMU) para poder
     // re-aplicarlo al cambiar de idioma.
     private SecurityFeatures _securityFeatures = new(false, false, "", false, false, false);
@@ -51,12 +43,6 @@ public sealed partial class SistemaPage : Page
             _loggingService = App.Services.GetRequiredService<ILoggingService>();
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
-
-            // Al cambiar el tema, reconstruir los chips con los colores nuevos.
-            ActualThemeChanged += (s, e) =>
-            {
-                if (_dataLoaded) BuildInstructionChips();
-            };
 
             // Al cambiar de idioma, re-aplicar los estados de seguridad (la página
             // usa caché de navegación, así que se suscribe una sola vez).
@@ -115,47 +101,6 @@ public sealed partial class SistemaPage : Page
         StopMonitoring();
     }
 
-    /// <summary>
-    /// Reconstruye los chips de instrucciones del procesador (estilo CPU-Z) con los
-    /// colores del tema actual. Se usa al cargar y al cambiar claro/oscuro.
-    /// </summary>
-    private void BuildInstructionChips()
-    {
-        if (InstructionsPanel == null) return;
-        InstructionsPanel.Children.Clear();
-
-        if (_instructionChips.Length == 0)
-        {
-            InstructionsPanel.Children.Add(new TextBlock
-            {
-                Text = _cpuArchitecture == "x64" ? "x86-64" : "x86",
-                FontSize = 14,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            return;
-        }
-
-        foreach (var instr in _instructionChips)
-        {
-            var chip = new Border
-            {
-                Background = ChipBrush,
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(10, 4, 10, 4),
-                Margin = new Thickness(0, 0, 6, 6),
-                Child = new TextBlock
-                {
-                    Text = instr.Trim(),
-                    FontSize = 12,
-                    FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-                    TextTrimming = TextTrimming.None,
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-            InstructionsPanel.Children.Add(chip);
-        }
-    }
-
     private async Task LoadInitialDataAsync()
     {
         // CPU + características
@@ -174,14 +119,8 @@ public sealed partial class SistemaPage : Page
         _cpuCoresText = $"{cpuInfo.PhysicalCores} núcleos / {cpuInfo.LogicalProcessors} hilos";
         CpuDetailsText.Text = $"{FormatFrequency(cpuInfo.CurrentFrequencyMHz)} · {_cpuCoresText}";
 
-        // Instrucciones del procesador en chips estilo CPU-Z
-        _instructionChips = cpuInfo.InstructionSet.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        _cpuArchitecture = cpuInfo.Architecture;
-        BuildInstructionChips();
-
-        // CPU e instrucciones listas: revelar sus cards
+        // CPU lista: revelar su card
         await RevealCardAsync(CpuSkeleton, CpuContent);
-        await RevealCardAsync(InstructionsSkeleton, InstructionsContent);
 
         // RAM
         _loggingService.LogInfo("SistemaPage: cargando RAM...");
@@ -279,14 +218,14 @@ public sealed partial class SistemaPage : Page
     private FrameworkElement?[] AllSkeletons => new FrameworkElement?[]
     {
         CpuSkeleton, GpuSkeleton, RamSkeleton, StorageSkeleton, OsSkeleton,
-        InstructionsSkeleton, BoardSkeleton, BiosSkeleton,
+        BoardSkeleton, BiosSkeleton,
         TpmSkeleton, SecureBootSkeleton, IommuSkeleton
     };
 
     private FrameworkElement?[] AllContents => new FrameworkElement?[]
     {
         CpuContent, GpuContent, RamContent, StorageContent, OsContent,
-        InstructionsContent, BoardContent, BiosContent,
+        BoardContent, BiosContent,
         TpmContent, SecureBootContent, IommuContent
     };
 

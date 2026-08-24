@@ -85,7 +85,27 @@ settings (`app.language`).
 2. Agregar una columna (posición) en cada tupla de `Translations.cs`.
 3. Dibujar la bandera en `Flags.cs` y agregar el ítem al menú del navbar.
 
-## Regla de oro 2 — Toda la UI tiene que reaccionar al tema seleccionado
+## Regla de oro 2 — Versionado en sincronía al publicar
+
+La app tiene actualizador integrado (`AppUpdateService`): consulta las releases de
+GitHub, compara la versión instalada y ofrece instalar el MSI nuevo dentro de la
+app. Para que funcione, **toda versión nueva debe publicarse con el MISMO número
+en 4 lugares**:
+
+1. `src/WHPO.Core/WHPO.Core.csproj` — `<Version>` (la lee el chequeo).
+2. `src/WHPO.UI/WHPO.UI.csproj` — `<Version>` (solo informativa/coherencia).
+3. `installer/Product.wxs` — `<Package Version>` y `ARPCOMMENTS` (y `ProductCode`
+   nuevo si cambia el contenido; `UpgradeCode` queda igual para que el MSI
+   reemplace la versión anterior).
+4. `installer/build-installer.ps1` — `$version`.
+
+El tag de la release debe ser `v<versión>` (ej. `v0.1.4`) y el MSI debe llamarse
+`WinForge-<versión>.msi` — el actualizador filtra por asset `.msi` que NO diga
+`x64` en el nombre. El CustomAction de relanzamiento post-update se compila desde
+`installer/PostUpdateCA` (net462 + DTF 4.0.6; NO usar las versiones 5.x de DTF:
+MakeSfxCA no resuelve System.Runtime con .NET 8/9).
+
+## Regla de oro 3 — Toda la UI tiene que reaccionar alo
 
 La app tiene tema **Claro / Oscuro / Sistema** (`AppTheme`), elegible en Configuración
 y guardado en settings (`AppTheme`). El tema se aplica con `RequestedTheme` en el root

@@ -119,7 +119,7 @@ public sealed partial class GestionarProcesosPage : Page
     {
         base.OnNavigatedTo(e);
 
-        // Estado del switch "Optimizar procesos al iniciar un juego (BETA)".
+        // Estado del switch "Modo juego de WinForge (BETA)".
         _boostSwitchInitialized = false;
         GameBoostSwitch.IsOn = _gameBoostService.IsEnabled;
         _boostSwitchInitialized = true;
@@ -197,7 +197,7 @@ public sealed partial class GestionarProcesosPage : Page
     private void UpdateGameBoostLabel()
     {
         GameBoostLabel.Inlines.Clear();
-        GameBoostLabel.Inlines.Add(new Run { Text = I18n.T("Optimizar procesos al iniciar un juego") + " " });
+        GameBoostLabel.Inlines.Add(new Run { Text = I18n.T("Modo juego de WinForge") + " " });
         GameBoostLabel.Inlines.Add(new Run { Text = I18n.T("(BETA)"), Foreground = new SolidColorBrush(BetaColor) });
         // Tooltip con el mismo estilo que los botones "?" informativos del resto de
         // la app: título (semi-negrita) + descripción con salto de línea, Placement
@@ -216,7 +216,7 @@ public sealed partial class GestionarProcesosPage : Page
             var content = new StackPanel { Spacing = 6, MaxWidth = 430 };
             content.Children.Add(new TextBlock
             {
-                Text = I18n.T("Optimizar procesos al iniciar un juego"),
+                Text = I18n.T("Modo juego de WinForge"),
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap

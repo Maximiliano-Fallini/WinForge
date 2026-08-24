@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO_UI.Views.Pages;
@@ -17,7 +18,15 @@ public sealed partial class ConfiguracionPage : Page
     private readonly IStartupService _startupService;
     private readonly ILoggingService _loggingService;
     private readonly IInstalledGamesService _installedGamesService;
+    private readonly IAppUpdateService _appUpdateService;
     private bool _isLoading;
+    private bool _updatingNavAll;
+
+    // Pestaña seleccionada del navbar interno (0=Inicio, 1=Actualizaciones, 2=Caché, 3=Navegación).
+    private int _selectedTabIndex;
+
+    // Último resultado del chequeo de actualizaciones (para el botón "Instalar").
+    private AppUpdateInfo? _updateInfo;
 
     // ---- Menú de navegación: pestañas del menú lateral y su clave de configuración ----
     private static readonly (string Tag, string Label)[] NavTabs =
@@ -39,7 +48,8 @@ public sealed partial class ConfiguracionPage : Page
         ("herramientas", "Herramientas y funciones"),
         ("panelwindows", "Panel de Windows"),
         ("reparacion", "Reparación"),
-        ("actualizaciones", "Windows Update")
+        ("actualizaciones", "Windows Update"),
+        ("limpieza", "Limpieza del dispositivo")
     };
 
     private readonly Dictionary<string, CheckBox> _navCheckBoxes = new();
@@ -53,6 +63,7 @@ public sealed partial class ConfiguracionPage : Page
         _startupService = App.Services.GetRequiredService<IStartupService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
+        _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
 
         Loaded += OnLoaded;
 
@@ -85,11 +96,16 @@ public sealed partial class ConfiguracionPage : Page
             Feedback.Set(MinimizedFeedbackText, null);
 
             BuildNavMenu();
+            ApplyConfigTabsLanguage();
             SelectTheme(_themeService.CurrentTheme);
             ApplyThemeOptionsLanguage();
             UpdateDeveloperLogsSize();
             UpdateCacheSize();
             App.MainWindowInstance?.UpdateTrayStatus();
+
+            // Chequeo inicial de actualizaciones al abrir la página (silencioso:
+            // si falla la red, solo se apaga el estado de "Buscando...").
+            _ = CheckForUpdatesAsync();
         }
         finally
         {
@@ -390,6 +406,148 @@ public sealed partial class ConfiguracionPage : Page
             Feedback.Success(MinimizedFeedbackText, I18n.T("Se abrirá minimizado al iniciar sesión."));
     }
 
+    // ===================== Actualizaciones de la app =====================
+
+    private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await CheckForUpdatesAsync();
+    }
+
+    /// <summary>
+    /// Consulta las releases del repositorio y muestra si hay una versión más
+    /// nueva. Corre en Task.Run para no congelar la UI durante la consulta HTTP.
+    /// </summary>
+    private async Task CheckForUpdatesAsync()
+    {
+        CheckUpdatesButton.IsEnabled = false;
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+        UpdateFeedbackText.Text = "";
+        UpdateStatusText.Text = I18n.T("Buscando actualizaciones...");
+        UpdateDetailText.Text = "";
+
+        try
+        {
+            var info = await Task.Run(() => _appUpdateService.CheckForUpdatesAsync());
+            _updateInfo = info;
+            ApplyUpdateUi(info);
+        }
+        catch (Exception ex)
+        {
+            _updateInfo = null;
+            ApplyUpdateUi(new AppUpdateInfo { Status = AppUpdateStatus.Error, CurrentVersion = AppUpdateService.CurrentVersion() });
+            Feedback.Error(UpdateFeedbackText, I18n.T("Error de red o servicio no disponible: {0}", ex.Message));
+        }
+        finally
+        {
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Aplica el resultado del chequeo a toda la UI de la pestaña (badge de estado,
+    /// mensajes y tarjetas de versiones). Cada estado usa su propio ícono y color:
+    /// actualizado → check verde · disponible → descarga con acento ·
+    /// build en desarrollo → info · error → alerta.
+    /// </summary>
+    private void ApplyUpdateUi(AppUpdateInfo info)
+    {
+        string glyph;
+        string status;
+        string detail;
+        Microsoft.UI.Xaml.Media.Brush brush;
+
+        switch (info.Status)
+        {
+            case AppUpdateStatus.UpdateAvailable:
+                glyph = "\uE896"; // Descargar
+                brush = ThemeBrushes.Get("AccentBrush");
+                status = I18n.T("¡Hay una versión nueva disponible!");
+                detail = I18n.T("Se puede instalar la v{0} sobre la actual.", info.LatestVersion);
+                break;
+            case AppUpdateStatus.UpToDate:
+                glyph = "\uE73E"; // Verificado
+                brush = ThemeBrushes.Get("SuccessBrush");
+                status = I18n.T("WinForge está actualizado.");
+                detail = I18n.T("La versión instalada (v{0}) es la más reciente publicada.", info.CurrentVersion);
+                break;
+            case AppUpdateStatus.DevelopmentBuild:
+                glyph = "\uE946"; // Información
+                brush = ThemeBrushes.Get("MutedBrush");
+                status = I18n.T("Versión en desarrollo");
+                detail = I18n.T("Esta build va adelantada: la última release publicada es la v{0}.",
+                    info.LatestVersion ?? info.CurrentVersion);
+                break;
+            default: // Error
+                glyph = "\uE946"; // Información (alerta)
+                brush = ThemeBrushes.Get("ErrorBrush");
+                status = I18n.T("No se pudo comprobar actualizaciones.");
+                detail = I18n.T("Revisá tu conexión a internet e intentá de nuevo.");
+                break;
+        }
+
+        UpdateStateIcon.Glyph = glyph;
+        UpdateStateIcon.Foreground = brush;
+        UpdateStatusText.Foreground = brush;
+        UpdateStatusText.Text = status;
+        UpdateDetailText.Text = detail;
+        UpdateDetailText.Visibility = string.IsNullOrEmpty(detail) ? Visibility.Collapsed : Visibility.Visible;
+
+        InstalledVersionValue.Text = string.IsNullOrEmpty(info.CurrentVersion) ? "—" : "v" + info.CurrentVersion;
+        LatestVersionValue.Text = string.IsNullOrEmpty(info.LatestVersion) ? "—" : "v" + info.LatestVersion;
+        ReleaseNotesHref.NavigateUri = new Uri(
+            info.ReleaseNotesUrl ?? $"https://github.com/{AppUpdateService.RepositoryFullName}/releases");
+
+        InstallUpdateButton.Visibility = info.Available ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateInfo is not { Available: true }) return;
+
+        var downloadUrl = _updateInfo.DownloadUrl;
+        if (string.IsNullOrWhiteSpace(downloadUrl))
+        {
+            Feedback.Warning(UpdateFeedbackText,
+                I18n.T("No se encontró el instalador en la release. Descargalo manualmente desde el repositorio."));
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("Actualizar WinForge"),
+            Content = I18n.T("Se descargará la versión {0} y la app se cerrará para instalarla. ¿Continuar?", _updateInfo.LatestVersion),
+            PrimaryButtonText = I18n.T("Actualizar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        InstallUpdateButton.IsEnabled = false;
+        UpdateFeedbackText.Text = "";
+        Feedback.Running(UpdateFeedbackText, I18n.T("Descargando actualización... (la app se cerrará sola)"), persistent: true);
+
+        try
+        {
+            // Flujo compartido con el botón del navbar (MainWindow): guarda la línea
+            // de relanzamiento, descarga el MSI y lo instala; la app se cierra sola.
+            bool launched = App.MainWindowInstance != null
+                && await App.MainWindowInstance.InstallUpdateAsync(_updateInfo);
+
+            if (!launched)
+            {
+                InstallUpdateButton.IsEnabled = true;
+                Feedback.Error(UpdateFeedbackText, I18n.T("No se pudo iniciar la actualización. Revisá tu conexión e intentá de nuevo."));
+            }
+        }
+        catch (Exception ex)
+        {
+            InstallUpdateButton.IsEnabled = true;
+            _loggingService.LogWarning($"ConfiguracionPage: actualizar: {ex.Message}");
+            Feedback.Error(UpdateFeedbackText, I18n.T("Error al actualizar: {0}", ex.Message));
+        }
+    }
+
     // ===================== Menú de navegación =====================
 
     private void BuildNavMenu()
@@ -397,8 +555,24 @@ public sealed partial class ConfiguracionPage : Page
         _navCheckBoxes.Clear();
         NavItemsPanel.Children.Clear();
 
+        // Agrupar por categoría lógica con subtítulos (más legible que una lista plana).
+        string? currentCat = null;
         foreach (var (tag, label) in NavTabs)
         {
+            var cat = NavCategory(tag);
+            if (cat != currentCat)
+            {
+                currentCat = cat;
+                NavItemsPanel.Children.Add(new TextBlock
+                {
+                    Text = I18n.T(cat),
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrushes.Get("TextFillColorSecondaryBrush"),
+                    Margin = new Thickness(0, NavItemsPanel.Children.Count == 0 ? 0 : 6, 0, 2)
+                });
+            }
+
             var cb = new CheckBox
             {
                 Content = I18n.T(label),
@@ -415,9 +589,29 @@ public sealed partial class ConfiguracionPage : Page
         UpdateNavMenuSummary();
     }
 
+    /// <summary>Agrupa las pestañas del menú en categorías para la vista de configuración.</summary>
+    private static string NavCategory(string tag)
+    {
+        // Categorías para agrupar las pestañas del menú en la vista de configuración.
+        switch (tag)
+        {
+            case "sistema": case "red": case "memoria": case "temporizador":
+            case "nucleos": case "sensores": case "optimizaciones":
+                return "Sistema y rendimiento";
+            case "overlay": case "procesos": case "procesosvivos": case "teclado":
+            case "autoclicker": case "estabilidad":
+                return "Juegos y automatización";
+            case "debloat": case "herramientas": case "panelwindows": case "reparacion":
+            case "actualizaciones": case "limpieza":
+                return "Mantenimiento";
+            default:
+                return "Otras";
+        }
+    }
+
     private void OnNavCheckChanged(object sender, RoutedEventArgs e)
     {
-        if (_isLoading) return;
+        if (_isLoading || _updatingNavAll) return;
         SaveNavVisibility();
     }
 
@@ -430,16 +624,41 @@ public sealed partial class ConfiguracionPage : Page
         UpdateNavMenuSummary();
     }
 
+    private void SetAllNavVisible(bool visible)
+    {
+        // Cambia todos los checks sin que cada uno dispare un guardado por separado.
+        _updatingNavAll = true;
+        try
+        {
+            foreach (var (tag, _) in NavTabs)
+                if (_navCheckBoxes.TryGetValue(tag, out var cb)) cb.IsChecked = visible;
+        }
+        finally
+        {
+            _updatingNavAll = false;
+        }
+        SaveNavVisibility();
+    }
+
+    private void ShowAllNavButton_Click(object sender, RoutedEventArgs e) => SetAllNavVisible(true);
+    private void HideAllNavButton_Click(object sender, RoutedEventArgs e) => SetAllNavVisible(false);
+
     private void UpdateNavMenuSummary()
     {
         int visible = NavTabs.Count(t => _navCheckBoxes.TryGetValue(t.Tag, out var cb) && cb.IsChecked == true);
-        NavMenuSummaryText.Text = visible == NavTabs.Length
+        int total = NavTabs.Length;
+
+        NavMenuSummaryText.Text = visible == total
             ? I18n.T("Todas las pestañas son visibles")
-            : I18n.T("{0} de {1} pestañas visibles", visible, NavTabs.Length);
+            : I18n.T("{0} de {1} pestañas visibles", visible, total);
+        NavMenuCountText.Text = $"{visible}/{total}";
+        NavProgressBar.Value = total == 0 ? 0 : (double)visible / total;
+        NavBadgeIcon.Foreground = visible == total ? ThemeBrushes.Get("SuccessBrush") : ThemeBrushes.Get("AccentBrush");
     }
 
     private void OnLanguageChanged()
     {
+        ApplyConfigTabsLanguage();
         UpdateNavMenuSummary();
         ApplyThemeOptionsLanguage();
         UpdateDeveloperLogsSize();
@@ -455,5 +674,53 @@ public sealed partial class ConfiguracionPage : Page
         ThemeSystemItem.Content = I18n.T("Usar sistema");
         ThemeDarkItem.Content = I18n.T("Oscuro");
         ThemeLightItem.Content = I18n.T("Claro");
+    }
+
+    // ===================== Navbar interno (pestañas) =====================
+
+    /// <summary>
+    /// Traduce las pestañas del SelectorBar interno (Inicio / Actualizaciones /
+    /// Caché). Los SelectorBarItem pueden no estar realizados en el árbol visual,
+    /// así que se traducen por colección lógica (mismo patrón que NucleosPage).
+    /// </summary>
+    private void ApplyConfigTabsLanguage()
+    {
+        try
+        {
+            if (ConfigTabs == null) return;
+            foreach (var item in ConfigTabs.Items.OfType<SelectorBarItem>())
+            {
+                if (item.Text is string s && Translations.TryGetSource(s, out var source))
+                    item.Text = I18n.T(source);
+            }
+        }
+        catch { }
+    }
+
+    // ===================== Navbar interno (pestañas) =====================
+
+    private void ConfigTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (ConfigTabs == null || ConfigTabs.Items.Count == 0) return;
+        int idx = ConfigTabs.SelectedItem != null ? ConfigTabs.Items.IndexOf(ConfigTabs.SelectedItem) : 0;
+        _selectedTabIndex = idx < 0 ? 0 : idx;
+        ApplyTabVisibility();
+    }
+
+    private void ApplyTabVisibility()
+    {
+        if (HomeTab == null || UpdatesTab == null || CacheTab == null || NavTab == null) return;
+        HomeTab.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdatesTab.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+        CacheTab.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
+        NavTab.Visibility = _selectedTabIndex == 3 ? Visibility.Visible : Visibility.Collapsed;
+
+        // Si la pestaña Actualizaciones todavía no tiene resultado (el chequeo de
+        // OnLoaded sigue en curso), re-ejecutarlo para que muestre el estado apenas
+        // se abra. Es idempotente: si ya terminó, el texto ya es el resultado.
+        if (_selectedTabIndex == 1 && UpdateStatusText.Text == I18n.T("Comprobando actualizaciones..."))
+        {
+            _ = CheckForUpdatesAsync();
+        }
     }
 }

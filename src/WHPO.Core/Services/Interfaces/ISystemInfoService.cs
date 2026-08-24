@@ -166,16 +166,7 @@ public record CpuInfo(
     int L2CacheKB,
     int L3CacheKB,
     bool VirtualizationEnabled,
-    string Architecture,
-    bool SmtEnabled,
-    string InstructionSet,
-    double CoreVoltageVID,
-    double CurrentFreqMHz,
-    double BusSpeedMHz,
-    string CpuId,
-    string Stepping,
-    string Model,
-    string Family
+    double CurrentFreqMHz
 );
 
 /// <summary>

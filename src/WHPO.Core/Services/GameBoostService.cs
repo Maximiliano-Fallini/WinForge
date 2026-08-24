@@ -8,8 +8,7 @@ using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services;
 
-/// <summary>
-/// Implementación del "optimizador de procesos al iniciar un juego (BETA)".
+/// <summary>    /// Implementación del "Modo juego de WinForge (BETA)".
 ///
 /// Al aplicar (juego corriendo y switch activo) se guarda un snapshot del estado
 /// previo y se hacen los cambios; al cerrar el juego se restaura exactamente ese

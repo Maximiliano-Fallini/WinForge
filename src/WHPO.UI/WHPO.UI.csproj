@@ -2,9 +2,11 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
-    <!-- Versión 0.1.3 beta: coincide con la del instalador (WinForge-0.1.3.msi) -->
-    <Version>0.1.3</Version>
-    <InformationalVersion>0.1.3-beta</InformationalVersion>
+    <!-- Versión de la app: la lee AppUpdateService para el chequeo de actualizaciones.
+         Al publicar, llevar 0.1.4 junto con WHPO.Core.csproj, installer/Product.wxs
+         y installer/build-installer.ps1 -->
+    <Version>0.1.4</Version>
+    <InformationalVersion>0.1.4-beta</InformationalVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>WHPO_UI</RootNamespace>
     <!-- El ejecutable se llama WinForge.exe (no WHPO.UI.exe) -->

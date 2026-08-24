@@ -19,6 +19,8 @@ namespace WHPO_UI;
 /// </summary>
 internal static class IconExtractor
 {
+    private const uint SHGFI_ICON = 0x100;
+    private const uint SHGFI_LARGEICON = 0x0;
     private const uint SHGFI_SYSICONINDEX = 0x4000;
     private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
     private const uint FILE_ATTRIBUTE_NORMAL = 0x80;
@@ -29,24 +31,25 @@ internal static class IconExtractor
     /// <summary>
     /// Ícono genérico de .exe (el de "aplicación" del Explorador) SIN tocar el disco:
     /// SHGFI_USEFILEATTRIBUTES sobre un nombre ficticio hace que el shell devuelva el
-    /// ícono asociado a la extensión .exe. Es el fallback para procesos cuyo exe no se
-    /// puede leer (protegidos, sin MainModule) o que no traen recurso de ícono propio.
+    /// ícono asociado a la extensión .exe.
+    ///
+    /// NO usa la lista de imágenes del shell (SHGetImageList/IImageList): si el primer
+    /// llamador del proceso es el hilo UI (STA + DPI v2), la lista JUMBO queda "viva" en
+    /// ese apartamento y los demás hilos (MTA) fallan con E_NOINTERFACE — es exactamente
+    /// lo que pasaba: la extracción real devolvía null y no aparecía ningún ícono.
+    /// SHGFI_ICON devuelve un HICON directo sin COM, funciona desde cualquier hilo.
     /// </summary>
     public static Bitmap? ExtractDefaultExeIcon()
     {
         try
         {
             var sfi = new SHFILEINFO();
-            IntPtr sysList = SHGetFileInfo("placeholder.exe", FILE_ATTRIBUTE_NORMAL, ref sfi,
-                (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES);
-            if (sysList == IntPtr.Zero || sfi.iIcon < 0) return null;
-
-            Guid iid = IID_IImageList;
-            if (SHGetImageList(SHIL_JUMBO, ref iid, out IImageList il) != 0) return null;
-            if (il.GetIcon(sfi.iIcon, ILD_TRANSPARENT, out IntPtr hIcon) != 0) return null;
+            IntPtr res = SHGetFileInfo("placeholder.exe", FILE_ATTRIBUTE_NORMAL, ref sfi,
+                (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_ICON | SHGFI_USEFILEATTRIBUTES);
+            if (res == IntPtr.Zero || sfi.hIcon == IntPtr.Zero) return null;
             try
             {
-                using var icon = Icon.FromHandle(hIcon);
+                using var icon = Icon.FromHandle(sfi.hIcon);
                 var bmp = icon.ToBitmap();
                 if (bmp == null) return null;
                 var trimmed = TrimTransparentMargins(bmp);
@@ -55,7 +58,7 @@ internal static class IconExtractor
             }
             finally
             {
-                DestroyIcon(hIcon);
+                DestroyIcon(sfi.hIcon);
             }
         }
         catch
@@ -64,7 +67,15 @@ internal static class IconExtractor
         }
     }
 
-    /// <summary>Bitmap con el ícono de alta resolución del exe (o null si falla).</summary>
+    /// <summary>
+    /// Bitmap con el ícono de máxima resolución disponible del exe.
+    ///
+    /// Primer intento: lista de imágenes JUMBO del shell (256 px). Si esa llamada
+    /// falla (ver ExtractDefaultExeIcon: la lista queda varada en el STA cuando el
+    /// hilo UI es el primer llamador y los hilos MTA no pueden obtener la interfaz),
+    /// se cae a Icon.ExtractAssociatedIcon (32 px, sin COM: funciona desde cualquier
+    /// hilo/apartamento). El ícono siempre aparece.
+    /// </summary>
     public static Bitmap? ExtractHighResIcon(string filePath)
     {
         try
@@ -72,23 +83,43 @@ internal static class IconExtractor
             var sfi = new SHFILEINFO();
             IntPtr sysList = SHGetFileInfo(filePath, 0, ref sfi,
                 (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_SYSICONINDEX);
-            if (sysList == IntPtr.Zero || sfi.iIcon < 0) return null;
+            if (sysList != IntPtr.Zero && sfi.iIcon >= 0)
+            {
+                Guid iid = IID_IImageList;
+                if (SHGetImageList(SHIL_JUMBO, ref iid, out IImageList il) == 0 &&
+                    il.GetIcon(sfi.iIcon, ILD_TRANSPARENT, out IntPtr hIcon) == 0)
+                {
+                    try
+                    {
+                        using var icon = Icon.FromHandle(hIcon);
+                        var bmp = icon.ToBitmap();
+                        if (bmp != null)
+                        {
+                            var trimmed = TrimTransparentMargins(bmp);
+                            if (!ReferenceEquals(trimmed, bmp)) bmp.Dispose();
+                            return trimmed;
+                        }
+                    }
+                    finally
+                    {
+                        DestroyIcon(hIcon);
+                    }
+                }
+            }
 
-            Guid iid = IID_IImageList;
-            if (SHGetImageList(SHIL_JUMBO, ref iid, out IImageList il) != 0) return null;
-            if (il.GetIcon(sfi.iIcon, ILD_TRANSPARENT, out IntPtr hIcon) != 0) return null;
+            // Fallback sin COM: 32 px, funciona en cualquier hilo.
             try
             {
-                using var icon = Icon.FromHandle(hIcon);
+                using var icon = System.Drawing.Icon.ExtractAssociatedIcon(filePath);
+                if (icon == null) return null;
                 var bmp = icon.ToBitmap();
-                if (bmp == null) return null;
                 var trimmed = TrimTransparentMargins(bmp);
                 if (!ReferenceEquals(trimmed, bmp)) bmp.Dispose();
                 return trimmed;
             }
-            finally
+            catch
             {
-                DestroyIcon(hIcon);
+                return null;
             }
         }
         catch

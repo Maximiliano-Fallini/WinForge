@@ -3,7 +3,7 @@ using System.Threading.Tasks;
 namespace WHPO.Core.Services.Interfaces;
 
 /// <summary>
-/// "Optimizar procesos al iniciar un juego (BETA)": al lanzar un juego, pausa
+/// "Modo juego de WinForge (BETA)": al lanzar un juego, pausa
 /// Windows Update, detiene servicios de mantenimiento/diagnóstico (SysMain,
 /// DiagTrack, etc.) y baja la prioridad de procesos en segundo plano. Al cerrar
 /// el juego, restaura el estado previo exacto: solo re-arranca los servicios que

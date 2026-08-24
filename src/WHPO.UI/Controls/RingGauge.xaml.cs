@@ -183,6 +183,70 @@ public sealed class RingGauge : Grid
     }
 
     /// <summary>
+    /// Ajusta el diámetro TOTAL del control reescalando pista, arco, casillas y
+    /// tipografías. Sin llamarlo queda el tamaño por defecto (160), igual que en
+    /// los usos existentes.
+    /// </summary>
+    public void ConfigureSize(double controlSize)
+    {
+        _stroke = Math.Max(7.0, controlSize * 0.075);
+        _size = controlSize - _stroke - 10;
+        _radius = _size / 2 - _stroke / 2;
+
+        Width = Height = controlSize;
+        _trackEllipse.Width = _trackEllipse.Height = _size;
+        _trackEllipse.StrokeThickness = _stroke;
+        _progressPath.Width = _progressPath.Height = _size;
+        _progressPath.StrokeThickness = _stroke;
+        _cellCanvas.Width = _cellCanvas.Height = _size;
+
+        _valueText.FontSize = Math.Max(13, controlSize * 0.16);
+        _labelText.FontSize = Math.Max(9, controlSize * 0.075);
+
+        if (_cellsActive)
+            RebuildCells();
+        else
+            UpdateArc(_progress);
+    }
+
+    /// <summary>
+    /// Dibuja marcas de escala fijas alrededor del anillo (estilo velocímetro/reloj).
+    /// Las marcas son finitas (rayitas redondeadas), NO se rellenan: el progreso sigue siendo
+    /// el arco continuo de <see cref="Progress"/> (se llena como un cronómetro).
+    /// </summary>
+    public void ConfigureTicks(int tickCount)
+    {
+        _cellsActive = false;
+        _progressPath.Visibility = Visibility.Visible;
+        _cellCanvas.Children.Clear();
+
+        tickCount = Math.Max(4, tickCount);
+        double innerR = _radius - _stroke / 2 + 1;
+        double outerR = _radius + _stroke / 2 - 1;
+        double cx = _size / 2, cy = _size / 2;
+
+        for (int i = 0; i < tickCount; i++)
+        {
+            double deg = -90.0 + 360.0 * i / tickCount;
+            double rad = deg * Math.PI / 180.0;
+
+            var pOuter = new Point(cx + outerR * Math.Cos(rad), cy + outerR * Math.Sin(rad));
+            var pInner = new Point(cx + innerR * Math.Cos(rad), cy + innerR * Math.Sin(rad));
+
+            var line = new Line
+            {
+                X1 = pOuter.X, Y1 = pOuter.Y,
+                X2 = pInner.X, Y2 = pInner.Y,
+                Stroke = new SolidColorBrush(Color.FromArgb(255, 150, 150, 150)),
+                StrokeThickness = Math.Max(1.2, (_stroke * 0.18)),
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round
+            };
+            _cellCanvas.Children.Add(line);
+        }
+    }
+
+    /// <summary>
     /// Arma el anillo de casillas para un test de <paramref name="packetCount"/> paquetes.
     /// Cada casilla corresponde EXACTAMENTE a un paquete (sin agrupar). El anillo mantiene
     /// su tamaño fijo: con muchos paquetes las casillas se achican (puede perderse la
@@ -269,6 +333,30 @@ public sealed class RingGauge : Grid
         PacketCellState.Slow or PacketCellState.Lost => LostCellBrush,
         _ => PendingCellBrush
     };
+
+    /// <summary>
+    /// Modo casillas: enciende proporcionalmente las casillas según
+    /// <paramref name="fraction"/> (0.0 a 1.0), estilo velocímetro. Las casillas
+    /// no alcanzadas vuelven a invisible, así el indicador también retrocede si
+    /// hace falta.
+    /// </summary>
+    public void SetCellsProgress(double fraction)
+    {
+        if (!_cellsActive || _cells.Length == 0) return;
+
+        fraction = Math.Clamp(fraction, 0.0, 1.0);
+        int lit = (int)Math.Round(fraction * _cellCount);
+
+        for (int i = 0; i < _cellCount; i++)
+        {
+            var target = i < lit ? PacketCellState.Ok : PacketCellState.Pending;
+            if ((int)target != _cellStates[i])
+            {
+                _cellStates[i] = (int)target;
+                _cells[i].Fill = BrushForState(target);
+            }
+        }
+    }
 
     private void UpdateArc(double progress)
     {
