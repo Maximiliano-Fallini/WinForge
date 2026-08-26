@@ -58,7 +58,9 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.5/WinForge-0.1.5.msi">
     <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.5_MSI_~87_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.1.5 MSI"/>
   </a>
+  <br/>
   <sub>(26/8/2026 UTC)</sub>
+  <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.1.5">
     <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.1.5_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
