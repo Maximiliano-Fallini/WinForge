@@ -1,0 +1,147 @@
+<Window
+    x:Class="WHPO_UI.OnboardingWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Bienvenido a WinForge">
+
+    <Grid x:Name="RootGrid" Background="{ThemeResource OnboardingBackdropBrush}">
+        <Grid.Resources>
+            <Style x:Key="OnboardingCardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource OnboardingSurfaceBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="20"/>
+                <Setter Property="HorizontalAlignment" Value="Center"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+            <Style x:Key="OnboardingOptionStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="12"/>
+            </Style>
+        </Grid.Resources>
+
+        <Image Source="/logos/backgroundinstaller/banner.png"
+               Stretch="UniformToFill"
+               IsHitTestVisible="False"/>
+        <Border Background="{ThemeResource OnboardingScrimBrush}" IsHitTestVisible="False"/>
+
+        <StackPanel MaxWidth="640" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+            <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center">
+                <Image Source="/logos/WinForge.png" Width="64" Height="64" VerticalAlignment="Center"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="WinForge" FontSize="30" FontWeight="Bold"/>
+                    <TextBlock x:Name="SubtitleText" FontSize="14" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- Altura FIJA de la card: las fases tienen distinto contenido y, si la
+                 card creciera/encogiera, los botones de abajo saltarían de posición
+                 (rompe el feedback visual al pasar de fase). El contenido de cada
+                 fase se centra en la fila sobrante. -->
+            <Border Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="320">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Puntos + línea de progreso: su propia fila, arriba y centrados. -->
+                    <StackPanel x:Name="ProgressDots" Grid.Row="0" Orientation="Horizontal"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,0,0,20"/>
+
+                    <!-- ===== FASE 1: TEMA ===== -->
+                    <StackPanel x:Name="PhaseTheme" Grid.Row="1" Spacing="14" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform Y="0"/>
+                        </StackPanel.RenderTransform>
+                        <TextBlock Text="Elegí el tema" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Tu apariencia, tu estilo. Podés cambiarlo en Configuración."
+                                   FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Center"/>
+                        <Grid ColumnSpacing="16" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Oscuro -->
+                            <Border x:Name="ThemeDarkCard" Style="{StaticResource OnboardingOptionStyle}" Padding="16"
+                                    Grid.Column="0" Tapped="ThemeOption_Tapped">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Border Width="64" Height="64" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}" HorizontalAlignment="Center">
+                                        <Border Width="26" Height="26" CornerRadius="7" Background="{ThemeResource AccentBrush}"
+                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="Oscuro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Claro -->
+                            <Border x:Name="ThemeLightCard" Style="{StaticResource OnboardingOptionStyle}" Padding="16"
+                                    Grid.Column="1" Tapped="ThemeOption_Tapped">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Border Width="64" Height="64" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" HorizontalAlignment="Center">
+                                        <Border Width="26" Height="26" CornerRadius="7" Background="{ThemeResource AccentBrush}"
+                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="Claro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Usar sistema -->
+                            <Border x:Name="ThemeSystemCard" Style="{StaticResource OnboardingOptionStyle}" Padding="16"
+                                    Grid.Column="2" Tapped="ThemeOption_Tapped">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Grid Width="64" Height="64">
+                                        <Border CornerRadius="12" Background="{ThemeResource CardBorderBrush}"/>
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="*"/>
+                                                <RowDefinition Height="*"/>
+                                            </Grid.RowDefinitions>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Row="0" Grid.Column="0" Background="{ThemeResource CardBackgroundBrush}"/>
+                                            <Border Grid.Row="1" Grid.Column="1" Background="{ThemeResource AccentTintBrush}"/>
+                                        </Grid>
+                                    </Grid>
+                                    <TextBlock Text="Usar sistema" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- ===== FASE 2: GRATIS + ESTRELLA ===== -->
+                    <StackPanel x:Name="PhaseThanks" Grid.Row="1" Spacing="14" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform Y="0"/>
+                        </StackPanel.RenderTransform>
+                        <FontIcon Glyph="&#xE734;" FontSize="34" Foreground="{ThemeResource AccentBrush}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="100% Gratuito" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="WinForge es totalmente gratuito y lo seguirá siendo: todas las funciones están desbloqueadas. Si te resulta útil, apoyalo con una estrella."
+                                   FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center"/>
+                        <Button x:Name="StarButton" Content="Dejar una estrella en GitHub" Style="{StaticResource AccentButtonStyle}"
+                                Padding="16,10" HorizontalAlignment="Center" Click="StarButton_Click"/>
+                    </StackPanel>
+
+                </Grid>
+            </Border>
+
+            <Grid ColumnSpacing="10" HorizontalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton" Content="Atrás" Visibility="Collapsed" Click="BackButton_Click" Padding="18,10"/>
+                <Button x:Name="NextButton" Content="Continuar" Grid.Column="1" Style="{StaticResource AccentButtonStyle}"
+                        Padding="22,10" Click="NextButton_Click"/>
+            </Grid>
+        </StackPanel>
+    </Grid>
+</Window>

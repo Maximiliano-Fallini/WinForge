@@ -41,7 +41,24 @@ public static class ThemeBrushes
     /// </summary>
     public static SolidColorBrush Get(string key)
     {
-        if (App.Current.Resources.ThemeDictionaries.TryGetValue(ActiveThemeKey(), out var dict)
+        return Get(key, ActiveThemeKey());
+    }
+
+    /// <summary>
+    /// Devuelve un pincel para el tema indicado. Es útil en una vista previa que
+    /// cambia de tema localmente sin alterar la ventana principal.
+    /// </summary>
+    public static SolidColorBrush Get(string key, AppTheme theme)
+    {
+        var effectiveTheme = theme == AppTheme.SystemDefault
+            ? App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme()
+            : theme;
+        return Get(key, effectiveTheme == AppTheme.Light ? "Light" : "Dark");
+    }
+
+    private static SolidColorBrush Get(string key, string themeKey)
+    {
+        if (App.Current.Resources.ThemeDictionaries.TryGetValue(themeKey, out var dict)
             && dict is ResourceDictionary themeDict
             && themeDict.TryGetValue(key, out var value)
             && value is SolidColorBrush brush)

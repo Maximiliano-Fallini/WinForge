@@ -59,10 +59,12 @@ public static class I18n
     }
 
     /// <summary>
-    /// Idioma del sistema (preferencia de idioma de Windows). Solo se usa en el
-    /// primer arranque, cuando todavía no hay idioma guardado.
+    /// Detecta el idioma del sistema (preferencia de idioma de Windows) y lo
+    /// normaliza a uno soportado (variantes regionales caen al idioma base).
+    /// Devuelve null si ningún idioma del sistema está disponible entre los
+    /// soportados — el llamador decide el fallback (en-US).
     /// </summary>
-    private static string? DetectSystemLanguage()
+    public static string? DetectSystemLanguage()
     {
         try
         {

@@ -8,7 +8,7 @@ namespace WHPO.Core.Services.Interfaces;
 /// </summary>
 public interface IAppUpdateService
 {
-    /// <summary>Versión de la app en ejecución (del ensamblado, "0.1.4").</summary>
+    /// <summary>Versión de la app en ejecución (del ensamblado, "0.1.5").</summary>
     static string CurrentVersion() => AppUpdateService.CurrentVersion();
 
     /// <summary>Consulta la última release del repositorio y compara la versión.</summary>

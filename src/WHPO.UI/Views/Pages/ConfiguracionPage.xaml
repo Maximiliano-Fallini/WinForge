@@ -5,7 +5,7 @@
 
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
-        <!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación ====== -->
+        <!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación / Desarrollo ====== -->
         <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="ConfigTabs"
                          Margin="20,10,20,4"
@@ -15,6 +15,7 @@
                 <SelectorBarItem Text="Actualizaciones"/>
                 <SelectorBarItem Text="Caché"/>
                 <SelectorBarItem Text="Navegación"/>
+                <SelectorBarItem x:Name="DevelopmentTabItem" Text="Desarrollo" Visibility="Collapsed"/>
             </SelectorBar>
         </Border>
 
@@ -360,6 +361,57 @@
                         </StackPanel>
                     </Border>
 
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ============ PESTAÑA: DESARROLLO (solo si la build supera la release) ============ -->
+            <ScrollViewer x:Name="DevTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
+                    <Border x:Name="DevSection" Style="{StaticResource CardStyle}" CornerRadius="12" Padding="20">
+                        <StackPanel Spacing="16">
+                            <TextBlock Text="🛠️ Herramientas de desarrollo" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock Text="Esta sección solo aparece en builds de desarrollo (versión superior a la publicada en GitHub)."
+                                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+
+                            <!-- Reposicionamiento de pantalla -->
+                            <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Reposicionamiento de ventana" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Forzar recálculo de posición/tamaño al iniciar (útil tras cambios de monitor/DPI)."
+                                               FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                                        <Button x:Name="ResetWindowPosButton" Content="Restablecer posición ahora"
+                                                Style="{StaticResource AccentButtonStyle}" Padding="14,8"
+                                                Click="ResetWindowPosButton_Click"/>
+                                        <Button x:Name="SimulateOnboardingButton" Content="Simular onboarding"
+                                                Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
+                                                Click="SimulateOnboardingButton_Click"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="DevFeedbackText" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Logs de desarrollo: se administran desde la pestaña Caché. -->
+                            <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16" Visibility="Collapsed">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Logs de desarrollo" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Activa logs detallados en el archivo de errores para depuración."
+                                               FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Info de versión -->
+                            <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16">
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="Información de versión" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="DevVersionInfoText" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
 

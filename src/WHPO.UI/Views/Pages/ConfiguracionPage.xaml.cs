@@ -22,11 +22,12 @@ public sealed partial class ConfiguracionPage : Page
     private bool _isLoading;
     private bool _updatingNavAll;
 
-    // Pestaña seleccionada del navbar interno (0=Inicio, 1=Actualizaciones, 2=Caché, 3=Navegación).
+    // Pestaña seleccionada del navbar interno (0=Inicio, 1=Actualizaciones, 2=Caché, 3=Navegación, 4=Desarrollo).
     private int _selectedTabIndex;
 
     // Último resultado del chequeo de actualizaciones (para el botón "Instalar").
     private AppUpdateInfo? _updateInfo;
+    private OnboardingSimulatorWindow? _onboardingSimulator;
 
     // ---- Menú de navegación: pestañas del menú lateral y su clave de configuración ----
     private static readonly (string Tag, string Label)[] NavTabs =
@@ -54,6 +55,7 @@ public sealed partial class ConfiguracionPage : Page
 
     private readonly Dictionary<string, CheckBox> _navCheckBoxes = new();
 
+    // Sección de desarrollo: visible solo si la build es más nueva que la release publicada.
     public ConfiguracionPage()
     {
         InitializeComponent();
@@ -66,6 +68,12 @@ public sealed partial class ConfiguracionPage : Page
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
 
         Loaded += OnLoaded;
+
+        // La página usa caché de navegación: estas suscripciones se hacen una sola vez.
+        // Sincroniza el indicador de la pestaña interna "Actualizaciones" con el estado
+        // global del chequeo (MainWindow dispara el evento al completar el check).
+        if (App.MainWindowInstance != null)
+            App.MainWindowInstance.AppUpdateStateChanged += OnAppUpdateStateChanged;
 
         // Al cambiar de idioma, actualizar el resumen del menú de navegación (la
         // página usa caché de navegación, así que se suscribe una sola vez).
@@ -102,10 +110,13 @@ public sealed partial class ConfiguracionPage : Page
             UpdateDeveloperLogsSize();
             UpdateCacheSize();
             App.MainWindowInstance?.UpdateTrayStatus();
+            ApplyUpdatesTabBadge();
 
             // Chequeo inicial de actualizaciones al abrir la página (silencioso:
             // si falla la red, solo se apaga el estado de "Buscando...").
             _ = CheckForUpdatesAsync();
+
+            UpdateDevelopmentToolsVisibility();
         }
         finally
         {
@@ -406,7 +417,138 @@ public sealed partial class ConfiguracionPage : Page
             Feedback.Success(MinimizedFeedbackText, I18n.T("Se abrirá minimizado al iniciar sesión."));
     }
 
+    // ===================== Herramientas de desarrollo =====================
+
+    private void UpdateDevVersionInfo()
+    {
+        try
+        {
+            if (DevVersionInfoText == null) return;
+            var info = _updateInfo ?? App.MainWindowInstance?.LatestUpdate;
+            if (info == null) return;
+
+            var current = info.CurrentVersion ?? AppUpdateService.CurrentVersion();
+            var latest = info.LatestVersion ?? "desconocida";
+            var status = info.Status.ToString();
+
+            var ahead = false;
+            try { ahead = Version.Parse(current).CompareTo(Version.Parse(latest)) > 0; } catch { }
+
+            var relation = I18n.T(ahead ? "por delante" : "por detrás");
+            DevVersionInfoText.Text = string.Join(Environment.NewLine,
+                I18n.T("Versión instalada: {0}", current),
+                I18n.T("Última release en GitHub: {0}", latest),
+                I18n.T("Estado del chequeo: {0}", status),
+                I18n.T("La build de desarrollo está {0} de la release publicada.", relation));
+        }
+        catch { DevVersionInfoText.Text = I18n.T("No se pudo obtener la información de versión."); }
+    }
+
+    private void ResetWindowPosButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (App.MainWindowInstance != null)
+        {
+            // Llamar al método que ya existe en MainWindow para restablecer posición
+            App.MainWindowInstance.ResetWindowPosition();
+            Feedback.Success(DevFeedbackText, I18n.T("Posición de ventana restablecida."));
+        }
+    }
+
+    private void SimulateOnboardingButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Abre el simulador del asistente de primera configuración (tema → aviso
+        // gratis): se ve idéntico al onboarding real pero no persiste nada.
+        if (_onboardingSimulator != null)
+        {
+            _onboardingSimulator.Activate();
+            return;
+        }
+
+        _onboardingSimulator = new OnboardingSimulatorWindow();
+        _onboardingSimulator.Closed += (_, _) => _onboardingSimulator = null;
+        _onboardingSimulator.Activate();
+    }
+
+    private void UpdateDevelopmentToolsVisibility()
+    {
+        // La pestaña depende exclusivamente de la comparación contra la última
+        // release publicada, no del sufijo beta/alpha de la versión.
+        var update = _updateInfo ?? App.MainWindowInstance?.LatestUpdate;
+        bool isDevelopmentBuild = update?.Status == AppUpdateStatus.DevelopmentBuild;
+
+        DevelopmentTabItem.Visibility = isDevelopmentBuild ? Visibility.Visible : Visibility.Collapsed;
+        DevSection.Visibility = isDevelopmentBuild ? Visibility.Visible : Visibility.Collapsed;
+        DevTab.Visibility = isDevelopmentBuild && ReferenceEquals(ConfigTabs.SelectedItem, DevelopmentTabItem)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        // Si una comprobación posterior deja de considerar esta build como de
+        // desarrollo, no dejamos seleccionada una pestaña que acaba de ocultarse.
+        if (!isDevelopmentBuild && ReferenceEquals(ConfigTabs.SelectedItem, DevelopmentTabItem))
+        {
+            _selectedTabIndex = 0;
+            ConfigTabs.SelectedItem = ConfigTabs.Items.OfType<SelectorBarItem>().FirstOrDefault();
+        }
+
+        if (isDevelopmentBuild)
+            UpdateDevVersionInfo();
+
+        ApplyTabVisibility();
+    }
+
     // ===================== Actualizaciones de la app =====================
+
+    private void OnAppUpdateStateChanged()
+    {
+        ApplyUpdatesTabBadge();
+        UpdateDevelopmentToolsVisibility();
+    }
+
+    /// <summary>
+    /// Muestra u oculta el indicador de "actualización disponible" sobre la pestaña
+    /// interna "Actualizaciones" de Configuración. Se sincroniza con el estado global
+    /// del chequeo (MainWindow), de modo que queda visible incluso antes de abrir y
+    /// consultar la pestaña. SelectorBarItem no expone InfoBadge, así que se marca con
+    /// un ícono de descarga junto al texto.
+    /// </summary>
+    private void ApplyUpdatesTabBadge()
+    {
+        try
+        {
+            if (ConfigTabs == null) return;
+            var item = ConfigTabs.Items.OfType<SelectorBarItem>().Skip(1).FirstOrDefault(); // "Actualizaciones"
+            if (item == null) return;
+
+            bool show = (_updateInfo ?? App.MainWindowInstance?.LatestUpdate) is { Available: true };
+            if (show && item.Icon == null)
+            {
+                item.Icon = new FontIcon
+                {
+                    Glyph = "\uE896", // Descargar
+                    FontFamily = UiSymbolFontFamily(),
+                    FontSize = 12
+                };
+            }
+            else if (!show)
+            {
+                item.Icon = null;
+            }
+        }
+        catch
+        {
+            // El badge es decorativo: un fallo aquí nunca debe romper la página.
+        }
+    }
+
+    private static Microsoft.UI.Xaml.Media.FontFamily UiSymbolFontFamily()
+    {
+        if (Microsoft.UI.Xaml.Application.Current.Resources.TryGetValue("SymbolThemeFontFamily", out var r)
+            && r is Microsoft.UI.Xaml.Media.FontFamily ff)
+        {
+            return ff;
+        }
+        return new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons");
+    }
 
     private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
     {
@@ -430,11 +572,13 @@ public sealed partial class ConfiguracionPage : Page
             var info = await Task.Run(() => _appUpdateService.CheckForUpdatesAsync());
             _updateInfo = info;
             ApplyUpdateUi(info);
+            UpdateDevelopmentToolsVisibility();
         }
         catch (Exception ex)
         {
             _updateInfo = null;
             ApplyUpdateUi(new AppUpdateInfo { Status = AppUpdateStatus.Error, CurrentVersion = AppUpdateService.CurrentVersion() });
+            UpdateDevelopmentToolsVisibility();
             Feedback.Error(UpdateFeedbackText, I18n.T("Error de red o servicio no disponible: {0}", ex.Message));
         }
         finally
@@ -498,6 +642,7 @@ public sealed partial class ConfiguracionPage : Page
             info.ReleaseNotesUrl ?? $"https://github.com/{AppUpdateService.RepositoryFullName}/releases");
 
         InstallUpdateButton.Visibility = info.Available ? Visibility.Visible : Visibility.Collapsed;
+        ApplyUpdatesTabBadge();
     }
 
     private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
@@ -680,7 +825,7 @@ public sealed partial class ConfiguracionPage : Page
 
     /// <summary>
     /// Traduce las pestañas del SelectorBar interno (Inicio / Actualizaciones /
-    /// Caché). Los SelectorBarItem pueden no estar realizados en el árbol visual,
+    /// Caché / Navegación / Desarrollo). Los SelectorBarItem pueden no estar realizados en el árbol visual,
     /// así que se traducen por colección lógica (mismo patrón que NucleosPage).
     /// </summary>
     private void ApplyConfigTabsLanguage()
@@ -709,11 +854,15 @@ public sealed partial class ConfiguracionPage : Page
 
     private void ApplyTabVisibility()
     {
-        if (HomeTab == null || UpdatesTab == null || CacheTab == null || NavTab == null) return;
+        if (HomeTab == null || UpdatesTab == null || CacheTab == null || NavTab == null || DevTab == null) return;
         HomeTab.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdatesTab.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
         CacheTab.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
         NavTab.Visibility = _selectedTabIndex == 3 ? Visibility.Visible : Visibility.Collapsed;
+        DevTab.Visibility = _selectedTabIndex == ConfigTabs.Items.IndexOf(DevelopmentTabItem)
+            && DevelopmentTabItem.Visibility == Visibility.Visible
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         // Si la pestaña Actualizaciones todavía no tiene resultado (el chequeo de
         // OnLoaded sigue en curso), re-ejecutarlo para que muestre el estado apenas

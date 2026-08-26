@@ -211,6 +211,7 @@ public partial class App : Application
         {
             MainWindowInstance?.HideToTrayAtStartup();
         }
+
     }
 
     // ===== Chequeo de administrador al arrancar =====

@@ -16,11 +16,11 @@
 
     <!-- Secondary Button Style -->
     <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
-        <Setter Property="Background" Value="{ThemeResource ButtonBackgroundSecondary}"/>
-        <Setter Property="Foreground" Value="{ThemeResource ButtonForegroundSecondary}"/>
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
         <Setter Property="CornerRadius" Value="4"/>
         <Setter Property="Padding" Value="16,8"/>
-        <Setter Property="BorderBrush" Value="{ThemeResource ButtonBorderBrushSecondary}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="MinWidth" Value="88"/>
         <Setter Property="MinHeight" Value="36"/>

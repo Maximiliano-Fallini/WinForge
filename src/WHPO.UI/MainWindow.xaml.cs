@@ -1251,6 +1251,19 @@ public sealed partial class MainWindow : Window
 
     // ===== Actualizaciones de la app (navbar) =====
 
+    /// <summary>Último estado conocido del chequeo de actualizaciones (para compartir con otras vistas).</summary>
+    public AppUpdateInfo? LatestUpdate => _latestUpdate;
+
+    /// <summary>
+    /// Se dispara cada vez que cambia el estado del chequeo de actualizaciones o se
+    /// re-aplica el indicador (al completar el check y al cambiar de idioma). Lo usa
+    /// ConfiguracionPage para sincronizar su pestaña interna "Actualizaciones".
+    /// </summary>
+    public event Action? AppUpdateStateChanged;
+
+    /// <summary>True si la build instalada es más nueva que la última release publicada (build de desarrollo).</summary>
+    public bool IsDevelopmentBuild => _latestUpdate?.Status == AppUpdateStatus.DevelopmentBuild;
+
     /// <summary>
     /// Chequeo de actualizaciones al abrir la app. Asíncrono y silencioso: si hay
     /// versión más nueva en el repo muestra el ícono "Actualizar a vX" en el
@@ -1288,6 +1301,8 @@ public sealed partial class MainWindow : Window
         try
         {
             var info = _latestUpdate;
+            ApplyUpdateBadges();
+            AppUpdateStateChanged?.Invoke();
             if (info == null)
             {
                 UpdateButton.Visibility = Visibility.Collapsed;
@@ -1319,6 +1334,77 @@ public sealed partial class MainWindow : Window
         {
             _loggingService.LogWarning($"MainWindow: indicador de actualización: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Aplica el tipo de letra símbolo (Segoe Fluent Icons) a los íconos creados en
+    /// código. Se resuelve de los recursos del tema por si el recurso no está.
+    /// </summary>
+    private static Microsoft.UI.Xaml.Media.FontFamily SymbolFontFamily()
+    {
+        if (WinUIApp.Current.Resources.TryGetValue("SymbolThemeFontFamily", out var resource)
+            && resource is Microsoft.UI.Xaml.Media.FontFamily ff)
+        {
+            return ff;
+        }
+        return new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons");
+    }
+
+    /// <summary>
+    /// Muestra u oculta el badge de "actualización disponible". El ícono de
+    /// notificación aparece sobre "Configuración", la sección que lleva a la pestaña
+    /// de actualización de la app (Configuración > Actualizaciones).
+    /// </summary>
+    private void ApplyUpdateBadges()
+    {
+        try
+        {
+            var meta = _latestUpdate;
+            bool show = meta is { Available: true };
+            // Solo sobre "Configuración" (la pestaña lateral que lleva a la sección
+            // de actualización de la app). El ítem "actualizaciones" del navbar es
+            // "Windows Update" (políticas del sistema), no la actualización de la app.
+            ApplyNavBadge("configuracion", show);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: badges de actualización: {ex.Message}");
+        }
+    }
+
+    private void ApplyNavBadge(string tag, bool show)
+    {
+        var item = FindNavItem(tag);
+        if (item == null) return;
+
+        if (show && item.InfoBadge == null)
+        {
+            // Misma acción y estética que el botón de actualizar del navbar (glifo de
+            // descarga): indica que se puede actualizar la app desde ese punto.
+            item.InfoBadge = new InfoBadge
+            {
+                IconSource = new FontIconSource
+                {
+                    Glyph = "\uE896", // Descargar
+                    FontFamily = SymbolFontFamily(),
+                    FontSize = 10
+                }
+            };
+        }
+        else if (!show && item.InfoBadge != null)
+        {
+            item.InfoBadge = null;
+        }
+    }
+
+    private NavigationViewItem? FindNavItem(string tag)
+    {
+        foreach (var item in AllNavItems())
+        {
+            if (string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
+                return item;
+        }
+        return null;
     }
 
     private async void UpdateButton_Click(object sender, RoutedEventArgs e)

@@ -5,10 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- Versión de la app: la lee AppUpdateService para el chequeo de actualizaciones
-         (el MSI trae esta misma versión). Al publicar, llevar 0.1.4 junto con
+         (el MSI trae esta misma versión). Al publicar, llevar 0.1.5 junto con
          installer/Product.wxs y installer/build-installer.ps1 -->
-    <Version>0.1.4</Version>
-    <InformationalVersion>0.1.4-beta</InformationalVersion>
+    <Version>0.1.5</Version>
+    <InformationalVersion>0.1.5-beta</InformationalVersion>
     <!-- Habilitar COM para System.Management (WMI) -->
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>

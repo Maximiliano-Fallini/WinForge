@@ -50,10 +50,10 @@ public sealed class AppUpdateInfo
 /// como PROPERTY de msiexec (PROPERTY="valor"), porque los argumentos de msiexec
 /// con espacios rompen la línea de comandos de ProcessStartInfo de otra forma.
 ///
-/// La versión actual se lee del InformationalVersion del ensamblado (0.1.4-beta,
+/// La versión actual se lee del InformationalVersion del ensamblado (0.1.5-beta,
 /// definido por MSBuild a partir de &lt;Version&gt;). GitHub permite semver sin
-/// la etiqueta de pre-release como tag (v0.1.4): la etiqueta -beta se ignora en
-/// la comparación para que la app sepa que un v0.1.4 instalado ya incluye todo.
+/// la etiqueta de pre-release como tag (v0.1.5): la etiqueta -beta se ignora en
+/// la comparación para que la app sepa que un v0.1.5 instalado ya incluye todo.
 /// </summary>
 public sealed class AppUpdateService : IAppUpdateService
 {
@@ -82,7 +82,7 @@ public sealed class AppUpdateService : IAppUpdateService
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("WinForge-Updater/1.0");
     }
 
-    /// <summary>Versión de la app en ejecución ("0.1.4"): del ensamblado, sin pre-release.</summary>
+    /// <summary>Versión de la app en ejecución ("0.1.5"): del ensamblado, sin pre-release.</summary>
     public static string CurrentVersion()
     {
         try
@@ -95,7 +95,7 @@ public sealed class AppUpdateService : IAppUpdateService
         return "0.0.0";
     }
 
-    /// <summary>Quita sufijos de pre-release ("0.1.4-beta" -> "0.1.4") y hashes de build.</summary>
+    /// <summary>Quita sufijos de pre-release ("0.1.5-beta" -> "0.1.5") y hashes de build.</summary>
     private static string StripPrerelease(string version)
     {
         var s = version.Trim();

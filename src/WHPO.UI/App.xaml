@@ -57,6 +57,19 @@
                     <SolidColorBrush x:Key="AccentTintBrush" Color="#228AB4F8"/>
                     <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9A9C"/>
 
+                    <!-- Asistente de primera configuración: fondo con gradiente oscuro. -->
+                    <LinearGradientBrush x:Key="OnboardingBackdropBrush" StartPoint="0,0" EndPoint="1,1">
+                        <LinearGradientBrush.GradientStops>
+                            <GradientStop Offset="0.0" Color="#FF0C0C0E"/>
+                            <GradientStop Offset="0.55" Color="#FF141722"/>
+                            <GradientStop Offset="1.0" Color="#FF1A2233"/>
+                        </LinearGradientBrush.GradientStops>
+                    </LinearGradientBrush>
+
+                    <!-- Capa sobre el banner del asistente: oscurece en tema oscuro. -->
+                    <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#55000000"/>
+                    <SolidColorBrush x:Key="OnboardingSurfaceBrush" Color="#D9151517"/>
+
                     <!-- Chips de instrucciones del procesador (Sistema). -->
                     <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FF262626"/>
 
@@ -99,6 +112,19 @@
                     <SolidColorBrush x:Key="CardSelectedBrush" Color="#FFE2E9F6"/>
                     <SolidColorBrush x:Key="AccentTintBrush" Color="#223D7EDB"/>
                     <SolidColorBrush x:Key="MutedBrush" Color="#FF6E7683"/>
+
+                    <!-- Asistente de primera configuración: fondo con gradiente claro. -->
+                    <LinearGradientBrush x:Key="OnboardingBackdropBrush" StartPoint="0,0" EndPoint="1,1">
+                        <LinearGradientBrush.GradientStops>
+                            <GradientStop Offset="0.0" Color="#FFEFF2F7"/>
+                            <GradientStop Offset="0.55" Color="#FFE3EAF5"/>
+                            <GradientStop Offset="1.0" Color="#FFD6E2F5"/>
+                        </LinearGradientBrush.GradientStops>
+                    </LinearGradientBrush>
+
+                    <!-- Capa sobre el banner del asistente: aclara en tema claro. -->
+                    <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#73FFFFFF"/>
+                    <SolidColorBrush x:Key="OnboardingSurfaceBrush" Color="#E6FFFFFF"/>
 
                     <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FFEFF1F4"/>
 
