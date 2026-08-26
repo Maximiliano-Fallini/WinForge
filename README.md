@@ -85,12 +85,12 @@ Si te gusta WinForge, dejá una ⭐ para mostrar apoyo — es gratis y ayuda muc
 
 </div>
 
-## 🧱 Tecnología
+## ⚠️ Advertencia
 
-- **WinUI 3** + **Windows App SDK** (.NET 9) — interfaz nativa moderna
-- **WMI** — detección de procesos/juegos por eventos (cero polling)
-- **LibreHardwareMonitor** — sensores de temperatura
-- **WiX v7** — instalador MSI
+> [!IMPORTANT]
+> Esta aplicación **no cuenta con firma digital** y, por diseño, **modifica el sistema operativo ejecutándose como administrador** (limpieza de archivos, gestión de procesos, tweaks del sistema). Por estos motivos, algunos antivirus pueden detectarla como un **falso positivo**.
+>
+> Si confiás en el proyecto, agregá una excepción en tu antivirus. Podés verificar la integridad del instalador comparando el SHA-256 publicado en cada release.
 
 ---
 
