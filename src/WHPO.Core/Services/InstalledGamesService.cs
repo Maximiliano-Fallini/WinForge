@@ -122,6 +122,7 @@ public sealed class InstalledGamesService : IInstalledGamesService
         try { games.AddRange(ScanRiot()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Riot: {ex.Message}"); }
         try { games.AddRange(ScanBlacksmith()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Blacksmith: {ex.Message}"); }
         try { games.AddRange(ScanStandalone()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: independientes: {ex.Message}"); }
+        try { games.AddRange(ScanEmulators()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: emuladores: {ex.Message}"); }
         // Llave maestra: ningún launcher/instalador/anti-cheat puede ser un juego.
         // Si cualquier scanner resolviera un stub como exe (ej. BlacksmithBootstrap.exe
         // del launcher de Dark and Darker), se descarta acá, pase lo que pase.
@@ -1526,5 +1527,155 @@ public sealed class InstalledGamesService : IInstalledGamesService
             }
         }
         return games;
+    }
+
+    // ===================== Emuladores =====================
+
+    /// <summary>
+    /// Detecta emuladores instalados por rutas de registro y carpetas típicas.
+    /// Cada emulador aparece como una card en la biblioteca (lanzable con un
+    /// click), igual que BlueStacks: el exe es el proceso real que corre los
+    /// juegos, así las reglas de prioridad/afinidad y el badge "En ejecución"
+    /// funcionan igual que en los juegos de launchers.
+    /// Best-effort: si no está instalado, no aparece.
+    /// </summary>
+    private List<InstalledGame> ScanEmulators()
+    {
+        var games = new List<InstalledGame>();
+        var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string name, string? exePath, string installPath)
+        {
+            if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath)) return;
+            var full = Path.GetFullPath(exePath);
+            if (!found.Add(full)) return;
+            games.Add(new InstalledGame(name, Path.GetFileName(exePath), "Emulador", installPath));
+        }
+
+        string? FindInDirs(string exeName, params string[] dirs)
+        {
+            foreach (var d in dirs)
+            {
+                if (string.IsNullOrEmpty(d) || !Directory.Exists(d)) continue;
+                // Raíz
+                var f = Path.Combine(d, exeName);
+                if (File.Exists(f)) return f;
+                // Un nivel adentro (ej. subcarpeta bin, build, x64...)
+                try
+                {
+                    foreach (var sub in Directory.EnumerateDirectories(d))
+                    {
+                        var sf = Path.Combine(sub, exeName);
+                        if (File.Exists(sf)) return sf;
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var la = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        // RetroArch: portable (cualquier carpeta) o instalador. Se busca por
+        // registro (InstallDir) y rutas típicas. El exe es retroarch.exe.
+        var retroDir = GetRegValue(@"SOFTWARE\WOW6432Node\RetroArch", "InstallDir")
+            ?? GetRegValue(@"SOFTWARE\RetroArch", "InstallDir");
+        Add("RetroArch", FindInDirs("retroarch.exe",
+            retroDir ?? "", pf, pf86,
+            Path.Combine(pf, "RetroArch"), Path.Combine(pf86, "RetroArch"),
+            Path.Combine(la, "RetroArch")),
+            retroDir ?? "");
+
+        // Dolphin (GameCube/Wii): portable. Busca Dolphin.exe.
+        var dolphinDir = GetRegValue(@"SOFTWARE\Dolphin Emulator", "InstallPath")
+            ?? GetRegValue(@"SOFTWARE\WOW6432Node\Dolphin", "InstallPath");
+        Add("Dolphin", FindInDirs("Dolphin.exe",
+            dolphinDir ?? "", pf, pf86,
+            Path.Combine(pf, "Dolphin"), Path.Combine(pf86, "Dolphin"),
+            Path.Combine(la, "Dolphin Emulator")),
+            dolphinDir ?? "");
+
+        // PCSX2 (PS2): instalador o portable. Busca pcsx2-qtx.exe (Qt) o pcsx2.exe.
+        var pcsx2Dir = GetRegValue(@"SOFTWARE\PCSX2", "Install_Dir")
+            ?? GetRegValue(@"SOFTWARE\WOW6432Node\PCSX2", "Install_Dir");
+        var pcsx2Exe = FindInDirs("pcsx2-qtx.exe", pcsx2Dir ?? "", pf, pf86,
+            Path.Combine(pf, "PCSX2"), Path.Combine(pf86, "PCSX2"))
+            ?? FindInDirs("pcsx2.exe", pcsx2Dir ?? "", pf, pf86,
+            Path.Combine(pf, "PCSX2"), Path.Combine(pf86, "PCSX2"));
+        Add("PCSX2", pcsx2Exe, pcsx2Dir ?? "");
+
+        // RPCS3 (PS3): portable. Busca rpcs3.exe.
+        Add("RPCS3", FindInDirs("rpcs3.exe",
+            pf, pf86,
+            Path.Combine(pf, "RPCS3"), Path.Combine(pf86, "RPCS3"),
+            Path.Combine(la, "RPCS3")), "");
+
+        // Cemu (Wii U): portable. Busca Cemu.exe.
+        Add("Cemu", FindInDirs("Cemu.exe",
+            pf, pf86,
+            Path.Combine(pf, "Cemu"), Path.Combine(pf86, "Cemu"),
+            Path.Combine(la, "Cemu")), "");
+
+        // MAME: instalador o portable. Busca mame.exe o mame64.exe.
+        var mameExe = FindInDirs("mame64.exe", pf, pf86,
+            Path.Combine(pf, "MAME"), Path.Combine(pf86, "MAME"))
+            ?? FindInDirs("mame.exe", pf, pf86,
+            Path.Combine(pf, "MAME"), Path.Combine(pf86, "MAME"));
+        Add("MAME", mameExe, "");
+
+        // PPSSPP (PSP): instalador o portable. Busca PPSSPPWindows.exe.
+        Add("PPSSPP", FindInDirs("PPSSPPWindows.exe",
+            pf, pf86,
+            Path.Combine(pf, "PPSSPP"), Path.Combine(pf86, "PPSSPP"),
+            Path.Combine(la, "PPSSPP")), "");
+
+        // Ryujinx (Switch): portable. Busca Ryujinx.exe.
+        Add("Ryujinx", FindInDirs("Ryujinx.exe",
+            pf, pf86,
+            Path.Combine(pf, "Ryujinx"), Path.Combine(pf86, "Ryujinx"),
+            Path.Combine(la, "Ryujinx")), "");
+
+        // Lime3DS (3DS, sucesor de Citra): portable. Busca lime3ds.exe o citra.exe.
+        var limeExe = FindInDirs("lime3ds.exe", pf, pf86,
+            Path.Combine(pf, "Lime3DS"), Path.Combine(pf86, "Lime3DS"),
+            Path.Combine(la, "Lime3DS"))
+            ?? FindInDirs("citra-qt.exe", pf, pf86,
+            Path.Combine(pf, "Citra"), Path.Combine(pf86, "Citra"));
+        Add("Lime3DS", limeExe, "");
+
+        // Mesen (NES/SNES/etc.): portable. Busca Mesen.exe.
+        Add("Mesen", FindInDirs("Mesen.exe",
+            pf, pf86,
+            Path.Combine(pf, "Mesen"), Path.Combine(pf86, "Mesen"),
+            Path.Combine(la, "Mesen")), "");
+
+        // bsnes (SNES): portable. Busca bsnes.exe.
+        Add("bsnes", FindInDirs("bsnes.exe",
+            pf, pf86,
+            Path.Combine(pf, "bsnes"), Path.Combine(pf86, "bsnes"),
+            Path.Combine(la, "bsnes")), "");
+
+        // FBNeo (arcade): portable. Busca fbneo.exe o fbneo64.exe.
+        var fbneoExe = FindInDirs("fbneo.exe", pf, pf86,
+            Path.Combine(pf, "FBNeo"), Path.Combine(pf86, "FBNeo"),
+            Path.Combine(la, "FBNeo"))
+            ?? FindInDirs("fbneo64.exe", pf, pf86,
+            Path.Combine(pf, "FBNeo"), Path.Combine(pf86, "FBNeo"));
+        Add("FBNeo", fbneoExe, "");
+
+        return games;
+    }
+
+    /// <summary>Lee un valor string del registro HKLM\{keyPath}\{valueName} (null si no existe).</summary>
+    private static string? GetRegValue(string keyPath, string valueName)
+    {
+        try
+        {
+            using var reg = Registry.LocalMachine.OpenSubKey(keyPath);
+            return reg?.GetValue(valueName) as string;
+        }
+        catch { return null; }
     }
 }
