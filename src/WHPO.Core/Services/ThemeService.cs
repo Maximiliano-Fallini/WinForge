@@ -64,12 +64,6 @@ public class ThemeService : IThemeService
         _logger.LogInfo($"Tema cambiado a: {theme}");
     }
 
-    public void ToggleTheme()
-    {
-        var newTheme = _currentTheme == AppTheme.Dark ? AppTheme.Light : AppTheme.Dark;
-        SetTheme(newTheme);
-    }
-
     /// <summary>
     /// Inicializa el tema al arrancar la aplicación.
     /// </summary>
