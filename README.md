@@ -33,16 +33,21 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 
 ### 🕹️ Biblioteca de juegos con reglas por juego
 - Detecta juegos instalados desde **Steam, Epic, Battle.net, GOG, Xbox, Riot** y más.
+- **Detección de emuladores**: RetroArch, Dolphin, PCSX2, RPCS3, Cemu, MAME, PPSSPP, Ryujinx, Lime3DS, Mesen, bsnes y FBNeo — cada uno aparece como una card lanzable en la biblioteca.
 - **Reglas por juego**: prioridad de CPU, afinidad de núcleos, prioridad de GPU, prioridad de E/S y plan de energía — con alcance *"Actual"* (solo la apertura actual) o *"Siempre"* (persistente).
-- **Detección inteligente**: eventos WMI (cero polling) + detector de ventana fullscreen en primer plano para juegos fuera de la biblioteca (emuladores, itch.io, DRM-free…).
+- **Detección inteligente**: eventos WMI (cero polling) + detector de ventana fullscreen en primer plano para juegos fuera de la biblioteca (itch.io, DRM-free…).
 - **Lanzamiento desde la bandeja**: click derecho en el ícono → elegí un favorito y el juego arranca con la lógica correcta para cada launcher.
 
 ### 📊 Monitoreo
 - CPU, memoria, red, sensores de temperatura (CPU/GPU), núcleos y uso en vivo.
 - **Overlay de métricas en el juego** (FPS, CPU, GPU, RAM, temperaturas) con atajos de teclado.
 
+### 🎨 Temas
+- **5 temas**: Usar sistema, Oscuro, Claro, **Rosa/Blanco** y **Negro/Azul** — se aplican al instante sin reiniciar, con acento reactivo en switches, checkboxes y botones.
+
 ### 🧰 Herramientas
 - **Limpiar memoria caché en RAM** (lista standby) desde la app o la bandeja.
+- **Limpiador de caché** de navegadores con soporte para layout Chromium moderno (Opera GX, Edge, Chrome…).
 - **Planes de energía**, tweaks y debloat de Windows, reparación del sistema.
 - **Teclado**: macros, reasignación y **autoclicker**.
 - **Temporizador de apagado**, panel de ventanas, estabilidad y más.
@@ -55,15 +60,15 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.2.0/WinForge-0.2.0.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.2.0_MSI_~87_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.2.0 MSI"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.2.1/WinForge-0.2.1.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.2.1_MSI_~87_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.2.1 MSI"/>
   </a>
   <br/>
-  <sub>(29/8/2026 UTC)</sub>
+  <sub>(30/8/2026 UTC)</sub>
   <br/>
   <br/>
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.2.0">
-    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.2.0_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.2.1">
+    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.2.1_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
   </a>
   &nbsp;
   <img src="https://img.shields.io/badge/self_contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self contained"/>
