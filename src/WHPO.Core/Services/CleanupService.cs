@@ -337,6 +337,11 @@ public sealed class CleanupService : ICleanupService
             Id = "opera", DisplayName = "Opera", ProcessName = "opera", Accent = "#FF1B2D",
             Profiles = () =>
             {
+                // Opera moderno (GX 2024+) usa layout CHROMIUM: los perfiles viven en
+                // subcarpetas (Roaming\...\Opera GX Stable\Default con Cookies/History
+                // y Local\...\Default con la Cache). Opera viejo mantenía los datos
+                // directo en la raíz. ChromiumProfiles cubre ambos: enumera subcarpetas
+                // con datos y agrega la raíz si ella misma tiene Cookies/Cache.
                 var list = new List<string>();
                 var roots = new[]
                 {
@@ -347,9 +352,9 @@ public sealed class CleanupService : ICleanupService
                 };
                 foreach (var root in roots)
                 {
-                    if (Directory.Exists(root) && HasBrowserData(root) &&
-                        !list.Contains(root, StringComparer.OrdinalIgnoreCase))
-                        list.Add(root);
+                    foreach (var profile in ChromiumProfiles(root))
+                        if (!list.Contains(profile, StringComparer.OrdinalIgnoreCase))
+                            list.Add(profile);
                 }
                 return list;
             },
@@ -357,12 +362,23 @@ public sealed class CleanupService : ICleanupService
                 Path.Combine(LocalAppData, "Programs", "Opera", "opera.exe"),
                 Path.Combine(ProgFiles, "Opera", "opera.exe")),
             CachePaths = p =>
-            [
-                Path.Combine(p, "Cache"),
-                Path.Combine(p, "Code Cache"),
-                Path.Combine(p, "GPUCache"),
-                Path.Combine(p, "Media Cache")
-            ],
+            {
+                // Cachés estándar de Chromium dentro del perfil + cachés propias de
+                // Opera a nivel raíz (hermanas de Default en el layout nuevo).
+                var paths = new List<string>(ChromiumCachePaths(p));
+                var root = Path.GetFileName(p).Equals("Default", StringComparison.OrdinalIgnoreCase)
+                    ? Path.GetDirectoryName(p)
+                    : p;
+                if (root != null)
+                {
+                    paths.Add(Path.Combine(root, "GPUPersistentCache"));
+                    paths.Add(Path.Combine(root, "GrShaderCache"));
+                    paths.Add(Path.Combine(root, "ShaderCache"));
+                }
+                // Caché de sistema propia del layout nuevo de Opera GX.
+                paths.Add(Path.Combine(p, "System Cache"));
+                return paths;
+            },
             CookieFiles = ["Network\\Cookies", "Cookies"],
             HistoryFiles = ["History"]
         },

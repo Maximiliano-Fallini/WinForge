@@ -1436,6 +1436,39 @@ public sealed partial class LimpiezaPage : Page
     }
 
     /// <summary>
+    /// Avance de fase como consecuencia de completar una acción (limpieza,
+    /// cierre de apps o desactivación de inicio). Espera un momento para que
+    /// el usuario vea el mensaje de éxito, pasa a la siguiente fase que tenga
+    /// contenido (salteando fases vacías) y, si no queda ninguna, vuelve al
+    /// panel de inicio del Chequeo. Nunca se invoca sin haber ejecutado la
+    /// acción de la fase.
+    /// </summary>
+    private async void ScheduleChequeoPhaseAdvance()
+    {
+        await Task.Delay(1600);
+        // Si el usuario volvió al inicio mientras esperábamos, no avanzar.
+        if (ChequeoResultsPanel.Visibility != Visibility.Visible) return;
+
+        for (int next = _chequeoPhase + 1; next <= 2; next++)
+        {
+            bool hasContent = next switch
+            {
+                1 => ChequeoAppsSection.Visibility == Visibility.Visible,
+                2 => ChequeoStartupSection.Visibility == Visibility.Visible,
+                _ => false
+            };
+            if (hasContent)
+            {
+                _chequeoPhase = next;
+                UpdateChequeoPhaseView();
+                return;
+            }
+        }
+        // Última fase completada: volver al inicio para un análisis nuevo.
+        ResetChequeoToStart();
+    }
+
+    /// <summary>
     /// "Saltar": avanza a la siguiente fase. En la última (fase 3) vuelve a la
     /// vista inicial del Chequeo (botón Analizar + texto), para arrancar un
     /// análisis nuevo desde cero.
@@ -1550,6 +1583,8 @@ public sealed partial class LimpiezaPage : Page
         }
         UpdateChequeoAppsButton();
         Feedback.Success(ChequeoFeedbackText, I18n.T("Aplicaciones cerradas: {0}.", closed));
+        _logging.LogInfo($"[Chequeo] Fase 2: apps cerradas={closed} de {selected.Count} solicitadas.");
+        if (closed > 0) ScheduleChequeoPhaseAdvance();
     }
 
     /// <summary>FASE 3 · Deshabilita las apps de inicio tildadas (Toggle con enable=false).</summary>
@@ -1581,6 +1616,8 @@ public sealed partial class LimpiezaPage : Page
         }
         UpdateChequeoStartupButton();
         Feedback.Success(ChequeoFeedbackText, I18n.T("Aplicaciones de inicio desactivadas: {0}.", disabled));
+        _logging.LogInfo($"[Chequeo] Fase 3: apps de inicio desactivadas={disabled} de {selected.Count} solicitadas.");
+        if (disabled > 0) ScheduleChequeoPhaseAdvance();
     }
 
     /// <summary>
@@ -1592,11 +1629,14 @@ public sealed partial class LimpiezaPage : Page
         if (checkedItems.Count == 0) return;
 
         if (XamlRoot == null) return;
+        var dialogContent = I18n.T("Se limpiarán {0} elementos seleccionados. Esta acción no se puede deshacer.", checkedItems.Count);
+        if (checkedItems.Any(c => c.SubItem == BrowserSubItem.Cookies))
+            dialogContent += "\n" + I18n.T("Incluiste Cookies: se cerrarán las sesiones iniciadas en los sitios web.");
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = I18n.T("Limpiar elementos"),
-            Content = I18n.T("Se limpiarán {0} elementos seleccionados. Esta acción no se puede deshacer.", checkedItems.Count),
+            Content = dialogContent,
             PrimaryButtonText = I18n.T("Limpiar"),
             CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Close
@@ -1604,6 +1644,7 @@ public sealed partial class LimpiezaPage : Page
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
         SetBusy(false);
+        _logging.LogInfo($"[Chequeo] Limpieza iniciada: {checkedItems.Count} elemento(s) seleccionado(s).");
         Feedback.Running(ChequeoFeedbackText, "Limpiando...", persistent: true);
         var dq = DispatcherQueue;
         long totalFreed = 0;
@@ -1643,6 +1684,8 @@ public sealed partial class LimpiezaPage : Page
                 _chequeoTotalBytes = 0;
                 UpdateChequeoPhaseView();
                 Feedback.Success(ChequeoFeedbackText, I18n.T("Limpieza completada: {0} liberados.", FormatBytes(totalFreed)));
+                _logging.LogInfo($"[Chequeo] Limpieza completada: {FormatBytes(totalFreed)} liberados.");
+                ScheduleChequeoPhaseAdvance();
             });
         }
         catch (Exception ex)
@@ -1784,7 +1827,44 @@ public sealed partial class LimpiezaPage : Page
                     ColumnSpacing = 12
                 };
                 var subItem = (BrowserSubItem)i;
-                var cb = new CheckBox { Content = I18n.T(BrowserItemLabels[i]), MinHeight = 26, IsChecked = true };
+
+                // Cookies: borra las SESIONES INICIADAS. Se distingue con un aviso
+                // al lado y viene DESMARCADA por defecto: limpiar la caché no
+                // debería sacrificar los logins sin que el usuario lo decida.
+                CheckBox cb;
+                if (subItem == BrowserSubItem.Cookies)
+                {
+                    var labelPanel = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 6,
+                        VerticalAlignment = VerticalAlignment.Center
+                    };
+                    labelPanel.Children.Add(new TextBlock
+                    {
+                        Text = I18n.T(BrowserItemLabels[i]),
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                    labelPanel.Children.Add(new FontIcon
+                    {
+                        Glyph = "\uE7BA",
+                        FontSize = 12,
+                        Foreground = Feedback.WarningBrush,
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                    labelPanel.Children.Add(new TextBlock
+                    {
+                        Text = I18n.T("Cierra las sesiones iniciadas"),
+                        FontSize = 11,
+                        Foreground = Feedback.WarningBrush,
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                    cb = new CheckBox { Content = labelPanel, MinHeight = 26, IsChecked = false };
+                }
+                else
+                {
+                    cb = new CheckBox { Content = I18n.T(BrowserItemLabels[i]), MinHeight = 26, IsChecked = true };
+                }
                 var size = new TextBlock
                 {
                     Text = "…",

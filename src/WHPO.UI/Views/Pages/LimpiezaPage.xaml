@@ -52,16 +52,22 @@
                         Visibility="Collapsed"
                         Background="{ThemeResource CardBackgroundBrush}"
                         BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
-                        CornerRadius="14" Padding="20,18"
+                        CornerRadius="14" Padding="22,18"
                         Margin="24,16,24,0">
-                        <StackPanel Spacing="14">
+                        <StackPanel Spacing="16">
 
-                            <!-- Total encontrado con barra de acento + feedback debajo -->
-                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-                                <Border Width="4" Background="{ThemeResource AccentBrush}" CornerRadius="2"
-                                        HorizontalAlignment="Center" VerticalAlignment="Stretch"/>
-                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                                    <TextBlock x:Name="ChequeoTotalsText" Text="—" FontSize="22" FontWeight="Bold"
+                            <!-- Total encontrado: chip de icono + etiqueta + valor grande -->
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
+                                <Border Width="44" Height="44" CornerRadius="12"
+                                        Background="{ThemeResource AccentTintBrush}"
+                                        VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE9D9;" FontSize="20" Foreground="{ThemeResource AccentBrush}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Total encontrado" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                    <TextBlock x:Name="ChequeoTotalsText" Text="—" FontSize="21" FontWeight="Bold"
                                                TextWrapping="Wrap"/>
                                     <TextBlock x:Name="ChequeoFeedbackText" Text="" FontSize="12"
                                                Foreground="{ThemeResource SecondaryTextBrush}"
@@ -121,25 +127,36 @@
                                 Grid.Row="1"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center"
-                                Spacing="12"
                                 Margin="24,0">
-                        <TextBlock Text="Hacé clic en Analizar para buscar datos basura en el sistema y los navegadores."
-                                   FontSize="13"
-                                   Foreground="{ThemeResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap"
-                                   TextAlignment="Center"
-                                   MaxWidth="400"/>
-                        <Button x:Name="ChequeoAnalyzeButton"
-                                Content="Analizar"
-                                Click="ChequeoAnalyzeButton_Click"
-                                Style="{StaticResource AccentButtonStyle}"
-                                HorizontalAlignment="Center"
-                                CornerRadius="8"
-                                Padding="24,12"
-                                FontSize="15"
-                                FontWeight="SemiBold"
-                                MinWidth="160"
-                                MinHeight="44"/>
+                        <Border Background="{ThemeResource CardBackgroundBrush}"
+                                BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
+                                CornerRadius="14" Padding="30,26"
+                                MaxWidth="440" HorizontalAlignment="Center">
+                            <StackPanel Spacing="14">
+                                <Border Width="52" Height="52" CornerRadius="14"
+                                        Background="{ThemeResource AccentTintBrush}"
+                                        HorizontalAlignment="Center">
+                                    <FontIcon Glyph="&#xE74D;" FontSize="24" Foreground="{ThemeResource AccentBrush}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock Text="Hacé clic en Analizar para buscar datos basura en el sistema y los navegadores."
+                                           FontSize="13"
+                                           Foreground="{ThemeResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center"/>
+                                <Button x:Name="ChequeoAnalyzeButton"
+                                        Content="Analizar"
+                                        Click="ChequeoAnalyzeButton_Click"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        HorizontalAlignment="Center"
+                                        CornerRadius="8"
+                                        Padding="24,12"
+                                        FontSize="15"
+                                        FontWeight="SemiBold"
+                                        MinWidth="160"
+                                        MinHeight="44"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
 
                     <!-- Progreso del escaneo -->
@@ -182,14 +199,17 @@
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
                                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                        <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource AccentTintBrush}"
+                                        <Border Width="30" Height="30" CornerRadius="9" Background="{ThemeResource AccentTintBrush}"
                                                 VerticalAlignment="Center">
-                                            <FontIcon Glyph="&#xE774;" FontSize="12" Foreground="{ThemeResource AccentBrush}"
+                                            <FontIcon Glyph="&#xE774;" FontSize="14" Foreground="{ThemeResource AccentBrush}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
-                                        <TextBlock Grid.Column="1" Text="Navegadores" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="ChequeoBrowserTotal" Grid.Column="2" Text="" FontSize="12"
-                                                   Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="Navegadores" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="2" Background="{ThemeResource AccentTintBrush}" CornerRadius="10" Padding="10,3"
+                                                VerticalAlignment="Center">
+                                            <TextBlock x:Name="ChequeoBrowserTotal" Text="" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </Border>
                                     </Grid>
                                     <StackPanel x:Name="ChequeoBrowsersHost" Spacing="8"/>
                                 </StackPanel>
@@ -201,14 +221,17 @@
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
                                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                        <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource AccentTintBrush}"
+                                        <Border Width="30" Height="30" CornerRadius="9" Background="{ThemeResource AccentTintBrush}"
                                                 VerticalAlignment="Center">
-                                            <FontIcon Glyph="&#xE7C3;" FontSize="12" Foreground="{ThemeResource AccentBrush}"
+                                            <FontIcon Glyph="&#xE7C3;" FontSize="14" Foreground="{ThemeResource AccentBrush}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
-                                        <TextBlock Grid.Column="1" Text="Archivos temporales del sistema" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="ChequeoSystemTotal" Grid.Column="2" Text="" FontSize="12"
-                                                   Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="Archivos temporales del sistema" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="2" Background="{ThemeResource AccentTintBrush}" CornerRadius="10" Padding="10,3"
+                                                VerticalAlignment="Center">
+                                            <TextBlock x:Name="ChequeoSystemTotal" Text="" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </Border>
                                     </Grid>
                                     <StackPanel x:Name="ChequeoSystemHost" Spacing="6"/>
                                 </StackPanel>
@@ -220,14 +243,17 @@
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
                                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                        <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource AccentTintBrush}"
+                                        <Border Width="30" Height="30" CornerRadius="9" Background="{ThemeResource AccentTintBrush}"
                                                 VerticalAlignment="Center">
-                                            <FontIcon Glyph="&#xE7B5;" FontSize="12" Foreground="{ThemeResource AccentBrush}"
+                                            <FontIcon Glyph="&#xE7B5;" FontSize="14" Foreground="{ThemeResource AccentBrush}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
-                                        <TextBlock Grid.Column="1" Text="Memoria caché de aplicaciones" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="ChequeoAppCacheTotal" Grid.Column="2" Text="" FontSize="12"
-                                                   Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="Memoria caché de aplicaciones" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="2" Background="{ThemeResource AccentTintBrush}" CornerRadius="10" Padding="10,3"
+                                                VerticalAlignment="Center">
+                                            <TextBlock x:Name="ChequeoAppCacheTotal" Text="" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </Border>
                                     </Grid>
                                     <StackPanel x:Name="ChequeoAppCacheHost" Spacing="6"/>
                                 </StackPanel>
@@ -239,14 +265,17 @@
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
                                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                        <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource AccentTintBrush}"
+                                        <Border Width="30" Height="30" CornerRadius="9" Background="{ThemeResource AccentTintBrush}"
                                                 VerticalAlignment="Center">
-                                            <FontIcon Glyph="&#xE74D;" FontSize="12" Foreground="{ThemeResource AccentBrush}"
+                                            <FontIcon Glyph="&#xE74D;" FontSize="14" Foreground="{ThemeResource AccentBrush}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                         </Border>
-                                        <TextBlock Grid.Column="1" Text="Papelera de reciclaje" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                        <TextBlock x:Name="ChequeoRecycleTotal" Grid.Column="2" Text="" FontSize="12"
-                                                   Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1" Text="Papelera de reciclaje" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="2" Background="{ThemeResource AccentTintBrush}" CornerRadius="10" Padding="10,3"
+                                                VerticalAlignment="Center">
+                                            <TextBlock x:Name="ChequeoRecycleTotal" Text="" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </Border>
                                     </Grid>
                                     <StackPanel x:Name="ChequeoRecycleHost" Spacing="6"/>
                                 </StackPanel>
@@ -260,14 +289,17 @@
                                 <Border Style="{StaticResource AnalysisCardStyle}">
                                     <StackPanel Spacing="8">
                                         <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                            <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource AccentTintBrush}"
+                                            <Border Width="30" Height="30" CornerRadius="9" Background="{ThemeResource AccentTintBrush}"
                                                     VerticalAlignment="Center">
-                                                <FontIcon Glyph="&#xE770;" FontSize="12" Foreground="{ThemeResource AccentBrush}"
+                                                <FontIcon Glyph="&#xE770;" FontSize="14" Foreground="{ThemeResource AccentBrush}"
                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Border>
-                                            <TextBlock Grid.Column="1" Text="Aplicaciones en segundo plano" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                            <TextBlock x:Name="ChequeoAppsTotal" Grid.Column="2" Text="" FontSize="12"
-                                                       Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Aplicaciones en segundo plano" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <Border Grid.Column="2" Background="{ThemeResource AccentTintBrush}" CornerRadius="10" Padding="10,3"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock x:Name="ChequeoAppsTotal" Text="" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                            </Border>
                                         </Grid>
                                         <TextBlock Text="Marcá las aplicaciones que querés cerrar para liberar memoria."
                                                    FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
@@ -283,14 +315,17 @@
                                 <Border Style="{StaticResource AnalysisCardStyle}">
                                     <StackPanel Spacing="8">
                                         <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
-                                            <Border Width="26" Height="26" CornerRadius="8" Background="{ThemeResource AccentTintBrush}"
+                                            <Border Width="30" Height="30" CornerRadius="9" Background="{ThemeResource AccentTintBrush}"
                                                     VerticalAlignment="Center">
-                                                <FontIcon Glyph="&#xE823;" FontSize="12" Foreground="{ThemeResource AccentBrush}"
+                                                <FontIcon Glyph="&#xE823;" FontSize="14" Foreground="{ThemeResource AccentBrush}"
                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Border>
-                                            <TextBlock Grid.Column="1" Text="Aplicaciones de inicio" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                            <TextBlock x:Name="ChequeoStartupTotal" Grid.Column="2" Text="" FontSize="12"
-                                                       Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Text="Aplicaciones de inicio" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <Border Grid.Column="2" Background="{ThemeResource AccentTintBrush}" CornerRadius="10" Padding="10,3"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock x:Name="ChequeoStartupTotal" Text="" FontSize="12" FontWeight="SemiBold"
+                                                           Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                            </Border>
                                         </Grid>
                                         <TextBlock Text="Marcá las aplicaciones que querés desactivar del inicio de Windows."
                                                    FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
