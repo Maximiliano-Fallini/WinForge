@@ -55,8 +55,8 @@ public class ThemeApplier : IThemeApplier
             // Los {ThemeResource} SOLO se re-evalúan con un cambio de tema efectivo.
             // Las transiciones que involucran paletas propias pueden dejar el tema
             // efectivo igual (Rosa/Blanco → Claro, o Sistema → Rosa/Blanco cuando el
-            // sistema ya está en claro): alternamos y volvemos EN EL MISMO TICK para
-            // forzar la re-evaluación de los pinceles (no hay frame intermedio).
+            // sistema ya está en claro): alternamos y volvemos en el mismo tick para
+            // forzar la re-evaluación de los pinceles de la ventana.
             bool paletteSwitched = ThemePalettes.HasOwnPalette(theme)
                 || (previousTheme is { } prev && ThemePalettes.HasOwnPalette(prev));
             if (paletteSwitched && rootElement.RequestedTheme == elementTheme)

@@ -1782,6 +1782,28 @@ public sealed partial class MainWindow : Window
             _ => App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark
         };
         ApplyTitleBarColors(appWindow, dark);
+
+        // El NavigationView cachea el {ThemeResource} de su Background: al cambiar
+        // entre temas de la misma base (Negro/Azul → Oscuro, ambos Dark) el
+        // diccionario se actualiza pero el control no repinta. Setear el
+        // Background directamente con el color hardcodeado del tema (igual que
+        // ApplyTitleBarColors hace con la title bar) es lo único que funciona
+        // de forma confiable en WinUI 3.
+        try
+        {
+            var t = themeService.CurrentTheme;
+            var sysDark = t == AppTheme.SystemDefault
+                && App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark;
+            var navColor = (dark, t) switch
+            {
+                (_, AppTheme.BlueBlack) => Windows.UI.Color.FromArgb(255, 0x0E, 0x15, 0x24),
+                (_, AppTheme.PinkLight) => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF),
+                (true, _) => Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17),  // Oscuro / Sistema oscuro
+                (false, _) => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF) // Claro / Sistema claro
+            };
+            NavigationViewControl.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
+        }
+        catch { /* arranque temprano */ }
     }
 
     /// <summary>

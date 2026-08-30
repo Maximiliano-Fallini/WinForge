@@ -106,7 +106,18 @@ public static class ThemePalettes
     {
         if (dict == null) return;
         foreach (var (key, value) in snapshot)
-            dict[key] = value;
+        {
+            // Reescribir la MISMA referencia no invalida los {ThemeResource}
+            // que la consumen (WinUI ve que el valor del diccionario no cambió).
+            // Crear una NUEVA instancia del pincel con el color original fuerza
+            // a los controles (NavigationView, cards) a re-resolver.
+            if (value is SolidColorBrush sb)
+                dict[key] = new SolidColorBrush(sb.Color);
+            else if (value is Windows.UI.Color c)
+                dict[key] = c;
+            else
+                dict[key] = value;
+        }
     }
 
     private static Dictionary<string, object> Capture(ResourceDictionary? dict, IEnumerable<string> keys)

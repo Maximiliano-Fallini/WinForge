@@ -67,6 +67,7 @@ public sealed partial class ConfiguracionPage : Page
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
 
         Loaded += OnLoaded;
+        _themeService.ThemeChanged += OnThemeChanged;
 
         // La página usa caché de navegación: estas suscripciones se hacen una sola vez.
         // Sincroniza el indicador de la pestaña interna "Actualizaciones" con el estado
@@ -814,6 +815,34 @@ public sealed partial class ConfiguracionPage : Page
         UpdateNavMenuSummary();
         ApplyThemeOptionsLanguage();
         UpdateDeveloperLogsSize();
+    }
+
+    /// <summary>
+    /// Repinta el navbar interno (ConfigNavBar) al cambiar de tema. El Border
+    /// usa {ThemeResource NavigationViewDefaultPaneBackground}, que WinUI cachea:
+    /// al cambiar entre temas de la misma base (Negro/Azul → Oscuro) el
+    /// diccionario se actualiza pero el control no repinta. Setear el
+    /// Background directamente con el color del tema (igual que MainWindow hace
+    /// con el navbar principal) es lo único que funciona de forma confiable.
+    /// </summary>
+    private void OnThemeChanged(object? sender, AppTheme theme)
+    {
+        try
+        {
+            var sysDark = theme == AppTheme.SystemDefault
+                && App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark;
+            var dark = theme == AppTheme.Dark || theme == AppTheme.BlueBlack || sysDark;
+            var navColor = theme switch
+            {
+                AppTheme.BlueBlack => Windows.UI.Color.FromArgb(255, 0x0E, 0x15, 0x24),
+                AppTheme.PinkLight => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF),
+                _ => dark
+                    ? Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17)
+                    : Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF)
+            };
+            ConfigNavBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
+        }
+        catch { /* arranque temprano */ }
     }
 
     /// <summary>

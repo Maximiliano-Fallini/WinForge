@@ -6,7 +6,7 @@
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
         <!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación / Desarrollo ====== -->
-        <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+        <Border x:Name="ConfigNavBar" Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="ConfigTabs"
                          Margin="20,10,20,10"
                          Background="Transparent"
