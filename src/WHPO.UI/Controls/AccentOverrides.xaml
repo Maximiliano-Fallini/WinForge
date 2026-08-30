@@ -69,4 +69,10 @@
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
+    <!-- Separador del navbar (entre el menú principal y el footer de
+         Configuración): el default de WinUI es 0,3,0,4 (asimétrico).
+         Lo hacemos simétrico 0,4,0,4. Theme-independent: va al nivel raíz
+         del diccionario y gana por orden de merge en App.xaml. -->
+    <Thickness x:Key="NavigationViewItemSeparatorMargin">0,4,0,4</Thickness>
+
 </ResourceDictionary>

@@ -74,10 +74,8 @@ public sealed record BrowserCleanupInfo(
 );
 
 /// <summary>
-/// Servicio de limpieza del dispositivo (estilo CCleaner): analiza y borra
-/// archivos basura del sistema, aplicaciones y navegadores usando las mismas
-/// rutas canónicas que usa CCleaner (TEMP, SoftwareDistribution, supresión de
-/// cachés de navegadores, WER, minidumps, thumbcaches, MRUs del registro, etc.).
+/// Servicio de limpieza del dispositivo: analiza y borra archivos basura del
+/// sistema, aplicaciones y navegadores usando rutas seguras y conocidas.
 /// </summary>
 public interface ICleanupService
 {

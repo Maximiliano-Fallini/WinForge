@@ -8,7 +8,7 @@
         <!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación / Desarrollo ====== -->
         <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="ConfigTabs"
-                         Margin="20,10,20,4"
+                         Margin="20,10,20,10"
                          Background="Transparent"
                          SelectionChanged="ConfigTabs_SelectionChanged">
                 <SelectorBarItem Text="Inicio" IsSelected="True"/>

@@ -428,18 +428,37 @@ public sealed partial class ConfiguracionPage : Page
             if (info == null) return;
 
             var current = info.CurrentVersion ?? AppUpdateService.CurrentVersion();
-            var latest = info.LatestVersion ?? "desconocida";
-            var status = info.Status.ToString();
 
-            var ahead = false;
-            try { ahead = Version.Parse(current).CompareTo(Version.Parse(latest)) > 0; } catch { }
+            // Estado legible (no el nombre crudo del enum): si no se pudo contactar
+            // a GitHub, el motivo típico es no tener internet y eso es lo que se
+            // muestra — no un "Error" genérico.
+            var status = info.Status switch
+            {
+                AppUpdateStatus.NoConnection => I18n.T("Falta de conexión a internet"),
+                AppUpdateStatus.UpToDate => I18n.T("WinForge está actualizado."),
+                AppUpdateStatus.UpdateAvailable => I18n.T("¡Hay una versión nueva disponible!"),
+                AppUpdateStatus.DevelopmentBuild => I18n.T("Versión en desarrollo"),
+                _ => I18n.T("No se pudo comprobar actualizaciones.")
+            };
 
-            var relation = I18n.T(ahead ? "por delante" : "por detrás");
-            DevVersionInfoText.Text = string.Join(Environment.NewLine,
+            var lines = new List<string>
+            {
                 I18n.T("Versión instalada: {0}", current),
-                I18n.T("Última release en GitHub: {0}", latest),
-                I18n.T("Estado del chequeo: {0}", status),
-                I18n.T("La build de desarrollo está {0} de la release publicada.", relation));
+                I18n.T("Estado del chequeo: {0}", status)
+            };
+            if (!string.IsNullOrEmpty(info.LatestVersion))
+            {
+                // Solo si el chequeo detectó la release: si no, no hay contra qué
+                // comparar y las líneas "última release"/"por delante/por detrás"
+                // serían inventadas.
+                var latest = info.LatestVersion;
+                var ahead = false;
+                try { ahead = Version.Parse(current).CompareTo(Version.Parse(latest!)) > 0; } catch { }
+                var relation = I18n.T(ahead ? "por delante" : "por detrás");
+                lines.Add(I18n.T("Última release en GitHub: {0}", latest));
+                lines.Add(I18n.T("La build de desarrollo está {0} de la release publicada.", relation));
+            }
+            DevVersionInfoText.Text = string.Join(Environment.NewLine, lines);
         }
         catch { DevVersionInfoText.Text = I18n.T("No se pudo obtener la información de versión."); }
     }
@@ -620,6 +639,12 @@ public sealed partial class ConfiguracionPage : Page
                 status = I18n.T("Versión en desarrollo");
                 detail = I18n.T("Esta build va adelantada: la última release publicada es la v{0}.",
                     info.LatestVersion ?? info.CurrentVersion);
+                break;
+            case AppUpdateStatus.NoConnection:
+                glyph = "\uE946"; // Información
+                brush = ThemeBrushes.Get("MutedBrush");
+                status = I18n.T("Falta de conexión a internet");
+                detail = I18n.T("No se pudo detectar la última versión publicada. Revisá tu conexión a internet e intentá de nuevo.");
                 break;
             default: // Error
                 glyph = "\uE946"; // Información (alerta)

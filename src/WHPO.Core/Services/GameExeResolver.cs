@@ -61,6 +61,13 @@ public static class GameExeResolver
         "setup",
         "installer",
         "redist",
+        // Launcher de Dark and Darker (Ironmace / Blacksmith): los binarios del
+        // launcher nunca son el juego (el juego real es DungeonCrawler.exe)
+        "blacksmith",
+        "blacksmithim",
+        "blacksmithbootstrap",
+        "blacksmithworker",
+        "debris",
         // Boilerplate de Unreal Engine que viaja en TODOS los juegos UE
         "crashreportclient",
         "epicwebhelper",
@@ -114,7 +121,10 @@ public static class GameExeResolver
         "easyanticheat_service", "easyanticheatlauncher",
         "beservice", "battleye", "belauncher",
         "anticheatexpert", "anticheatexpertservice", "acedriver",
-        "vconsole", "vconsole2"
+        "vconsole", "vconsole2",
+        // Launcher de Dark and Darker (Ironmace / Blacksmith): si la caché quedó
+        // con el launcher como exe del juego, es una detección vieja incorrecta.
+        "blacksmith", "blacksmithim", "blacksmithbootstrap", "blacksmithworker", "debris"
     };
 
     /// <summary>¿El archivo es un stub (anti-cheat/consola/desinstalador/instalador)?</summary>
@@ -131,6 +141,17 @@ public static class GameExeResolver
         }
         catch { }
         return false;
+    }
+
+    /// <summary>
+    /// ¿El archivo es un stub solo por su NOMBRE (anti-cheat, launcher, instalador)?
+    /// No mira la carpeta: sirve para entradas manuales, cuya ruta elegida puede
+    /// estar anidada y no debe depender de los fragmentos de carpeta.
+    /// </summary>
+    public static bool IsStubExeName(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        return StubExeNames.Contains(Path.GetFileNameWithoutExtension(path));
     }
 
     /// <summary>

@@ -782,12 +782,29 @@ public sealed partial class LimpiezaPage : Page
             // =====================================================================
             UpdateChequeoProgress(4, I18n.T("Fase {0} de {1}: {2}...", 1, 3, I18n.T("Limpieza de archivos")));
 
-            // ---- Detectar navegadores en background (evita congelar la UI) ----
-            var browsers = await Task.Run(() => _cleanup.GetBrowsers().Where(b => b.IsInstalled).ToList(), ct);
+            // Detectar navegadores instalados y procesos abiertos por separado.
+            // Un navegador abierto puede no tener aún un perfil detectable (por
+            // ejemplo, primera ejecución), pero igualmente debe disparar el aviso.
+            var browsers = await Task.Run(() => _cleanup.GetBrowsers().ToList(), ct);
+            var runningByProcess = await Task.Run(GetRunningBrowserProcesses, ct);
+            browsers = browsers
+                .Where(b => b.IsInstalled || runningByProcess.Contains(b.ProcessName, StringComparer.OrdinalIgnoreCase))
+                .Select(b => b with { IsRunning = IsBrowserRunning(b, runningByProcess) })
+                .ToList();
+
+            // Si hay un proceso compatible abierto sin entrada instalada, crear una
+            // ficha mínima para que el diálogo también pueda identificarlo.
+            foreach (var processName in runningByProcess)
+            {
+                if (browsers.Any(b => b.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))) continue;
+                var fallback = _cleanup.GetBrowsers().FirstOrDefault(b => b.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+                if (fallback != null) browsers.Add(fallback with { IsInstalled = true, IsRunning = true });
+            }
 
             // ---- Popup: si hay navegadores abiertos, avisar para cerrarlos antes
             //      de seguir (o continuar sin cerrar / cancelar el análisis). ----
             var stillOpen = await PromptCloseRunningBrowsersAsync(browsers, ct);
+            _logging.LogDebug($"[Chequeo] Navegadores instalados={browsers.Count}, abiertos={browsers.Count(b => b.IsRunning)}");
             if (stillOpen == null)
             {
                 ChequeoProgressPanel.Visibility = Visibility.Collapsed;
@@ -1803,6 +1820,73 @@ public sealed partial class LimpiezaPage : Page
     ///  - lista vacía si no había navegadores abiertos o se cerraron todos;
     ///  - los navegadores que siguen abiertos (no se marcaron para cerrar).
     /// </summary>
+    private static HashSet<string> GetRunningBrowserProcesses()
+    {
+        var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "chrome", "msedge", "brave", "opera", "opera_gx", "thorium", "vivaldi", "firefox", "librewolf", "waterfox", "yandex", "arc"
+        };
+        var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var process in Process.GetProcesses())
+            {
+                try
+                {
+                    if (!process.HasExited && known.Contains(process.ProcessName))
+                        running.Add(process.ProcessName);
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
+        }
+        catch { }
+        return running;
+    }
+
+    private static bool IsBrowserRunning(BrowserCleanupInfo browser, ISet<string>? runningProcesses = null)
+    {
+        var processNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            browser.ProcessName
+        };
+        if (browser.Id.Equals("opera", StringComparison.OrdinalIgnoreCase))
+            processNames.Add("opera_gx");
+        if (browser.Id.Equals("thorium", StringComparison.OrdinalIgnoreCase))
+            processNames.Add("thorium_shell");
+        if (browser.Id.Equals("vivaldi", StringComparison.OrdinalIgnoreCase))
+            processNames.Add("vivaldi_crash_handler");
+
+        if (runningProcesses != null && processNames.Any(runningProcesses.Contains))
+            return true;
+
+        try
+        {
+            foreach (var processName in processNames)
+            {
+                var processes = Process.GetProcessesByName(processName);
+                try
+                {
+                    if (processes.Any(p =>
+                    {
+                        try { return !p.HasExited; }
+                        catch { return false; }
+                    }))
+                        return true;
+                }
+                finally
+                {
+                    foreach (var process in processes) process.Dispose();
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        return false;
+    }
+
     private async Task<IReadOnlyList<BrowserCleanupInfo>?> PromptCloseRunningBrowsersAsync(IReadOnlyList<BrowserCleanupInfo> browsers, CancellationToken ct)
     {
         var running = browsers.Where(b => b.IsRunning).ToList();

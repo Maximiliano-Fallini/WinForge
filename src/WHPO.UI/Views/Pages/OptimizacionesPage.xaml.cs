@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel.DataTransfer;
 using WHPO.Core.Services.Interfaces;
+using WHPO_UI.Controls;
 
 namespace WHPO_UI.Views.Pages;
 
@@ -416,22 +417,8 @@ public sealed partial class OptimizacionesPage : Page
 
     private Button BuildInfoButton(TweakInfo tweak)
     {
-        var infoButton = new Button
-        {
-            Content = "?",
-            FontSize = 11,
-            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            MinWidth = 22,
-            MaxWidth = 22,
-            Height = 22,
-            Padding = new Thickness(0),
-            Background = TransparentBrush,
-            Foreground = MutedBrush,
-            CornerRadius = new CornerRadius(4),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
         var toolTipContent = new StackPanel { Spacing = 6, MaxWidth = 420 };
+        toolTipContent.Resources["TextControlForeground"] = ThemeBrushes.Get("SecondaryTextBrush");
         toolTipContent.Children.Add(new TextBlock
         {
             Text = I18n.T(tweak.Name),
@@ -454,13 +441,7 @@ public sealed partial class OptimizacionesPage : Page
             TextWrapping = TextWrapping.Wrap
         });
 
-        ToolTipService.SetToolTip(infoButton, new ToolTip
-        {
-            Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Bottom,
-            Content = toolTipContent
-        });
-
-        return infoButton;
+        return TooltipStyles.CreateInfoButton(toolTipContent);
     }
 
     private Border BuildAppliedBadge(string tweakName)

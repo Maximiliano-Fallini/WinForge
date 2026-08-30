@@ -194,7 +194,7 @@
             <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                 <!-- TPM -->
                 <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="110">
-                    <Grid>
+                    <Grid VerticalAlignment="Center">
                         <StackPanel x:Name="TpmContent" Spacing="6" Visibility="Collapsed">
                             <TextBlock Text="TPM" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -213,7 +213,7 @@
                 </Border>
                 <!-- Secure Boot -->
                 <Border Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="110">
-                    <Grid>
+                    <Grid VerticalAlignment="Center">
                         <StackPanel x:Name="SecureBootContent" Spacing="6" Visibility="Collapsed">
                             <TextBlock Text="Arranque seguro" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
                             <StackPanel Orientation="Horizontal" Spacing="8">
@@ -232,7 +232,7 @@
                 </Border>
                 <!-- IOMMU -->
                 <Border Grid.Column="2" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="110">
-                    <Grid>
+                    <Grid VerticalAlignment="Center">
                         <StackPanel x:Name="IommuContent" Spacing="6" Visibility="Collapsed">
                             <TextBlock Text="IOMMU" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
                             <StackPanel Orientation="Horizontal" Spacing="8">

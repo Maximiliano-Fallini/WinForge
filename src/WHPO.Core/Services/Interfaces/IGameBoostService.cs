@@ -33,10 +33,4 @@ public interface IGameBoostService
 
     /// <summary>Lista por defecto de procesos en segundo plano (la que aplica si no hay configuración guardada).</summary>
     List<string> GetDefaultBackgroundProcesses();
-
-    /// <summary>GUID del plan de energía global a activar al iniciar cualquier juego (null/vacío = no cambiar el plan).</summary>
-    string? GetGlobalPowerPlanGuid();
-
-    /// <summary>Persiste el plan de energía global del boost (null/vacío = no cambiar el plan).</summary>
-    void SetGlobalPowerPlanGuid(string? planGuid);
 }

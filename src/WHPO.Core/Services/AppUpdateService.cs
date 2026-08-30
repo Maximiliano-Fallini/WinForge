@@ -19,8 +19,11 @@ public enum AppUpdateStatus
     /// <summary>La build instalada es MÁS NUEVA que la última release publicada (build en desarrollo).</summary>
     DevelopmentBuild,
 
-    /// <summary>El chequeo falló (red, GitHub, etc.).</summary>
-    Error
+    /// <summary>El chequeo falló por un motivo no relacionado con la red (respuesta inesperada, sin releases, etc.).</summary>
+    Error,
+
+    /// <summary>No se pudo contactar al repositorio: falta de conexión a internet (o GitHub inaccesible/timeout).</summary>
+    NoConnection
 }
 
 /// <summary>
@@ -228,7 +231,18 @@ public sealed class AppUpdateService : IAppUpdateService
         catch (Exception ex)
         {
             _logging.LogWarning($"AppUpdateService: no se pudo consultar actualizaciones: {ex.Message}");
-            return new AppUpdateInfo { Status = AppUpdateStatus.Error, CurrentVersion = CurrentVersion() };
+
+            // Distinguir "sin conexión" de un error genuino: si no se pudo llegar a
+            // GitHub (DNS/red caída, timeout del HttpClient, TLS), la UI muestra
+            // "falta de conexión a internet" en vez de un error genérico.
+            bool noConnection = ex is HttpRequestException
+                or TaskCanceledException // timeout del HttpClient (25 s)
+                or System.Net.Sockets.SocketException;
+            return new AppUpdateInfo
+            {
+                Status = noConnection ? AppUpdateStatus.NoConnection : AppUpdateStatus.Error,
+                CurrentVersion = CurrentVersion()
+            };
         }
     }
 

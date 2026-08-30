@@ -120,8 +120,13 @@ public sealed class InstalledGamesService : IInstalledGamesService
         try { games.AddRange(ScanGog()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: GOG: {ex.Message}"); }
         try { games.AddRange(ScanXbox()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Xbox: {ex.Message}"); }
         try { games.AddRange(ScanRiot()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Riot: {ex.Message}"); }
+        try { games.AddRange(ScanBlacksmith()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Blacksmith: {ex.Message}"); }
         try { games.AddRange(ScanStandalone()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: independientes: {ex.Message}"); }
+        // Llave maestra: ningún launcher/instalador/anti-cheat puede ser un juego.
+        // Si cualquier scanner resolviera un stub como exe (ej. BlacksmithBootstrap.exe
+        // del launcher de Dark and Darker), se descarta acá, pase lo que pase.
         return games
+            .Where(g => !GameExeResolver.IsStubExeName(g.ExeFileName))
             .GroupBy(g => g.ExeFileName, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
@@ -170,10 +175,24 @@ public sealed class InstalledGamesService : IInstalledGamesService
                 }
                 catch { }
             }
+            // Blacksmith: si el exe cacheado (ej. DarkAndDarker.exe de detecciones
+            // viejas) ya no existe en la carpeta del juego, descartar la caché y
+            // re-escannear: el exe real es DungeonCrawler.exe y el badge "En
+            // ejecución" matchea por nombre exacto del proceso.
+            if (valid.Any(g =>
+                    string.Equals(g.Launcher, "Blacksmith", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(g.ExeFileName)
+                    && !string.IsNullOrEmpty(g.InstallPath)
+                    && !ExeExistsInTree(g.InstallPath, g.ExeFileName)))
+                return null;
             // Quitar entradas viejas de "BlueStacks X" que hayan quedado en cachés
             // anteriores: es el cliente web/tienda (0,5 MB), no el emulador; no debe
             // aparecer en la biblioteca.
             valid.RemoveAll(g => string.Equals(g.ExeFileName, "BlueStacks X.exe", StringComparison.OrdinalIgnoreCase));
+            // Llave maestra de la caché: descartar cualquier entrada cuyo exe sea un
+            // stub/launcher (ej. BlacksmithBootstrap.exe). Aunque el archivo exista
+            // en el árbol (el launcher sigue instalado), no es el juego.
+            valid.RemoveAll(g => GameExeResolver.IsStubExeName(g.ExeFileName));
             // Migración de detección: la caché vieja no conoce BlueStacks (la
             // detección se agregó después). Si está instalado, sumarlo en memoria
             // sin re-escannear: aparece en la biblioteca aunque la caché sea vieja.
@@ -201,6 +220,16 @@ public sealed class InstalledGamesService : IInstalledGamesService
             _logging.LogWarning($"InstalledGames: leer caché: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>¿Existe un archivo con ese nombre en algún nivel de la carpeta de instalación?</summary>
+    private static bool ExeExistsInTree(string installPath, string exeFileName)
+    {
+        try
+        {
+            return Directory.EnumerateFiles(installPath, exeFileName, SearchOption.AllDirectories).Any();
+        }
+        catch { return false; }
     }
 
     // ===================== Steam =====================
@@ -372,6 +401,30 @@ public sealed class InstalledGamesService : IInstalledGamesService
         {
             if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath)) return;
             if (!found.Add(exePath)) return;
+
+            // Nunca listar binarios del launcher Blacksmith ni stubs como juego:
+            // BlacksmithIM/Debris/etc. son el launcher de Dark and Darker, no un
+            // juego, y el filtro de stubs evita cualquier otro helper (crash
+            // handlers, instaladores…) que aparezca en las rutas conocidas.
+            if (GameExeResolver.IsStubExe(exePath)) return;
+
+            // Ignorar juegos que pertenecen a Blacksmith/Dark and Darker (ya detectados por ScanBlacksmith)
+            var pathLower = (exePath ?? "").ToLowerInvariant();
+            var nameLower = (name ?? "").ToLowerInvariant();
+            if (pathLower.Contains("dark and darker") ||
+                pathLower.Contains("darkanddarker") ||
+                pathLower.Contains("ironmace") ||
+                pathLower.Contains("blacksmith") ||
+                pathLower.Contains("dungeoncrawler") ||
+                nameLower.Contains("dark and darker") ||
+                nameLower.Contains("darkanddarker") ||
+                nameLower.Contains("ironmace") ||
+                nameLower.Contains("blacksmith") ||
+                nameLower.Contains("tavernworker"))
+            {
+                return;
+            }
+
             games.Add(new InstalledGame(name, Path.GetFileName(exePath), "Independiente", installPath));
         }
 
@@ -1115,6 +1168,322 @@ public sealed class InstalledGamesService : IInstalledGamesService
         // Default típico (raíz del disco del sistema).
         var def = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\", "Riot Games");
         return Directory.Exists(def) ? def : null;
+    }
+
+    // ===================== Blacksmith (Dark and Darker) =====================
+
+    /// <summary>
+    /// Detecta Dark and Darker instalado vía el launcher Blacksmith de Ironmace.
+    /// El juego se instala en "IRONMACE\Dark and Darker" (raíz de una unidad o
+    /// Program Files); el launcher en "IRONMACE\Blacksmith".
+    /// El exe real del juego es DungeonCrawler.exe (proyecto Unreal del juego:
+    /// carpeta DungeonCrawler\Binaries\Win64 y proceso con ese nombre en Task
+    /// Manager — el badge "En ejecución" matchea por nombre exacto del proceso).
+    /// "DarkAndDarker.exe" se mantiene como variante de builds viejos.
+    /// </summary>
+    private List<InstalledGame> ScanBlacksmith()
+    {
+        var games = new List<InstalledGame>();
+        try
+        {
+            // 1) Por la ruta del launcher (IRONMACE suele tener el juego al lado).
+            string? blacksmithRoot = FindBlacksmithRoot();
+            string? gameDir = blacksmithRoot == null ? null : FindDarkAndDarkerSubdir(blacksmithRoot);
+
+            // 2) Barrido global de unidades: el juego puede estar en otra unidad
+            //    que la del launcher (ej. D:\IRONMACE\Dark and Darker).
+            if (gameDir == null)
+                gameDir = FindDarkAndDarkerDirsGlobal().FirstOrDefault();
+
+            if (gameDir == null) return games;
+
+            var exe = FindDarkAndDarkerExe(gameDir);
+            if (exe != null)
+                games.Add(new InstalledGame("Dark and Darker", Path.GetFileName(exe), "Blacksmith", gameDir));
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"InstalledGames: Blacksmith: {ex.Message}");
+        }
+
+        return games;
+    }
+
+    /// <summary>
+    /// Carpeta del juego dentro de una raíz del launcher: la raíz misma si ya es
+    /// la del juego (IRONMACE\Dark and Darker), o una subcarpeta "Dark and Darker"
+    /// (también bajo IRONMACE/Blacksmith).
+    /// </summary>
+    private static string? FindDarkAndDarkerSubdir(string root)
+    {
+        try
+        {
+            if (IsDarkAndDarkerDirName(Path.GetFileName(root)))
+                return root;
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                if (IsDarkAndDarkerDirName(Path.GetFileName(dir)))
+                    return dir;
+            }
+            foreach (var dir in Directory.EnumerateDirectories(root))
+            {
+                if (dir.Contains("Ironmace", StringComparison.OrdinalIgnoreCase)
+                    || dir.Contains("Blacksmith", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var sub in Directory.EnumerateDirectories(dir))
+                        if (IsDarkAndDarkerDirName(Path.GetFileName(sub)))
+                            return sub;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static bool IsDarkAndDarkerDirName(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        return name.Contains("Dark", StringComparison.OrdinalIgnoreCase)
+            && name.Contains("Darker", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Barrido global acotado: busca la carpeta del juego en la raíz de cada unidad
+    /// fija y en subcarpetas IRONMACE/Blacksmith de cada raíz.
+    /// </summary>
+    private static IEnumerable<string> FindDarkAndDarkerDirsGlobal()
+    {
+        var result = new List<string>();
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                if (drive.DriveType != DriveType.Fixed) continue;
+                var root = drive.Name.TrimEnd('\\');
+                try
+                {
+                    foreach (var dir in Directory.EnumerateDirectories(root))
+                    {
+                        var name = Path.GetFileName(dir);
+                        if (IsDarkAndDarkerDirName(name))
+                        {
+                            result.Add(dir);
+                            continue;
+                        }
+                        if (name.Contains("Ironmace", StringComparison.OrdinalIgnoreCase)
+                            || name.Contains("Blacksmith", StringComparison.OrdinalIgnoreCase))
+                        {
+                            foreach (var sub in Directory.EnumerateDirectories(dir))
+                                if (IsDarkAndDarkerDirName(Path.GetFileName(sub)))
+                                    result.Add(sub);
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return result;
+    }
+
+    /// <summary>
+    /// Exe real de Dark and Darker: DungeonCrawler\Binaries\Win64\DungeonCrawler.exe
+    /// (el proceso del juego en Task Manager se llama DungeonCrawler.exe). Con
+    /// respaldo de variantes (DungeonCrawler-Win64-Shipping, DarkAndDarker*) y un
+    /// barrido acotado que salta stubs (crash handlers, instaladores…).
+    /// </summary>
+    private static string? FindDarkAndDarkerExe(string gameDir)
+    {
+        string[] candidates =
+        {
+            Path.Combine(gameDir, "DungeonCrawler", "Binaries", "Win64", "DungeonCrawler.exe"),
+            Path.Combine(gameDir, "DungeonCrawler", "Binaries", "Win64", "DungeonCrawler-Win64-Shipping.exe"),
+            Path.Combine(gameDir, "DungeonCrawler.exe"),
+            Path.Combine(gameDir, "DungeonCrawler-Win64-Shipping.exe"),
+            Path.Combine(gameDir, "DarkAndDarker.exe"),
+            Path.Combine(gameDir, "Binaries", "Win64", "DarkAndDarker.exe"),
+            Path.Combine(gameDir, "Binaries", "Win64", "DarkAndDarker-Win64-Shipping.exe")
+        };
+        foreach (var p in candidates)
+            if (File.Exists(p)) return p;
+
+        // Barrido acotado: el proceso real es DungeonCrawler.exe (badge "En
+        // ejecución" matchea por nombre exacto), así que se prioriza ese nombre.
+        var exes = new List<string>();
+        int budget = 800;
+        GameExeResolver.CollectExes(gameDir, exes, 0, 4, ref budget);
+        string? exactDc = null, shippingDc = null, otherDc = null, dad = null;
+        foreach (var e in exes)
+        {
+            if (GameExeResolver.IsStubExe(e)) continue;
+            var name = Path.GetFileNameWithoutExtension(e);
+            if (name.Contains("Launcher", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("Worker", StringComparison.OrdinalIgnoreCase)
+                || name.Contains("Bootstrap", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (name.Equals("DungeonCrawler", StringComparison.OrdinalIgnoreCase))
+                exactDc ??= e;
+            else if (name.Equals("DungeonCrawler-Win64-Shipping", StringComparison.OrdinalIgnoreCase))
+                shippingDc ??= e;
+            else if (name.StartsWith("DungeonCrawler", StringComparison.OrdinalIgnoreCase))
+                otherDc ??= e;
+            else if (name.StartsWith("DarkAndDarker", StringComparison.OrdinalIgnoreCase))
+                dad ??= e;
+        }
+        return exactDc ?? shippingDc ?? otherDc ?? dad;
+    }
+
+    private static string? FindBlacksmithRoot()
+    {
+        // Rutas típicas donde se instala Blacksmith
+        var roots = new List<string>
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+        };
+
+        // Agregar todas las unidades de disco disponibles
+        foreach (var drive in DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed))
+        {
+            roots.Add(drive.Name.TrimEnd('\\'));
+        }
+
+        foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                // Buscar carpeta IRONMACE directamente
+                var ironmacePath = Path.Combine(root, "IRONMACE");
+                if (Directory.Exists(ironmacePath))
+                {
+                    // Buscar Dark and Darker dentro de IRONMACE
+                    foreach (var dir in Directory.EnumerateDirectories(ironmacePath))
+                    {
+                        var dirName = Path.GetFileName(dir);
+                        if (dirName.Contains("Dark", StringComparison.OrdinalIgnoreCase) &&
+                            dirName.Contains("Darker", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return dir;
+                        }
+                    }
+                    // Si no se encontró, devolver la carpeta IRONMACE
+                    return ironmacePath;
+                }
+
+                var candidates = new[]
+                {
+                    Path.Combine(root, "Blacksmith"),
+                    Path.Combine(root, "Dark and Darker"),
+                    Path.Combine(root, "DarkAndDarker"),
+                    Path.Combine(root, "Ironmace"),
+                    Path.Combine(root, "Ironmace", "Blacksmith"),
+                    Path.Combine(root, "Ironmace", "Dark and Darker"),
+                    Path.Combine(root, "IRONMACE"),
+                    Path.Combine(root, "IRONMACE", "Dark and Darker"),
+                    Path.Combine(root, "IRONMACE", "Blacksmith"),
+                    Path.Combine(root, "Games", "Dark and Darker"),
+                    Path.Combine(root, "Games", "DarkAndDarker"),
+                };
+                foreach (var cand in candidates)
+                {
+                    if (Directory.Exists(cand)) return cand;
+                }
+
+                // Buscar en subdirectorios de Program Files (incluyendo IRONMACE)
+                if (root.Contains("Program Files", StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var dir in Directory.EnumerateDirectories(root))
+                    {
+                        var dirName = Path.GetFileName(dir);
+                        if (dirName.Contains("Dark", StringComparison.OrdinalIgnoreCase) &&
+                            dirName.Contains("Darker", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return dir;
+                        }
+                        if (dirName.Contains("Blacksmith", StringComparison.OrdinalIgnoreCase) ||
+                            dirName.Contains("Ironmace", StringComparison.OrdinalIgnoreCase) ||
+                            dirName.Equals("IRONMACE", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Buscar subcarpetas dentro de IRONMACE
+                            foreach (var subDir in Directory.EnumerateDirectories(dir))
+                            {
+                                var subDirName = Path.GetFileName(subDir);
+                                if (subDirName.Contains("Dark", StringComparison.OrdinalIgnoreCase) &&
+                                    subDirName.Contains("Darker", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    return subDir;
+                                }
+                            }
+                            return dir;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // Buscar en el registro de Windows
+        try
+        {
+            foreach (var regPath in new[]
+            {
+                @"SOFTWARE\Ironmace\Blacksmith",
+                @"SOFTWARE\WOW6432Node\Ironmace\Blacksmith",
+                @"SOFTWARE\Ironmace\Dark and Darker",
+                @"SOFTWARE\WOW6432Node\Ironmace\Dark and Darker",
+                @"SOFTWARE\IRONMACE\Dark and Darker",
+                @"SOFTWARE\WOW6432Node\IRONMACE\Dark and Darker"
+            })
+            {
+                using var reg = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(regPath);
+                var installDir = reg?.GetValue("InstallDir") as string;
+                if (!string.IsNullOrEmpty(installDir) && Directory.Exists(installDir))
+                    return installDir;
+
+                var installLoc = reg?.GetValue("InstallLocation") as string;
+                if (!string.IsNullOrEmpty(installLoc) && Directory.Exists(installLoc))
+                    return installLoc;
+            }
+        }
+        catch { }
+
+        // Entrada de desinstalación del juego (DisplayName "Dark and Darker"): cubre
+        // instalaciones en carpetas no estándar elegidas por el usuario.
+        try
+        {
+            string[] uninstallRoots =
+            {
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+            };
+            foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+            {
+                foreach (var uninstallRoot in uninstallRoots)
+                {
+                    using var reg = hive.OpenSubKey(uninstallRoot);
+                    if (reg == null) continue;
+                    foreach (var sub in reg.GetSubKeyNames())
+                    {
+                        try
+                        {
+                            using var app = reg.OpenSubKey(sub);
+                            var displayName = app?.GetValue("DisplayName") as string;
+                            if (string.IsNullOrEmpty(displayName)
+                                || !displayName.Contains("Dark and Darker", StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            var loc = app?.GetValue("InstallLocation") as string;
+                            if (!string.IsNullOrEmpty(loc) && Directory.Exists(loc))
+                                return loc.TrimEnd('\\');
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return null;
     }
 
     // ===================== Epic =====================

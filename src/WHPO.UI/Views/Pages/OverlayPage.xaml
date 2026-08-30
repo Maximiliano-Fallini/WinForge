@@ -82,6 +82,21 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="Mostrar overlay solo al detectar un juego" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Oculta automáticamente el overlay mientras no haya un juego detectado."
+                                               FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleSwitch x:Name="ShowOverlayOnlyWithGameToggle" Grid.Column="1"
+                                              Style="{StaticResource CompactToggleSwitchStyle}"
+                                              VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <Grid ColumnSpacing="24">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
                                     <TextBlock Text="Opacidad" FontSize="14" FontWeight="SemiBold"/>
                                     <TextBlock Text="Opacidad del fondo de la superposición. El texto de las métricas queda siempre legible."
                                                FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
@@ -188,6 +203,21 @@
                                             CornerRadius="6"/>
                                 </Grid>
                             </StackPanel>
+
+                            <Grid ColumnSpacing="24">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="Mostrar título del juego" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Muestra el nombre del juego al final de la superposición, abajo de todas las métricas."
+                                               FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleSwitch x:Name="ShowGameTitleToggle" Grid.Column="1"
+                                              Style="{StaticResource CompactToggleSwitchStyle}"
+                                              VerticalAlignment="Center"/>
+                            </Grid>
                         </StackPanel>
                     </Border>
 

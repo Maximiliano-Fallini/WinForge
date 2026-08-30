@@ -124,6 +124,42 @@
         <Setter Property="Placement" Value="Auto"/>
     </Style>
 
+    <!-- Estilo global para tooltips: consistente, legible y reutilizable en toda la app.
+         OJO: NO definir ContentTemplate ni Placement aquí — en WinUI 3, un template/binding
+         global rompe los tooltips creados en código con ToolTipService.SetToolTip(btn, "texto")
+         (el string pierde el contenido al presentarse vía template).
+         OJO 2: un estilo implícito SIN Template reemplaza al template por defecto del
+         framework y el tooltip queda SIN fondo (transparente). Por eso el ControlTemplate
+         de abajo: pinta un Border sólido con los pinceles del estilo. -->
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Padding" Value="10,7"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="MaxWidth" Value="420"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          ContentTemplate="{TemplateBinding ContentTemplate}"
+                                          HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Margin="2,0"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- TeachingTip Style -->
     <Style x:Key="DefaultTeachingTipStyle" TargetType="muxc:TeachingTip">
         <Setter Property="PreferredPlacement" Value="Auto"/>

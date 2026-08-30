@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,6 +13,7 @@ using Microsoft.UI.Xaml.Media;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Overlay;
 using WHPO_UI.Services;
+using WHPO_UI.Controls;
 
 namespace WHPO_UI.Views.Pages;
 
@@ -51,6 +54,8 @@ public sealed partial class OverlayPage : Page
         FontSizeSlider.ValueChanged += FontSizeSlider_ValueChanged;
         CornerComboBox.SelectionChanged += CornerComboBox_SelectionChanged;
         ResetOrderButton.Click += ResetOrderButton_Click;
+        ShowOverlayOnlyWithGameToggle.Toggled += ShowOverlayOnlyWithGameToggle_Toggled;
+        ShowGameTitleToggle.Toggled += ShowGameTitleToggle_Toggled;
 
         // Drag de badges: el pointer se captura en el PANEL (no en el badge). Al
         // reordenar se remueve/inserta el badge del árbol y, si el capturado fuera
@@ -82,6 +87,8 @@ public sealed partial class OverlayPage : Page
             LockHotkeyButton.Content = HotkeyLabel("overlay.lockHotkeyVk", 0x43, "overlay.lockHotkeyMods", ModCtrl | ModAlt);
 
             OpacitySlider.Value = Math.Clamp(_settings.Get("overlay.opacity", 0.85), 0.0, 1.0);
+            ShowOverlayOnlyWithGameToggle.IsOn = _settings.Get("overlay.onlyWhenGameDetected", true);
+            ShowGameTitleToggle.IsOn = _settings.Get("overlay.showGameTitle", true);
             UpdateOpacityText();
             FontSizeSlider.Value = Math.Clamp(_settings.Get("overlay.fontSize", 1.4), 0.6, 2.0);
             UpdateFontSizeText();
@@ -110,6 +117,7 @@ public sealed partial class OverlayPage : Page
             UpdateColorButton(CpuColorButton, _settings.Get("overlay.colorCpu", "#FFFFFF"));
             UpdateColorButton(GpuColorButton, _settings.Get("overlay.colorGpu", "#FFFFFF"));
             UpdateColorButton(RamColorButton, _settings.Get("overlay.colorRam", "#FFFFFF"));
+
         }
         finally
         {
@@ -125,9 +133,14 @@ public sealed partial class OverlayPage : Page
         {
             var show = HotkeyLabel("overlay.showHotkeyVk", 0x58, "overlay.showHotkeyMods", ModCtrl | ModAlt);
             var lockH = HotkeyLabel("overlay.lockHotkeyVk", 0x43, "overlay.lockHotkeyMods", ModCtrl | ModAlt);
+            // Modo de detección: automático o juego elegido manualmente.
+            string targetExe = (_settings.Get("overlay.targetExe", "") ?? "").Trim();
+            string modeText = string.Equals(_settings.Get("overlay.targetMode", "automatic"), "manual", StringComparison.OrdinalIgnoreCase) && targetExe.Length > 0
+                ? string.Format(I18n.T("Esperando el juego seleccionado: {0}"), targetExe)
+                : I18n.T("Selección automática: se buscará el juego activo.");
             OverlayStatusText.Text = string.Format(
-                I18n.T("Activo. {0} muestra/oculta · {1} bloquea/desbloquea. El FPS corresponde al juego en primer plano."),
-                show, lockH);
+                I18n.T("Activo. {0} muestra/oculta · {1} bloquea/desbloquea. {2}"),
+                show, lockH, modeText);
         }
         else
         {
@@ -135,12 +148,171 @@ public sealed partial class OverlayPage : Page
         }
     }
 
-    private void OverlayEnabledToggle_Toggled(object sender, RoutedEventArgs e)
+    private async void OverlayEnabledToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (_loading) return;
-        _overlay.Enabled = OverlayEnabledToggle.IsOn;
+
+        if (OverlayEnabledToggle.IsOn)
+        {
+            // La activación se confirma después de elegir el modo. Así el popup
+            // aparece antes de que el servicio empiece a seleccionar procesos.
+            OverlayEnabledToggle.IsOn = false;
+            await ShowOverlayTargetDialogAsync();
+            return;
+        }
+
+        _overlay.Enabled = false;
         _settings.Save();
         UpdateStatusText();
+    }
+
+    private async Task ShowOverlayTargetDialogAsync()
+    {
+        if (XamlRoot == null) return;
+
+        var contentPanel = new StackPanel
+        {
+            Spacing = 14,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        var content = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        content.Children.Add(contentPanel);
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Spacing = 10,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        var autoButtonContent = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Spacing = 8
+        };
+        autoButtonContent.Children.Add(new TextBlock
+        {
+            Text = I18n.T("Detectar automáticamente"),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        var recommendedText = new TextBlock
+        {
+            Text = I18n.T("(Recomendado)"),
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80)),
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        autoButtonContent.Children.Add(recommendedText);
+        var recommendationButton = TooltipStyles.CreateInfoButton(new TextBlock
+        {
+            Text = I18n.T("Se detectará con mejor eficacia el juego si se abre desde la biblioteca de juegos de WinForge."),
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 420
+        });
+        autoButtonContent.Children.Add(recommendationButton);
+
+        Button autoButton = new()
+        {
+            Content = autoButtonContent,
+            MinHeight = 46,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center
+        };
+        Button manualButton = new()
+        {
+            Content = I18n.T("Elegir juego manualmente"),
+            MinHeight = 46,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center
+        };
+        Button cancelButton = new()
+        {
+            Content = I18n.T("Cancelar"),
+            MinHeight = 46,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Center
+        };
+        buttons.Children.Add(autoButton);
+        buttons.Children.Add(manualButton);
+        buttons.Children.Add(cancelButton);
+        contentPanel.Children.Add(buttons);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("¿Cómo querés seleccionar el juego?"),
+            Content = content,
+            DefaultButton = ContentDialogButton.None,
+            MinWidth = 0,
+            MaxWidth = double.PositiveInfinity
+        };
+        var resultTcs = new TaskCompletionSource<ContentDialogResult>();
+        autoButton.Click += (_, _) => { resultTcs.TrySetResult(ContentDialogResult.Primary); dialog.Hide(); };
+        manualButton.Click += (_, _) => { resultTcs.TrySetResult(ContentDialogResult.Secondary); dialog.Hide(); };
+        cancelButton.Click += (_, _) => { resultTcs.TrySetResult(ContentDialogResult.None); dialog.Hide(); };
+
+        await dialog.ShowAsync();
+        var result = resultTcs.Task.IsCompleted ? resultTcs.Task.Result : ContentDialogResult.None;
+        if (result == ContentDialogResult.None)
+        {
+            OverlayEnabledToggle.IsOn = false;
+            return;
+        }
+
+        if (result == ContentDialogResult.Primary)
+        {
+            _settings.Set("overlay.targetMode", "automatic");
+            _settings.Remove("overlay.targetExe");
+        }
+        else
+        {
+            var path = PickGameExecutable();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                OverlayEnabledToggle.IsOn = false;
+                return;
+            }
+            _settings.Set("overlay.targetMode", "manual");
+            _settings.Set("overlay.targetExe", Path.GetFileName(path));
+        }
+
+        _settings.Set("overlay.enabled", true);
+        _settings.Save();
+        _loading = true;
+        try { OverlayEnabledToggle.IsOn = true; }
+        finally { _loading = false; }
+        _overlay.Enabled = true;
+        UpdateStatusText();
+    }
+
+    private string? PickGameExecutable()
+    {
+        try
+        {
+            using var dialog = new System.Windows.Forms.OpenFileDialog
+            {
+                Title = I18n.T("Seleccionar el exe del juego"),
+                Filter = "Ejecutables (*.exe)|*.exe|Todos los archivos (*.*)|*.*",
+                FilterIndex = 1,
+                CheckFileExists = true,
+                Multiselect = false,
+                RestoreDirectory = true,
+                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+            };
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance);
+            var owner = System.Windows.Forms.NativeWindow.FromHandle(hwnd);
+            return dialog.ShowDialog(owner) == System.Windows.Forms.DialogResult.OK
+                ? dialog.FileName
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning($"OverlayPage: no se pudo seleccionar el ejecutable: {ex.Message}");
+            return null;
+        }
     }
 
     // ===== Atajos =====
@@ -238,6 +410,22 @@ public sealed partial class OverlayPage : Page
         ScheduleSave();
         _overlay.ApplyWindowConfig();
         UpdateOpacityText();
+    }
+
+    private void ShowOverlayOnlyWithGameToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _settings.Set("overlay.onlyWhenGameDetected", ShowOverlayOnlyWithGameToggle.IsOn);
+        _settings.Save();
+        _overlay.ApplyWindowConfig();
+    }
+
+    private void ShowGameTitleToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _settings.Set("overlay.showGameTitle", ShowGameTitleToggle.IsOn);
+        _settings.Save();
+        _overlay.ApplyWindowConfig();
     }
 
     private void UpdateOpacityText() => OpacityValueText.Text = $"{OpacitySlider.Value * 100:F0}%";
@@ -341,6 +529,7 @@ public sealed partial class OverlayPage : Page
         ("fps", "FPS"),
         ("low1", "1% low"),
         ("low01", "0.1% low"),
+        ("latencyGraph", "Gráfico ms"),
         ("cpuUsage", "CPU %"),
         ("cpuMhz", "CPU MHz"),
         ("cpuTemp", "CPU °C"),

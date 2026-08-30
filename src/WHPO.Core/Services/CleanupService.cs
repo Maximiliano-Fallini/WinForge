@@ -11,10 +11,8 @@ using WHPO.Core.Services.Interfaces;
 namespace WHPO.Core.Services;
 
 /// <summary>
-/// Limpieza del dispositivo estilo CCleaner: analiza y borra archivos basura del
-/// sistema, aplicaciones y navegadores. Usa las rutas canónicas de CCleaner
-/// (TEMP de Windows y del usuario, SoftwareDistribution\Download, INetCache,
-/// WER, CrashDumps, thumbcache/iconcache, MRUs del registro, Prefetch, etc.).
+/// Limpieza del dispositivo: analiza y borra archivos basura del sistema,
+/// aplicaciones y navegadores mediante rutas seguras y conocidas.
 ///
 /// Reglas de seguridad:
 ///  - Cada ítem borra el CONTENIDO de su carpeta pero conserva la raíz.
@@ -340,10 +338,19 @@ public sealed class CleanupService : ICleanupService
             Profiles = () =>
             {
                 var list = new List<string>();
-                var stable = Path.Combine(AppDataRoaming, "Opera Software", "Opera Stable");
-                var gx = Path.Combine(AppDataRoaming, "Opera Software", "Opera GX Stable");
-                if (Directory.Exists(stable)) list.Add(stable);
-                if (Directory.Exists(gx)) list.Add(gx);
+                var roots = new[]
+                {
+                    Path.Combine(AppDataRoaming, "Opera Software", "Opera Stable"),
+                    Path.Combine(AppDataRoaming, "Opera Software", "Opera GX Stable"),
+                    Path.Combine(LocalAppData, "Opera Software", "Opera Stable"),
+                    Path.Combine(LocalAppData, "Opera Software", "Opera GX Stable")
+                };
+                foreach (var root in roots)
+                {
+                    if (Directory.Exists(root) && HasBrowserData(root) &&
+                        !list.Contains(root, StringComparer.OrdinalIgnoreCase))
+                        list.Add(root);
+                }
                 return list;
             },
             ExePath = () => FindFirstExe(
@@ -356,6 +363,30 @@ public sealed class CleanupService : ICleanupService
                 Path.Combine(p, "GPUCache"),
                 Path.Combine(p, "Media Cache")
             ],
+            CookieFiles = ["Network\\Cookies", "Cookies"],
+            HistoryFiles = ["History"]
+        },
+        new()
+        {
+            Id = "thorium", DisplayName = "Thorium", ProcessName = "thorium", Accent = "#5B8DEF",
+            Profiles = () => ChromiumProfiles(Path.Combine(LocalAppData, "Thorium", "User Data")),
+            CachePaths = ChromiumCachePaths,
+            ExePath = () => FindFirstExe(
+                Path.Combine(LocalAppData, "Thorium", "Application", "thorium.exe"),
+                Path.Combine(ProgFiles, "Thorium", "thorium.exe"),
+                Path.Combine(ProgFilesX86, "Thorium", "thorium.exe")),
+            CookieFiles = ["Network\\Cookies", "Cookies"],
+            HistoryFiles = ["History"]
+        },
+        new()
+        {
+            Id = "vivaldi", DisplayName = "Vivaldi", ProcessName = "vivaldi", Accent = "#EF3939",
+            Profiles = () => ChromiumProfiles(Path.Combine(LocalAppData, "Vivaldi", "User Data")),
+            CachePaths = ChromiumCachePaths,
+            ExePath = () => FindFirstExe(
+                Path.Combine(LocalAppData, "Vivaldi", "Application", "vivaldi.exe"),
+                Path.Combine(ProgFiles, "Vivaldi", "Application", "vivaldi.exe"),
+                Path.Combine(ProgFilesX86, "Vivaldi", "Application", "vivaldi.exe")),
             CookieFiles = ["Network\\Cookies", "Cookies"],
             HistoryFiles = ["History"]
         },
@@ -420,6 +451,10 @@ public sealed class CleanupService : ICleanupService
             if (HasBrowserData(dir))
                 list.Add(dir);
         }
+        // Opera mantiene los datos directamente en Opera Stable/Opera GX Stable,
+        // no dentro de subcarpetas Default/Profile como Chrome.
+        if (HasBrowserData(userData) && !list.Contains(userData, StringComparer.OrdinalIgnoreCase))
+            list.Add(userData);
         return list;
     }
 

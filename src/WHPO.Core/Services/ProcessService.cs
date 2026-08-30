@@ -10,7 +10,7 @@ using Microsoft.Win32;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services;    /// <summary>
-    /// Gestión de procesos estilo Process Lasso: enumera las aplicaciones/juegos con
+    /// Gestión de procesos: enumera las aplicaciones/juegos con
     /// ventana visible, calcula CPU/RAM y aplica reglas persistidas (prioridad de CPU,
     /// afinidad de núcleos y prioridad de GPU) por ejecutable. Solo se aplica lo que el
     /// usuario configuró explícitamente: los valores por defecto no tocan nada.
@@ -97,7 +97,10 @@ public sealed class ProcessService : IProcessService
     private readonly HashSet<string> _runningLaunchers = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> LauncherNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Battle.net", "EpicGamesLauncher", "GalaxyClient", "Steam", "Xbox", "XboxStub", "GamingApp"
+        "Battle.net", "EpicGamesLauncher", "GalaxyClient", "Steam", "Xbox", "XboxStub", "GamingApp",
+        // Blacksmith (Dark and Darker): el binario real del launcher de Ironmace es
+        // BlacksmithIM.exe; "Blacksmith" se mantiene por compatibilidad.
+        "Blacksmith", "BlacksmithIM"
     };
     public event Action? LauncherStateChanged;
     public bool WmiEventsActive { get; private set; }
@@ -548,7 +551,7 @@ public sealed class ProcessService : IProcessService
         // afinidad del padre al nacer, así que se aplica a la cadena de
         // lanzamiento (launcher / stub anti-cheat del mismo directorio): el
         // juego real termina corriendo con la afinidad pedida aunque su proceso
-        // esté bloqueado. Es la técnica documentada de Process Lasso para EAC.
+        // esté bloqueado.
         if (ApplyAffinityToAncestors(pid, mask))
         {
             _logging.LogWarning($"ProcessService: afinidad 0x{mask:X} de {pid} aplicada a su cadena de lanzamiento (proceso protegido; el juego la hereda al nacer)");
@@ -859,7 +862,7 @@ public sealed class ProcessService : IProcessService
     // ===== Prioridad de E/S (IO_PRIORITY_HINT) =====
     // No hay API Win32 pública para la prioridad de E/S: se usa
     // NtSetInformationProcess(ProcessIoPriority=33) con un IO_PRIORITY_HINT
-    // (0=VeryLow, 1=Low, 2=Normal, 3=High, 4=Critical), igual que Process Lasso.
+    // (0=VeryLow, 1=Low, 2=Normal, 3=High, 4=Critical).
     // No tiene clave de nacimiento bien documentada (PerfOptions\IoPriority es
     // semidocumentada), así que solo aplica en vivo, como la prioridad de GPU.
     private const int ProcessIoPriority = 33;
@@ -1393,12 +1396,23 @@ public sealed class ProcessService : IProcessService
     /// </summary>
     public bool IsLauncherRunning(string procName)
     {
+        // Blacksmith (Dark and Darker): el proceso real del launcher es
+        // BlacksmithIM.exe (no existe Blacksmith.exe); se aceptan ambos.
+        bool blacksmithQuery = procName.Equals("Blacksmith", StringComparison.OrdinalIgnoreCase);
         if (WmiEventsActive)
         {
             lock (_launcherLock)
-                return _runningLaunchers.Contains(procName);
+            {
+                if (_runningLaunchers.Contains(procName)) return true;
+                if (blacksmithQuery && _runningLaunchers.Contains("BlacksmithIM")) return true;
+                return false;
+            }
         }
-        try { return Process.GetProcessesByName(procName).Length > 0; }
+        try
+        {
+            if (Process.GetProcessesByName(procName).Length > 0) return true;
+            return blacksmithQuery && Process.GetProcessesByName("BlacksmithIM").Length > 0;
+        }
         catch { return false; }
     }
 
@@ -1869,31 +1883,6 @@ public sealed class ProcessService : IProcessService
             UnregisterProcess(pid);
     }
 
-    public bool TryApplyGlobalPowerPlan(string planGuid)
-    {
-        lock (_planLock)
-        {
-            if (_appliedPlanExe != null) return false; // un juego ya activó el suyo: gana el plan por juego
-            _defaultPlanGuid ??= _powerPlan.GetActivePowerPlanGuid();
-            _ = _powerPlan.SetActivePowerPlanAsync(planGuid);
-            _appliedPlanExe = GlobalPlanRuleKey;
-            return true;
-        }
-    }
-
-    public void RevertGlobalPowerPlan()
-    {
-        lock (_planLock)
-        {
-            // Solo revierte si el plan activo es el global. Si un juego con plan propio
-            // lo reemplazó, ese juego revierte el suyo al cerrar (RevertPlanIfNoLongerRunning).
-            if (_appliedPlanExe != GlobalPlanRuleKey) return;
-            _defaultPlanGuid ??= _powerPlan.GetActivePowerPlanGuid();
-            _ = _powerPlan.SetActivePowerPlanAsync(_defaultPlanGuid);
-            _appliedPlanExe = null;
-        }
-    }
-
     /// <summary>Aplica la regla efectiva (sesión gana sobre guardada) a un proceso recién visto.</summary>
     private void ApplyEffectiveRule(int pid, string ruleKey, Dictionary<string, ProcessRule> session, Dictionary<string, ProcessRule> rules)
     {
@@ -1918,17 +1907,13 @@ public sealed class ProcessService : IProcessService
         }
     }
 
-    /// <summary>Clave reservada para el plan global del GameBoost (nunca colisiona con un exe).</summary>
-    private const string GlobalPlanRuleKey = "__gameboost_global__";
-
-    /// <summary>Activa el plan del primer juego con regla que se detecta; el resto espera.
-    /// Excepción: si el plan activo es el GLOBAL del GameBoost, un juego con plan propio
-    /// lo reemplaza (el plan por juego tiene prioridad sobre el global).</summary>
+    /// <summary>Activa el plan del primer juego con regla que se detecta; el resto espera
+    /// hasta que el juego activo cierre el suyo.</summary>
     private void ApplyPlanFor(string ruleKey, string planGuid)
     {
         lock (_planLock)
         {
-            if (_appliedPlanExe != null && _appliedPlanExe != GlobalPlanRuleKey) return; // otro juego ya tiene el plan activo
+            if (_appliedPlanExe != null) return; // otro juego ya tiene el plan activo
             _defaultPlanGuid ??= _powerPlan.GetActivePowerPlanGuid();
             _ = _powerPlan.SetActivePowerPlanAsync(planGuid);
             _appliedPlanExe = ruleKey;
@@ -1960,8 +1945,11 @@ public sealed class ProcessService : IProcessService
         // (detección vieja) al exe real del juego: SMITE 2 se guardó como
         // start_protected_game.exe (EAC) y CS2 como vconsole2.exe; ahora son
         // Hemingway.exe y cs2.exe. No se toca el settings: se resuelve en memoria.
+        // Los stubs/launchers (ej. BlacksmithBootstrap.exe) no pueden ser favoritos:
+        // si quedó uno guardado de antes, no debe aparecer en la bandeja.
         return favs
             .Select(ResolveExeAlias)
+            .Where(f => !GameExeResolver.IsStubExeName(f))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -2012,6 +2000,10 @@ public sealed class ProcessService : IProcessService
         foreach (var raw in _settings.Get("process.manual", new List<string>()) ?? new())
         {
             var (name, exe, path) = ParseEntry(raw);
+            // Entradas viejas de launchers/instaladores agregadas a mano (ej.
+            // BlacksmithBootstrap.exe): un launcher no es un juego y no debe
+            // listarse ni en la biblioteca ni en la bandeja.
+            if (!string.IsNullOrEmpty(exe) && GameExeResolver.IsStubExeName(exe)) continue;
             result.Add((exe, name, path));
         }
         return result;
@@ -2042,13 +2034,16 @@ public sealed class ProcessService : IProcessService
             list.Add(entry);
         _settings.Set("process.manual", list);
 
-        // Si el exe estaba oculto (por ejemplo, se había "eliminado de la biblioteca"
-        // antes, que lo oculta), re-agregarlo a mano lo desoculta: si el usuario lo
-        // quiere de vuelta, el ocultamiento previo no debe hacer que la card no
-        // aparezca aunque el mensaje diga "se agregó".
+        // Si el exe estaba oculto o eliminado (por ejemplo, se había sacado de la
+        // biblioteca antes), re-agregarlo a mano lo restaura: si el usuario lo quiere
+        // de vuelta, el ocultamiento/eliminación previos no deben hacer que la card
+        // no aparezca aunque el mensaje diga "se agregó".
         var hidden = GetHiddenExes();
         if (hidden.RemoveAll(h => string.Equals(h, exe, StringComparison.OrdinalIgnoreCase)) > 0)
             _settings.Set("process.hidden", hidden);
+        var deleted = GetDeletedGames();
+        if (deleted.RemoveAll(d => string.Equals(d, exe, StringComparison.OrdinalIgnoreCase)) > 0)
+            _settings.Set("process.deleted", deleted);
 
         _settings.Save();
     }
@@ -2061,6 +2056,45 @@ public sealed class ProcessService : IProcessService
             _settings.Set("process.manual", list);
             _settings.Save();
         }
+
+        // También eliminar el launcher configurado si existe
+        var launchers = GetManualGameLaunchers();
+        if (launchers.Remove(exe))
+        {
+            _settings.Set("process.manual.launchers", launchers);
+            _settings.Save();
+        }
+    }
+
+    /// <summary>Borra TODOS los juegos manuales (Re-detectar los elimina).</summary>
+    public void ClearManualExes()
+    {
+        _settings.Remove("process.manual");
+        _settings.Remove("process.manual.launchers");
+        _settings.Save();
+    }
+
+    /// <summary>Configura el launcher de un juego manual (ej: "Blacksmith" para Dark and Darker).</summary>
+    public void SetManualGameLauncher(string exe, string launcher)
+    {
+        var launchers = GetManualGameLaunchers();
+        launchers[exe] = launcher;
+        _settings.Set("process.manual.launchers", launchers);
+        _settings.Save();
+    }
+
+    /// <summary>Obtiene el launcher configurado para un juego manual (null si no tiene).</summary>
+    public string? GetManualGameLauncher(string exe)
+    {
+        var launchers = GetManualGameLaunchers();
+        return launchers.TryGetValue(exe, out var launcher) ? launcher : null;
+    }
+
+    /// <summary>Obtiene todos los juegos manuales con su launcher configurado.</summary>
+    public Dictionary<string, string> GetManualGameLaunchers()
+    {
+        return _settings.Get<Dictionary<string, string>>("process.manual.launchers", null)
+            ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     }
 
     // ===== Ocultos (juegos eliminados de la biblioteca) =====

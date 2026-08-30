@@ -91,7 +91,7 @@
                             Foreground="{ThemeResource MutedBrush}"
                             CornerRadius="4"
                             VerticalAlignment="Center"/>
-                    <!-- Tuerca de configuración: lista de procesos + plan de energía global. -->
+                    <!-- Tuerca de configuración: lista de procesos en segundo plano. -->
                     <Button x:Name="GameBoostSettingsButton"
                             Click="GameBoostSettingsButton_Click"
                             Width="22"
@@ -133,7 +133,12 @@
                      ENCIMA del contenido), así que se reserva SIEMPRE el espacio (14 px)
                      para que nunca tape las cards y las cards no cambien de ancho al
                      aparecer/desaparecer el scrollbar. -->
-                <StackPanel x:Name="LibraryPanel" Spacing="16" Margin="0,0,14,0"/>
+                <Grid>
+                    <!-- Receptor de la sombra de las cards (ThemeShadow exige un
+                         receptor que NO sea ancestro del caster): hermano detrás. -->
+                    <Border x:Name="CardShadowReceiver"/>
+                    <StackPanel x:Name="LibraryPanel" Spacing="16" Margin="0,0,14,0"/>
+                </Grid>
             </ScrollViewer>
         </Grid>
     </Grid>

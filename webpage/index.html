@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WinForge — El optimizador competitivo para tu Windows</title>
+  <meta name="description" content="WinForge es un optimizador competitivo para Windows: monitoreá tu PC, optimizala al jugar, gestioná tus juegos y ajustá Windows a tu medida. 100% gratuito." />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- ===== Fondo lámpara de lava interactivo ===== -->
+  <div class="lava-bg" aria-hidden="true">
+    <!-- Capas ambientales (profundidad, muy suaves) -->
+    <div class="lava-ambient amb-a"></div>
+    <div class="lava-ambient amb-b"></div>
+    <!-- Escena goo: los blobs se generan por JS y se funden con filtro SVG -->
+    <div class="lava-scene" id="lavaScene"></div>
+    <!-- Viñeta de vidrio -->
+    <div class="lava-vignette"></div>
+  </div>
+
+  <!-- ========= Barra de navegación ========= -->
+  <header class="nav" id="nav">
+    <div class="nav-inner container">
+      <a class="brand" href="#inicio">
+        <img src="favicon.svg" alt="WinForge" class="brand-logo" />
+        <span class="brand-name">Win<em>Forge</em></span>
+      </a>
+
+      <nav class="nav-links" id="navLinks">
+        <a href="#inicio" class="nav-link">Inicio</a>
+        <a href="#caracteristicas" class="nav-link">Características</a>
+        <a href="#lenguajes" class="nav-link">Idiomas</a>
+        <a href="#instalacion" class="nav-link">Descargar</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a class="btn btn-primary btn-sm" href="#instalacion">
+          Obtener WinForge
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </a>
+        <button class="nav-burger" id="navBurger" aria-label="Abrir menú">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- ========= HERO ========= -->
+    <section class="hero container" id="inicio">
+      <div class="hero-content reveal">
+        <span class="hero-badge">
+          <span class="dot"></span>
+          100% Gratuito · Sin límites
+        </span>
+        <h1 class="hero-title">
+          Forjá tu Windows.<br />
+          <span class="grad">Jugá al máximo.</span>
+        </h1>
+        <p class="hero-sub">
+          <strong>WinForge</strong> es el optimizador competitivo para gamers y usuarios
+          avanzados. Una sola app para monitorear tu PC, optimizarla al jugar,
+          gestionar tus juegos y ajustar Windows a tu medida.
+        </p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#instalacion">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Descargar v0.2.0
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/Maximiliano-Fallini/WinForge" target="_blank" rel="noopener">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.11.79-.25.79-.56v-2c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.68-1.28-1.68-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.18-1.49 3.15-1.18 3.15-1.18.63 1.59.24 2.76.12 3.05.74.81 1.19 1.83 1.19 3.09 0 4.43-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.2.68.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5Z"/></svg>
+            Ver en GitHub
+          </a>
+        </div>
+        <div class="hero-meta">
+          <span><strong>Beta</strong> v0.2.0</span>
+          <span><strong>Win</strong> 10 / 11</span>
+          <span><strong>100%</strong> Gratuito</span>
+        </div>
+      </div>
+
+      <!-- Visual del logo -->
+      <div class="hero-visual reveal" aria-hidden="true">
+        <div class="logo-halo"></div>
+        <img src="favicon.svg" alt="" class="hero-logo" />
+        <div class="particle p1"></div>
+        <div class="particle p2"></div>
+        <div class="particle p3"></div>
+        <div class="particle p4"></div>
+        <div class="particle p5"></div>
+      </div>
+    </section>
+
+    <!-- ========= MARQUEE DE HARDWARE ========= -->
+    <section class="strip container reveal">
+      <p class="strip-label">Optimizá sin importar tu hardware</p>
+      <div class="strip-logos">
+        <span class="hw">Windows 10 / 11</span>
+        <span class="hw">AMD</span>
+        <span class="hw">Intel</span>
+        <span class="hw">NVIDIA</span>
+        <span class="hw">Steam · Epic</span>
+        <span class="hw">Battle.net · Riot · GOG</span>
+      </div>
+    </section>
+
+    <!-- ========= CARACTERÍSTICAS ========= -->
+    <section class="section container" id="caracteristicas">
+      <div class="section-head reveal">
+        <span class="kicker">Características</span>
+        <h2 class="section-title">Todo lo que tu PC necesita.<br /><span class="grad">Una sola app.</span></h2>
+        <p class="section-desc">
+          Un toolkit completo para sacar el máximo provecho de cada componente,
+          sin dejar nada en manos del azar.
+        </p>
+      </div>
+
+      <div class="features-grid">
+        <article class="feature-card reveal">
+          <div class="feature-icon" style="--c:#ffb703">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </div>
+          <h3>Optimización automática</h3>
+          <p>Al iniciar un juego, ajustá prioridades, pausá Windows Update, silenciá notificaciones y activá tu plan de energía. Todo se restaura al cerrar.</p>
+          <span class="feature-tag">Procesos · Servicios · Energía</span>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="feature-icon" style="--c:#7dfc9d">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+          </div>
+          <h3>Biblioteca de juegos</h3>
+          <p>Detecta juegos de Steam, Epic, Battle.net, GOG, Xbox y Riot. Reglas por juego: CPU, afinidad, GPU, E/S y energía, con alcance "Actual" o "Siempre".</p>
+          <span class="feature-tag">Steam · Epic · GOG · Riot · más</span>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="feature-icon" style="--c:#b16cff">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></svg>
+          </div>
+          <h3>Monitoreo en vivo</h3>
+          <p>CPU, memoria, red, temperaturas de CPU/GPU y uso en tiempo real. Overlay de métricas dentro del juego con atajos de teclado.</p>
+          <span class="feature-tag">FPS · CPU · GPU · RAM</span>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="feature-icon" style="--c:#00bbf9">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><circle cx="12" cy="12" r="9"/></svg>
+          </div>
+          <h3>Herramientas</h3>
+          <p>Limpieza de caché en RAM, planes de energía tweaks y debloat de Windows, reparación del sistema, macros de teclado y autoclicker.</p>
+          <span class="feature-tag">Debloat · Teclado · RAM</span>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="feature-icon" style="--c:#f15bb5">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>
+          </div>
+          <h3>Lanzamiento desde bandeja</h3>
+          <p>Click derecho en el ícono para arrancar un favorito con la lógica correcta de cada launcher, sin abrir la app.</p>
+          <span class="feature-tag">Tray · Auto-inicio</span>
+        </article>
+
+        <article class="feature-card reveal">
+          <div class="feature-icon" style="--c:#ff7a3d">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M19 13a9 9 0 0 1-3.5 1.5"/><circle cx="9.5" cy="9.5" r="1"/><circle cx="14" cy="14" r=".8"/><circle cx="7" cy="15" r=".8"/></svg>
+          </div>
+          <h3>Detección inteligente</h3>
+          <p>Eventos WMI (cero polling) y detector de ventana fullscreen para juegos fuera de la biblioteca: emuladores, itch.io y DRM-free.</p>
+          <span class="feature-tag">WMI · Fullscreen</span>
+        </article>
+      </div>
+    </section>
+
+    <!-- ========= LENGUAJES ========= -->
+    <section class="section container" id="lenguajes">
+      <div class="section-head reveal">
+        <span class="kicker">Multilenguaje</span>
+        <h2 class="section-title">Tu idioma, <span class="grad">al instante</span></h2>
+        <p class="section-desc">
+          WinForge se adapta al idioma de tu Windows, o elegilo vos desde el
+          selector de banderas del navbar. Se traduce al instante, sin reiniciar.
+        </p>
+      </div>
+      <div class="langs reveal">
+        <div class="lang">
+          <img src="assets/flags/ar.png" alt="Español" />
+          <span><em>es-AR</em><small>Español</small></span>
+        </div>
+        <div class="lang">
+          <img src="assets/flags/us.png" alt="English" />
+          <span><em>en-US</em><small>English</small></span>
+        </div>
+        <div class="lang">
+          <img src="assets/flags/br.png" alt="Português" />
+          <span><em>pt-BR</em><small>Português</small></span>
+        </div>
+        <div class="lang">
+          <img src="assets/flags/de.png" alt="Deutsch" />
+          <span><em>de-DE</em><small>Deutsch</small></span>
+        </div>
+        <div class="lang">
+          <img src="assets/flags/fr.png" alt="Français" />
+          <span><em>fr-FR</em><small>Français</small></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= INSTALACIÓN ========= -->
+    <section class="section container" id="instalacion">
+      <div class="download reveal">
+        <div class="download-info">
+          <span class="kicker">Instalación</span>
+          <h2 class="section-title">Listo en segundos</h2>
+          <p class="section-desc">
+            Descargá el instalador MSI, ejecutalo como administrador y empezá a
+            forjar tu rendimiento. No requiere .NET: la app trae todo incluido.
+          </p>
+          <ul class="reqs">
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <span><strong>Windows 10/11</strong> probado en Windows 11 25H2</span>
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15v2m-6 4h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2zm10-10V7a4 4 0 0 0-8 0v4"/></svg>
+              <span><strong>Ejecutar como administrador</strong> para optimizar procesos y planes de energía</span>
+            </li>
+            <li>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              <span><strong>Self-contained</strong> sin necesidad de instalar .NET</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="download-cta">
+          <div class="dl-card">
+            <span class="dl-ver">v0.2.0 · MSI · ~90 MB</span>
+            <a class="btn btn-primary btn-xl" href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.2.0/WinForge-0.2.0.msi">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Descargar WinForge
+            </a>
+            <span class="dl-sub">Beta · Reportá issues en GitHub</span>
+            <a class="btn btn-ghost btn-sm" href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.2.0" target="_blank" rel="noopener">Ver en Releases</a>
+            <div class="dl-star">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/></svg>
+              Todas las funciones de optimización son <strong>100% gratuitas</strong>. Dejá una ⭐ en GitHub.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+<!-- ========= CTA FINAL ========= -->
+    <section class="section container reveal">
+      <div class="final-cta">
+        <h2 class="section-title">Rendimiento y control, <span class="grad">al máximo.</span></h2>
+        <p>Vos ganás. Tu Windows también.</p>
+        <a class="btn btn-primary btn-xl" href="https://github.com/Maximiliano-Fallini/WinForge" target="_blank" rel="noopener">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5A11.5 11.5 0 0 0 .5 12a11.5 11.5 0 0 0 7.86 10.92c.58.11.79-.25.79-.56v-2c-3.2.7-3.87-1.54-3.87-1.54-.53-1.33-1.28-1.68-1.28-1.68-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.18-1.49 3.15-1.18 3.15-1.18.63 1.59.24 2.76.12 3.05.74.81 1.19 1.83 1.19 3.09 0 4.43-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.2.68.8.56A11.5 11.5 0 0 0 23.5 12 11.5 11.5 0 0 0 12 .5Z"/></svg>
+          Ver en GitHub
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========= FOOTER ========= -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <a class="brand" href="#inicio">
+          <img src="favicon.svg" alt="WinForge" class="brand-logo" />
+          <span class="brand-name">Win<em>Forge</em></span>
+        </a>
+        <p>El optimizador competitivo para tu Windows. Rendimiento y control, al máximo.</p>
+      </div>
+      <nav class="footer-links">
+        <div class="footer-col">
+          <h4>Producto</h4>
+          <a href="#caracteristicas">Características</a>
+          <a href="#instalacion">Descargar</a>
+          <a href="#lenguajes">Idiomas</a>
+        </div>
+        <div class="footer-col">
+          <h4>Recursos</h4>
+          <a href="https://github.com/Maximiliano-Fallini/WinForge" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/Maximiliano-Fallini/WinForge/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/Maximiliano-Fallini/WinForge/issues" target="_blank" rel="noopener">Reportar un issue</a>
+        </div>
+      </nav>
+    </div>
+    <div class="container footer-bottom">
+      <span>© 2026 WinForge · Open Source · 100% Gratuito</span>
+      <span>Hecho con 🔥 para gamers</span>
+    </div>
+  </footer>
+
+  <script src="js/lavalamp.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

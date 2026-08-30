@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -671,24 +672,55 @@ public sealed partial class ProcesosPage : Page
         ApplyFilterStyle(FilterUserButton, FilterUserIcon, FilterUserLabel, _onlyUserProcesses);
     }
 
-    // Valores por defecto (tema) capturados antes de aplicar el primer estilo, para
-    // restaurarlos al desactivar el filtro. No se usan claves del framework
-    // (TextFillColorPrimaryBrush) porque ThemeBrushes.Get solo garantiza las de la app.
-    private static readonly Dictionary<Button, (Brush Bg, Brush Fg, Brush IconFg, Brush LabelFg)> FilterDefaults = new();
+    // Valores capturados por botón: el estilo del filtro está gobernado por el
+    // code-behind (colores explícitos, legibles en ambos temas) en lugar de depender
+    // del template por defecto del Button, cuyo estado PointerOver oscurece el fondo
+    // sin mantener el contraste del texto.
+    private static readonly Dictionary<Button, bool> FilterActive = new();
+    private static readonly HashSet<Button> FilterHooked = new();
 
     private static void ApplyFilterStyle(Button button, FontIcon icon, TextBlock label, bool active)
     {
-        if (!FilterDefaults.TryGetValue(button, out var def))
+        FilterActive[button] = active;
+        if (FilterHooked.Add(button))
         {
-            def = (button.Background, button.Foreground ?? ThemeBrushes.Get("MutedBrush"),
-                   icon.Foreground ?? ThemeBrushes.Get("MutedBrush"),
-                   label.Foreground ?? ThemeBrushes.Get("MutedBrush"));
-            FilterDefaults[button] = def;
+            button.PointerEntered += (_, _) => RenderFilterState(button, icon, label, hover: true);
+            button.PointerExited += (_, _) => RenderFilterState(button, icon, label, hover: false);
         }
-        button.Background = active ? ThemeBrushes.Get("AccentBrush") : def.Bg;
-        button.Foreground = active ? ThemeBrushes.Get("AccentForegroundBrush") : def.Fg;
-        icon.Foreground = active ? ThemeBrushes.Get("AccentForegroundBrush") : def.IconFg;
-        label.Foreground = active ? ThemeBrushes.Get("AccentForegroundBrush") : def.LabelFg;
+        RenderFilterState(button, icon, label, hover: false);
+    }
+
+    /// <summary>
+    /// Pinta el botón según su estado (activo/inactivo) y el hover, con colores que
+    /// garantizan contraste: fondo de card + texto secundario en reposo, fondo más
+    /// claro + mismo texto al hover, y acento + texto oscuro cuando está activo.
+    /// </summary>
+    private static void RenderFilterState(Button button, FontIcon icon, TextBlock label, bool hover)
+    {
+        bool active = FilterActive.TryGetValue(button, out var a) && a;
+        Brush bg, fg;
+        if (active)
+        {
+            bg = ThemeBrushes.Get("AccentBrush");
+            // Texto del botón activo: el que contrasta con el acento (casi negro en
+            // oscuro, verdaderamente legible). Se mantiene igual al hacer hover para
+            // que no se pierda el contraste.
+            fg = ThemeBrushes.Get("AccentForegroundBrush");
+        }
+        else if (hover)
+        {
+            bg = ThemeBrushes.Get("CardHoverBrush");
+            fg = ThemeBrushes.Get("AccentBrush");
+        }
+        else
+        {
+            bg = ThemeBrushes.Get("CardBackgroundBrush");
+            fg = ThemeBrushes.Get("SecondaryTextBrush");
+        }
+        button.Background = bg;
+        button.Foreground = fg;
+        icon.Foreground = fg;
+        label.Foreground = fg;
     }
 
     private void PauseButton_Click(object sender, RoutedEventArgs e) => TogglePause();
@@ -2484,11 +2516,11 @@ public sealed partial class ProcesosPage : Page
             menu.Items.Add(new MenuFlyoutSeparator());
 
             var closeItem = new MenuFlyoutItem { Text = I18n.T("Cerrar") };
-            closeItem.Click += (_, _) => CloseProcess(exe);
+            closeItem.Click += (_, _) => CloseProcess(pid, exe);
             menu.Items.Add(closeItem);
 
             var killItem = new MenuFlyoutItem { Text = I18n.T("Terminar") };
-            killItem.Click += (_, _) => TerminateProcess(exe);
+            killItem.Click += (_, _) => TerminateProcess(pid, exe);
             menu.Items.Add(killItem);
 
             var locateSub = new MenuFlyoutSubItem { Text = I18n.T("Localizar") };
@@ -2530,55 +2562,78 @@ public sealed partial class ProcesosPage : Page
 
     // ===== Acciones del menú de clic derecho =====
 
-    private void ShowStatus(string text, Brush brush)
+    private void ShowStatus(string text, Brush brush, params object?[] args)
     {
-        StatusText.Text = text;
-        StatusText.Foreground = brush;
-        StatusText.Visibility = Visibility.Visible;
+        // Delegar en Feedback.Set: autodesvanece a los 4 s (como el resto de la app)
+        // y colapsa el elemento con texto vacío. El texto llega como plantilla sin
+        // traducir para que Feedback.Set lo traduzca una sola vez.
+        string message = args.Length > 0 ? string.Format(text, args) : text;
+        Feedback.Set(StatusText, message, brush as SolidColorBrush);
     }
 
-    private void CloseProcess(string exe)
+    private void CloseProcess(int pid, string exe)
     {
         try
         {
-            var app = _processService.FindRunningProcess(exe);
-            if (app == null)
+            // Usar el PID de la fila clicada directamente: no re-buscar por
+            // nombre (FindRunningProcess) que puede fallar aunque la fila siga
+            // viva (cambio de nombre, truncado, etc.).
+            using var p = Process.GetProcessById(pid);
+            if (p.HasExited)
             {
-                ShowStatus(I18n.T("Proceso no encontrado: {0}", exe), Feedback.WarningBrush);
+                ShowStatus("Proceso no encontrado: {0}", Feedback.WarningBrush, exe);
                 return;
             }
-            using var p = Process.GetProcessById(app.Id);
             // WM_CLOSE a la ventana principal: cierre ordenado (guarda datos).
             if (p.CloseMainWindow())
-                ShowStatus(I18n.T("Se envió la orden de cerrar a {0}.", exe), Feedback.MutedBrush);
-            else
-                ShowStatus(I18n.T("No se pudo cerrar {0}: el proceso no tiene ventana principal.", exe), Feedback.WarningBrush);
+            {
+                ShowStatus("Se envió la orden de cerrar a {0}.", Feedback.MutedBrush, exe);
+                return;
+            }
+            // El proceso no tiene ventana principal (consola, servicio, background):
+            // caer a una terminación forzosa — es lo que busca quien pide "Cerrar".
+            try
+            {
+                p.Kill();
+                ShowStatus("Se terminó {0}.", Feedback.SuccessBrush, exe);
+            }
+            catch (Exception ex2)
+            {
+                _loggingService.LogWarning($"ProcesosPage: cerrar {exe}: {ex2.Message}");
+                ShowStatus("No se pudo cerrar {0}.", Feedback.WarningBrush, exe);
+            }
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"ProcesosPage: cerrar {exe}: {ex.Message}");
-            ShowStatus(I18n.T("No se pudo cerrar {0}: {1}", exe, ex.Message), Feedback.WarningBrush);
+            ShowStatus("No se pudo cerrar {0}.", Feedback.WarningBrush, exe);
         }
     }
 
-    private void TerminateProcess(string exe)
+    private void TerminateProcess(int pid, string exe)
     {
         try
         {
-            var app = _processService.FindRunningProcess(exe);
-            if (app == null)
+            using var p = Process.GetProcessById(pid);
+            if (p.HasExited)
             {
-                ShowStatus(I18n.T("Proceso no encontrado: {0}", exe), Feedback.WarningBrush);
+                ShowStatus("Proceso no encontrado: {0}", Feedback.WarningBrush, exe);
                 return;
             }
-            using var p = Process.GetProcessById(app.Id);
             p.Kill();
-            ShowStatus(I18n.T("Proceso terminado: {0}", exe), Feedback.SuccessBrush);
+            ShowStatus("Se terminó {0}.", Feedback.SuccessBrush, exe);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 5)
+        {
+            // ERROR_ACCESS_DENIED: proceso protegido (PPL), del sistema o de
+            // integridad mayor. Sobre esto Windows no deja ni elevado.
+            _loggingService.LogWarning($"ProcesosPage: terminar {exe}: acceso denegado (PID {pid})");
+            ShowStatus("Windows protege a {0} y no deja terminarlo.", Feedback.WarningBrush, exe);
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"ProcesosPage: terminar {exe}: {ex.Message}");
-            ShowStatus(I18n.T("No se pudo terminar {0}: {1}", exe, ex.Message), Feedback.WarningBrush);
+            ShowStatus("No se pudo terminar {0}.", Feedback.WarningBrush, exe);
         }
         _ = RefreshAsync();
     }
@@ -2602,7 +2657,7 @@ public sealed partial class ProcesosPage : Page
         {
             if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
             {
-                ShowStatus(I18n.T("No se encontró el archivo: {0}", exePath ?? exe), Feedback.WarningBrush);
+                ShowStatus("No se encontró el archivo: {0}", Feedback.WarningBrush, exePath ?? exe);
                 return;
             }
             // Abre el Explorador con el archivo seleccionado.

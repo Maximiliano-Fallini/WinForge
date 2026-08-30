@@ -502,6 +502,15 @@ public sealed partial class TecladoPage : Page
         RecordStatusText.Foreground = Feedback.AccentBrush;
         RecordStatusText.Visibility = Visibility.Visible;
 
+        // Evitar que el NumberBox de delay conserve el foco al comenzar la captura:
+        // el texto escrito durante la grabación debe convertirse en eventos, no en
+        // una edición accidental del campo.
+        // El foco debe quedar fuera de cualquier control editable. EventsList puede
+        // no tener contenedores realizados todavía y, en ese caso, WinUI conserva el
+        // foco en EventDelayBox. Enviar el foco al botón de detener garantiza que las
+        // teclas capturadas no se escriban en el NumberBox.
+        StopRecordButton.Focus(FocusState.Programmatic);
+
         _macroService.StartRecording(MacroService.DefaultRecordStopKey, RecordMouseToggle.IsOn,
             step => DispatcherQueue.TryEnqueue(() => AppendEventStep(step)),
             steps => DispatcherQueue.TryEnqueue(() =>

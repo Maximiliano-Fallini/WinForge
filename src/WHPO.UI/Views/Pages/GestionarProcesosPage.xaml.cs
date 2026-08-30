@@ -104,6 +104,10 @@ public sealed partial class GestionarProcesosPage : Page
     internal static readonly string BannerCacheDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO", "gamebanners");
 
+    // Sombra compartida de las cards de la biblioteca (ThemeShadow, receptor
+    // configurado en el constructor sobre CardShadowReceiver).
+    private readonly Microsoft.UI.Xaml.Media.ThemeShadow _cardShadow = new();
+
     public GestionarProcesosPage()
     {
         InitializeComponent();
@@ -113,6 +117,12 @@ public sealed partial class GestionarProcesosPage : Page
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _gameBoostService = App.Services.GetRequiredService<IGameBoostService>();
         CleanupLegacyIconCacheDirs();
+
+        // Sombra de las cards de la biblioteca: una sola ThemeShadow compartida
+        // por todas las cards (casters), proyectada sobre el Border receptor
+        // del XAML (WinUI 3: colección Receivers). La elevación (z de
+        // card.Translation) se activa al hover.
+        _cardShadow.Receivers.Add(CardShadowReceiver);
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -233,8 +243,7 @@ public sealed partial class GestionarProcesosPage : Page
             {
                 "Pausa Windows Update (se reanuda solo al salir).",
                 "Detiene servicios de mantenimiento y telemetría que estén corriendo (SysMain, DiagTrack, búsqueda, etc.): los ya detenidos no se tocan.",
-                "Baja prioridad y activa el modo de eficiencia en procesos de segundo plano (búsqueda, widgets, OneDrive…).",
-                "Si hay un plan de energía global configurado (⚙️) lo activa; el plan propio de cada juego tiene prioridad."
+                "Baja prioridad y activa el modo de eficiencia en procesos de segundo plano (búsqueda, widgets, OneDrive…)."
             })
             {
                 content.Children.Add(Line(key, bullet: true));
@@ -254,7 +263,7 @@ public sealed partial class GestionarProcesosPage : Page
     // ===================== Tuerca: configuración del optimizador =====================
 
     /// <summary>
-    /// Popup con dos pestañas: plan de energía global y procesos en segundo plano.
+    /// Popup de configuración del optimizador: procesos en segundo plano.
     /// Los procesos DEFAULT del boost aparecen bloqueados (no se pueden quitar); los
     /// AGREGADOS por el usuario sí, y se suman desde la lista de procesos en ejecución
     /// con doble clic (sin tipear nombres a mano).
@@ -266,40 +275,7 @@ public sealed partial class GestionarProcesosPage : Page
             .Where(n => !defaults.Contains(n, StringComparer.OrdinalIgnoreCase))
             .ToList();
 
-        // ---------- Pestaña 1: plan de energía ----------
-        var planBox = new ComboBox { MinWidth = 240, MaxWidth = 340, HorizontalAlignment = HorizontalAlignment.Left };
-        planBox.Items.Add(new ComboBoxItem { Content = I18n.T("Usar el plan actual"), Tag = string.Empty });
-        foreach (var plan in _cpuPowerService.GetPowerPlans())
-            planBox.Items.Add(new ComboBoxItem { Content = plan.Name, Tag = plan.Guid });
-        var savedPlan = _gameBoostService.GetGlobalPowerPlanGuid() ?? string.Empty;
-        planBox.SelectedIndex = 0;
-        for (int i = 1; i < planBox.Items.Count; i++)
-            if (string.Equals((string?)((ComboBoxItem)planBox.Items[i]!).Tag, savedPlan, StringComparison.OrdinalIgnoreCase))
-            { planBox.SelectedIndex = i; break; }
-
-        var planCard = MakeSettingsCard(new StackPanel
-        {
-            Spacing = 10,
-            Children =
-            {
-                new TextBlock { Text = I18n.T("Plan de energía global"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 14 },
-                new TextBlock
-                {
-                    Text = I18n.T("Se activa al iniciar cualquier juego, salvo que el juego tenga uno propio configurado desde su tarjeta."),
-                    FontSize = 12,
-                    Foreground = Feedback.MutedBrush,
-                    TextWrapping = TextWrapping.Wrap
-                },
-                planBox
-            }
-        });
-
-        // ---------- Pestaña 2: procesos ----------
         var processesPanel = BuildProcessesTab(defaults, custom);
-
-        var pivot = new Pivot { Margin = new Thickness(0, 2, 0, 0) };
-        pivot.Items.Add(new PivotItem { Header = I18n.T("Plan de energía"), Content = planCard });
-        pivot.Items.Add(new PivotItem { Header = I18n.T("Procesos"), Content = processesPanel });
 
         var dialog = new ContentDialog
         {
@@ -308,13 +284,14 @@ public sealed partial class GestionarProcesosPage : Page
             PrimaryButtonText = I18n.T("Guardar"),
             CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Primary,
-            Content = pivot
+            Content = processesPanel
         };
+        // El template del ContentDialog limita el ancho a 548 px por defecto; lo
+        // ampliamos para que las dos columnas respiren y el popup sea más bajo.
+        dialog.Resources["ContentDialogMaxWidth"] = 880d;
 
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
-        var selected = planBox.SelectedItem as ComboBoxItem;
-        _gameBoostService.SetGlobalPowerPlanGuid(selected?.Tag as string ?? string.Empty);
         _gameBoostService.SetBackgroundProcesses(custom);
     }
 
@@ -554,7 +531,7 @@ public sealed partial class GestionarProcesosPage : Page
         var pickerList = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
-            MaxHeight = 252,
+            MaxHeight = 224,
             Margin = new Thickness(0, 2, 0, 0)
         };
 
@@ -728,16 +705,27 @@ public sealed partial class GestionarProcesosPage : Page
             RebuildPicker();
         };
 
+        var boostLists = new StackPanel { Spacing = 10 };
+        boostLists.Children.Add(new TextBlock { Text = I18n.T("Por defecto"), FontSize = 11, Foreground = Feedback.MutedBrush });
+        boostLists.Children.Add(defaultsRows);
+        boostLists.Children.Add(new TextBlock { Text = I18n.T("Agregados"), FontSize = 11, Foreground = Feedback.MutedBrush });
+        boostLists.Children.Add(addedRows);
+
         var rightCard = MakeSettingsCard(new StackPanel
         {
             Spacing = 10,
             Children =
             {
                 new TextBlock { Text = I18n.T("En el boost"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 },
-                new TextBlock { Text = I18n.T("Por defecto"), FontSize = 11, Foreground = Feedback.MutedBrush },
-                defaultsRows,
-                new TextBlock { Text = I18n.T("Agregados"), FontSize = 11, Foreground = Feedback.MutedBrush },
-                addedRows,
+                // Tope de altura + scroll: la lista de defaults (~17 procesos) no
+                // estira el popup hacia abajo; el popup queda compacto y parejo
+                // con la columna izquierda.
+                new ScrollViewer
+                {
+                    MaxHeight = 218,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Content = boostLists
+                },
                 restoreButton
             }
         });
@@ -1041,10 +1029,12 @@ public sealed partial class GestionarProcesosPage : Page
     // (por si se instaló/desinstaló un juego desde la última visita).
     private void RedetectButton_Click(object sender, RoutedEventArgs e)
     {
-        // Re-detectar muestra TODOS los juegos: limpia ocultos Y eliminados para
-        // que vuelvan a aparecer los que se habían escondido o borrado (ej. Fortnite).
+        // Re-detectar limpia ocultos, manuales y eliminados para que solo se
+        // muestren los juegos detectados automáticamente por el escáner (un juego
+        // eliminado de la biblioteca tampoco debe reaparecer al re-detectear).
         _processService.ClearHiddenExes();
-        _processService.ClearDeletedGames();
+        _processService.ClearManualExes(); // Limpiar juegos manuales
+        _processService.ClearDeletedGames(); // Limpiar eliminados (vuelven los quitados)
         _ = RefreshAsync(showSkeleton: false, refreshCache: true);
     }
 
@@ -1086,6 +1076,7 @@ public sealed partial class GestionarProcesosPage : Page
 
             var added = new List<string>();
             var skipped = new List<string>();
+            var skippedLaunchers = new List<string>();
             foreach (var path in dialog.FileNames)
             {
                 // Acceso directo (.lnk): resolver el destino real (el exe del juego),
@@ -1103,14 +1094,31 @@ public sealed partial class GestionarProcesosPage : Page
                     skipped.Add(Path.GetFileName(resolved));
                     continue;
                 }
+                // Un launcher/instalador/anti-cheat (ej. BlacksmithBootstrap.exe) no
+                // es un juego: no tiene sentido en la biblioteca (no se puede lanzar
+                // el juego desde ahí). Se avisa y se omite.
+                if (GameExeResolver.IsStubExeName(resolved))
+                {
+                    skippedLaunchers.Add(Path.GetFileName(resolved));
+                    continue;
+                }
                 string? dir = Path.GetDirectoryName(resolved);
                 _processService.AddManualExe(Path.GetFileName(resolved), Path.GetFileNameWithoutExtension(resolved), dir);
+
+                // Detectar automáticamente si es Dark y configurar Blacksmith
+                if (GameLauncher.IsDarkAndDarker(dir, Path.GetFileName(resolved)))
+                {
+                    _processService.SetManualGameLauncher(Path.GetFileName(resolved), "Blacksmith");
+                }
+
                 added.Add(resolved);
             }
 
             if (added.Count == 0)
             {
-                StatusText.Text = I18n.T("No se agregó ningún juego: «{0}» no es un ejecutable.", skipped.FirstOrDefault() ?? "");
+                StatusText.Text = skippedLaunchers.Count > 0
+                    ? I18n.T("No se agregó «{0}»: es un launcher o instalador, no el juego.", skippedLaunchers[0])
+                    : I18n.T("No se agregó ningún juego: «{0}» no es un ejecutable.", skipped.FirstOrDefault() ?? "");
                 StatusText.Foreground = Feedback.WarningBrush;
                 StatusText.Visibility = Visibility.Visible;
                 return;
@@ -1377,7 +1385,7 @@ public sealed partial class GestionarProcesosPage : Page
             for (int j = i; j < Math.Min(i + perRow, items.Count); j++)
             {
                 var item = items[j];
-                var card = BuildGameCard(item.game, item.exe, item.name ?? item.exe, item.installPath);
+                var card = BuildGameCard(item.game, item.exe, item.name ?? item.exe, item.installPath, item.isManual);
                 row.Children.Add(card);
             }
             panel.Children.Add(row);
@@ -1385,10 +1393,16 @@ public sealed partial class GestionarProcesosPage : Page
         return panel;
     }
 
-    private Border BuildGameCard(InstalledGame? game, string exe, string name, string? installPath)
+    private Border BuildGameCard(InstalledGame? game, string exe, string name, string? installPath, bool isManual)
     {
         bool fav = _processService.IsFavorite(exe);
         string? exePath = GameLauncher.FindExePath(installPath ?? "", exe);
+        // Si el registro/launcher no entregó una ruta válida, resolver el exe desde
+        // la carpeta completa. Esto es especialmente importante para Battle.net:
+        // Hearthstone suele llegar con un nombre de exe vacío o con una ruta distinta
+        // a la carpeta real, aunque Hearthstone.exe exista en el disco.
+        if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+            exePath = GameExeResolver.FindMainExePath(installPath ?? "");
         // El ícono de la card se extrae del exe REAL del juego (no del stub de
         // anti-cheat/consola): el exe detectado puede ser start_protected_game.exe
         // (EAC) o vconsole2.exe (CS2), cuyo ícono no es el del juego. El exe de
@@ -1397,26 +1411,29 @@ public sealed partial class GestionarProcesosPage : Page
             ? GameExeResolver.FindBestGameExePath(installPath)
             : exePath;
 
-        // ===== Banner (imagen principal del juego) =====
-        // Cadena de visualización: 1) banner (CDN de Steam o catálogo de Epic),
-        // 2) ícono extraído del exe del juego, 3) emoji de control 🎮. El banner se
-        // aplica como ImageBrush de fondo (el CornerRadius del Border la recorta) y
-        // el ícono/emoji van como elementos centrados que se ocultan cuando carga la
-        // imagen real.
+        // ===== Banner e ícono (imagen principal del juego) =====
+        // Cadena de visualización: banner remoto → ícono local del exe/.ico →
+        // logo de WinForge. El fallback siempre permanece visible hasta que una
+        // imagen válida se haya cargado correctamente.
         var mediaImage = new Image
         {
-            Width = 64,
-            Height = 64,
+            // Base para íconos de fallback (exe/.ico): centrada y compacta (72 px).
+            Width = 72,
+            Height = 72,
             Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false
         };
-        var emojiText = new TextBlock
+        var fallbackIcon = new Image
         {
-            Text = "\U0001F3AE", // 🎮 control de consola
-            FontSize = 44,
+            Source = new BitmapImage(new Uri("ms-appx:///logos/WinForge.png")),
+            // Logo de WinForge cuando no hay NADA mejor: aún más chico (64 px),
+            // centrado, para que el banner vacío se vea prolijo.
+            Width = 64,
+            Height = 64,
+            Stretch = Stretch.Uniform,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false
@@ -1424,14 +1441,16 @@ public sealed partial class GestionarProcesosPage : Page
         var banner = new Border
         {
             // La card es solo el banner (los botones van en el overlay al hover):
-            // las cuatro esquinas redondeadas.
+            // las cuatro esquinas redondeadas. El fondo inicial mantiene visible el
+            // icono de WinForge incluso mientras se resuelve el recurso real.
             CornerRadius = new CornerRadius(12),
             Margin = new Thickness(0),
+            MinHeight = 180,
             Background = ThemeBrushes.Get("CardHoverBrush")
         };
         var bannerGrid = new Grid();
+        bannerGrid.Children.Add(fallbackIcon);
         bannerGrid.Children.Add(mediaImage);
-        bannerGrid.Children.Add(emojiText);
         banner.Child = bannerGrid;
 
         // Estrella (favorito) arriba a la izquierda del banner.
@@ -1479,7 +1498,7 @@ public sealed partial class GestionarProcesosPage : Page
         // Ejecutable para el CFG: el exe REAL del juego (el mismo que se usa para
         // el ícono, saltando stubs de anti-cheat), o el exe detectado.
         string? cfgExe = !string.IsNullOrEmpty(iconPath) ? Path.GetFileName(iconPath) : exe;
-        gearBtn.Click += (s, e) => ShowRuleMenu(gearBtn, exe, name, defenderFolder?.TrimEnd('\\'), cfgExe);
+        gearBtn.Click += (s, e) => ShowRuleMenu(gearBtn, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe);
 
         // ===== Título sobre el banner =====
         // Sombra débil: degradado oscuro suave que sube desde el borde inferior de la
@@ -1513,6 +1532,7 @@ public sealed partial class GestionarProcesosPage : Page
             "GOG" => "ms-appx:///logos/launcher/goglogo.png",
             "Xbox" => "ms-appx:///logos/launcher/xboxlogo.png",
             "Riot" => "ms-appx:///logos/launcher/riotlogo.png",
+            "Blacksmith" => "ms-appx:///logos/launcher/blacksmithlogo.png",
             _ => null
         };
         var titleGrid = new Grid();
@@ -1564,6 +1584,20 @@ public sealed partial class GestionarProcesosPage : Page
         // Blizzard necesitan la sesión del launcher. El resto, por su exe.
         bool steamLaunch = game?.Launcher == "Steam" && !string.IsNullOrEmpty(game?.AppId);
         bool riotLaunch = game?.Launcher == "Riot" && !string.IsNullOrEmpty(game?.AppId);
+        bool blacksmithLaunch = game?.Launcher == "Blacksmith";
+
+        // Para juegos manuales, verificar si tiene un launcher configurado
+        string? manualLauncher = null;
+        if (isManual && game == null)
+        {
+            manualLauncher = _processService.GetManualGameLauncher(exe);
+            if (!string.IsNullOrEmpty(manualLauncher))
+            {
+                blacksmithLaunch = string.Equals(manualLauncher, "Blacksmith", StringComparison.OrdinalIgnoreCase);
+                steamLaunch = string.Equals(manualLauncher, "Steam", StringComparison.OrdinalIgnoreCase);
+                riotLaunch = string.Equals(manualLauncher, "Riot", StringComparison.OrdinalIgnoreCase);
+            }
+        }
         // El código de producto Battle.net viene del servicio (AppId: product.db o
         // mapeo por carpeta); el mapeo por exe queda como respaldo por si llega vacío.
         string? blizzardCode = game?.Launcher == "Blizzard"
@@ -1600,6 +1634,13 @@ public sealed partial class GestionarProcesosPage : Page
             // Riot Client → client del juego → proceso del juego.
             launchFile = GameLauncher.FindRiotLauncher() ?? "";
             launchArgs = $"--launch-product={game!.AppId} --launch-patchline=live";
+        }
+        else if (blacksmithLaunch)
+        {
+            // Blacksmith (Dark and Darker): el launcher Blacksmith maneja el lanzamiento.
+            // LaunchGameAsync se encarga de abrir Blacksmith y pasarle los argumentos.
+            launchFile = exePath ?? "";
+            launchArgs = "";
         }
         else
         {
@@ -1650,6 +1691,27 @@ public sealed partial class GestionarProcesosPage : Page
         {
             launcherProc = "RiotClientServices";
             launcherFound = GameLauncher.FindRiotLauncher() != null;
+        }
+        else if (blacksmithLaunch)
+        {
+            // Dark and Darker se lanza por su exe directo (DungeonCrawler.exe):
+            // el launcher Blacksmith no es un launcher de arranque (no lanza el
+            // juego solo y no es necesario para jugar). La card se comporta como
+            // un juego normal: sin estado de launcher externo ni "Blacksmith no
+            // iniciado".
+            launcherProc = null;
+        }
+        // Para juegos manuales con launcher configurado. EXCEPTO Blacksmith
+        // (Dark and Darker): ese launcher no es de arranque — no lanza el juego
+        // solo y no es necesario para jugar; el juego se lanza por su exe directo
+        // (DungeonCrawler.exe), así que la card se comporta como un juego normal
+        // (sin estado de launcher externo).
+        else if (!string.IsNullOrEmpty(manualLauncher)
+                 && !string.Equals(manualLauncher, "Blacksmith", StringComparison.OrdinalIgnoreCase))
+        {
+            launcherProc = manualLauncher;
+            launcherFound = _processService.IsLauncherRunning(manualLauncher);
+            autoOpen = true;
         }
         bool canLaunch = launcherFound && (!string.IsNullOrEmpty(launchFile) || blizzardCode != null);
         var launchBtn = new Button
@@ -1733,16 +1795,35 @@ public sealed partial class GestionarProcesosPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = banner
         };
-        card.PointerEntered += (s, e) => FadeOverlay(overlay, true);
-        card.PointerExited += (s, e) => FadeOverlay(overlay, false);
+        // Elevación al hover: la card se levanta 6 px con una animación suave
+        // (TranslateTransform + Storyboard, mismo patrón que FadeOverlay) y la
+        // sombra (ThemeShadow compartida) aparece con la elevación z. Al salir,
+        // vuelve a su lugar y la sombra desaparece (z=0).
+        var lift = new TranslateTransform();
+        card.RenderTransform = lift;
+        card.Shadow = _cardShadow;
+        card.PointerEntered += (s, e) =>
+        {
+            AnimateCardLift(lift, -6);
+            card.Translation = new System.Numerics.Vector3(0f, 0f, 24f);
+            FadeOverlay(overlay, true);
+        };
+        card.PointerExited += (s, e) =>
+        {
+            AnimateCardLift(lift, 0);
+            card.Translation = System.Numerics.Vector3.Zero;
+            FadeOverlay(overlay, false);
+        };
 
         _cards.Add((card, banner));
         if (!string.IsNullOrEmpty(game?.BannerUrl))
-            _ = LoadBannerAsync(banner, mediaImage, emojiText, game!.AppId, game.BannerUrl);
+            _ = LoadBannerAsync(banner, mediaImage, fallbackIcon, game!.AppId, game.BannerUrl, iconPath);
         else if (game?.Launcher == "Epic" && !string.IsNullOrEmpty(game.AppId) && !string.IsNullOrEmpty(game.ArtNamespace))
-            _ = LoadEpicBannerAsync(banner, mediaImage, emojiText, game.ArtNamespace, game.AppId, iconPath);
-        else if (!string.IsNullOrEmpty(iconPath))
-            _ = LoadExeIconAsync(mediaImage, emojiText, iconPath);
+            _ = LoadEpicBannerAsync(banner, mediaImage, fallbackIcon, game.ArtNamespace, game.AppId, iconPath);
+        else
+            // Siempre iniciar la cadena de fallback aunque el launcher no tenga
+            // banner: exe/icono local → icono WinForge ya visible.
+            _ = LoadExeIconAsync(mediaImage, fallbackIcon, iconPath ?? "");
 
         return card;
     }
@@ -1780,6 +1861,28 @@ public sealed partial class GestionarProcesosPage : Page
             if (!show) overlay.Visibility = Visibility.Collapsed;
         };
         overlay.Tag = sb;
+        sb.Begin();
+    }
+
+    /// <summary>
+    /// Elevación suave de una card al hover: anima el Y de su TranslateTransform
+    /// (0 → -6 al entrar, -6 → 0 al salir) con easing cúbico ease-out de 180 ms.
+    /// Detiene la animación previa del transform para que entradas/salidas rápidas
+    /// no se pisen. La sombra va aparte (ThemeShadow vía card.Translation z).
+    /// </summary>
+    private static void AnimateCardLift(TranslateTransform lift, double to)
+    {
+        var anim = new DoubleAnimation
+        {
+            To = to,
+            Duration = new Duration(TimeSpan.FromMilliseconds(180)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            EnableDependentAnimation = true
+        };
+        Storyboard.SetTarget(anim, lift);
+        Storyboard.SetTargetProperty(anim, "Y");
+        var sb = new Storyboard();
+        sb.Children.Add(anim);
         sb.Begin();
     }
 
@@ -1853,7 +1956,7 @@ public sealed partial class GestionarProcesosPage : Page
     /// la conversión, cada apertura decodifica una imagen chica al instante. Si algo
     /// falla, queda el ícono/emoji.
     /// </summary>
-    private static async Task LoadBannerAsync(Border banner, Image mediaImage, TextBlock emojiText, string appId, string url)
+    private static async Task LoadBannerAsync(Border banner, Image mediaImage, Image fallbackIcon, string appId, string url, string? exePath)
     {
         try
         {
@@ -1893,17 +1996,21 @@ public sealed partial class GestionarProcesosPage : Page
                     {
                         File.WriteAllBytes(file, bytes);
                     }
-                }
-                catch { return; }
+                }                    catch
+                    {
+                        if (!string.IsNullOrEmpty(exePath)) _ = LoadExeIconAsync(mediaImage, fallbackIcon, exePath);
+                        return;
+                    }
             }
             // Validar que la caché sea una imagen real (JPEG/PNG); si está corrupta,
             // descartarla y dejar el ícono/emoji (no un banner vacío con todo oculto).
             if (!IsValidImageFile(file))
             {
                 try { File.Delete(file); } catch { }
+                if (!string.IsNullOrEmpty(exePath)) _ = LoadExeIconAsync(mediaImage, fallbackIcon, exePath);
                 return;
             }
-            ApplyBannerFile(banner, mediaImage, emojiText, file);
+            ApplyBannerFile(banner, mediaImage, fallbackIcon, file);
         }
         catch (Exception ex)
         {
@@ -1912,21 +2019,27 @@ public sealed partial class GestionarProcesosPage : Page
     }
 
     /// <summary>Aplica un archivo de imagen ya validado como fondo 16:9 de la card.</summary>
-    private static void ApplyBannerFile(Border banner, Image mediaImage, TextBlock emojiText, string file)
+    private static void ApplyBannerFile(Border banner, Image mediaImage, Image fallbackIcon, string file)
     {
         var bmp = new BitmapImage(new Uri(file));
         // Decodificar a tamaño de card (no a resolución completa): banners tipo
         // 2160×2160 (Battle.net) o 2560×1440 (Epic) decodifican mucho más rápido y
         // con mucha menos memoria si se pide el decode ya escalado.
-        bmp.DecodePixelWidth = 640;
-        // El ícono/emoji quedaría flotando sobre la imagen: se ocultan al aplicar el banner.
-        mediaImage.Visibility = Visibility.Collapsed;
-        emojiText.Visibility = Visibility.Collapsed;
-        banner.Background = new ImageBrush
-        {
-            ImageSource = bmp,
-            Stretch = Stretch.UniformToFill
-        };
+        bmp.DecodePixelWidth = 640;            // El banner se renderiza como un Image real dentro del mismo árbol visual.
+            // Mantener el Source en el control evita que el brush quede sin layout o
+            // sea tapado por capas posteriores.
+            mediaImage.Source = bmp;
+            // BANNER REAL: la imagen cubre todo el banner (UniformToFill) y queda
+            // anclada al CENTRO (el recorte interno del cover también es centrado).
+            // No toca el layout de la card: solo la alineación de la propia imagen.
+            mediaImage.Stretch = Stretch.UniformToFill;
+            mediaImage.HorizontalAlignment = HorizontalAlignment.Center;
+            mediaImage.VerticalAlignment = VerticalAlignment.Center;
+            mediaImage.Width = double.NaN;
+            mediaImage.Height = double.NaN;
+            mediaImage.Visibility = Visibility.Visible;
+            fallbackIcon.Visibility = Visibility.Collapsed;
+            banner.Background = ThemeBrushes.Get("CardHoverBrush");
     }
 
     /// <summary>
@@ -2001,12 +2114,12 @@ public sealed partial class GestionarProcesosPage : Page
     /// caché propia en disco. Si falla (launcher nunca abierto, juego dado de baja...),
     /// cae al ícono del exe.
     /// </summary>
-    private static async Task LoadEpicBannerAsync(Border banner, Image mediaImage, TextBlock emojiText, string ns, string catalogItemId, string? exePath)
+    private static async Task LoadEpicBannerAsync(Border banner, Image mediaImage, Image fallbackIcon, string ns, string catalogItemId, string? exePath)
     {
         void FallbackToIcon()
         {
             if (!string.IsNullOrEmpty(exePath))
-                _ = LoadExeIconAsync(mediaImage, emojiText, exePath);
+                _ = LoadExeIconAsync(mediaImage, fallbackIcon, exePath);
         }
 
         try
@@ -2029,7 +2142,7 @@ public sealed partial class GestionarProcesosPage : Page
             }
             if (IsValidImageFile(file))
             {
-                ApplyBannerFile(banner, mediaImage, emojiText, file);
+                ApplyBannerFile(banner, mediaImage, fallbackIcon, file);
             }
             else
             {
@@ -2243,10 +2356,16 @@ public sealed partial class GestionarProcesosPage : Page
     /// (igual que los banners): SetSource con un MemoryStream descartado dejaba la
     /// imagen en blanco porque BitmapImage decodifica en forma asíncrona.
     /// </summary>
-    private static async Task LoadExeIconAsync(Image mediaImage, TextBlock emojiText, string exePath)
+    private static async Task LoadExeIconAsync(Image mediaImage, Image fallbackIcon, string exePath)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+            {
+                // El fallback de WinForge ya está visible; no ocultarlo si no hay
+                // ejecutable resoluble (caso frecuente en juegos de Battle.net).
+                return;
+            }
             // Sufijo "-hi": la caché vieja guardaba íconos estirados de 32 px (borrosos);
             // con el sufijo nuevo se re-extrae todo en alta resolución (hasta 256 px).
             // "exeicons-v2": descarta la v1 que podía guardar íconos legacy con el
@@ -2284,18 +2403,32 @@ public sealed partial class GestionarProcesosPage : Page
                     });
                     if (okIco && IsValidImageFile(icoCache))
                     {
-                        mediaImage.Source = new BitmapImage(new Uri(icoCache));
+                        var iconImage = new BitmapImage(new Uri(icoCache));
+                        iconImage.DecodePixelWidth = 72;
+                        mediaImage.Source = iconImage;
+                        mediaImage.Stretch = Stretch.Uniform;
+                        mediaImage.Width = 72;
+                        mediaImage.Height = 72;
+                        mediaImage.HorizontalAlignment = HorizontalAlignment.Center;
+                        mediaImage.VerticalAlignment = VerticalAlignment.Center;
                         mediaImage.Visibility = Visibility.Visible;
-                        emojiText.Visibility = Visibility.Collapsed;
+                        fallbackIcon.Visibility = Visibility.Collapsed;
                         return;
                     }
                 }
             }
             else if (IsValidImageFile(icoCache))
             {
+                // Ícono local del juego desde caché: mismo tamaño compacto y centrado
+                // que el resto de los fallbacks de ícono.
                 mediaImage.Source = new BitmapImage(new Uri(icoCache));
+                mediaImage.Stretch = Stretch.Uniform;
+                mediaImage.Width = 72;
+                mediaImage.Height = 72;
+                mediaImage.HorizontalAlignment = HorizontalAlignment.Center;
+                mediaImage.VerticalAlignment = VerticalAlignment.Center;
                 mediaImage.Visibility = Visibility.Visible;
-                emojiText.Visibility = Visibility.Collapsed;
+                fallbackIcon.Visibility = Visibility.Collapsed;
                 return;
             }
 
@@ -2346,18 +2479,34 @@ public sealed partial class GestionarProcesosPage : Page
                     if (File.Exists(small) && IsValidImageFile(small))
                     {
                         mediaImage.Source = new BitmapImage(new Uri(small));
+                        mediaImage.Stretch = Stretch.Uniform;
+                        mediaImage.Width = 72;
+                        mediaImage.Height = 72;
+                        mediaImage.HorizontalAlignment = HorizontalAlignment.Center;
+                        mediaImage.VerticalAlignment = VerticalAlignment.Center;
                         mediaImage.Visibility = Visibility.Visible;
-                        emojiText.Visibility = Visibility.Collapsed;
+                        fallbackIcon.Visibility = Visibility.Collapsed;
                     }
                     return;
                 }
             }
             if (!IsValidImageFile(cacheFile)) return;
-            mediaImage.Source = new BitmapImage(new Uri(cacheFile));
+            var finalImage = new BitmapImage(new Uri(cacheFile));
+            finalImage.DecodePixelWidth = 72;
+            mediaImage.Source = finalImage;
+            mediaImage.Stretch = Stretch.Uniform;
+            mediaImage.Width = 72;
+            mediaImage.Height = 72;
+            mediaImage.HorizontalAlignment = HorizontalAlignment.Center;
+            mediaImage.VerticalAlignment = VerticalAlignment.Center;
             mediaImage.Visibility = Visibility.Visible;
-            emojiText.Visibility = Visibility.Collapsed;
+            fallbackIcon.Visibility = Visibility.Collapsed;
         }
-        catch { }
+        catch
+        {
+            // Nunca ocultar el fallback: una extracción fallida no debe dejar la
+            // card sin ningún recurso visual.
+        }
     }
 
     /// <summary>Hash corto y estable de una ruta (para el nombre del archivo de caché del ícono).</summary>
@@ -2411,7 +2560,7 @@ public sealed partial class GestionarProcesosPage : Page
         {
             cardEl.Width = cardWidth;
             // El banner ocupa el ancho completo de la card (sin márgenes): 16:9 real.
-            banner.Height = Math.Max(bannerMin, cardWidth * 9.0 / 16.0);
+            banner.Height = Math.Max(180, cardWidth * 9.0 / 16.0);
         }
         // Misma geometría para el skeleton (si está visible en la grilla).
         foreach (var (card, banner, _) in _skeletonCards)
@@ -2423,7 +2572,7 @@ public sealed partial class GestionarProcesosPage : Page
 
     // ===== Tuerca → desplegable simple (submenús) =====
 
-    private void ShowRuleMenu(FrameworkElement target, string exe, string name, string? defenderFolder = null, string? cfgExe = null)
+    private void ShowRuleMenu(FrameworkElement target, string exe, string name, bool isManual, string? defenderFolder = null, string? cfgExe = null)
     {
         var rules = _processService.GetRules();
         var rule = rules.TryGetValue(exe, out var r) ? r : new ProcessRule(null, null, null);
@@ -2916,7 +3065,8 @@ public sealed partial class GestionarProcesosPage : Page
         }
 
         // Eliminar: saca el juego de TODA la biblioteca (ni ocultos lo lista).
-        // No es definitivo: «Re-detectar» lo vuelve a mostrar.
+        // Si es manual: elimina de la lista de manuales (no vuelve a aparecer).
+        // Si es detectado: agrega a eliminados (vuelve con Re-detectar).
         menu.Items.Add(new MenuFlyoutSeparator());
         var deleteItem = new MenuFlyoutItem
         {
@@ -2929,15 +3079,31 @@ public sealed partial class GestionarProcesosPage : Page
             {
                 XamlRoot = XamlRoot,
                 Title = I18n.T("Eliminar de la biblioteca"),
-                Content = I18n.T("¿Eliminar {0} de la biblioteca? No se desinstala y vuelve a aparecer con «Re-detectar».", name),
+                Content = isManual
+                    ? I18n.T("¿Eliminar {0} de la biblioteca? No se desinstala. Al ser un juego manual, no volverá a aparecer con «Re-detectar».", name)
+                    : I18n.T("¿Eliminar {0} de la biblioteca? No se desinstala. Podés re-detectarlo con el botón «Re-detectar».", name),
                 PrimaryButtonText = I18n.T("Eliminar"),
                 CloseButtonText = I18n.T("Cancelar"),
                 DefaultButton = ContentDialogButton.Close
             };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             {
-                _processService.DeleteGame(exe);
-                StatusText.Text = I18n.T("{0} eliminado de la biblioteca. «Re-detectar» lo vuelve a mostrar.", name);
+                if (isManual)
+                {
+                    // Juego manual: eliminar de la lista de manuales y registrarlo
+                    // como eliminado para que NO vuelva a aparecer aunque el escáner
+                    // también lo detecte (ej. por registro de desinstalación) ni con
+                    // «Re-detectar» (el filtro de eliminados cubre manuales y detectados).
+                    _processService.RemoveManualExe(exe);
+                    _processService.DeleteGame(exe);
+                    StatusText.Text = I18n.T("{0} eliminado de la biblioteca. Al ser manual, no se re-detectará.", name);
+                }
+                else
+                {
+                    // Juego detectado: agregar a eliminados
+                    _processService.DeleteGame(exe);
+                    StatusText.Text = I18n.T("{0} eliminado de la biblioteca. Podés re-detectarlo con «Re-detectar».", name);
+                }
                 StatusText.Foreground = Feedback.MutedBrush;
                 StatusText.Visibility = Visibility.Visible;
                 await RefreshAsync();

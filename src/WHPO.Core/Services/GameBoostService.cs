@@ -82,7 +82,6 @@ public sealed class GameBoostService : IGameBoostService
     };
 
     private const string BackgroundProcessesKey = "gameboost.backgroundProcesses";
-    private const string GlobalPlanKey = "gameboost.powerPlanGuid";
 
     public GameBoostService(ISettingsService settings, ILoggingService logging, IProcessService processService)
     {
@@ -151,19 +150,6 @@ public sealed class GameBoostService : IGameBoostService
 
     public List<string> GetDefaultBackgroundProcesses()
         => new(DefaultBackgroundProcesses);
-
-    public string? GetGlobalPowerPlanGuid()
-    {
-        var guid = _settings.Get(GlobalPlanKey, string.Empty);
-        return string.IsNullOrWhiteSpace(guid) ? null : guid;
-    }
-
-    public void SetGlobalPowerPlanGuid(string? planGuid)
-    {
-        _settings.Set(GlobalPlanKey, string.IsNullOrWhiteSpace(planGuid) ? string.Empty : planGuid);
-        _settings.Save();
-        _logging.LogDebug($"GameBoost: plan de energía global {(string.IsNullOrWhiteSpace(planGuid) ? "(ninguno)" : planGuid)}.");
-    }
 
     public Task ApplyAsync()
     {
@@ -237,15 +223,6 @@ public sealed class GameBoostService : IGameBoostService
             StopServices(WindowsUpdateServices.Concat(MaintenanceServices));
             DeprioritizeBackgroundProcesses(backgroundProcesses);
             PauseToasts();
-
-            // 4) Plan de energía global: solo si ningún juego ya activó el suyo (el plan
-            //    por juego configurado en la card tiene prioridad sobre el global).
-            var globalPlan = GetGlobalPowerPlanGuid();
-            if (!string.IsNullOrWhiteSpace(globalPlan))
-            {
-                bool applied = _processService.TryApplyGlobalPowerPlan(globalPlan!);
-                _logging.LogDebug($"GameBoost: plan de energía global {(applied ? "activado" : "omitido (un juego ya activó el suyo)")}.");
-            }
 
             _logging.LogInfo($"GameBoost: optimización aplicada ({servicesToRestart.Count} servicios y {processesToRestore.Count} procesos a restaurar al cerrar).");
         }
@@ -413,10 +390,6 @@ public sealed class GameBoostService : IGameBoostService
         try
         {
             _logging.LogInfo("GameBoost: restaurando estado previo...");
-
-            // El plan global de GameBoost se revierte primero: si un juego con plan
-            // propio lo tomó, este método no toca nada (el juego lo revierte al salir).
-            _processService.RevertGlobalPowerPlan();
 
             foreach (var svc in servicesToRestart)
             {

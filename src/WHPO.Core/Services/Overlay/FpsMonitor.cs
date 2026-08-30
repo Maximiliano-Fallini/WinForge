@@ -4,15 +4,17 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Microsoft.Diagnostics.Tracing;
+using Microsoft.Diagnostics.Tracing.Parsers;
 using Microsoft.Diagnostics.Tracing.Session;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services.Overlay;
 
 /// <summary>
-/// Contador de FPS por proceso leyendo los eventos de presentación que el runtime
-/// DXGI ya emite por ETW (provider Microsoft-Windows-DXGI, evento
-/// DXGI_Present_Start). Es el mismo mecanismo que usa PresentMon/OCAT para medir
+/// Contador de FPS por proceso leyendo eventos de presentación directamente desde
+/// ETW. La ruta DXGI (DXGI_Present_Start) alimenta la métrica pública actual; la
+/// ruta interna DxgKrnl correlaciona flips/completions para preparar Displayed FPS
+/// sin depender de una aplicación externa. Es un mecanismo de Windows para medir
 /// framerate: escuchar los presents no requiere inyectar código en el juego, así
 /// que no choca con anti-cheats (EAC, BattlEye).
 ///
@@ -24,19 +26,26 @@ namespace WHPO.Core.Services.Overlay;
 /// La sesión ETW corre en un hilo de fondo (TraceEventSession.Source.Process()
 /// bloquea hasta detener la sesión). Todo el estado es thread-safe (concurrent
 /// dictionary + volátiles); los consumidores leen desde su propio hilo.
+///
+/// Cada muestra guarda además el timestamp de LLEGADA (DateTime.UtcNow, reloj de
+/// pared) junto al delta: es lo que permite al gráfico de latencia del overlay
+/// anclar cada frame a tiempo real (eje X = hace cuánto se presentó) y drenar
+/// solas las muestras viejas cuando el juego deja de presentar.
 /// </summary>
 public sealed class FpsMonitor : IFpsMonitor, IDisposable
 {
-    // Microsoft-Windows-DXGI (el provider user-mode del runtime DXGI): emite un
-    // evento DXGI_Present_Start por cada llamada Present() de cada aplicación, con
-    // el PID del proceso que presenta y nombre decodificable. Es el mismo que usa
-    // PresentMon/OCAT como punto de entrada de cada frame, sin el ruido del provider
-    // de kernel (DxgKrnl) ni la necesidad de mapear IDs por versión de Windows.
-    private static readonly Guid DxgiProviderGuid = new("ca11c036-0102-4a2d-a6ad-f03cfed5d3c9");
+    private readonly EtwFrameCapture _capture = new();
+    private readonly DxgKrnlFrameCorrelator _kernelCorrelator = new();
 
-    // Keyword "Events" del provider (verificado con `logman query providers
-    // Microsoft-Windows-DXGI`): cubre los eventos DXGI_Present_*.
+    // Microsoft-Windows-DxgKrnl (provider kernel) es la base de PresentMon y
+    // permite cubrir DX9, OpenGL y Vulkan. TraceEvent 3.2.5 no incluye un parser
+    // DxgKrnl manifestado; los eventos gráficos deben correlacionarse por
+    // PresentHistoryToken/SubmitSequence/VSync antes de usarlos para FPS.
+    private static readonly Guid DxgKrnlProviderGuid = new("802ec45a-1e99-4b83-9920-87c98277ba9d");
+
+    // Keyword "Events" del provider DXGI.
     private const ulong DxgiEventsKeyword = 0x2;
+    // Keyword Present del provider DxgKrnl (0x08000000).
 
     private const string SessionName = "WinForgeFps";
 
@@ -44,20 +53,68 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
     private readonly object _startLock = new();
     private TraceEventSession? _session;
     private Thread? _consumerThread;
+    private System.Threading.Timer? _flushTimer;
     private volatile bool _running;
 
-    // Estado por proceso: último timestamp de presentación + buffer de tiempos de frame (ms).
+    // Estado por proceso: anillo de frames (timestamp de llegada + ms) y último
+    // present para los deltas.
     private sealed class ProcessStats
     {
         public long LastPresentTicks;   // e.TimeStamp del último present (para los deltas de frame)
         public long LastEventAtTicks;   // DateTime.UtcNow de CUANDO se recibió el evento (para el prune)
-        public readonly List<double> FrameTimesMs = new();
+        public readonly FrameRing Frames = new();
     }
 
     private readonly ConcurrentDictionary<int, ProcessStats> _processes = new();
 
-    // Tamaño del buffer de tiempos de frame para FPS (mediana) y para los percentiles.
-    private const int FrameTimeBufferSize = 300;
+    // Anillo circular de muestras de frame: guarda (timestamp ETW del evento,
+    // timestamp de llegada, ms del frame) sin desplazamientos O(n) por evento (la
+    // List vieja movía hasta 900 doubles por frame a fps altos). Capacidad: 900
+    // frames cubren 3.5 s hasta ~257 fps (la ventana que usa el gráfico de
+    // latencia del overlay).
+    private sealed class FrameRing
+    {
+        private const int Capacity = 900;
+        private readonly long[] _etwTicks = new long[Capacity];
+        private readonly long[] _wallTicks = new long[Capacity];
+        private readonly double[] _ms = new double[Capacity];
+        private int _head; // índice del sample más viejo
+        public int Count { get; private set; }
+
+        public void Add(long etwTicks, long wallTicks, double ms)
+        {
+            // Cuando está lleno, el nuevo frame reemplaza exactamente al más viejo
+            // (head) y luego head avanza. En el caso no lleno, tail es el siguiente
+            // hueco libre. Ambas ramas mantienen el orden cronológico.
+            int index;
+            if (Count == Capacity)
+            {
+                index = _head;
+                _head = (_head + 1) % Capacity;
+            }
+            else
+            {
+                index = (_head + Count) % Capacity;
+                Count++;
+            }
+            _etwTicks[index] = etwTicks;
+            _wallTicks[index] = wallTicks;
+            _ms[index] = ms;
+        }
+
+        public long EtwTickAt(int i) => _etwTicks[(_head + i) % Capacity];
+        public long WallTickAt(int i) => _wallTicks[(_head + i) % Capacity];
+        public double MsAt(int i) => _ms[(_head + i) % Capacity];
+
+        /// <summary>Copia los valores de ms (para ordenar en los percentiles).</summary>
+        public double[] CopyMs()
+        {
+            var result = new double[Count];
+            for (int i = 0; i < Count; i++) result[i] = _ms[(_head + i) % Capacity];
+            return result;
+        }
+    }
+
     private const int FpsSmoothingWindow = 30;
 
     public FpsMonitor(ILoggingService log)
@@ -86,10 +143,42 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
                 catch { }
 
                 _session = new TraceEventSession(SessionName, null);
-                // Keyword "Events" + nivel Informational: el runtime DXGI emite los
-                // eventos DXGI_Present_Start/Stop de cada Present() de cada proceso.
-                _session.EnableProvider(DxgiProviderGuid, TraceEventLevel.Informational, DxgiEventsKeyword);
+                // La fuente productiva actual es DXGI. Se habilita además la sesión
+                // kernel estándar para disponer de contexto de procesos/hilos y dejar
+                // lista la telemetría ETW; DxgKrnl gráfico no se cuenta aún porque
+                // TraceEvent no decodifica su manifest y un filtro heurístico falsearía
+                // FPS. El parser completo se integrará en una fase posterior.
+                _session.EnableProvider(EtwFrameCapture.DxgiProviderGuid, TraceEventLevel.Informational, DxgiEventsKeyword);
+                try
+                {
+                    _session.EnableKernelProvider(
+                        KernelTraceEventParser.Keywords.Process |
+                        KernelTraceEventParser.Keywords.Thread);
+                    _session.EnableProvider(
+                        DxgKrnlFrameCorrelator.ProviderGuid,
+                        TraceEventLevel.Informational,
+                        0x08000000);
+                    _log.LogInfo("FpsMonitor: captura ETW kernel DxgKrnl habilitada");
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning($"FpsMonitor: contexto ETW kernel no disponible; se mantiene DXGI: {ex.Message}");
+                }
                 _session.Source.AllEvents += OnEvent;
+
+                // Flush forzado cada 100 ms: ETW entrega los eventos en ráfagas
+                // (por defecto ~1 s), lo que hacía que el gráfico de frametime se
+                // cortara y el valor ms parpadeara entre ráfaga y ráfaga. Con este
+                // flush los eventos llegan casi en tiempo real y el gráfico
+                // scrollea fluido.
+                _flushTimer = new System.Threading.Timer(_ =>
+                {
+                    try
+                    {
+                        if (_running) _session?.Flush();
+                    }
+                    catch { }
+                }, null, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(100));
 
                 _running = true;
                 _consumerThread = new Thread(ConsumerLoop)
@@ -99,7 +188,7 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
                 };
                 _consumerThread.Start();
 
-                _log.LogInfo("FpsMonitor: sesión ETW DXGI iniciada");
+                _log.LogInfo("FpsMonitor: sesión ETW DXGI + DxgKrnl iniciada");
             }
             catch (Exception ex)
             {
@@ -117,6 +206,8 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
         {
             if (!_running) return;
             _running = false;
+            _flushTimer?.Dispose();
+            _flushTimer = null;
             try
             {
                 _session?.Stop();
@@ -147,29 +238,17 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
 
     private void OnEvent(TraceEvent e)
     {
-        if (e.ProviderGuid != DxgiProviderGuid) return;
-        if (!IsPresentEvent(e)) return;
-        TryRecordPresent(e, e.ProcessID, e.TimeStamp);
-    }
-
-    /// <summary>
-    /// Determina si un evento del provider es el inicio de una presentación de
-    /// frame. DXGI_Present_Start es el evento "el proceso llamó Present()": el
-    /// delta entre Present_Start consecutivos del mismo proceso es el tiempo de
-    /// frame (la métrica que muestran MSI Afterburner / RTSS como framerate).
-    /// </summary>
-    private static bool IsPresentEvent(TraceEvent e)
-    {
-        var name = e.EventName;
-        if (!string.IsNullOrEmpty(name))
+        if (_capture.IsFrameEvent(e))
         {
-            // Manifest decodificado: Microsoft-Windows-DXGI/DXGI_Present_Start.
-            if (name.EndsWith("DXGI_Present_Start", StringComparison.OrdinalIgnoreCase)) return true;
-            if (name.EndsWith("Present_Start", StringComparison.OrdinalIgnoreCase)) return true;
+            TryRecordPresent(e, e.ProcessID, e.TimeStamp);
+            return;
         }
-        // Sin manifest decodificable (verificado empíricamente): DXGI_Present_Start
-        // es el evento 42 con opcode Start en Windows 10/11; el 43 es Present_Stop.
-        return (int)e.ID == 42 && e.Opcode == TraceEventOpcode.Start;
+
+        // La ruta kernel se procesa para validar/correlacionar presentaciones, pero
+        // no se mezcla todavía con la serie DXGI: su completion mide Present→display,
+        // mientras que esta API pública expone delta entre frames. Mezclarlas
+        // falsearía FPS; el correlador queda listo para añadir Displayed FPS separado.
+        _kernelCorrelator.TryProcess(e, out _);
     }
 
     private void TryRecordPresent(TraceEvent e, int pid, DateTime timestamp)
@@ -193,11 +272,17 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
         // Descartar deltas espurios: < 0.1 ms (duplicados) o > 2 s (pausas/alt-tab).
         if (dtMs < 0.1 || dtMs > 2000) return;
 
-        lock (stats.FrameTimesMs)
+        // Se guardan DOS relojes: el timestamp ETW del evento (reloj QPC, uniforme
+        // entre presents — el eje X correcto del gráfico) y el de LLEGADA (reloj de
+        // pared — el ancla con la que el gráfico drena las muestras viejas cuando
+        // el juego deja de presentar). ETW entrega los eventos en ráfagas, así que
+        // los timestamps de llegada de una ráfaga son casi idénticos: usarlos como
+        // eje X apiñaba los puntos y la línea se veía como barras "|".
+        long etwTicks = nowTicks;
+        long arrivalTicks = stats.LastEventAtTicks;
+        lock (stats.Frames)
         {
-            stats.FrameTimesMs.Add(dtMs);
-            if (stats.FrameTimesMs.Count > FrameTimeBufferSize)
-                stats.FrameTimesMs.RemoveRange(0, stats.FrameTimesMs.Count - FrameTimeBufferSize);
+            stats.Frames.Add(etwTicks, arrivalTicks, dtMs);
         }
     }
 
@@ -211,11 +296,12 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
     public double GetFps(int pid)
     {
         if (!_running || pid <= 0 || !_processes.TryGetValue(pid, out var stats)) return 0;
-        lock (stats.FrameTimesMs)
+        lock (stats.Frames)
         {
-            if (stats.FrameTimesMs.Count == 0) return 0;
-            int n = Math.Min(stats.FrameTimesMs.Count, FpsSmoothingWindow);
-            var recent = stats.FrameTimesMs.Skip(stats.FrameTimesMs.Count - n).ToArray();
+            if (stats.Frames.Count == 0) return 0;
+            int n = Math.Min(stats.Frames.Count, FpsSmoothingWindow);
+            var recent = new double[n];
+            for (int i = 0; i < n; i++) recent[i] = stats.Frames.MsAt(stats.Frames.Count - n + i);
             Array.Sort(recent);
             double median = recent[recent.Length / 2];
             return median > 0 ? 1000.0 / median : 0;
@@ -227,16 +313,44 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
     public double GetLow01(int pid) => GetLowPercentile(pid, 0.001, minSamples: 100);
 
     /// <summary>
+    /// Serie reciente de frametimes, del más viejo al más nuevo (hasta maxSamples),
+    /// cada una con su timestamp de llegada (reloj de pared). Es la materia prima
+    /// del gráfico de latencia del overlay: cada punto es el delta entre dos
+    /// Present() consecutivos del proceso, anclado a tiempo real.
+    /// </summary>
+    public FrametimeSample[] GetFrametimeSeries(int pid, int maxSamples)
+    {
+        if (maxSamples <= 0) return Array.Empty<FrametimeSample>();
+        if (!_running || pid <= 0 || !_processes.TryGetValue(pid, out var stats))
+            return Array.Empty<FrametimeSample>();
+        lock (stats.Frames)
+        {
+            if (stats.Frames.Count == 0) return Array.Empty<FrametimeSample>();
+            int take = Math.Min(stats.Frames.Count, maxSamples);
+            var result = new FrametimeSample[take];
+            for (int i = 0; i < take; i++)
+            {
+                int idx = stats.Frames.Count - take + i;
+                result[i] = new FrametimeSample(
+                    stats.Frames.EtwTickAt(idx),
+                    stats.Frames.WallTickAt(idx),
+                    stats.Frames.MsAt(idx));
+            }
+            return result;
+        }
+    }
+
+    /// <summary>
     /// FPS del peor "p" de los frames: promedio del p% de frames más lentos.
     /// Requiere al menos minSamples frames en el buffer para ser representativo.
     /// </summary>
     private double GetLowPercentile(int pid, double worstFraction, int minSamples)
     {
         if (!_running || pid <= 0 || !_processes.TryGetValue(pid, out var stats)) return 0;
-        lock (stats.FrameTimesMs)
+        lock (stats.Frames)
         {
-            if (stats.FrameTimesMs.Count < minSamples) return 0;
-            var sorted = stats.FrameTimesMs.ToArray();
+            if (stats.Frames.Count < minSamples) return 0;
+            var sorted = stats.Frames.CopyMs();
             Array.Sort(sorted);
             int worstCount = Math.Max(1, (int)(sorted.Length * worstFraction));
             double sum = 0;

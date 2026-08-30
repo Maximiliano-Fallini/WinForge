@@ -29,7 +29,7 @@ public record RuleApplyFeedback(bool CpuFailed, bool AffinityFailed, bool GpuFai
 }
 
 /// <summary>
-/// Gestión de procesos estilo Process Lasso: detecta las apps/juegos en ejecución,
+/// Gestión de procesos: detecta las apps/juegos en ejecución,
 /// aplica prioridad de CPU, afinidad de núcleos y prioridad de GPU, y persiste las
 /// reglas por ejecutable. Nada se aplica sin una regla guardada (no se hardcodea
 /// ningún valor a ningún proceso).
@@ -132,19 +132,6 @@ public interface IProcessService
     void RevertPowerPlanIfApplied(string exe);
 
     /// <summary>
-    /// Activa el plan de energía GLOBAL del GameBoost solo si ningún juego ya activó
-    /// el suyo (el plan por juego tiene prioridad). Devuelve true si el plan global
-    /// quedó activo; false si un juego ya tenía el suyo.
-    /// </summary>
-    bool TryApplyGlobalPowerPlan(string planGuid);
-
-    /// <summary>
-    /// Revierte el plan global del GameBoost (solo si el plan activo es el global; si
-    /// un juego con plan propio lo tomó, ese juego lo revierte al cerrar).
-    /// </summary>
-    void RevertGlobalPowerPlan();
-
-    /// <summary>
     /// Registra exe → carpeta de instalación para matchear por ruta: muchos juegos
     /// corren con un proceso distinto al exe detectado (ej. Smite.exe lanza
     /// SmiteGame-Win64-Shipping.exe). La UI la llama al refrescar la biblioteca.
@@ -162,6 +149,15 @@ public interface IProcessService
     List<(string Exe, string? Name, string? InstallPath)> GetManualEntries();
     void AddManualExe(string exe, string? displayName = null, string? installPath = null);
     void RemoveManualExe(string exe);
+    /// <summary>Borra TODOS los juegos manuales (Re-detectar los elimina).</summary>
+    void ClearManualExes();
+
+    /// <summary>Configura el launcher de un juego manual (ej: "Blacksmith" para Dark and Darker).</summary>
+    void SetManualGameLauncher(string exe, string launcher);
+    /// <summary>Obtiene el launcher configurado para un juego manual (null si no tiene).</summary>
+    string? GetManualGameLauncher(string exe);
+    /// <summary>Obtiene todos los juegos manuales con su launcher configurado.</summary>
+    Dictionary<string, string> GetManualGameLaunchers();
 
     // ===== Ocultos (juegos que no se muestran en la biblioteca) =====
     List<string> GetHiddenExes();

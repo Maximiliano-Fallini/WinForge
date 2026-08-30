@@ -4,6 +4,66 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <Page.Resources>
+        <!-- Botón de barra de herramientas (filtros + vista plana/árbol).
+             Template PROPIO: el template por defecto del Button oscurece el fondo
+             en su estado PointerOver, y como el color activo (azul) + texto oscuro
+             lo gobierna el code-behind, el hover lo dejaba ilegible. Con este
+             template, hover/pressed NO cambian el fondo: el contraste lo mantiene
+             el code-behind (RenderFilterState). -->
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal"/>
+                                    <!-- PointerOver: sin cambio de fondo (el code-behind
+                                         maneja el hover con colores con contraste). -->
+                                    <VisualState x:Name="PointerOver"/>
+                                    <VisualState x:Name="Pressed">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0.75"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                    <VisualState x:Name="Disabled">
+                                        <Storyboard>
+                                            <ObjectAnimationUsingKeyFrames Storyboard.TargetName="RootBorder" Storyboard.TargetProperty="Opacity">
+                                                <DiscreteObjectKeyFrame KeyTime="0" Value="0.5"/>
+                                            </ObjectAnimationUsingKeyFrames>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <Border x:Name="RootBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="{TemplateBinding CornerRadius}">
+                                <ContentPresenter Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  Foreground="{TemplateBinding Foreground}"
+                                                  HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Page.Resources>
+
     <Grid Background="{ThemeResource AppBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -40,9 +100,7 @@
                 <!-- Filtro de procesos: todos o solo los del usuario actual. -->
                 <Button x:Name="FilterAllButton"
                         Click="FilterAllButton_Click"
-                        Padding="12,6"
-                        CornerRadius="6"
-                        FontSize="12">
+                        Style="{StaticResource ToolbarButtonStyle}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon x:Name="FilterAllIcon" Glyph="&#xE71D;" FontSize="13"/>
                         <TextBlock x:Name="FilterAllLabel" Text="Todos los procesos" FontSize="12"/>
@@ -51,9 +109,7 @@
 
                 <Button x:Name="FilterUserButton"
                         Click="FilterUserButton_Click"
-                        Padding="12,6"
-                        CornerRadius="6"
-                        FontSize="12">
+                        Style="{StaticResource ToolbarButtonStyle}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon x:Name="FilterUserIcon" Glyph="&#xE77B;" FontSize="13"/>
                         <TextBlock x:Name="FilterUserLabel" Text="Procesos del usuario" FontSize="12"/>
@@ -74,9 +130,7 @@
                 <!-- Alterna vista plana (Admin de tareas) / vista árbol. -->
                 <Button x:Name="TreeButton"
                         Click="TreeButton_Click"
-                        Padding="12,6"
-                        CornerRadius="6"
-                        FontSize="12">
+                        Style="{StaticResource ToolbarButtonStyle}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <FontIcon x:Name="TreeIcon" Glyph="&#xE8FD;" FontSize="13"/>
                         <TextBlock x:Name="TreeLabel" Text="Vista árbol" FontSize="12"/>

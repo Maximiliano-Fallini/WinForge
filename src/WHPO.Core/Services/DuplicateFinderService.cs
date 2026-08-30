@@ -53,7 +53,7 @@ public sealed class DuplicateFinderService : IDuplicateFinderService
         => Task.Run(() => DeleteSync(files, toRecycleBin, ct), ct);
 
     // =====================================================================
-    // Protección de raíces del sistema (estilo CCleaner)
+    // Protección de raíces del sistema
     // =====================================================================
 
     // Solo C:\Windows queda bloqueada por ubicación: sus archivos son
@@ -106,7 +106,7 @@ public sealed class DuplicateFinderService : IDuplicateFinderService
             ct.ThrowIfCancellationRequested();
             if (!Directory.Exists(dir)) continue;
 
-            // Raíces del sistema protegidas: avisar y saltar (estilo CCleaner).
+            // Raíces del sistema protegidas: avisar y saltar.
             if (IsInProtectedRoot(dir))
             {
                 _logging.LogWarning(
@@ -125,7 +125,7 @@ public sealed class DuplicateFinderService : IDuplicateFinderService
         if (totalCandidates == 0)
             return new DuplicateScanResult([], 0, 0, totalFiles);
 
-        // ----- Fase 2: hasheado en dos pasadas EN PARALELO (estilo CCleaner) -----
+        // ----- Fase 2: hasheado en dos pasadas EN PARALELO -----
         // 2a) Hash parcial (primeros 64 KB) de TODOS los candidatos a la vez:
         //     casi siempre separa archivos distintos sin leerlos enteros. Con
         //     varios núcleos y solo 64 KB por archivo, esta pasada vuela.
@@ -268,8 +268,8 @@ public sealed class DuplicateFinderService : IDuplicateFinderService
                 }
                 else
                 {
-                    // Archivos ocultos o de sistema excluidos (estilo CCleaner):
-                    // no son basura del usuario y borrarlos es peligroso.
+                    // Archivos ocultos o de sistema excluidos: no son basura del
+                    // usuario y borrarlos es peligroso.
                     if ((fsi.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0) continue;
                     if (IgnoredExtensions.Contains(fsi.Extension)) continue;
                     if (fsi is not FileInfo fi) continue;

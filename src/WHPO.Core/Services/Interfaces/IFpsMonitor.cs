@@ -1,8 +1,19 @@
 namespace WHPO.Core.Services.Interfaces;
 
 /// <summary>
+/// Una muestra de tiempo de frame: cuánto duró el frame (ms, delta entre Present()
+/// consecutivos), el timestamp ETW del evento (reloj QPC del sistema, uniforme
+/// entre presents — es el reloj correcto para el eje X) y el timestamp de LLEGADA
+/// (reloj de pared, UTC ticks — el ancla que permite drenar las muestras viejas
+/// cuando el juego deja de presentar).
+/// </summary>
+public readonly record struct FrametimeSample(long EtwTicks, long TicksUtc, double FrameMs);
+
+/// <summary>
 /// Contador de FPS por proceso basado en ETW (provider Microsoft-Windows-DXGI,
-/// evento DXGI_Present_Start — el mismo punto de medición que usa PresentMon).
+/// evento DXGI_Present_Start). La arquitectura está preparada para agregar la
+/// correlación completa de DxgKrnl tipo PresentMon, necesaria para APIs que no
+/// exponen eventos DXGI.
 /// No inyecta nada en el juego: solo escucha los eventos de presentación que ya
 /// emite el runtime DXGI, por lo que funciona con juegos protegidos por anti-cheat.
 /// Requiere permisos de administrador (los tiene la app).
@@ -29,6 +40,14 @@ public interface IFpsMonitor
 
     /// <summary>0.1% low FPS del proceso (0 si no hay suficientes muestras).</summary>
     double GetLow01(int pid);
+
+    /// <summary>
+    /// Serie reciente de tiempos de frame del proceso, del más viejo al más nuevo
+    /// (hasta <paramref name="maxSamples"/>), cada una con su timestamp de llegada
+    /// (reloj de pared). Para el gráfico de latencia del overlay. Devuelve un array
+    /// vacío si no hay datos.
+    /// </summary>
+    FrametimeSample[] GetFrametimeSeries(int pid, int maxSamples);
 
     /// <summary>Limpia el estado de procesos que ya no presentan frames.</summary>
     void Prune();

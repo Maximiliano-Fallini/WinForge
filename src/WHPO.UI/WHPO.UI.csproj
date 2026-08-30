@@ -3,10 +3,10 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     <!-- Versión de la app: la lee AppUpdateService para el chequeo de actualizaciones.
-         Al publicar, llevar 0.1.5 junto con WHPO.Core.csproj, installer/Product.wxs
+         Al publicar, llevar 0.2.0 junto con WHPO.Core.csproj, installer/Product.wxs
          y installer/build-installer.ps1 -->
-    <Version>0.1.5</Version>
-    <InformationalVersion>0.1.5-beta</InformationalVersion>
+    <Version>0.2.0</Version>
+    <InformationalVersion>0.2.0-beta</InformationalVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>WHPO_UI</RootNamespace>
     <!-- El ejecutable se llama WinForge.exe (no WHPO.UI.exe) -->
@@ -114,7 +114,7 @@
   <!-- Post-build event to copy exe to fixed location for debugging -->
   <Target Name="CopyExeToFixedLocation" AfterTargets="Build">
     <PropertyGroup>
-      <FixedExeDir>$(MSBuildThisFileDirectory)..\bin\Debug\WHPO.Debug\</FixedExeDir>
+      <FixedExeDir>$(MSBuildThisFileDirectory)..\bin\$(Configuration)\WHPO.$(Configuration).$(Platform)\</FixedExeDir>
     </PropertyGroup>
     <MakeDir Directories="$(FixedExeDir)" Condition="!Exists('$(FixedExeDir)')" />
     <!-- Copy entire output directory (including subdirectories) -->

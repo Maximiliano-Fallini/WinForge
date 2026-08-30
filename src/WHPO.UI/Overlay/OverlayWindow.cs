@@ -34,6 +34,9 @@ public sealed record OverlayConfig(
     Color CpuColor,
     Color GpuColor,
     Color RamColor,
+    // Título del juego: línea sutil al final del overlay (abajo de todo). Se
+    // muestra/oculta con un switch en la página de apariencia.
+    bool ShowGameTitle,
     // FILAS de métricas del overlay (badges arrastrables de la página): cada fila
     // de badges de la configuración es una línea de la superposición. Cada fila
     // contiene ids; dentro de una fila, los ids se dibujan en el orden indicado y
@@ -46,7 +49,8 @@ public sealed record OverlayConfig(
 /// cualquier juego. Cuando está BLOQUEADA es click-through (los clics pasan al juego);
 /// cuando está DESBLOQUEADA recibe el mouse y se puede arrastrar para ubicarla.
 ///
-/// El render corre con un timer propio de 250 ms: dibuja el fondo redondeado
+/// El render corre con un timer propio (16 ms con el gráfico de frametime activo,
+/// 250 ms sin él): dibuja el fondo redondeado
 /// semi-transparente (opacidad configurable) y las líneas de métricas con el color
 /// de cada una. Vive en el hilo de UI de la app (WinForms convive con WinUI 3 en el
 /// mismo hilo; NotifyIcon ya lo demuestra).
@@ -65,38 +69,41 @@ public sealed class OverlayWindow : Form
     private OverlayConfig _config;
     private bool _disposed;
 
+    // Tope de escala del gráfico de frametime con HISTÉRESIS: sube al instante
+    // ante un pico (el stutter siempre se ve completo) y baja lento (10% por
+    // render) cuando vuelve la calma, para que la escala no vibre. Se resetea
+    // cuando deja de llegar señal.
+    private double _graphCapMs;
+
     // Dimensiones del overlay: el ancho es fijo y el alto se calcula según la
     // cantidad de líneas de métricas (cada fila de badges = una línea).
-    private const int OverlayWidth = 330;
+    private const int OverlayWidth = 360;
     private const int MinOverlayHeight = 120;
 
     // Columnas de la grilla de hardware, alineadas a la derecha (sin escala):
     // usage / mhz / temp / watts. Medidas con la fuente real (Consolas bold 12.5px):
-    // "100%"=32.5, "5299 MHz"=60.8, "89°C"=32.5, "120 W"=39.6 → con gaps de 14px
-    // entre columnas y 10px de margen derecho, el peor caso (3 dígitos de watts)
-    // no se pega ni al valor anterior ni al borde.
+    // "100%"=32.5, "5299 MHz"=60.8, "89°C"=32.5, "120 W"=39.6 → con gaps de 22px
+    // entre columnas y 16px de margen derecho (overlay de 360px), la fila completa
+    // de 4 valores queda aireada y el peor caso (3 dígitos de watts) nunca se pega
+    // al valor anterior ni al borde.
     private const float ColUsageRight = 144;
-    private const float ColMhzRight = 219;
-    private const float ColTempRight = 266;
-    private const float ColWattsRight = 320;
+    private const float ColMhzRight = 227;
+    private const float ColTempRight = 282;
+    private const float ColWattsRight = 344;
 
     // Fuentes dinámicas según la escala de letra configurada (todo Consolas).
-    private Font? _fpsFont;
     private Font? _lowFont;
     private Font? _lineFont;
     private float _fontScale = -1f;
 
-    private Font FpsFont => _fpsFont!;
     private Font LowFont => _lowFont!;
     private Font LineFont => _lineFont!;
 
     private void EnsureFonts(float scale)
     {
         if (Math.Abs(scale - _fontScale) < 0.001f) return;
-        _fpsFont?.Dispose();
         _lowFont?.Dispose();
         _lineFont?.Dispose();
-        _fpsFont = new Font("Consolas", 20f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
         _lowFont = new Font("Consolas", 11f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
         _lineFont = new Font("Consolas", 12.5f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
         _fontScale = scale;
@@ -321,7 +328,7 @@ public sealed class OverlayWindow : Form
     public void StartRendering()
     {
         if (_renderTimer != null) return;
-        _renderTimer = new WinFormsTimer { Interval = 250 };
+        _renderTimer = new WinFormsTimer { Interval = RenderInterval() };
         _renderTimer.Tick += (_, _) => Render();
         _renderTimer.Start();
     }
@@ -585,6 +592,7 @@ public sealed class OverlayWindow : Form
             CpuColor: c("overlay.colorCpu", "#FFFFFF"),
             GpuColor: c("overlay.colorGpu", "#FFFFFF"),
             RamColor: c("overlay.colorRam", "#FFFFFF"),
+            ShowGameTitle: b("overlay.showGameTitle", true),
             MetricRows: metricRows);
     }
 
@@ -600,10 +608,38 @@ public sealed class OverlayWindow : Form
     /// <summary>Id de métrica válido (de los badges configurables).</summary>
     private static bool IsValidMetricId(string id) => id switch
     {
-        "fps" or "low1" or "low01" or "cpuUsage" or "cpuMhz" or "cpuTemp" or "cpuWatts"
+        "fps" or "low1" or "low01" or FrametimeGraphId or "cpuUsage" or "cpuMhz" or "cpuTemp" or "cpuWatts"
             or "gpuUsage" or "gpuMhz" or "gpuTemp" or "gpuWatts" or "ramMb" or "ramMhz" => true,
         _ => false
     };
+
+    // Id del badge del gráfico de frametime (compartido con OverlayPage).
+    private const string FrametimeGraphId = "latencyGraph";
+
+    // Ventana de tiempo que muestra el gráfico (estilo RTSS) y muestras pedidas
+    // al monitor de FPS: 900 frames cubren 3.5 s hasta ~257 fps (el buffer de
+    // FpsMonitor guarda 900).
+    private const double FrametimeWindowSeconds = 3.5;
+    private const int FrametimeGraphSamples = 900;
+
+    // Gracias de señal del gráfico: si el último evento llegó hace más de esto,
+    // el juego dejó de presentar y la señal se drena (la línea se limpia y el
+    // valor ms se oculta). La entrega ETW llega en ráfagas de hasta ~1 s, así que
+    // la gracia debe cubrirlas sin ocultar datos con el juego corriendo.
+    private const double SignalGraceMs = 2500;
+
+    // Hueco máximo tolerable entre el último punto y el borde derecho del panel
+    // (~2% de la ventana de 3.5 s): con el flush ETW de 100 ms la entrega nunca
+    // se retrasa mucho, así que el último punto se mantiene casi pegado al borde
+    // y el espacio vacío entre la línea y la card es mínimo.
+    private const double MaxHuecoMs = 60;
+
+    /// <summary>Intervalo de render: 16 ms con el gráfico activo (~60 actualizaciones/seg:
+    /// el scroll del eje de tiempo real se ve fluido y cada frame nuevo se dibuja en
+    /// cuanto llega) y 250 ms sin él (el overlay es estático salvo los valores, y así
+    /// se ahorra CPU).</summary>
+    private int RenderInterval() =>
+        _config.MetricRows.Any(r => r.Contains(FrametimeGraphId)) ? 16 : 250;
 
     private void Render()
     {
@@ -614,6 +650,8 @@ public sealed class OverlayWindow : Form
             {
                 _config = ReadConfig();
                 _configDirty = false;
+                // Prender/apagar el gráfico cambia la frecuencia de render necesaria.
+                if (_renderTimer != null) _renderTimer.Interval = RenderInterval();
             }
 
             var metrics = _metrics.Latest;
@@ -727,8 +765,9 @@ public sealed class OverlayWindow : Form
                 }
             }
 
-            // Nombre del juego (subtítulo sutil, abajo a la izquierda).
-            if (haveFps && !string.IsNullOrEmpty(gameName) && gameName != "WinForge")
+            // Nombre del juego (subtítulo sutil, abajo de todo) — SOLO si el
+            // switch de la página de apariencia lo habilita.
+            if (_config.ShowGameTitle && haveFps && !string.IsNullOrEmpty(gameName) && gameName != "WinForge")
             {
                 using var gameBrush = new SolidBrush(Color.FromArgb(180, 180, 180));
                 g.DrawString(gameName, LowFont, gameBrush, S(16), y);
@@ -790,12 +829,11 @@ public sealed class OverlayWindow : Form
     }
 
     /// <summary>
-    /// Bloque de FPS: número grande con la etiqueta "FPS {api}" AL LADO (misma
-    /// línea, para no romper la grilla vertical) y, debajo, los lows 1% / 0.1%
-    /// habilitados. Cada métrica dibuja su texto desde la MISMA coordenada Y que
-    /// las líneas de hardware, así todo queda alineado como si estuviese en una
-    /// grilla. Solo se dibuja si algún badge del bloque (fps/low1/low01) está
-    /// activo.
+    /// Bloque de FPS: línea igual a las de hardware — label "FPS" (con la API
+    /// gráfica si está disponible) a la izquierda y el valor alineado a la derecha
+    /// en la primera columna de la grilla, con la MISMA fuente y alto de línea.
+    /// Debajo, los lows 1% / 0.1% habilitados y el gráfico de frametime. Solo se
+    /// dibuja si algún badge del bloque (fps/low1/low01) está activo.
     /// </summary>
     private float DrawFpsBlock(Graphics g, WHPO.Core.Services.Interfaces.OverlayMetrics? metrics,
         bool haveFps, List<string> ids, Brush fpsBrush, float y)
@@ -803,22 +841,20 @@ public sealed class OverlayWindow : Form
         bool showFps = ids.Contains("fps");
         bool showLow1 = ids.Contains("low1");
         bool showLow01 = ids.Contains("low01");
-        if (!showFps && !showLow1 && !showLow01) return y;
+        bool showGraph = ids.Contains(FrametimeGraphId);
+        if (!showFps && !showLow1 && !showLow01 && !showGraph) return y;
 
         float left = S(12);
         if (showFps)
         {
-            string fpsText = haveFps ? metrics!.Fps.ToString("F0") : "--";
-            g.DrawString(fpsText, FpsFont, fpsBrush, left, y - S(2));
-
-            // Etiqueta "FPS" + API gráfica en pequeño, al lado derecho del número
-            // y verticalmente centrada en la misma línea (no debajo): así la fila
-            // no ocupa doble alto y el resto de la grilla no se desacomoda.
             string api = metrics?.GfxApi ?? "";
             string fpsLabel = api.Length > 0 ? $"FPS {api}" : "FPS";
-            float numW = g.MeasureString(fpsText, FpsFont).Width;
-            g.DrawString(fpsLabel, LowFont, fpsBrush, left + numW + S(6), y + S(3));
-            y += S(34);
+            string fpsText = haveFps ? metrics!.Fps.ToString("F0") : "--";
+            // Igual que las líneas de hardware: label a la izquierda, valor
+            // alineado a la derecha en la primera columna de la grilla.
+            DrawLabeledLine(g, fpsLabel, fpsBrush, y,
+                new List<(string Text, float RightX)> { (fpsText, S(ColUsageRight)) });
+            y += S(25);
         }
 
         // 1% low / 0.1% low (chico, sobre la MISMA base vertical que las filas de
@@ -826,15 +862,147 @@ public sealed class OverlayWindow : Form
         // dibuja su línea; si comparten fila con el FPS quedan debajo del número.
         var lows = new List<string>();
         if (showLow1 && metrics != null && metrics.FpsLow1 > 0)
-            lows.Add($"1% {metrics.FpsLow1:F0}");
+            lows.Add($"1% low: {metrics.FpsLow1:F0}");
         if (showLow01 && metrics != null && metrics.FpsLow01 > 0)
-            lows.Add($"0.1% {metrics.FpsLow01:F0}");
+            lows.Add($"0,1% low: {metrics.FpsLow01:F0}");
         if (lows.Count > 0)
         {
             g.DrawString(string.Join("  ", lows), LowFont, fpsBrush, left, y);
             y += S(24);
         }
+
+        // Gráfico de frametime (ms) debajo de los lows,
+        // dentro del mismo bloque FPS. La serie se lee EN VIVO del monitor de FPS
+        // en cada tick de render (16 ms con el gráfico activo), no del snapshot
+        // de 500 ms — por eso el gráfico corre fluido y sin saltos.
+        if (showGraph)
+        {
+            var series = _metrics.GetLiveFrametimes(FrametimeGraphSamples);
+            y = DrawFrametimeGraph(g, series, fpsBrush, y);
+        }
         return y;
+    }
+
+    /// <summary>
+    /// Gráfico de frametime (ms): panel inset con la línea del tiempo de frame con
+    /// EJE DE TIEMPO REAL DE PARED — cada muestra lleva el timestamp ETW de su
+    /// evento (espaciado uniforme, sin apiñarse en ráfagas) calibrado al reloj de
+    /// pared, así que X es literalmente "hace cuánto se presentó ese frame": la
+    /// línea scrollea continua hacia la izquierda y, si el juego deja de presentar,
+    /// el gráfico SE DRENA SOLO en vez de quedar congelado mostrando data vieja.
+    /// Incluye relleno bajo la curva con anti-aliasing y el valor actual en ms a la
+    /// DERECHA del panel, verticalmente centrado (mientras la señal sea reciente).
+    /// Sin grillas ni etiquetas de escala: la línea es la única referencia visual.
+    /// La escala vertical tiene histéresis (sube al instante ante picos, baja
+    /// lento; múltiplo de 10 ms, mínimo 20): los picos de stutter se ven sin
+    /// aplastar la línea ni hacer vibrar la escala.
+    /// </summary>
+    private float DrawFrametimeGraph(Graphics g, FrametimeSample[] series, Brush lineBrush, float y)
+    {
+        float x = S(12);
+        // Área reservada a la derecha del panel para el valor de ms actual
+        // (verticalmente centrado, fuera del gráfico).
+        float valueArea = S(56);
+        float w = (float)_buffer!.Width - S(24) - valueArea;
+        float h = S(50);
+        if (w < 40 || h < 12) return y;
+
+        var rect = new RectangleF(x, y, w, h);
+
+        // Sin card: ni fondo oscuro ni borde — el área del gráfico queda 100%
+        // transparente y solo se dibuja la línea sobre el fondo del overlay.
+
+        // Eje X: el frame más nuevo se ancla al borde derecho del panel (como
+        // RTSS) y el resto se espacia con el reloj ETW del evento (uniforme entre
+        // presents — no se apiña en ráfagas como el reloj de llegada). El hueco
+        // entre el último punto y el borde se acota a MaxHuecoMs: cuando una
+        // ráfaga llega tarde, el último punto se mantiene a esa distancia del
+        // borde y el gráfico nunca se corta. El drenado usa el reloj de pared:
+        // si el último evento llegó hace más de SignalGraceMs, el juego dejó de
+        // presentar y la señal se limpia.
+        double windowMs = FrametimeWindowSeconds * 1000.0;
+        int n = series.Length;
+        if (n == 0) return y;
+        long nowWall = DateTime.UtcNow.Ticks;
+        long latestEtw = series[n - 1].EtwTicks;
+        long latestWall = series[n - 1].TicksUtc;
+
+        // Edad del último present en reloj de pared (cuánto hace que llegó el
+        // evento). Con el juego corriendo, la entrega ETW llega en ráfagas de
+        // hasta ~1 s; superada la gracia, la señal se drena.
+        double wallAgeMs = (nowWall - latestWall) / 10000.0;
+        bool haveSignal = n >= 2 && wallAgeMs <= SignalGraceMs;
+
+        // El ancla del borde derecho: avanza con el reloj de pared mientras la
+        // entrega es fresca (scroll fluido) y se detiene a MaxHuecoMs del último
+        // punto cuando la ráfaga tarda (sin cortes visibles).
+        double anchorAgeMs = Math.Min(wallAgeMs, MaxHuecoMs);
+
+        int start = 0;
+        while (start < n && (latestEtw - series[start].EtwTicks) / 10000.0 + anchorAgeMs > windowMs) start++;
+        int count = n - start;
+
+        // Escala vertical 0..cap ms con histéresis: "needed" es el máximo visible
+        // redondeado a múltiplo de 10 (mínimo 20 ms). Si hace falta más, el tope
+        // sube AL INSTANTE (el pico se ve completo); si sobra, baja un 10% por
+        // render para que la escala no vibre. Sin señal se resetea.
+        double needed = 0;
+        for (int i = start; i < n; i++)
+            if (series[i].FrameMs > needed) needed = series[i].FrameMs;
+        needed = Math.Max(20.0, Math.Ceiling(needed / 10.0) * 10.0);
+        if (!haveSignal) _graphCapMs = 0;
+        else if (_graphCapMs < needed) _graphCapMs = needed;
+        else _graphCapMs = needed + (_graphCapMs - needed) * 0.9;
+        double cap = _graphCapMs > 0 ? _graphCapMs : needed;
+        float ToY(double ms) => rect.Bottom - (float)(Math.Min(ms, cap) / cap * rect.Height);
+        // X = hace cuánto se presentó ese frame (espaciado ETW + ancla del borde).
+        float ToX(double agoMs) => rect.Right - (float)(agoMs / windowMs * rect.Width);
+
+        // Anti-aliasing en línea y relleno: sin él la curva se ve dentada a esta
+        // cadencia de render. Sin grillas ni etiquetas de escala (la línea es la
+        // única referencia visual).
+        var prevSmoothing = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        try
+        {
+            if (haveSignal)
+            {
+                var pts = new PointF[count];
+                for (int k = 0; k < count; k++)
+                {
+                    double agoMs = (latestEtw - series[start + k].EtwTicks) / 10000.0 + anchorAgeMs;
+                    pts[k] = new PointF(ToX(agoMs), ToY(series[start + k].FrameMs));
+                }
+
+                var c = lineBrush is SolidBrush sb ? sb.Color : Color.White;
+
+                // Solo la línea (sin relleno bajo la curva: el área debajo queda
+                // 100% transparente).
+                using (var line = new Pen(c, MathF.Max(1f, S(1.6f))))
+                    g.DrawLines(line, pts);
+            }
+        }
+        finally
+        {
+            g.SmoothingMode = prevSmoothing;
+        }
+
+        // Valor actual: frametime del frame más nuevo, a la DERECHA del panel y
+        // verticalmente centrado. Se muestra mientras la señal sea reciente
+        // (misma gracia que la línea): la entrega ETW llega en ráfagas de hasta
+        // ~1 s, así que un umbral menor hacía parpadear el valor con el juego
+        // corriendo; al pausar el juego, la edad del último present crece y el
+        // valor se oculta solo.
+        if (wallAgeMs <= SignalGraceMs)
+        {
+            string txt = $"{series[n - 1].FrameMs:F1} ms";
+            var size = g.MeasureString(txt, LowFont);
+            float vx = rect.Right + S(6);
+            float vy = rect.Top + (rect.Height - size.Height) / 2f;
+            g.DrawString(txt, LowFont, lineBrush, vx, vy);
+        }
+
+        return y + h + S(8);
     }
 
     /// <summary>
@@ -902,7 +1070,7 @@ public sealed class OverlayWindow : Form
 
     private static string FamilyOf(string id) => id switch
     {
-        "fps" or "low1" or "low01" => "fps",
+        "fps" or "low1" or "low01" or FrametimeGraphId => "fps",
         _ when id.StartsWith("cpu", StringComparison.Ordinal) => "cpu",
         _ when id.StartsWith("gpu", StringComparison.Ordinal) => "gpu",
         _ when id.StartsWith("ram", StringComparison.Ordinal) => "ram",
@@ -1036,8 +1204,9 @@ public sealed class OverlayWindow : Form
             switch (row.Family)
             {
                 case "fps":
-                    if (row.Ids.Contains("fps")) y += S(34);
+                    if (row.Ids.Contains("fps")) y += S(25); // línea igual a las de hardware
                     if (row.Ids.Contains("low1") || row.Ids.Contains("low01")) y += S(24);
+                    if (row.Ids.Contains(FrametimeGraphId)) y += S(58); // gráfico (50) + gap (8)
                     break;
                 case "ram":
                 case "cpu":
@@ -1172,7 +1341,6 @@ public sealed class OverlayWindow : Form
                 _posSaveTimer?.Dispose();
                 _bufferGraphics?.Dispose();
                 _buffer?.Dispose();
-                _fpsFont?.Dispose();
                 _lowFont?.Dispose();
                 _lineFont?.Dispose();
             }

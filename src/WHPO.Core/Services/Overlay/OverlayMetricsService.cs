@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using WHPO.Core.Services.Interfaces;
@@ -11,11 +13,12 @@ namespace WHPO.Core.Services.Overlay;
 /// de CPU y GPU, RAM, y FPS del juego en primer plano (via ETW). Todo el trabajo
 /// corre en un timer de fondo; el snapshot se publica de forma thread-safe.
 ///
-/// Fuentes (todas livianas y con caché interna):
+/// Fuentes (todas nativas, autosuficientes, sin dependencias externas):
 ///  - CPU/GPU %: Performance Counter (la misma fuente que el Administrador de tareas).
 ///  - Temp/MHz/watts: LibreHardwareMonitor vía ISystemInfoService (con caché).
 ///  - RAM: IMemoryService (GlobalMemoryStatusEx nativo).
-///  - FPS: IFpsMonitor (ETW DxgKrnl) sobre el proceso de la ventana en primer plano.
+///  - FPS: IFpsMonitor (ETW DXGI; correlación DxgKrnl tipo PresentMon pendiente)
+///    sobre el proceso de la ventana en primer plano.
 /// </summary>
 public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
 {
@@ -24,6 +27,7 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
     private readonly IMemoryService _memory;
     private readonly IFpsMonitor _fpsMonitor;
     private readonly IInstalledGamesService _installedGames;
+    private readonly ISettingsService _settings;
     private readonly object _lock = new();
 
     private Timer? _timer;
@@ -56,6 +60,11 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
     private int _lastGamePid;
     private string _lastGameName = "";
     private readonly int _selfPid = Environment.ProcessId;
+    private string _targetMode = "automatic";
+    private string _targetExe = "";
+    private string _launchedTargetExe = "";
+    private string _launchedTargetInstallPath = "";
+    private DateTime _launchedTargetRegisteredUtc;
 
     // Diagnóstico: valor de FPS del último snapshot para loguear las transiciones
     // 0 ↔ valor (si el contador vuelve a parpadear, el log muestra la causa exacta).
@@ -82,18 +91,43 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
         ISystemInfoService systemInfo,
         IMemoryService memory,
         IFpsMonitor fpsMonitor,
-        IInstalledGamesService installedGames)
+        IInstalledGamesService installedGames,
+        ISettingsService settings)
     {
         _logging = logging;
         _systemInfo = systemInfo;
         _memory = memory;
         _fpsMonitor = fpsMonitor;
         _installedGames = installedGames;
+        _settings = settings;
+    }
+
+    public string TargetMode => _targetMode;
+    public string TargetExecutable => _targetExe;
+    public string LaunchedTargetExecutable => _launchedTargetExe;
+    public void RegisterLaunchedGame(string executable, string? installPath = null)
+    {
+        _launchedTargetExe = Path.GetFileName(executable ?? "");
+        _launchedTargetInstallPath = installPath ?? "";
+        _launchedTargetRegisteredUtc = DateTime.UtcNow;
+        _lastGamePid = 0;
+        _lastGameName = "";
+        _logging.LogInfo($"OverlayMetrics: juego lanzado desde WinForge registrado temporalmente: {_launchedTargetExe}");
     }
 
     public bool IsRunning => _running;
 
     public OverlayMetrics? Latest => _latest;
+
+    /// <summary>Serie de frametimes en vivo del juego activo (ver la interfaz).</summary>
+    public FrametimeSample[] GetLiveFrametimes(int maxSamples)
+    {
+        if (maxSamples <= 0) return Array.Empty<FrametimeSample>();
+        int pid = _lastGamePid;
+        if (pid <= 0) return Array.Empty<FrametimeSample>();
+
+        return _fpsMonitor.GetFrametimeSeries(pid, maxSamples);
+    }
 
     public void Start()
     {
@@ -101,6 +135,7 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
         {
             if (_running) return;
             EnsureCounters();
+            // Monitor ETW: la única fuente de FPS de la app (autosuficiente).
             _fpsMonitor.Start();
             _running = true;
             _timer = new Timer(_ => Sample(), null, 0, 500);
@@ -171,22 +206,29 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
     {
         try
         {
-            double cpuUsage = _cpuCounter?.NextValue() ?? 0;
+            _targetMode = (_settings.Get("overlay.targetMode", "automatic") ?? "automatic").Trim().ToLowerInvariant();
+            _targetExe = (_settings.Get("overlay.targetExe", "") ?? "").Trim();
+            bool launchedTargetActive = !string.IsNullOrWhiteSpace(_launchedTargetExe)
+                && (DateTime.UtcNow - _launchedTargetRegisteredUtc).TotalMinutes <= 30;
+
+            double cpuUsage = 0;
             double gpuUsage = 0;
+
+            double cpuTemp = 0, cpuMhz = 0, cpuWatts = 0;
+            double gpuTemp = 0, gpuMhz = 0, gpuWatts = 0;
+            // El hardware nativo se calcula SIEMPRE: es la base autosuficiente de la app.
+            cpuUsage = _cpuCounter?.NextValue() ?? 0;
             foreach (var counter in _gpuCounters)
             {
-                try { gpuUsage += counter.NextValue(); }
-                catch { }
+                try { gpuUsage += counter.NextValue(); } catch { }
             }
             gpuUsage = Math.Min(gpuUsage, 100);
-
-            var cpuTemp = _systemInfo.GetCpuTemperatureFresh();
-            var cpuMhz = _systemInfo.GetCpuFrequency();
-            var cpuWatts = _systemInfo.GetCpuPower();
-
-            var gpuTemp = _systemInfo.GetGpuTemperature();
-            var gpuMhz = _systemInfo.GetGpuClockMHz();
-            var gpuWatts = _systemInfo.GetGpuPower();
+            cpuTemp = _systemInfo.GetCpuTemperatureFresh();
+            cpuMhz = _systemInfo.GetCpuFrequency();
+            cpuWatts = _systemInfo.GetCpuPower();
+            gpuTemp = _systemInfo.GetGpuTemperature();
+            gpuMhz = _systemInfo.GetGpuClockMHz();
+            gpuWatts = _systemInfo.GetGpuPower();
 
             EnsureHardware();
 
@@ -209,9 +251,15 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
             int gamePid = 0;
             string gameName = "";
             double fps = 0, low1 = 0, low01 = 0;
+
+            // Monitor ETW: la única fuente de FPS de la app (autosuficiente).
             if (_fpsMonitor.IsRunning)
             {
                 int fgPid = GetForegroundProcessId();
+                if (_targetMode == "manual")
+                    fgPid = FindManualTargetPid();
+                else if (launchedTargetActive)
+                    fgPid = FindLaunchedTargetPid();
                 double fgFps = fgPid > 0 && fgPid != _selfPid ? _fpsMonitor.GetFps(fgPid) : 0;
 
                 if (fgFps >= GameLikeFpsThreshold)
@@ -244,7 +292,7 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
                     // (cubre el juego corriendo en background, p. ej. otro monitor).
                     // Piso de 5 fps para no mostrar ruido de procesos idle (~2 fps).
                     var best = _fpsMonitor.GetMostActiveProcess(_selfPid);
-                    if (best.Pid > 0 && best.Fps >= 5)
+                        if (_targetMode != "manual" && !launchedTargetActive && best.Pid > 0 && best.Fps >= 5)
                     {
                         _lastGamePid = best.Pid;
                         _lastGameName = GetGameDisplayName(best.Pid);
@@ -290,8 +338,13 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
                 FpsLow01: low01,
                 GamePid: gamePid,
                 GameName: gameName,
-                GfxApi: gamePid > 0 ? GetGfxApi(gamePid) : "",
-                FpsMonitorActive: _fpsMonitor.IsRunning);
+                GfxApi: gamePid > 0 ? GetGfxApi(gamePid) : "");
+
+            if (_settings.Get("overlay.onlyWhenGameDetected", false))
+            {
+                // La ventana se sincroniza desde OverlayService; el snapshot conserva
+                // el PID detectado para que la visibilidad no afecte la captura.
+            }
         }
         catch (Exception ex)
         {
@@ -342,6 +395,53 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
         catch { ok = false; }
 
         _hardwareResolved = ok;
+    }
+
+    private bool IsAllowedTarget(int pid, string exeName)
+    {
+        if (_targetMode != "manual") return true;
+        if (string.IsNullOrWhiteSpace(_targetExe)) return false;
+        string processName = string.Empty;
+        try { processName = Process.GetProcessById(pid).ProcessName + ".exe"; } catch { }
+        return string.Equals(Path.GetFileName(exeName), Path.GetFileName(_targetExe), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(processName, Path.GetFileName(_targetExe), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private int FindLaunchedTargetPid()
+    {
+        if (string.IsNullOrWhiteSpace(_launchedTargetExe)) return 0;
+        string target = Path.GetFileNameWithoutExtension(_launchedTargetExe);
+        try
+        {
+            var candidates = Process.GetProcessesByName(target)
+                .Where(p => p.Id != _selfPid)
+                .Select(p => (Process: p, Path: GetProcessPathSafe(p)))
+                .Where(x => string.IsNullOrWhiteSpace(_launchedTargetInstallPath)
+                    || (!string.IsNullOrWhiteSpace(x.Path) && x.Path.StartsWith(_launchedTargetInstallPath, StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(x => x.Process.WorkingSet64)
+                .ToList();
+            return candidates.FirstOrDefault().Process?.Id ?? 0;
+        }
+        catch { return 0; }
+    }
+
+    private static string? GetProcessPathSafe(Process process)
+    {
+        try { return process.MainModule?.FileName; } catch { return null; }
+    }
+
+    private int FindManualTargetPid()
+    {
+        if (_targetMode != "manual" || string.IsNullOrWhiteSpace(_targetExe)) return 0;
+        string name = Path.GetFileNameWithoutExtension(_targetExe);
+        try
+        {
+            return Process.GetProcessesByName(name)
+                .Where(p => p.Id != _selfPid)
+                .Select(p => p.Id)
+                .FirstOrDefault();
+        }
+        catch { return 0; }
     }
 
     /// <summary>

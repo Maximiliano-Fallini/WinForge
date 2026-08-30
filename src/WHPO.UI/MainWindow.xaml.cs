@@ -69,10 +69,10 @@ public sealed partial class MainWindow : Window
         _gameBoostService = App.Services.GetService<IGameBoostService>();
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
 
-        // Overlay de métricas de juegos: si quedó activado se reanuda desde el arranque
-        // (ventana, hotkeys y muestreo). Se construye acá, en el hilo de UI, para que
-        // OverlayService capture el DispatcherQueue correcto para su ventana WinForms.
-        App.Services.GetRequiredService<WHPO_UI.Services.OverlayService>().EnsureStarted();
+        // El overlay nunca se restaura automáticamente al iniciar. Solo se activa
+        // desde su página cuando el usuario lo solicita explícitamente.
+        _settingsService.Set("overlay.enabled", false);
+        _settingsService.Save();
 
         // Configurar ThemeApplier con esta ventana
         var themeApplier = App.Services.GetRequiredService<IThemeApplier>();
@@ -422,6 +422,11 @@ public sealed partial class MainWindow : Window
             {
                 launchFile = GameLauncher.FindRiotLauncher() ?? "";
                 launchArgs = $"--launch-product={game.AppId} --launch-patchline=live";
+            }
+            else if (game.Launcher == "Blacksmith")
+            {
+                launchFile = exePath ?? "";
+                launchArgs = "";
             }
             else
             {

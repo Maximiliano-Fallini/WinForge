@@ -40,6 +40,7 @@ public sealed class OverlayService
     private Thread? _hotkeyThread;
     private volatile bool _hotkeyStop;
     private bool _started;
+    private Timer? _visibilityTimer;
 
     public OverlayService(
         ISettingsService settings,
@@ -54,7 +55,7 @@ public sealed class OverlayService
         _dispatcher = DispatcherQueue.GetForCurrentThread();
     }
 
-    /// <summary>¿El overlay está activado? Persistido en "overlay.enabled".</summary>
+    /// <summary>¿El overlay está activado durante esta sesión?</summary>
     public bool Enabled
     {
         get => _settings.Get("overlay.enabled", false);
@@ -81,7 +82,8 @@ public sealed class OverlayService
 
         if (!_settings.Get("overlay.enabled", false))
         {
-            // El overlay estaba desactivado: no arrancar nada hasta que se active.
+            // El overlay está desactivado: no arrancar nada hasta que el usuario
+            // lo active explícitamente.
             lock (_lock) _started = false;
             return;
         }
@@ -98,21 +100,66 @@ public sealed class OverlayService
             ReapplyHotkeys();
 
             var show = _settings.Get("overlay.visible", true);
-            _window!.Visible = show;
+            _window!.Visible = show && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0);
             _window.SetLocked(_settings.Get("overlay.locked", true));
-            if (show)
+            if (show && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0))
             {
                 _window.Show();
                 _window.InvalidateConfig();
             }
+            else
+            {
+                _window.Hide();
+            }
         });
         _log.LogInfo("OverlayService: overlay iniciado");
+
+        // Re-evaluación periódica de visibilidad: en Start() el primer snapshot de
+        // métricas aún no existe (GamePid = 0) y con "solo cuando hay juego" la
+        // ventana arrancaba oculta PARA SIEMPRE — nada la volvía a mostrar cuando
+        // el juego lanzado desde la biblioteca era finalmente detectado. Este timer
+        // muestra el overlay en cuanto hay juego detectado y lo oculta al terminar.
+        _visibilityTimer?.Dispose();
+        _visibilityTimer = new Timer(_ => _dispatcher.TryEnqueue(ReevaluateVisibility), null, 1000, 1000);
+    }
+
+    /// <summary>
+    /// Alinea la visibilidad real de la ventana con: overlay.visible (switch maestro)
+    /// AND (solo-cuando-hay-juego desactivado OR hay juego detectado). No toca nada
+    /// si ya coincide, para no interferir con arrastres ni con el hotkey.
+    /// </summary>
+    private void ReevaluateVisibility()
+    {
+        var win = _window;
+        if (win == null || !_started) return;
+        try
+        {
+            bool show = _settings.Get("overlay.visible", true)
+                && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0);
+            if (show && !win.Visible)
+            {
+                win.InvalidateConfig();
+                win.Show();
+                _log.LogInfo("OverlayService: overlay mostrado (juego detectado)");
+            }
+            else if (!show && win.Visible)
+            {
+                win.Hide();
+                _log.LogInfo("OverlayService: overlay oculto (sin juego detectado)");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning($"OverlayService: error re-evaluando visibilidad: {ex.Message}");
+        }
     }
 
     /// <summary>Detiene el overlay: oculta la ventana, detiene métricas y hotkeys.</summary>
     public void Stop()
     {
         StopHotkeys();
+        _visibilityTimer?.Dispose();
+        _visibilityTimer = null;
         _metrics.Stop();
         _dispatcher.TryEnqueue(() =>
         {
