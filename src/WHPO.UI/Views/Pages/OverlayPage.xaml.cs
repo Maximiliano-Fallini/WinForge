@@ -43,6 +43,7 @@ public sealed partial class OverlayPage : Page
     public OverlayPage()
     {
         InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _settings = App.Services.GetRequiredService<ISettingsService>();
         _log = App.Services.GetRequiredService<ILoggingService>();
         _overlay = App.Services.GetRequiredService<OverlayService>();

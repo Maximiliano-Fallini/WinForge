@@ -65,6 +65,7 @@ public sealed partial class TecladoPage : Page
     public TecladoPage()
     {
         InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _keyboardService = App.Services.GetRequiredService<IKeyboardService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _macroService = App.Services.GetRequiredService<IMacroService>();

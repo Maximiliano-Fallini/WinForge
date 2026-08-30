@@ -111,6 +111,7 @@ public sealed partial class GestionarProcesosPage : Page
     public GestionarProcesosPage()
     {
         InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _processService = App.Services.GetRequiredService<IProcessService>();
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
         _cpuPowerService = App.Services.GetRequiredService<ICpuPowerService>();

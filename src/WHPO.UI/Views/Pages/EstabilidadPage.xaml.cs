@@ -59,6 +59,7 @@ public sealed partial class EstabilidadPage : Page
     public EstabilidadPage()
     {
         InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _stabilityService = App.Services.GetRequiredService<IStabilityService>();
         _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();

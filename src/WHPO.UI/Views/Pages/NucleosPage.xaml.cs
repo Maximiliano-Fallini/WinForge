@@ -125,6 +125,7 @@ public sealed partial class NucleosPage : Page
     public NucleosPage()
     {
         InitializeComponent();
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
         _cpuPowerService = App.Services.GetRequiredService<ICpuPowerService>();
         _winUtilService = App.Services.GetRequiredService<IWinUtilService>();
