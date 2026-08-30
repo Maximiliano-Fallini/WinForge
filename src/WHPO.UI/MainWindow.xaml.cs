@@ -1777,6 +1777,8 @@ public sealed partial class MainWindow : Window
         {
             AppTheme.Dark => true,
             AppTheme.Light => false,
+            AppTheme.BlueBlack => true,   // identidad oscura (negro)
+            AppTheme.PinkLight => false,  // identidad clara (blanco)
             _ => App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark
         };
         ApplyTitleBarColors(appWindow, dark);

@@ -29,20 +29,42 @@ public class ThemeApplier : IThemeApplier
 
     public void ApplyTheme(AppTheme theme)
     {
+        var previousTheme = _lastAppliedTheme;
+
+        // Gestión de paletas: restaurar el diccionario del tema ANTERIOR y pisar
+        // los pinceles de identidad del nuevo. RestoreBase es no-op si el tema
+        // anterior no tiene paleta propia. La restauración va ANTES de la
+        // aplicación para que nunca queden pinceles mezclados entre paletas.
+        ThemePalettes.RestoreBase(ThemePalettes.BaseThemeFor(previousTheme ?? theme));
+        ThemePalettes.ApplyPalette(theme);
+
         _lastAppliedTheme = theme;
-        if (_mainWindow == null)
-            return;
 
         var elementTheme = theme switch
         {
             AppTheme.Dark => ElementTheme.Dark,
             AppTheme.Light => ElementTheme.Light,
+            AppTheme.PinkLight => ElementTheme.Light,   // base clara con paleta rosa
+            AppTheme.BlueBlack => ElementTheme.Dark,    // base oscura con paleta azul
             _ => ElementTheme.Default
         };
 
         // Aplicar el tema al contenido de la ventana
         if (_mainWindow.Content is FrameworkElement rootElement)
         {
+            // Los {ThemeResource} SOLO se re-evalúan con un cambio de tema efectivo.
+            // Las transiciones que involucran paletas propias pueden dejar el tema
+            // efectivo igual (Rosa/Blanco → Claro, o Sistema → Rosa/Blanco cuando el
+            // sistema ya está en claro): alternamos y volvemos EN EL MISMO TICK para
+            // forzar la re-evaluación de los pinceles (no hay frame intermedio).
+            bool paletteSwitched = ThemePalettes.HasOwnPalette(theme)
+                || (previousTheme is { } prev && ThemePalettes.HasOwnPalette(prev));
+            if (paletteSwitched && rootElement.RequestedTheme == elementTheme)
+            {
+                rootElement.RequestedTheme = elementTheme == ElementTheme.Light
+                    ? ElementTheme.Dark
+                    : ElementTheme.Light;
+            }
             rootElement.RequestedTheme = elementTheme;
         }
     }

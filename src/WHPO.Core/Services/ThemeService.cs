@@ -29,8 +29,12 @@ public class ThemeService : IThemeService
         _settingsService = settingsService;
         _themeApplier = themeApplier;
 
-        // Cargar tema guardado o usar sistema por defecto
+        // Cargar tema guardado o usar sistema por defecto. Migración: versiones
+        // viejas guardaban el enum por número con menos valores; si el número no
+        // existe en el enum actual, queda el default (sistema).
         var savedTheme = _settingsService.Get("AppTheme", AppTheme.SystemDefault);
+        if (!Enum.IsDefined(typeof(AppTheme), savedTheme))
+            savedTheme = AppTheme.SystemDefault;
         _currentTheme = savedTheme;
     }
 
@@ -47,6 +51,9 @@ public class ThemeService : IThemeService
         _settingsService.Set("AppTheme", theme);
         _settingsService.Save();
 
+        // Los temas con paleta propia (Rosa/Blanco, Negro/Azul) NO se convierten
+        // acá: ThemeApplier (capa UI) los mapea a su diccionario base y pisa los
+        // pinceles de identidad con su paleta. Core solo resuelve "Sistema".
         var effectiveTheme = theme == AppTheme.SystemDefault
             ? _themeApplier.GetSystemTheme()
             : theme;

@@ -33,13 +33,15 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="Tema de la aplicación" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock Text="Elige entre el tema del sistema, oscuro o claro."
+                                <TextBlock Text="Elige entre el tema del sistema, oscuro, claro, rosa/blanco o negro/azul."
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                             </StackPanel>
                             <ComboBox x:Name="ThemeComboBox" Grid.Column="1" MinWidth="150" SelectionChanged="ThemeComboBox_SelectionChanged">
                                 <ComboBoxItem x:Name="ThemeSystemItem" Content="Usar sistema" Tag="SystemDefault"/>
                                 <ComboBoxItem x:Name="ThemeDarkItem" Content="Oscuro" Tag="Dark"/>
                                 <ComboBoxItem x:Name="ThemeLightItem" Content="Claro" Tag="Light"/>
+                                <ComboBoxItem x:Name="ThemePinkItem" Content="Rosa / Blanco" Tag="PinkLight"/>
+                                <ComboBoxItem x:Name="ThemeBlueBlackItem" Content="Negro / Azul" Tag="BlueBlack"/>
                             </ComboBox>
                         </Grid>
                     </Border>
@@ -342,12 +344,7 @@
                                 <ProgressBar x:Name="NavProgressBar" Maximum="1" Value="1"/>
                             </StackPanel>
 
-                            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,0">
-                                <Button x:Name="ShowAllNavButton" Content="Mostrar todo" FontSize="12"
-                                        Padding="12,6" Click="ShowAllNavButton_Click"/>
-                                <Button x:Name="HideAllNavButton" Content="Ocultar todo" FontSize="12"
-                                        Padding="12,6" Click="HideAllNavButton_Click"/>
-                            </StackPanel>
+                            
                         </StackPanel>
                     </Border>
 

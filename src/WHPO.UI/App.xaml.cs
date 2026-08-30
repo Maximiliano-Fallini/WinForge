@@ -158,6 +158,13 @@ public partial class App : Application
         // ApplyTheme cuando no hay ventana, así que aplicarlo antes dejaba la app
         // en modo oscuro aunque la configuración dijera "claro" al reabrirla.
         var themeService = Services.GetRequiredService<IThemeService>();
+
+        // Capturar los pinceles ORIGINALES de los diccionarios Light/Dark ANTES de
+        // aplicar el tema guardado: RestoreBase (al salir de Rosa/Blanco o
+        // Negro/Azul) vuelve a estos valores, así Claro/Oscuro/Sistema quedan
+        // exactamente como estaban. Debe correr antes de ts.Initialize().
+        ThemePalettes.Initialize();
+
         if (themeService is ThemeService ts)
         {
             ts.Initialize();

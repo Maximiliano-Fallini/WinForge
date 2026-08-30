@@ -56,6 +56,7 @@ public partial class OnboardingWindow : Window
 
         BuildProgressDots();
         ApplyTexts();
+        WireThemeCardsInteraction();
         SetSelectedTheme(_themeService.CurrentTheme);
 
         _phase = 0;
@@ -245,28 +246,150 @@ public partial class OnboardingWindow : Window
 
     private void UpdateThemeCards()
     {
-        SetThemeCard(ThemeDarkCard, _selectedTheme == AppTheme.Dark);
-        SetThemeCard(ThemeLightCard, _selectedTheme == AppTheme.Light);
-        SetThemeCard(ThemeSystemCard, _selectedTheme == AppTheme.SystemDefault);
+        // Fondos y textos de las cards son LITERALES en el XAML (no reactivos al
+        // tema). Acá solo se marca la selección (borde + badge de check) usando,
+        // para el estado NO seleccionado, el borde fijo propio de cada card, para
+        // que el toggle no les cambie el color al alternar el tema.
+        // Rosa/Blanco y Negro/Azul no tienen card propia en el asistente: se
+        // muestran como su tema BASE (claro/oscuro). La paleta propia se elige
+        // después desde Configuración → Tema de la aplicación.
+        bool darkSel = _selectedTheme is AppTheme.Dark or AppTheme.BlueBlack;
+        bool lightSel = _selectedTheme is AppTheme.Light or AppTheme.PinkLight;
+        bool sysSel = _selectedTheme == AppTheme.SystemDefault;
+
+        SetThemeCard(ThemeDarkCard, darkSel, 0xFF3F3F3F);
+        SetThemeCard(ThemeLightCard, lightSel, 0xFFC9C9C9);
+        SetThemeCard(ThemeSystemCard, sysSel, 0xFFC9C9C9);
+
+        // Badge de check (✓) sobre el preview de la card elegida.
+        if (ThemeDarkCheck != null) ThemeDarkCheck.Visibility = darkSel ? Visibility.Visible : Visibility.Collapsed;
+        if (ThemeLightCheck != null) ThemeLightCheck.Visibility = lightSel ? Visibility.Visible : Visibility.Collapsed;
+        if (ThemeSystemCheck != null) ThemeSystemCheck.Visibility = sysSel ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void SetThemeCard(Border card, bool selected)
+    private void SetThemeCard(Border card, bool selected, uint unselectedBorderArgb)
     {
         if (card == null) return;
         card.BorderBrush = selected
             ? ThemeBrushes.Get("AccentBrush", _selectedTheme)
-            : ThemeBrushes.Get("CardBorderBrush", _selectedTheme);
+            : new SolidColorBrush(Windows.UI.Color.FromArgb(
+                (byte)(unselectedBorderArgb >> 24),
+                (byte)(unselectedBorderArgb >> 16),
+                (byte)(unselectedBorderArgb >> 8),
+                (byte)unselectedBorderArgb));
         card.BorderThickness = new Thickness(selected ? 2 : 1);
+    }
+
+    /// <summary>
+    /// Cablea hover/cursor de las cards de tema: cursor de mano, leve elevación
+    /// al pasar el mouse y realce del borde cuando la card no está seleccionada.
+    /// </summary>
+    private void WireThemeCardsInteraction()
+    {
+        foreach (var card in new[] { ThemeDarkCard, ThemeLightCard, ThemeSystemCard })
+        {
+            if (card == null) continue;
+            card.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+            card.RenderTransform = new Microsoft.UI.Xaml.Media.ScaleTransform { ScaleX = 1, ScaleY = 1 };
+            card.PointerEntered += ThemeCard_PointerEntered;
+            card.PointerExited += ThemeCard_PointerExited;
+        }
+    }
+
+    private void ThemeCard_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is not Border card) return;
+        if (card.RenderTransform is Microsoft.UI.Xaml.Media.ScaleTransform st)
+        {
+            st.ScaleX = 1.03;
+            st.ScaleY = 1.03;
+        }
+
+        // Realce del borde solo si no está seleccionada (la seleccionada usa el acento).
+        bool selected = (card == ThemeDarkCard && _selectedTheme is AppTheme.Dark or AppTheme.BlueBlack)
+                     || (card == ThemeLightCard && _selectedTheme is AppTheme.Light or AppTheme.PinkLight)
+                     || (card == ThemeSystemCard && _selectedTheme == AppTheme.SystemDefault);
+        if (!selected)
+        {
+            card.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(
+                255, card == ThemeDarkCard ? (byte)0x6A : (byte)0x8A, (byte)0x8A, (byte)0x8A));
+        }
+    }
+
+    private void ThemeCard_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        if (sender is not Border card) return;
+        if (card.RenderTransform is Microsoft.UI.Xaml.Media.ScaleTransform st)
+        {
+            st.ScaleX = 1;
+            st.ScaleY = 1;
+        }
+        UpdateThemeCards(); // restaura el borde según la selección actual
     }
 
     private void UpdateOnboardingTheme(AppTheme theme)
     {
-        RootGrid.RequestedTheme = theme switch
+        // En el onboarding, el tema elegido se previsualiza SOLO en la card (la
+        // "ventana"): el fondo de pantalla (RootGrid con el banner + scrim) NO
+        // cambia al tocar los temas, y los botones de tema tienen colores
+        // literales fijos (XAML). La barra de título de la ventana (donde están
+        // la X y el minimizar) SÍ reacciona al tema, como en la app real.
+        // El simulador hereda este mismo comportamiento.
+        var effective = theme switch
         {
             AppTheme.Dark => ElementTheme.Dark,
             AppTheme.Light => ElementTheme.Light,
+            AppTheme.BlueBlack => ElementTheme.Dark,   // base oscura
+            AppTheme.PinkLight => ElementTheme.Light,  // base clara
+            _ => RootGrid.ActualTheme // Sistema: lo que la ventana resuelve hoy
+        };
+
+        ContentCard.RequestedTheme = theme switch
+        {
+            AppTheme.Dark => ElementTheme.Dark,
+            AppTheme.Light => ElementTheme.Light,
+            AppTheme.BlueBlack => ElementTheme.Dark,
+            AppTheme.PinkLight => ElementTheme.Light,
             _ => ElementTheme.Default
         };
+
+        ApplyTitleBarTheme(effective);
+    }
+
+    /// <summary>
+    /// Colorea la barra de título (franja de la X / minimizar) según el tema
+    /// efectivo elegido en el onboarding: negra en oscuro, blanca en claro y
+    /// según el sistema en "Sistema".
+    /// </summary>
+    private void ApplyTitleBarTheme(ElementTheme effective)
+    {
+        try
+        {
+            bool dark = effective == ElementTheme.Dark;
+            var bg = dark
+                ? Windows.UI.Color.FromArgb(255, 32, 32, 32)   // #202020
+                : Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            var fg = dark
+                ? Microsoft.UI.Colors.White
+                : Microsoft.UI.Colors.Black;
+            var hoverBg = dark
+                ? Windows.UI.Color.FromArgb(255, 58, 58, 58)
+                : Windows.UI.Color.FromArgb(255, 229, 229, 229);
+
+            var tb = AppWindow.TitleBar;
+            tb.BackgroundColor = bg;
+            tb.ForegroundColor = fg;
+            tb.ButtonBackgroundColor = bg;
+            tb.ButtonForegroundColor = fg;
+            tb.ButtonHoverBackgroundColor = hoverBg;
+            tb.ButtonHoverForegroundColor = fg;
+            tb.ButtonInactiveBackgroundColor = bg;
+            tb.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(255, 128, 128, 128);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Onboarding: aplicar tema a la barra de título: {ex.Message}");
+        }
     }
 
     // ----- Idioma -----

@@ -40,7 +40,14 @@
                  card creciera/encogiera, los botones de abajo saltarían de posición
                  (rompe el feedback visual al pasar de fase). El contenido de cada
                  fase se centra en la fila sobrante. -->
-            <Border Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="320">
+            <!-- El tema del onboarding se aplica SOLO a esta card (la "ventana"):
+                 el fondo (RootGrid: banner + scrim) queda fijo y no cambia al tocar
+                 los temas, y los botones de tema usan colores literales fijos.
+                 La barra de título de la ventana SÍ reacciona al tema (se colorea
+                 desde UpdateOnboardingTheme). En la app, en cambio, el tema sí
+                 afecta al fondo porque ThemeApplier aplica RequestedTheme al
+                 contenido raíz de MainWindow. -->
+            <Border x:Name="ContentCard" Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="320">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -60,58 +67,144 @@
                         <TextBlock Text="Tu apariencia, tu estilo. Podés cambiarlo en Configuración."
                                    FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" TextAlignment="Center"/>
-                        <Grid ColumnSpacing="16" Margin="0,8,0,0">
+                        <Grid Width="476" ColumnSpacing="12" Margin="0,10,0,0">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- Oscuro -->
-                            <Border x:Name="ThemeDarkCard" Style="{StaticResource OnboardingOptionStyle}" Padding="16"
-                                    Grid.Column="0" Tapped="ThemeOption_Tapped">
+                            <!-- ===== Oscuro =====
+                                 Colores LITERALES fijos (no reactivos al tema): el preview es
+                                 SIEMPRE una mini-ventana oscura con barra de título y líneas de
+                                 contenido, toque el tema que se toque. -->
+                            <Border x:Name="ThemeDarkCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
+                                    Grid.Column="0" Tapped="ThemeOption_Tapped"
+                                    Background="#1E1E1E" BorderBrush="#3F3F3F">
                                 <StackPanel Spacing="10" HorizontalAlignment="Center">
-                                    <Border Width="64" Height="64" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}" HorizontalAlignment="Center">
-                                        <Border Width="26" Height="26" CornerRadius="7" Background="{ThemeResource AccentBrush}"
-                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </Border>
-                                    <TextBlock Text="Oscuro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- Claro -->
-                            <Border x:Name="ThemeLightCard" Style="{StaticResource OnboardingOptionStyle}" Padding="16"
-                                    Grid.Column="1" Tapped="ThemeOption_Tapped">
-                                <StackPanel Spacing="10" HorizontalAlignment="Center">
-                                    <Border Width="64" Height="64" CornerRadius="12" Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                            BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" HorizontalAlignment="Center">
-                                        <Border Width="26" Height="26" CornerRadius="7" Background="{ThemeResource AccentBrush}"
-                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    </Border>
-                                    <TextBlock Text="Claro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- Usar sistema -->
-                            <Border x:Name="ThemeSystemCard" Style="{StaticResource OnboardingOptionStyle}" Padding="16"
-                                    Grid.Column="2" Tapped="ThemeOption_Tapped">
-                                <StackPanel Spacing="10" HorizontalAlignment="Center">
-                                    <Grid Width="64" Height="64">
-                                        <Border CornerRadius="12" Background="{ThemeResource CardBorderBrush}"/>
-                                        <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="*"/>
-                                                <RowDefinition Height="*"/>
-                                            </Grid.RowDefinitions>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            <Border Grid.Row="0" Grid.Column="0" Background="{ThemeResource CardBackgroundBrush}"/>
-                                            <Border Grid.Row="1" Grid.Column="1" Background="{ThemeResource AccentTintBrush}"/>
-                                        </Grid>
+                                    <Grid Width="84" Height="56" HorizontalAlignment="Center">
+                                        <Border CornerRadius="8" Background="#141414" BorderBrush="#454545" BorderThickness="1">
+                                            <StackPanel>
+                                                <!-- Barra de título de la mini-ventana -->
+                                                <Border Height="11" Background="#262626" CornerRadius="7,7,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="9,8,9,0" Spacing="5">
+                                                    <Border Height="5" Width="44" CornerRadius="2.5" Background="#4A4A4A" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="32" CornerRadius="2" Background="#333333" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="24" CornerRadius="2" Background="#2A2A2A" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ThemeDarkCheck" Width="20" Height="20" CornerRadius="10"
+                                                Background="{ThemeResource AccentBrush}" BorderThickness="2" BorderBrush="#1E1E1E"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Margin="0,-7,-7,0" Visibility="Collapsed">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"/>
+                                        </Border>
                                     </Grid>
-                                    <TextBlock Text="Usar sistema" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Oscuro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="White"/>
+                                        <TextBlock Text="Menos fatiga visual" FontSize="11" HorizontalAlignment="Center" Foreground="#9A9A9A"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ===== Claro =====
+                                 Colores LITERALES fijos: el preview es SIEMPRE una mini-ventana
+                                 blanca, independientemente del tema elegido. -->
+                            <Border x:Name="ThemeLightCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
+                                    Grid.Column="1" Tapped="ThemeOption_Tapped"
+                                    Background="#FFFFFF" BorderBrush="#C9C9C9">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Grid Width="84" Height="56" HorizontalAlignment="Center">
+                                        <Border CornerRadius="8" Background="#FFFFFF" BorderBrush="#C9C9C9" BorderThickness="1">
+                                            <StackPanel>
+                                                <Border Height="11" Background="#F1F1F1" CornerRadius="7,7,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="9,8,9,0" Spacing="5">
+                                                    <Border Height="5" Width="44" CornerRadius="2.5" Background="#C4C4C4" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="32" CornerRadius="2" Background="#DDDDDD" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="24" CornerRadius="2" Background="#E8E8E8" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ThemeLightCheck" Width="20" Height="20" CornerRadius="10"
+                                                Background="{ThemeResource AccentBrush}" BorderThickness="2" BorderBrush="#FFFFFF"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Margin="0,-7,-7,0" Visibility="Collapsed">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Claro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="#111111"/>
+                                        <TextBlock Text="Máxima legibilidad" FontSize="11" HorizontalAlignment="Center" Foreground="#6B6B6B"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- ===== Usar sistema =====
+                                 Colores LITERALES fijos: el preview es SIEMPRE una mini-ventana
+                                 partida (mitad oscura / mitad clara). -->
+                            <Border x:Name="ThemeSystemCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
+                                    Grid.Column="2" Tapped="ThemeOption_Tapped"
+                                    Background="#FFFFFF" BorderBrush="#C9C9C9">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Grid Width="84" Height="56" HorizontalAlignment="Center">
+                                        <!-- Mitad oscura (izquierda) -->
+                                        <Border Width="42" HorizontalAlignment="Left" CornerRadius="8,0,0,8"
+                                                Background="#141414" BorderBrush="#454545" BorderThickness="1,1,0,1">
+                                            <StackPanel>
+                                                <Border Height="11" Background="#262626" CornerRadius="7,0,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="6,8,0,0" Spacing="5">
+                                                    <Border Height="5" Width="20" CornerRadius="2.5" Background="#4A4A4A" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="14" CornerRadius="2" Background="#333333" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <!-- Mitad clara (derecha) -->
+                                        <Border Width="42" HorizontalAlignment="Right" CornerRadius="0,8,8,0"
+                                                Background="#FFFFFF" BorderBrush="#C9C9C9" BorderThickness="0,1,1,1">
+                                            <StackPanel>
+                                                <Border Height="11" Background="#F1F1F1" CornerRadius="0,7,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="6,8,0,0" Spacing="5">
+                                                    <Border Height="5" Width="20" CornerRadius="2.5" Background="#C4C4C4" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="14" CornerRadius="2" Background="#DDDDDD" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ThemeSystemCheck" Width="20" Height="20" CornerRadius="10"
+                                                Background="{ThemeResource AccentBrush}" BorderThickness="2" BorderBrush="#FFFFFF"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Margin="0,-7,-7,0" Visibility="Collapsed">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Usar sistema" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="#111111"/>
+                                        <TextBlock Text="Sigue el tema de Windows" FontSize="11" HorizontalAlignment="Center" Foreground="#6B6B6B"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </Grid>

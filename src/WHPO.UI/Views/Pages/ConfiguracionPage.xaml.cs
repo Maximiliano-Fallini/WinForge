@@ -20,7 +20,6 @@ public sealed partial class ConfiguracionPage : Page
     private readonly IInstalledGamesService _installedGamesService;
     private readonly IAppUpdateService _appUpdateService;
     private bool _isLoading;
-    private bool _updatingNavAll;
 
     // Pestaña seleccionada del navbar interno (0=Inicio, 1=Actualizaciones, 2=Caché, 3=Navegación, 4=Desarrollo).
     private int _selectedTabIndex;
@@ -781,7 +780,7 @@ public sealed partial class ConfiguracionPage : Page
 
     private void OnNavCheckChanged(object sender, RoutedEventArgs e)
     {
-        if (_isLoading || _updatingNavAll) return;
+        if (_isLoading) return;
         SaveNavVisibility();
     }
 
@@ -794,24 +793,7 @@ public sealed partial class ConfiguracionPage : Page
         UpdateNavMenuSummary();
     }
 
-    private void SetAllNavVisible(bool visible)
-    {
-        // Cambia todos los checks sin que cada uno dispare un guardado por separado.
-        _updatingNavAll = true;
-        try
-        {
-            foreach (var (tag, _) in NavTabs)
-                if (_navCheckBoxes.TryGetValue(tag, out var cb)) cb.IsChecked = visible;
-        }
-        finally
-        {
-            _updatingNavAll = false;
-        }
-        SaveNavVisibility();
-    }
-
-    private void ShowAllNavButton_Click(object sender, RoutedEventArgs e) => SetAllNavVisible(true);
-    private void HideAllNavButton_Click(object sender, RoutedEventArgs e) => SetAllNavVisible(false);
+    
 
     private void UpdateNavMenuSummary()
     {
@@ -844,6 +826,8 @@ public sealed partial class ConfiguracionPage : Page
         ThemeSystemItem.Content = I18n.T("Usar sistema");
         ThemeDarkItem.Content = I18n.T("Oscuro");
         ThemeLightItem.Content = I18n.T("Claro");
+        ThemePinkItem.Content = I18n.T("Rosa / Blanco");
+        ThemeBlueBlackItem.Content = I18n.T("Negro / Azul");
     }
 
     // ===================== Navbar interno (pestañas) =====================

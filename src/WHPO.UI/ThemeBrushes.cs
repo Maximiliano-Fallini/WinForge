@@ -30,7 +30,9 @@ public static class ThemeBrushes
         var theme = themeService.CurrentTheme == AppTheme.SystemDefault
             ? App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme()
             : themeService.CurrentTheme;
-        return theme == AppTheme.Light ? "Light" : "Dark";
+        // Los temas con paleta propia se estructuran sobre un diccionario base:
+        // el pincel correcto es el del tema EFECTIVO (PinkLight → Light, etc.).
+        return ThemePalettes.BaseThemeFor(theme) == AppTheme.Light ? "Light" : "Dark";
     }
 
     /// <summary>
@@ -53,7 +55,7 @@ public static class ThemeBrushes
         var effectiveTheme = theme == AppTheme.SystemDefault
             ? App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme()
             : theme;
-        return Get(key, effectiveTheme == AppTheme.Light ? "Light" : "Dark");
+        return Get(key, ThemePalettes.BaseThemeFor(effectiveTheme) == AppTheme.Light ? "Light" : "Dark");
     }
 
     private static SolidColorBrush Get(string key, string themeKey)
