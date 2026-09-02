@@ -92,7 +92,7 @@ Si te gusta WinForge, dejá una ⭐ para mostrar apoyo — es gratis y ayuda muc
 </div>
 
 > [!WARNING]
-> Esta aplicación **no cuenta con firma digital** y, por diseño, **modifica el sistema operativo ejecutándose como administrador** (limpieza de archivos, gestión de procesos, tweaks del sistema). Por estos motivos, algunos antivirus pueden detectarla como un **falso positivo**.
+> Esta aplicación **no cuenta con firma digital** y, por diseño, **modifica el sistema operativo ejecutándose como administrador** (limpieza de archivos, gestión de procesos, tweaks del sistema,etc). Por estos motivos, algunos antivirus pueden detectarla como un **falso positivo**.
 >
 > Si confiás en el proyecto, agregá una excepción en tu antivirus. Podés verificar la integridad del instalador comparando el SHA-256 publicado en cada release.
 
