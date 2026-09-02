@@ -55,7 +55,7 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## ⚙️ Requisitos
 
 - **Windows 10/11** (probado en Windows 11 25H2)
-- Ejecutar **como administrador** (necesario para optimización de procesos, servicios y planes de energía)
+- Ejecutar **como administrador** (para que la aplicación funcione correctamente en todas sus pestañas)
 
 ## 📦 Instalación
 
