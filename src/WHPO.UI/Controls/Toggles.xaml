@@ -3,27 +3,27 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
 
-    <!-- Base ToggleSwitch Style -->
+<!-- Base ToggleSwitch Style -->
     <Style x:Key="DefaultToggleSwitchStyle" TargetType="ToggleSwitch">
         <Setter Property="MinWidth" Value="80"/>
         <Setter Property="OnContent" Value="Activado"/>
         <Setter Property="OffContent" Value="Desactivado"/>
     </Style>
 
-    <!-- Compact ToggleSwitch Style -->
+<!-- Compact ToggleSwitch Style -->
     <Style x:Key="CompactToggleSwitchStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
         <Setter Property="MinWidth" Value="60"/>
         <Setter Property="OnContent" Value=""/>
         <Setter Property="OffContent" Value=""/>
     </Style>
 
-    <!-- Large ToggleSwitch Style -->
+<!-- Large ToggleSwitch Style -->
     <Style x:Key="LargeToggleSwitchStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
         <Setter Property="MinWidth" Value="100"/>
         <Setter Property="FontSize" Value="16"/>
     </Style>
 
-    <!-- ToggleSwitch with Label Style -->
+<!-- ToggleSwitch with Label Style -->
     <Style x:Key="LabeledToggleSwitchStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
         <Setter Property="HeaderTemplate">
             <Setter.Value>
@@ -34,7 +34,7 @@
         </Setter>
     </Style>
 
-    <!-- ToggleButton Style -->
+<!-- ToggleButton Style -->
     <Style x:Key="ToggleButtonStyle" TargetType="ToggleButton">
         <Setter Property="Background" Value="{ThemeResource ToggleButtonBackground}"/>
         <Setter Property="Foreground" Value="{ThemeResource ToggleButtonForeground}"/>
@@ -46,14 +46,14 @@
         <Setter Property="MinWidth" Value="80"/>
     </Style>
 
-    <!-- ToggleButton Checked Style -->
+<!-- ToggleButton Checked Style -->
     <Style x:Key="ToggleButtonCheckedStyle" TargetType="ToggleButton" BasedOn="{StaticResource ToggleButtonStyle}">
         <Setter Property="Background" Value="{ThemeResource SystemAccentColorBrush}"/>
         <Setter Property="Foreground" Value="{ThemeResource SystemAccentColorForegroundBrush}"/>
         <Setter Property="BorderBrush" Value="{ThemeResource SystemAccentColorBrush}"/>
     </Style>
 
-    <!-- Icon ToggleButton Style -->
+<!-- Icon ToggleButton Style -->
     <Style x:Key="IconToggleButtonStyle" TargetType="ToggleButton" BasedOn="{StaticResource ToggleButtonStyle}">
         <Setter Property="Padding" Value="8"/>
         <Setter Property="MinWidth" Value="40"/>
@@ -63,27 +63,27 @@
         <Setter Property="CornerRadius" Value="4"/>
     </Style>
 
-    <!-- CheckBox Style -->
+<!-- CheckBox Style -->
     <Style x:Key="DefaultCheckBoxStyle" TargetType="CheckBox">
         <Setter Property="MinWidth" Value="20"/>
         <Setter Property="MinHeight" Value="20"/>
         <Setter Property="FontSize" Value="14"/>
     </Style>
 
-    <!-- RadioButton Style -->
+<!-- RadioButton Style -->
     <Style x:Key="DefaultRadioButtonStyle" TargetType="RadioButton">
         <Setter Property="MinWidth" Value="20"/>
         <Setter Property="MinHeight" Value="20"/>
         <Setter Property="FontSize" Value="14"/>
     </Style>
 
-    <!-- Settings Toggle Style (for settings pages) -->
+<!-- Settings Toggle Style (for settings pages) -->
     <Style x:Key="SettingsToggleStyle" TargetType="ToggleSwitch" BasedOn="{StaticResource DefaultToggleSwitchStyle}">
         <Setter Property="Margin" Value="0,8"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
     </Style>
 
-    <!-- Switch with Description -->
+<!-- Switch with Description -->
     <DataTemplate x:Key="ToggleWithDescriptionTemplate">
         <StackPanel Spacing="4">
             <TextBlock Text="{Binding Title}" Style="{ThemeResource BodyTextBlockStyle}"/>

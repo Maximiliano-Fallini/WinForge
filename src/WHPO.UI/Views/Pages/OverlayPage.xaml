@@ -13,7 +13,7 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                     </StackPanel>
 
-                    <!-- ===== Activar ===== -->
+<!-- ===== Activar ===== -->
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
@@ -37,7 +37,7 @@
                         </Grid>
                     </Border>
 
-                    <!-- ===== Atajos ===== -->
+<!-- ===== Atajos ===== -->
                     <TextBlock Text="Atajos de teclado" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,0"/>
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <StackPanel Spacing="14">
@@ -72,7 +72,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ===== Apariencia ===== -->
+<!-- ===== Apariencia ===== -->
                     <TextBlock Text="Apariencia" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,0"/>
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <StackPanel Spacing="16">
@@ -221,7 +221,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ===== Métricas ===== -->
+<!-- ===== Métricas ===== -->
                     <TextBlock Text="Métricas" FontSize="18" FontWeight="SemiBold" Margin="0,12,0,0"/>
 
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">

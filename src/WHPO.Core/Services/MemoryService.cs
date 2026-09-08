@@ -21,6 +21,56 @@ public class MemoryService : IMemoryService
     private double _maxFreeMB = 4096;
     private int _pollIntervalMs = 1000;
     private int _currentTimerResolution = 156250; // 15.625ms por defecto en Windows
+    private int _requestedTimerResolution;        // valor que ESTA app solicitó (para liberarlo exacto)
+
+    // ====== Resolución REAL del tick (medida) ======
+    // En Win10 2004+/Win11 NtQueryTimerResolution solo refleja la petición del PROPIO
+    // proceso; la resolución efectiva global puede ser más fina (otras apps la fuerzan,
+    // p. ej. herramientas de optimización). La única forma de leer el dato real es medir
+    // el paso del reloj de interrupción (QueryInterruptTime) contra QPC.
+    private const int MinTickChanges = 5;             // saltos mínimos para aceptar la medición
+    private const int MinSampleMs = 40;               // piso de ventana de medición
+    private const int InterruptSampleTimeoutMs = 250; // techo de seguridad del muestreo
+    private const long HighResPollDueHns = -1000;     // sondeo cada 0,1 ms (sub-tick). Cuanto
+    // más fino el sondeo, menor la latencia
+    // de detección de cada salto: con 0,4 ms
+    // el error por intervalo era ±0,4 ms y en
+    // ticks gruesos (pocos saltos en la ventana)
+    // la mediana se iba ±20% (ej: "1,740 ms").
+    private const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
+    private const uint TIMER_MODIFY_STATE = 0x0002;
+    private const uint SYNCHRONIZE = 0x00100000;
+    private double _measuredTimerResolutionMs = 15.625;
+    private bool _ownTimerRequestActive; // esta app tiene una petición activa (Iniciar)
+    private IntPtr _highResTimer;
+    private readonly object _measureLock = new();
+    private static readonly long QpcFrequency = QueryQpcFrequency();
+
+    private IntPtr GetHighResTimer()
+    {
+        if (_highResTimer != IntPtr.Zero)
+            return _highResTimer;
+        try
+        {
+    // Timer de alta resolución (Win10 1803+): permite esperas sub-milisegundo
+    // precisas para sondear el tick más fino (0,5 ms) sin busy-wait.
+            _highResTimer = CreateWaitableTimerEx(IntPtr.Zero, null, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, SYNCHRONIZE | TIMER_MODIFY_STATE);
+        }
+        catch (Exception ex)
+        {
+    // Sin el timer el medidor cae al sondeo grueso (Sleep): degradación
+    // controlada en vez de romper cada medición con la excepción del P/Invoke.
+            _loggingService.LogWarning($"Timer de alta resolución no disponible, muestreo degradado: {ex.Message}");
+            _highResTimer = IntPtr.Zero;
+        }
+        return _highResTimer;
+    }
+
+    private static long QueryQpcFrequency()
+    {
+        QueryPerformanceFrequency(out long f);
+        return f;
+    }
     // OJO con la nomenclatura de NtQueryTimerResolution: MinimumResolution es la MÁS
     // GRUESA (15.625ms) y MaximumResolution la MÁS FINA (0.5ms).
     private int _minTimerResolution = 156250; // 15.625ms (la más gruesa)
@@ -47,6 +97,13 @@ public class MemoryService : IMemoryService
     // Constantes para NtSetTimerResolution
     private const int TIMER_RESOLUTION_MINIMUM = 5000; // 0.5ms en 100ns units
     private const int TIMER_RESOLUTION_DEFAULT = 156250; // 15.625ms
+
+ // NOTA: NO se usa el flag 0x80000000 de
+ // NtSetTimerResolution: hace SIEMPRE una petición normal y, para el alcance
+ // global, escribe la clave de registro del kernel GlobalTimerResolutionRequests
+ // (HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\kernel), que se lee al
+ // boot. El flag 0x80000000 está bloqueado/ignorado en Windows 11 24H2+ (probado).
+ // La petición normal respeta esa clave: si está en 1, ya es global.
 
     public MemoryService(ILoggingService loggingService)
     {
@@ -125,6 +182,24 @@ public class MemoryService : IMemoryService
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool QueryPerformanceFrequency(out long lpFrequency);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool QueryPerformanceCounter(out long lpPerformanceCount);
+
+    [DllImport("kernelbase.dll")]
+    private static extern void QueryInterruptTime(out ulong lpInterruptTime);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateWaitableTimerEx(IntPtr lpTimerAttributes, string? lpTimerName, uint dwFlags, uint dwDesiredAccess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetWaitableTimer(IntPtr hTimer, ref long lpDueTime, int lPeriod, IntPtr pfnCompletionRoutine, IntPtr lpArgToCompletionRoutine, bool fResume);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr hObject);
 
     // ====== Implementación ======
 
@@ -311,21 +386,137 @@ public class MemoryService : IMemoryService
         }
     }
 
+ /// <summary>
+ /// Resolución actual del temporizador, tal como la reporta Windows
+ /// (NtQueryTimerResolution): 0,500 ms con "Iniciar" activo, 15,625 ms al Detener.
+ ///
+ /// NOTA: no se usa la medición del tick de interrupción como fuente primaria.
+ /// En Windows 11 24H2+ el timer de alta resolución que necesita el sondeo SUBE
+ /// la resolución del sistema durante el muestreo, que se autoperturba y siempre
+ /// termina midiendo ~0,5 ms sin importar la resolución real (probado
+ /// empíricamente: la medición daba 0,518 ms con el sistema en 15,625). La
+ /// medición queda solo como último recurso si la consulta falla.
+ /// </summary>
     public int GetCurrentTimerResolution()
     {
+ // NtQueryTimerResolution refleja nuestra petición si está activa y el
+ // valor por-proceso del sistema si no: siempre coherente con lo que
+ // Iniciar/Detener deberían mostrar.
         try
         {
-            if (NtQueryTimerResolution(out _, out _, out int current) == 0)
-            {
-                _currentTimerResolution = current;
+            if (NtQueryTimerResolution(out _, out _, out int current) == 0 && current > 0)
                 return current;
-            }
         }
-        catch (Exception ex)
+        catch { /* caer a medición */ }
+        return MeasureEffectiveTimerResolution();
+    }
+
+ /// <summary>
+ /// Resoluciones que Windows realmente usa (serie de mitades del tick de 15,625 ms
+ /// más los valores "redondos" que piden las apps). Sirven para ajustar la medición:
+ /// el tick real del sistema siempre es uno de estos valores, así que si la medición
+ /// cae a menos del 1,2% de uno de ellos (la separación mínima entre candidatos es
+ /// ~2,4%), ese ES el valor.
+ /// </summary>
+    private static readonly double[] KnownTickMs =
+    {
+        0.48828125, 0.5, 0.9765625, 1.0, 1.953125, 2.0,
+        3.90625, 4.0, 7.8125, 8.0, 10.0, 15.625
+    };
+
+    private const double SnapTolerance = 0.012; // 1,2%
+
+    private static double SnapToKnownTick(double tickMs)
+    {
+        foreach (var known in KnownTickMs)
         {
-            _loggingService.LogError("Error consultando resolución del temporizador", ex);
+            if (Math.Abs(tickMs - known) / known <= SnapTolerance)
+                return known;
         }
-        return _currentTimerResolution;
+        return tickMs;
+    }
+
+ /// <summary>
+ /// Mide el tick observando cuántas veces SALTA el reloj de interrupción
+ /// (QueryInterruptTime) en una ventana cronometrada con QPC. Sondea cada 0,4 ms
+ /// con un timer de alta resolución para no perder saltos ni siquiera a 0,5 ms.
+ /// Estimador: MEDIANA de los intervalos QPC entre saltos consecutivos. El promedio
+ /// simple se inflaba cuando un sondeo atrasado por jitter cruzaba 2 fronteras de
+ /// tick (contadas como 1 salto → un intervalo del doble que arrastraba el promedio
+ /// por encima del real, p. ej. "0,505 ms" a un tick de 0,5 ms); la mediana los
+ /// ignora. El resultado se ajusta a la serie de valores reales de Windows.
+ /// Devuelve unidades de 100 ns.
+ /// </summary>
+    private int MeasureEffectiveTimerResolution()
+    {
+        lock (_measureLock)
+        {
+            try
+            {
+                IntPtr hTimer = GetHighResTimer();
+                bool useHighRes = hTimer != IntPtr.Zero;
+
+                QueryInterruptTime(out ulong last);
+                int changes = 0;
+                var changeQpcs = new List<long>(64);
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                while (sw.ElapsedMilliseconds < InterruptSampleTimeoutMs)
+                {
+                    if (useHighRes)
+                    {
+                        long due = HighResPollDueHns;
+                        if (!SetWaitableTimer(hTimer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false))
+                        {
+                            useHighRes = false; // timer roto: caer al sondeo grueso
+                            continue;
+                        }
+                        WaitForSingleObject(hTimer, 60);
+                    }
+                    else
+                    {
+                        Thread.Sleep(1);
+                    }
+
+                    QueryInterruptTime(out ulong now);
+                    if (now != last)
+                    {
+                        changes++;
+                        QueryPerformanceCounter(out long qNow);
+                        changeQpcs.Add(qNow);
+                        last = now;
+                    }
+                    if (changes >= MinTickChanges && sw.ElapsedMilliseconds >= MinSampleMs)
+                        break;
+                }
+
+ // El handle del timer se conserva para las siguientes mediciones
+ // (MemoryService es singleton); no se cierra por medición.
+
+                if (changes >= MinTickChanges)
+                {
+ // Intervalos entre saltos consecutivos (en ms)
+                    var intervals = new List<double>(changeQpcs.Count - 1);
+                    for (int i = 1; i < changeQpcs.Count; i++)
+                        intervals.Add((changeQpcs[i] - changeQpcs[i - 1]) * 1000.0 / QpcFrequency);
+
+                    intervals.Sort();
+                    double tickMs = intervals.Count % 2 == 1
+                        ? intervals[intervals.Count / 2]
+                        : (intervals[intervals.Count / 2 - 1] + intervals[intervals.Count / 2]) / 2.0;
+
+ // Valor absurdo (>20 ms por tick) = muestreo corrupto: conservar el anterior.
+                    if (tickMs > 0 && tickMs <= 20.0)
+                        _measuredTimerResolutionMs = SnapToKnownTick(tickMs);
+                }
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"No se pudo medir la resolución del tick: {ex.Message}");
+            }
+
+            return (int)Math.Round(_measuredTimerResolutionMs * 10000);
+        }
     }
 
     public int GetMinimumTimerResolution()
@@ -397,6 +588,77 @@ public class MemoryService : IMemoryService
         return 0;
     }
 
+ // ===== Clave de registro GlobalTimerResolutionRequests =====
+ // NO se usa el flag 0x80000000 de NtSetTimerResolution: se escribe esta clave del kernel
+ // (HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\kernel). El kernel la lee al
+ // boot y, si está en 1, trata las peticiones normales (timeBeginPeriod/NtSetTimerResolution)
+ // como globales — el comportamiento "viejo" de Win10. Sin la clave, en Win11 las peticiones
+ // quedan por proceso y la resolución del sistema no baja. Requiere reinicio para aplicarse.
+
+    private const string KernelSessionManagerKey = @"SYSTEM\CurrentControlSet\Control\Session Manager\kernel";
+    private const string GlobalTimerResolutionRequestsValue = "GlobalTimerResolutionRequests";
+
+ /// <summary>
+ /// Devuelve true si la clave GlobalTimerResolutionRequests está activada (1) en el registro.
+ /// NOTA: aunque la clave esté en 1, el kernel solo la aplica desde el próximo boot.
+ /// </summary>
+    public bool IsGlobalTimerResolutionRequestEnabled()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(KernelSessionManagerKey);
+            var value = key?.GetValue(GlobalTimerResolutionRequestsValue);
+            return value != null && Convert.ToInt32(value) == 1;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error leyendo GlobalTimerResolutionRequests", ex);
+            return false;
+        }
+    }
+
+ /// <summary>
+ /// Escribe (1) o borra la clave GlobalTimerResolutionRequests, equivalente.
+ /// Requiere permisos de administrador. El efecto completo aplica tras reiniciar.
+ /// </summary>
+    public async Task<CommandResult> SetGlobalTimerResolutionRequestEnabledAsync(bool enabled)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(KernelSessionManagerKey, writable: true);
+                if (key == null)
+                {
+                    return new CommandResult(false, "No se pudo abrir la clave del kernel del registro. Ejecute como administrador.",
+                        "No se pudo abrir la clave del kernel del registro. Ejecute como administrador.");
+                }
+
+                if (enabled)
+                {
+                    key.SetValue(GlobalTimerResolutionRequestsValue, 1, Microsoft.Win32.RegistryValueKind.DWord);
+                }
+                else
+                {
+                    if (key.GetValue(GlobalTimerResolutionRequestsValue) != null)
+                        key.DeleteValue(GlobalTimerResolutionRequestsValue);
+                }
+
+                string msg = enabled
+                    ? "GlobalTimerResolutionRequests activada. El kernel la aplicará al reiniciar el equipo."
+                    : "GlobalTimerResolutionRequests desactivada. El kernel la aplicará al reiniciar el equipo.";
+                _loggingService.LogInfo(msg);
+                return new CommandResult(true, msg, msg);
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogError("Error escribiendo GlobalTimerResolutionRequests", ex);
+                return new CommandResult(false, $"No se pudo modificar GlobalTimerResolutionRequests: {ex.Message}",
+                    "No se pudo modificar GlobalTimerResolutionRequests: {0}", new object?[] { ex.Message });
+            }
+        });
+    }
+
     public async Task<CommandResult> SetTimerResolutionAsync(int resolution100ns)
     {
         return await Task.Run(() =>
@@ -418,6 +680,8 @@ public class MemoryService : IMemoryService
                 }
 
                 _currentTimerResolution = current;
+                _requestedTimerResolution = resolution100ns; // para liberarla exacta al Detener
+                _ownTimerRequestActive = true;
                 double effectiveMs = current / 10000.0;
                 double requestedMs = resolution100ns / 10000.0;
                 // Windows aplica siempre la solicitud MÁS FINA de todos los procesos: si otra
@@ -455,7 +719,12 @@ public class MemoryService : IMemoryService
         {
             try
             {
-                int status = NtSetTimerResolution(TIMER_RESOLUTION_DEFAULT, false, out int current);
+ // La liberación debe usar el MISMO valor que se solicitó: el kernel
+ // da de baja la petición que coincida con el desired. Liberar con un
+ // valor distinto (ej. el default 156250) no suelta la petición fina
+ // (ej. 0,5 ms) y la resolución quedaba clavada en ella tras Detener.
+                int desired = _requestedTimerResolution != 0 ? _requestedTimerResolution : TIMER_RESOLUTION_MINIMUM;
+                int status = NtSetTimerResolution(desired, false, out int current);
                 if (status != 0)
                 {
                     _loggingService.LogError($"NtSetTimerResolution (reset) falló con código {status}");
@@ -464,7 +733,19 @@ public class MemoryService : IMemoryService
                 }
 
                 _currentTimerResolution = current;
-                double ms = current / 10000.0;
+                _ownTimerRequestActive = false; // petición liberada
+                _requestedTimerResolution = 0;
+
+ // Mostrar lo que Windows reporta ahora (15,625 ms si nada más fuerza
+ // el temporizador; la otra app puede seguir pidiendo lo suyo).
+                int after = current;
+                try
+                {
+                    if (NtQueryTimerResolution(out _, out _, out int nowCurrent) == 0 && nowCurrent > 0)
+                        after = nowCurrent;
+                }
+                catch { }
+                double ms = after / 10000.0;
                 _loggingService.LogInfo($"Resolución del temporizador restablecida a {ms:F3} ms");
                 return new CommandResult(true, $"Resolución del temporizador restablecida a {ms:F3} ms.",
                     "Resolución del temporizador restablecida a {0} ms.", new object?[] { $"{ms:F3}" });

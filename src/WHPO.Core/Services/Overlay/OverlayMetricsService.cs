@@ -14,11 +14,11 @@ namespace WHPO.Core.Services.Overlay;
 /// corre en un timer de fondo; el snapshot se publica de forma thread-safe.
 ///
 /// Fuentes (todas nativas, autosuficientes, sin dependencias externas):
-///  - CPU/GPU %: Performance Counter (la misma fuente que el Administrador de tareas).
-///  - Temp/MHz/watts: LibreHardwareMonitor vía ISystemInfoService (con caché).
-///  - RAM: IMemoryService (GlobalMemoryStatusEx nativo).
-///  - FPS: IFpsMonitor (ETW DXGI; correlación DxgKrnl tipo PresentMon pendiente)
-///    sobre el proceso de la ventana en primer plano.
+/// - CPU/GPU %: Performance Counter (la misma fuente que el Administrador de tareas).
+/// - Temp/MHz/watts: LibreHardwareMonitor vía ISystemInfoService (con caché).
+/// - RAM: IMemoryService (GlobalMemoryStatusEx nativo).
+/// - FPS: IFpsMonitor (ETW DXGI; correlación DxgKrnl tipo PresentMon pendiente)
+/// sobre el proceso de la ventana en primer plano.
 /// </summary>
 public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
 {
@@ -52,10 +52,10 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
     // a "--" cuando ningún proceso presenta.
     //
     // Selección del juego (en orden):
-    //  1) El PRIMER PLANO presenta a ritmo de juego (>= 30 fps) → es el juego activo.
-    //  2) Si no, el último juego conocido SI SIGUE presentando → se mantiene (evita
-    //     que un emulador/browser a 8 fps o el escritorio pisen al juego real).
-    //  3) Si no, el proceso con MAYOR tasa de presentación (juego en background).
+    // 1) El PRIMER PLANO presenta a ritmo de juego (>= 30 fps) → es el juego activo.
+    // 2) Si no, el último juego conocido SI SIGUE presentando → se mantiene (evita
+    // que un emulador/browser a 8 fps o el escritorio pisen al juego real).
+    // 3) Si no, el proceso con MAYOR tasa de presentación (juego en background).
     private const double GameLikeFpsThreshold = 30;
     private int _lastGamePid;
     private string _lastGameName = "";
@@ -373,7 +373,7 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
             var gpus = _systemInfo.GetGpuInfo();
             // La GPU principal = la de más VRAM dedicada. La integrada suele reportar
             // VRAM falsa (~512 MB por el AdapterRAM de WMI) y no debe ganarle a la
-            // dedicada (RTX 4060 Ti 8 GB) ni quedarse como "la primera".
+            // dedicada de mayor capacidad ni quedarse como "la primera".
             var primary = gpus.Where(g => g.DedicatedMemoryBytes > 0)
                               .OrderByDescending(g => g.DedicatedMemoryBytes)
                               .FirstOrDefault();
@@ -491,10 +491,10 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
 
     /// <summary>
     /// Nombre real del juego del proceso, en cascada:
-    ///  1) Biblioteca de juegos instalados (IInstalledGamesService) por ejecutable.
-    ///  2) Título real de la ventana del proceso.
-    ///  3) Nombre de producto del ejecutable (FileVersionInfo).
-    ///  4) Nombre del proceso limpiado genéricamente (sufijos UE, capitalización).
+    /// 1) Biblioteca de juegos instalados (IInstalledGamesService) por ejecutable.
+    /// 2) Título real de la ventana del proceso.
+    /// 3) Nombre de producto del ejecutable (FileVersionInfo).
+    /// 4) Nombre del proceso limpiado genéricamente (sufijos UE, capitalización).
     /// </summary>
     private string GetGameDisplayName(int pid)
     {

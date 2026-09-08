@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
+using WHPO_UI.Components;
 using WHPO_UI.Services;
 using WHPO_UI.Views.Pages;
 using WinFormsApp = System.Windows.Forms.Application;
@@ -32,6 +33,7 @@ public sealed partial class MainWindow : Window
     private readonly IInstalledGamesService _installedGamesService;
     private readonly IGameBoostService? _gameBoostService;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly ComponentRegistry _componentRegistry;
 
     // Último chequeo de actualizaciones (para el botón del navbar) y si ya se lanzó.
     private AppUpdateInfo? _latestUpdate;
@@ -68,6 +70,7 @@ public sealed partial class MainWindow : Window
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
         _gameBoostService = App.Services.GetService<IGameBoostService>();
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
+        _componentRegistry = App.Services.GetRequiredService<ComponentRegistry>();
 
         // El overlay nunca se restaura automáticamente al iniciar. Solo se activa
         // desde su página cuando el usuario lo solicita explícitamente.
@@ -107,6 +110,7 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("nucleos", typeof(NucleosPage));
             ns.RegisterPage("procesos", typeof(GestionarProcesosPage));
             ns.RegisterPage("procesosvivos", typeof(ProcesosPage));
+            ns.RegisterPage("overclockusb", typeof(OverclockUsbPage));
             ns.RegisterPage("teclado", typeof(TecladoPage));
             ns.RegisterPage("autoclicker", typeof(AutoclickerPage));
             ns.RegisterPage("estabilidad", typeof(EstabilidadPage));
@@ -120,7 +124,16 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("actualizaciones", typeof(ActualizacionesPage));
             ns.RegisterPage("limpieza", typeof(LimpiezaPage));
             ns.RegisterPage("configuracion", typeof(ConfiguracionPage));
+            ns.RegisterPage("workshop", typeof(WorkshopPage));
+            ns.RegisterPage("macros", typeof(MacrosPage));
         }
+
+        // Navbar dinámico: insertar las pestañas de los componentes no-core del
+        // registro (built-ins y componentes descargados del Workshop) después del
+        // ítem Workshop. Debe correr ANTES de ApplyInstallerTabSelection /
+        // ApplyNavigationVisibility / AttachNavItemMenus / TranslateNavbar.
+        IntegrateComponentNavbar();
+        _componentRegistry.Changed += () => DispatcherQueue.TryEnqueue(RefreshComponentNavItems);
 
         // Aplicar la selección de pestañas hecha en el instalador (una sola vez).
         ApplyInstallerTabSelection();
@@ -152,7 +165,7 @@ public sealed partial class MainWindow : Window
         this.AppWindow.Closing += AppWindow_Closing;
 
         // Garantizar la restauración/centrado en la primera activación: aplicar la
-        // posición antes de Activate() puede ser ignorado por Windows, y con el
+        // posición antes de Activate puede ser ignorado por Windows, y con el
         // evento queda seguro. (Misma posición que la del constructor: no salta.)
         this.Activated += (_, args) =>
         {
@@ -195,6 +208,19 @@ public sealed partial class MainWindow : Window
         {
             // SetupTrayIcon ya invoca UpdateTrayStatus internamente.
             SetupTrayIcon();
+
+            // El botón minimizar oculta a la bandeja cuando la opción está activa
+            // (mantiene la petición de resolución del temporizador; minimizada en la
+            // barra, Windows 11 la baja a 1 ms).
+            try
+            {
+                _minimizeSubclassHwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                InstallMinimizeToTrayHook();
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"Hook minimizar a bandeja: {ex.Message}");
+            }
 
             // Reaplicar lo que el usuario dejó iniciado en la sesión anterior
             // (resolución del temporizador y limpieza automática de memoria).
@@ -708,11 +734,63 @@ public sealed partial class MainWindow : Window
 
     private void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        var minimizeToTray = _settingsService.Get("window.minimizeToTray", true);
-        if (minimizeToTray)
+        // Reinicio de tema: cerrar DE VERDAD aunque "minimize to tray" esté activo.
+        // El flag se consume en la misma pasada (el usuario podría cancelar el
+        // cierre después de haberlo pedido).
+        if (_forceClosePending)
         {
-            args.Cancel = true; // Cancelar el cierre
-            HideWindow(); // Ocultar a bandeja
+            _forceClosePending = false;
+        }
+        else
+        {
+            var minimizeToTray = _settingsService.Get("window.minimizeToTray", true);
+            if (minimizeToTray)
+            {
+                args.Cancel = true; // Cancelar el cierre
+                HideWindow(); // Ocultar a bandeja
+            }
+        }
+    }
+
+    // Reinicio real pendiente: el próximo cierre de la ventana no va a la bandeja.
+    private bool _forceClosePending;
+
+    /// <summary>
+    /// Reinicio de la app para aplicar un cambio de apariencia/tema: el tema nuevo
+    /// se persiste ANTES de llamar a este método, así la app relanzada arranca con
+    /// la apariencia elegida desde el primer frame (sin repintados parciales ni
+    /// páginas con pinceles mezclados). Cierra la ventana de verdad (sin pasar por
+    /// la bandeja) y lanza el mismo exe con el flag --theme-restart.
+    /// </summary>
+    public void RestartForThemeChange()
+    {
+        try
+        {
+            _loggingService.LogInfo("Tema: reiniciando la app para aplicar la apariencia elegida.");
+            _forceClosePending = true;
+
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath))
+            {
+                // Sin ruta de exe no hay relanzamiento: cerrar normal (la bandeja
+                // ya no interviene en esta pasada) y que el usuario reabra a mano.
+                Close();
+                return;
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = exePath,
+                Arguments = "--theme-restart",
+                UseShellExecute = true
+            };
+            System.Diagnostics.Process.Start(psi);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError($"Tema: fallo el reinicio para cambio de apariencia: {ex.Message}", ex);
+            _forceClosePending = false;
         }
     }
 
@@ -863,6 +941,119 @@ public sealed partial class MainWindow : Window
     [System.Runtime.InteropServices.DllImport("psapi.dll")]
     private static extern bool EmptyWorkingSet(IntPtr hProcess);
 
+ // ===== Minimizar → bandeja =====
+ // En Windows 11, si la ventana queda MINIMIZADA en la barra de tareas, el sistema
+ // deja de honrar la petición NtSetTimerResolution del proceso y la resolución del
+ // temporizador "cae" a 1 ms (verificado empíricamente). En cambio, si la ventana
+ // queda OCULTA en la bandeja la petición se mantiene. Por eso, cuando la opción
+ // "Minimizar a la bandeja" está activa, el botón minimizar debe hacer lo mismo
+ // que la X: ocultar a la bandeja en vez de minimizar a la barra.
+    private IntPtr _minimizeSubclassHwnd = IntPtr.Zero;
+    private SubclassProcDelegate? _minimizeSubclassProc;
+    private IntPtr _minimizePrevWndProc = IntPtr.Zero;
+    private bool _minimizeUseSubclassApi;
+    private const uint WM_SYSCOMMAND = 0x0112;
+    private const int SC_MINIMIZE = 0xF020;
+
+    private delegate IntPtr SubclassProcDelegate(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData);
+
+    [System.Runtime.InteropServices.DllImport("comctl32.dll", SetLastError = true)]
+    private static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProcDelegate pfnSubclass, IntPtr uIdSubclass, IntPtr dwRefData);
+    [System.Runtime.InteropServices.DllImport("comctl32.dll")]
+    private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData);
+    [System.Runtime.InteropServices.DllImport("comctl32.dll", SetLastError = true)]
+    private static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassProcDelegate pfnSubclass, IntPtr uIdSubclass);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern IntPtr GetWindowLong32(IntPtr hWnd, int nIndex);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern IntPtr SetWindowLong32(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr CallWindowProcW(IntPtr lpPrevWndFunc, IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    private const int GWLP_WNDPROC = -4;
+
+    private static IntPtr GetWindowLongNative(IntPtr hWnd, int nIndex)
+        => IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : GetWindowLong32(hWnd, nIndex);
+
+    private static IntPtr SetWindowLongNative(IntPtr hWnd, int nIndex, IntPtr value)
+        => IntPtr.Size == 8 ? SetWindowLongPtr64(hWnd, nIndex, value) : SetWindowLong32(hWnd, nIndex, value);
+
+ /// <summary>
+ /// Intercepta el comando de minimizar de la ventana (botón de la barra de título,
+ /// Win+Down, etc.). Si "Minimizar a la bandeja" está activo, oculta la ventana a
+ /// la bandeja en vez de minimizarla: así la petición de resolución del temporizador
+ /// no se pierde (minimizada a la barra, Windows 11 la baja a 1 ms) y el modo
+ /// "Optimizar Rendimiento" aplica su limpieza al ocultar.
+ /// </summary>
+    private void InstallMinimizeToTrayHook()
+    {
+        try
+        {
+            if (_minimizeSubclassProc != null || _minimizeSubclassHwnd == IntPtr.Zero) return;
+
+            var proc = new SubclassProcDelegate(MinimizeSubclassProc);
+ // Primero con SetWindowSubclass (apilado, seguro). Si comctl32 no expone
+ // la función (v5), caer al reemplazo clásico de WndProc.
+            try
+            {
+                if (SetWindowSubclass(_minimizeSubclassHwnd, proc, IntPtr.Zero, IntPtr.Zero))
+                {
+                    _minimizeSubclassProc = proc;
+                    _minimizeUseSubclassApi = true;
+                    return;
+                }
+            }
+            catch { }
+
+            var prev = GetWindowLongNative(_minimizeSubclassHwnd, GWLP_WNDPROC);
+            var fn = Marshal.GetFunctionPointerForDelegate(proc);
+ // SetWindowLong devuelve el WndProc ANTERIOR; si es distinto de cero (o el
+ // error es 0) el reemplazo funcionó.
+            var replaced = SetWindowLongNative(_minimizeSubclassHwnd, GWLP_WNDPROC, fn);
+            if (replaced != IntPtr.Zero || Marshal.GetLastWin32Error() == 0)
+            {
+                _minimizePrevWndProc = prev;
+                _minimizeSubclassProc = proc;
+                _minimizeUseSubclassApi = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo instalar el hook de minimizar a bandeja: {ex.Message}");
+        }
+    }
+
+    private IntPtr MinimizeSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData)
+    {
+        try
+        {
+            if (uMsg == WM_SYSCOMMAND && ((long)wParam & 0xFFF0) == SC_MINIMIZE && ShouldMinimizeToTray())
+            {
+                DispatcherQueue.TryEnqueue(HideWindow);
+                return IntPtr.Zero; // consumido: no minimizar a la barra
+            }
+        }
+        catch { }
+
+        if (_minimizeUseSubclassApi && _minimizeSubclassProc != null)
+        {
+            try { return DefSubclassProc(hWnd, uMsg, wParam, lParam, uIdSubclass, dwRefData); } catch { }
+        }
+        return _minimizePrevWndProc == IntPtr.Zero
+            ? CallWindowProcW(GetWindowLongNative(hWnd, GWLP_WNDPROC), hWnd, uMsg, wParam, lParam)
+            : CallWindowProcW(_minimizePrevWndProc, hWnd, uMsg, wParam, lParam);
+    }
+
+    private bool ShouldMinimizeToTray()
+    {
+        try { return _notifyIcon != null && _settingsService.Get("window.minimizeToTray", true); }
+        catch { return false; }
+    }
+
     private void InitializePerformanceCounters()
     {
         // CPU - siempre disponible
@@ -907,7 +1098,8 @@ public sealed partial class MainWindow : Window
             var memStats = _memoryService.GetMemoryStats();
             var cacheMB = memStats.StandbyMB;
 
-            var currentTR = _memoryService.GetCurrentTimerResolution();
+ // La resolución efectiva se MIDE (~30-60 ms): fuera del hilo de UI.
+            var currentTR = await Task.Run(() => _memoryService.GetCurrentTimerResolution());
             var trMs = currentTR / 10000.0;
 
             var cpuTempPart = cpuTemp > 0 ? $" · {cpuTemp:F0}°C" : "";
@@ -938,7 +1130,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 var memStats = _memoryService.GetMemoryStats();
-                var currentTR = _memoryService.GetCurrentTimerResolution();
+                var currentTR = await Task.Run(() => _memoryService.GetCurrentTimerResolution());
                 var trMs = currentTR / 10000.0;
                 _notifyIcon.Text = $"WinForge\nRAM: {memStats.UsedMB:F0}/{memStats.TotalPhysicalMB:F0} MB\nTR: {trMs:F3} ms";
             }
@@ -1149,12 +1341,10 @@ public sealed partial class MainWindow : Window
     // ===== Selección de pestañas del instalador =====
 
     /// <summary>
-    /// Aplica una sola vez la selección de pestañas elegida en el instalador
-    /// (HKLM\Software\WinForge\InstallTabs\&lt;tag&gt;, escrita por el MSI: "1" =
-    /// visible, vacío = oculto). Las pestañas obligatorias (Sistema, Red, Memoria,
-    /// Núcleos y Plan de energía, Teclado y Macros, Configuración) quedan siempre
-    /// visibles. Después de la primera aplicación, el usuario controla la
-    /// visibilidad desde Configuración → Menú de navegación.
+    /// Aplica una sola vez la selección de pestañas del instalador
+    /// (HKLM\Software\WinForge\InstallTabs\&lt;tag&gt;). Desde la 0.3.0 SOLO se
+    /// considera el set core (siempre visible): las pestañas no core no se leen del
+    /// instalador porque nacen sin instalar y se activan desde el Workshop.
     /// </summary>
     private void ApplyInstallerTabSelection()
     {
@@ -1168,11 +1358,10 @@ public sealed partial class MainWindow : Window
             {
                 foreach (var name in key.GetValueNames())
                 {
-                    bool visible = key.GetValue(name) as string == "1";
-                    // Pestañas obligatorias: siempre visibles, sin importar el instalador.
-                    if (name is "sistema" or "red" or "memoria" or "nucleos" or "teclado" or "configuracion")
-                        visible = true;
-                    _settingsService.Set("nav." + name, visible);
+                    // 0.3.0 (Workshop): las pestañas no core se instalan desde el
+                    // Workshop, no desde el instalador — se ignoran acá.
+                    if (!ComponentRegistry.CoreTags.Contains(name)) continue;
+                    _settingsService.Set("nav." + name, true);
                 }
             }
 
@@ -1210,13 +1399,575 @@ public sealed partial class MainWindow : Window
     private void ApplyNavItemVisibility(NavigationViewItem item)
     {
         if (item.Tag is not string tag) return;
-        // La pestaña Configuración no se puede ocultar: siempre visible.
-        if (tag == "configuracion")
+        // El set core (Configuración incluida) no se puede ocultar: siempre visible.
+        if (ComponentRegistry.CoreTags.Contains(tag))
         {
             item.Visibility = Visibility.Visible;
             return;
         }
-        item.Visibility = _settingsService.Get("nav." + tag, true) ? Visibility.Visible : Visibility.Collapsed;
+        // Integrados no core: desde la 0.3.0 nacen sin instalar (Workshop) → ocultos.
+        item.Visibility = _settingsService.Get("nav." + tag, !_componentRegistry.RequiresInstall(tag)) ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // =====================================================================
+    // Navbar dinámico (componentes del Workshop)
+    // =====================================================================
+
+    /// <summary>
+    /// Inserta en el navbar los ítems de los componentes no-core del registro
+    /// (built-ins y descargados), en orden de registro, después del ítem Workshop.
+    /// </summary>
+    private void IntegrateComponentNavbar()
+    {
+        try
+        {
+            var menu = NavigationViewControl.MenuItems;
+            foreach (var comp in _componentRegistry.NavbarComponents)
+            {
+                if (FindNavItem(comp.Id) != null) continue;
+                int insertIndex = IndexAfterWorkshopItem(menu);
+                menu.Insert(Math.Min(insertIndex, menu.Count), CreateNavItem(comp));
+                // Los dinámicos navegan por el host genérico: registrar su página
+                // también en el arranque (no solo al instalar en caliente), si no
+                // el tag existe pero navegar falla con "Página no registrada".
+                if (comp is not BuiltinComponent && _navigationService is NavigationService ns)
+                    ns.RegisterPage(comp.Id, typeof(ComponentHostPage));
+            }
+            AttachNavItemDrag();
+            ApplySavedNavOrder();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: no se pudieron integrar los componentes al navbar: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Reconcilia el navbar con el estado actual del registro: se corrió al
+    /// instalar/desinstalar un componente desde el Workshop (registry.Changed).
+    /// </summary>
+    private void RefreshComponentNavItems()
+    {
+        try
+        {
+            var menu = NavigationViewControl.MenuItems;
+
+            // 1) Quitar ítems generados cuyo componente ya no está registrado.
+            for (int i = menu.Count - 1; i >= 0; i--)
+            {
+                if (menu[i] is not NavigationViewItem item || item.Tag is not string tag) continue;
+                if (ComponentRegistry.CoreTags.Contains(tag)) continue;
+                if (_componentRegistry.Find(tag) != null) continue;
+                menu.RemoveAt(i);
+                if (string.Equals(_navigationService.CurrentPage, tag, StringComparison.OrdinalIgnoreCase))
+                    _navigationService.NavigateTo("sistema");
+            }
+
+            // 2) Insertar los nuevos (componente recién instalado), en orden del
+            //    registro: cada uno va después del anterior para no invertir el orden.
+            int insertIndex = IndexAfterWorkshopItem(menu);
+            foreach (var comp in _componentRegistry.NavbarComponents)
+            {
+                if (FindNavItem(comp.Id) != null) continue;
+                menu.Insert(Math.Min(insertIndex, menu.Count), CreateNavItem(comp));
+                insertIndex++;
+                // Los dinámicos navegan por el host genérico; los built-in ya
+                // quedaron registrados con su página propia en el arranque.
+                if (comp is not BuiltinComponent && _navigationService is NavigationService ns)
+                    ns.RegisterPage(comp.Id, typeof(ComponentHostPage));
+            }
+
+            ApplyNavigationVisibility();
+            AttachNavItemDrag();
+            ApplySavedNavOrder();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: reconciliación del navbar: {ex.Message}");
+        }
+    }
+
+    /// <summary>Índice del primer hueco después del ítem Workshop (fin del set core).</summary>
+    private int IndexAfterWorkshopItem(IList<object> menu)
+    {
+        for (int i = 0; i < menu.Count; i++)
+            if (menu[i] is NavigationViewItem it && it.Tag as string == "workshop")
+                return i + 1;
+        return menu.Count;
+    }
+
+    private NavigationViewItem CreateNavItem(WHPO.Core.Components.IWinForgeComponent comp) => new()
+    {
+        Content = comp.Name,
+        Tag = comp.Id,
+        Icon = new FontIcon
+        {
+            Glyph = comp.IconGlyph,
+            FontFamily = SymbolFontFamily(),
+            FontSize = 16
+        }
+    };
+
+    // =====================================================================
+    // Reordenamiento del navbar por arrastre (drag & drop manual)
+    // =====================================================================
+
+    // El orden lo maneja el usuario arrastrando pestañas. Se persiste en el
+    // setting "nav.order" (tags separados por coma) y se re-aplica al arrancar
+    // y cuando el registro cambia (instalación/desinstalación de componentes).
+    private NavigationViewItem? _dragPressItem;   // ítem presionado (aún sin arrastrar)
+    private Windows.Foundation.Point _dragPressPoint;
+    private NavigationViewItem? _dragItem;        // ítem en arrastre activo
+    private uint _dragPointerId;                  // id del puntero dueño del gesto
+    private bool _dragging;                       // gesto de arrastre activo
+    private bool _dragSuppressClick;              // el release después de arrastrar no navega
+    private int? _dragTargetIndex;                // destino calculado durante el arrastre
+
+    // =====================================================================
+    // Sondeo global del cursor durante el gesto. El ListView interno de
+    // NavigationView retiene la captura del puntero (CapturePointer falla:
+    // "captura=False" en el log) y los eventos Moved/Released dejan de llegar
+    // apenas empieza el arrastre. GetCursorPos + GetAsyncKeyState hacen el
+    // gesto inmune a quién tenga la captura del puntero.
+    // =====================================================================
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _navDragPollTimer;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NavDragPoint { public int X; public int Y; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NavDragPoint lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern bool ScreenToClient(nint hWnd, ref NavDragPoint lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private const int NavDragVkLButton = 0x01;
+
+    private void StartNavDragPoll()
+    {
+        if (_navDragPollTimer == null)
+        {
+            _navDragPollTimer = DispatcherQueue.CreateTimer();
+            _navDragPollTimer.Interval = TimeSpan.FromMilliseconds(15);
+            _navDragPollTimer.Tick += (_, _) => NavDragPollTick();
+        }
+        _navDragPollTimer.Start();
+    }
+
+    private void StopNavDragPoll() => _navDragPollTimer?.Stop();
+
+    private void NavDragPollTick()
+    {
+        if (!_dragging || _dragItem == null) { StopNavDragPoll(); return; }
+
+        // Botón soltado (aunque el release se lo haya quedado otro control):
+        // aplicar el drop.
+        if ((GetAsyncKeyState(NavDragVkLButton) & 0x8000) == 0)
+        {
+            NavDragPoll_Finish();
+            return;
+        }
+
+        var p = GetCursorPosInNavCoords();
+        if (p.HasValue) UpdateNavDragFeedback(p.Value);
+    }
+
+    /// <summary>Drop del gesto detectado por el poll (equivale al release).</summary>
+    private void NavDragPoll_Finish()
+    {
+        if (!_dragging) return;
+        _dragSuppressClick = true;
+        int? target = _dragTargetIndex;
+        var item = _dragItem;
+        _loggingService.LogInfo($"NavDrag: release (poll) de '{item?.Tag}' con destino {target?.ToString() ?? "null"}");
+        EndNavDrag();
+
+        if (item == null || target == null) return;
+        DispatcherQueue.TryEnqueue(() => ApplyNavReorder(item, target.Value));
+    }
+
+    /// <summary>
+    /// Posición del cursor global convertida al espacio de coordenadas de
+    /// NavigationViewControl (DIPs), sin depender de eventos de puntero.
+    /// </summary>
+    private Windows.Foundation.Point? GetCursorPosInNavCoords()
+    {
+        try
+        {
+            if (!GetCursorPos(out var p)) return null;
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (!ScreenToClient(hwnd, ref p)) return null;
+            double scale = NavigationViewControl.XamlRoot?.RasterizationScale ?? 1.0;
+            if (scale <= 0) scale = 1.0;
+            var rootPoint = new Windows.Foundation.Point(p.X / scale, p.Y / scale);
+            var toRoot = NavigationViewControl.TransformToVisual(null);
+            return toRoot.Inverse.TransformPoint(rootPoint);
+        }
+        catch { return null; }
+    }
+
+    // Tag de la pestaña del footer: jamás participa del drag (ni como origen).
+    private const string DragExcludedTag = "configuracion";
+    // Umbral en px para no robarle el clic a la navegación normal.
+    private const double DragStartThresholdPx = 8;
+
+    /// <summary>
+    /// Suscribe los manejadores de arrastre (una sola vez, a nivel del control).
+    /// Con handledEventsToo=true: el interior de NavigationView marca los eventos
+    /// de puntero como manejados y sin esto los handlers normales NUNCA disparan
+    /// (por eso el drag parecía muerto).
+    /// </summary>
+    private bool _dragHandlersAttached;
+
+    private void AttachNavItemDrag()
+    {
+        if (_dragHandlersAttached) return;
+        _dragHandlersAttached = true;
+        NavigationViewControl.AddHandler(UIElement.PointerPressedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler(NavDrag_PointerPressed), true);
+        NavigationViewControl.AddHandler(UIElement.PointerMovedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler(NavDrag_PointerMoved), true);
+        NavigationViewControl.AddHandler(UIElement.PointerReleasedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler(NavDrag_PointerReleased), true);
+        NavigationViewControl.AddHandler(UIElement.PointerCanceledEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler(NavDrag_PointerCanceled), true);
+    }
+
+    /// <summary>
+    /// Sube por el árbol visual hasta encontrar el NavigationViewItem. Si antes de
+    /// llegar encuentra un Button (el ⋮ de ocultar de cada pestaña), devuelve null:
+    /// un press que nace ahí es un tap del menú, no un intento de arrastrar.
+    /// </summary>
+    private static NavigationViewItem? FindNavItemAncestor(DependencyObject? start)
+    {
+        var d = start;
+        while (d != null && d is not NavigationViewItem)
+        {
+            if (d is Microsoft.UI.Xaml.Controls.Button) return null;
+            d = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(d);
+        }
+        return d as NavigationViewItem;
+    }
+
+    private void NavDrag_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        // Limpiar el flag de un drag anterior: si el release anterior no generó
+        // ItemInvoked (drop fuera de una pestaña), el flag quedaba encendido y
+        // se comía el próximo clic legítimo.
+        _dragSuppressClick = false;
+
+        var item = FindNavItemAncestor(e.OriginalSource as DependencyObject);
+        // La pestaña Configuración vive en el footer: no se arrastra.
+        if (item is not { Tag: string tag } || tag == DragExcludedTag)
+        {
+            _dragPressItem = null;
+            return;
+        }
+        _dragPressItem = item;
+        _dragPointerId = e.Pointer.PointerId;
+        _dragPressPoint = e.GetCurrentPoint(NavigationViewControl).Position;
+        _loggingService.LogInfo($"NavDrag: press en '{tag}'");
+    }
+
+    private void NavDrag_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        // Solo el puntero dueño del gesto participa (un segundo dispositivo no
+        // interrumpe un arrastre en curso).
+        if (_dragPressItem == null) return;
+        if (e.Pointer.PointerId != _dragPointerId) return;
+
+        var point = e.GetCurrentPoint(NavigationViewControl);
+
+        // Sin botón presionado: el release se perdió (fuera de la ventana, alt-tab).
+        // Corte limpio en vez de quedar un "drag fantasma".
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            EndNavDrag();
+            return;
+        }
+
+        // Umbral de inicio del arrastre: recién acá se captura el puntero, NO en
+        // el press (capturar en el press le robaría el release al ítem interno y
+        // la navegación por clic dejaría de funcionar). Con la captura activa, los
+        // Moved/Released llegan siempre al NavigationView sin importar qué
+        // contenedor interno intente quedarse con el gesto, y el drag sobrevive
+        // aunque el mouse salga de la pestaña.
+        if (_dragItem == null)
+        {
+            var dx = point.Position.X - _dragPressPoint.X;
+            var dy = point.Position.Y - _dragPressPoint.Y;
+            if (dx * dx + dy * dy < DragStartThresholdPx * DragStartThresholdPx) return;
+
+            _dragItem = _dragPressItem;
+            _dragItem.Opacity = 0.55;
+            _dragging = true;
+            // NO se intenta CapturePointer: el ListView interno ya tiene la
+            // captura y siempre falla. El gesto continúa por sondeo global.
+            StartNavDragPoll();
+            _loggingService.LogInfo($"NavDrag: inicio arrastre de '{_dragItem.Tag}' (poll global)");
+            var cursorPt = GetCursorPosInNavCoords();
+            if (cursorPt.HasValue) UpdateNavDragFeedback(cursorPt.Value);
+            return;
+        }
+
+        // Durante el gesto activo el feedback lo maneja el poll global; si
+        // igualmente llega un Moved, se usa para refinar el indicador.
+        UpdateNavDragFeedback(point.Position);
+    }
+
+    /// <summary>
+    /// Calcula el destino según la posición del puntero y actualiza la línea
+    /// indicadora. Corre desde el poll global (y, como refino, desde Moved).
+    /// </summary>
+    private void UpdateNavDragFeedback(Windows.Foundation.Point position)
+    {
+
+        // NO se muta MenuItems durante el gesto: mutar contenedores con el puntero
+        // activo corrompe la realización de los ítems (texto que desaparece, navbar
+        // que deja de responder). Solo se calcula el índice destino y se mueve la
+        // línea indicadora; el movimiento real ocurre una vez, al soltar, fuera
+        // del pipeline de eventos.
+        var menu = NavigationViewControl.MenuItems;
+
+        // Pasada 1: dónde está el ítem arrastrado (la dirección del gesto depende
+        // de esto, así que se necesita ANTES de detectar la banda del puntero).
+        int draggedIndex = -1;
+        for (int i = 0; i < menu.Count; i++)
+            if (ReferenceEquals(menu[i], _dragItem)) { draggedIndex = i; break; }
+        if (draggedIndex < 0) { EndNavDrag(); return; } // ítem perdido: corte limpio
+
+        // Pasada 2: banda del puntero + extremos de la lista.
+        int? desired = null;
+        double hoverLineY = 0, hoverLeft = 0, hoverWidth = 0;
+        bool firstSeen = false;
+        double firstTop = 0, firstLeft = 0, firstWidth = 0;
+        double lastBottom = 0, lastLeft = 0, lastWidth = 0;
+
+        for (int i = 0; i < menu.Count; i++)
+        {
+            if (menu[i] is not NavigationViewItem it) continue;
+            if (it.Visibility != Visibility.Visible) continue;
+            double top, height, left;
+            try
+            {
+                var topLeft = it.TransformToVisual(NavigationViewControl).TransformPoint(new Windows.Foundation.Point(0, 0));
+                top = topLeft.Y;
+                left = topLeft.X;
+                height = it.ActualHeight;
+            }
+            catch { continue; } // ítem sin realizar todavía
+
+            if (!firstSeen)
+            {
+                firstSeen = true;
+                firstTop = top; firstLeft = left; firstWidth = it.ActualWidth;
+            }
+            lastBottom = top + height;
+            lastLeft = left;
+            lastWidth = it.ActualWidth;
+
+            if (i == draggedIndex) continue;
+
+            if (position.Y >= top && position.Y < top + height)
+            {
+                // Zonas de banda COMPLETA y direccionales (sin mitades muertas):
+                // subiendo → insertar antes de la pestaña tocada; bajando → después.
+                bool before = i < draggedIndex;
+                desired = before ? i : i + 1;
+                hoverLineY = before ? top : top + height;
+                hoverLeft = left;
+                hoverWidth = it.ActualWidth;
+                break;
+            }
+        }
+
+        // Encima de todas las pestañas (header del panel): insertar al principio.
+        if (desired == null && firstSeen && draggedIndex > 0 && position.Y < firstTop)
+        {
+            desired = 0;
+            hoverLineY = firstTop;
+            hoverLeft = firstLeft;
+            hoverWidth = firstWidth;
+        }
+
+        // Zona vacía debajo de la última pestaña: soltar al final (la pestaña
+        // Configuración del footer no es parte de MenuItems: nunca es destino).
+        if (desired == null && firstSeen && position.Y >= lastBottom)
+        {
+            desired = menu.Count;
+            hoverLineY = lastBottom;
+            hoverLeft = lastLeft;
+            hoverWidth = lastWidth;
+        }
+
+        // Sin zona de drop (sobre el propio hueco del ítem arrastrado): sin
+        // indicador y sin destino (soltar ahí = dejar todo como está).
+        if (desired == null)
+        {
+            _dragTargetIndex = null;
+            NavDragIndicator.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // Chequeo de no-op con el índice EFECTIVO (post-ajuste), pero se guarda el
+        // deseado SIN ajustar: ApplyNavReorder hace el ajuste una sola vez.
+        // (Ajustar acá Y en ApplyNavReorder hacía que arrastrar hacia abajo caiga
+        // siempre una posición más arriba de la esperada, y bajar un slot fuera
+        // directamente no-op).
+        int from = draggedIndex;
+        int effective = desired.Value > from ? desired.Value - 1 : desired.Value;
+        if (effective == from)
+        {
+            _dragTargetIndex = null;
+            NavDragIndicator.Visibility = Visibility.Collapsed;
+            return;
+        }
+        _dragTargetIndex = desired;
+
+        // Línea indicadora en el hueco visual donde caería la pestaña.
+        NavDragIndicator.Width = Math.Max(40, hoverWidth);
+        Microsoft.UI.Xaml.Controls.Canvas.SetLeft(NavDragIndicator, hoverLeft);
+        Microsoft.UI.Xaml.Controls.Canvas.SetTop(NavDragIndicator, hoverLineY - NavDragIndicator.Height / 2);
+        NavDragIndicator.Visibility = Visibility.Visible;
+    }
+
+    private void NavDrag_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        // Release de otro puntero (multitouch): no corta el gesto del dueño.
+        if (_dragging && e.Pointer.PointerId != _dragPointerId) return;
+
+        if (!_dragging)
+        {
+            EndNavDrag();
+            return;
+        }
+
+        // El release de un drag no navega (si el ítem interno igualmente levanta
+        // ItemInvoked, el flag lo frena; se limpia en el próximo press).
+        _dragSuppressClick = true;
+        int? target = _dragTargetIndex;
+        var item = _dragItem;
+        _loggingService.LogInfo($"NavDrag: release de '{item?.Tag}' con destino {target?.ToString() ?? "null"}");
+        EndNavDrag();
+
+        if (item == null || target == null) return;
+
+        // El reordenamiento se aplica FUERA del pipeline de eventos del puntero,
+        // en una sola operación atómica quitar+insertar.
+        DispatcherQueue.TryEnqueue(() => ApplyNavReorder(item, target.Value));
+    }
+
+    /// <summary>
+    /// Mueve un ítem del navbar a un índice destino y persiste el orden en
+    /// "nav.order". Corre fuera del pipeline de eventos (DispatcherQueue).
+    /// </summary>
+    private void ApplyNavReorder(NavigationViewItem item, int targetIndex)
+    {
+        try
+        {
+            var menu = NavigationViewControl.MenuItems;
+            int from = -1;
+            for (int i = 0; i < menu.Count; i++)
+                if (ReferenceEquals(menu[i], item)) { from = i; break; }
+            if (from < 0 || targetIndex < 0) return;
+
+            // El target se calculó sobre la lista con el ítem aún en su lugar:
+            // si va hacia abajo, el índice efectivo se corre uno.
+            int adjusted = targetIndex > from ? targetIndex - 1 : targetIndex;
+            if (adjusted == from) return;
+
+            bool wasSelected = ReferenceEquals(NavigationViewControl.SelectedItem, item);
+            menu.RemoveAt(from);
+            menu.Insert(Math.Clamp(adjusted, 0, menu.Count), item);
+            // Quitar el contenedor seleccionado puede resetear la selección
+            // interna del NavigationView: re-marcar para que el highlight siga
+            // en la misma pestaña (sin navegación espuria).
+            if (wasSelected) NavigationViewControl.SelectedItem = item;
+            SaveNavOrder();
+            _loggingService.LogInfo($"NavDrag: '{item.Tag}' movido de {from} a {adjusted}.");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: reordenamiento del navbar: {ex.Message}");
+        }
+    }
+
+    private void NavDrag_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => EndNavDrag();
+
+    private void NavDrag_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        // Si el sistema nos quitó la captura a mitad del gesto (la ventana perdió
+        // foco, apareció otro puntero), cortar el drag sin mover nada.
+        if (_dragging) EndNavDrag();
+    }
+
+    private void EndNavDrag()
+    {
+        // La captura de puntero NO se libera explícitamente: el contrato de
+        // CapturePointer la libera solo al soltar/cancelar el puntero (que es
+        // justo cuando se llama acá).
+        StopNavDragPoll();
+        if (_dragItem != null) _dragItem.Opacity = 1;
+        _dragItem = null;
+        _dragPressItem = null;
+        _dragTargetIndex = null;
+        _dragging = false;
+        NavDragIndicator.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Guarda el orden actual de las pestañas en "nav.order".</summary>
+    private void SaveNavOrder()
+    {
+        try
+        {
+            var tags = NavigationViewControl.MenuItems
+                .OfType<NavigationViewItem>()
+                .Where(i => i.Tag is string)
+                .Select(i => (string)i.Tag!);
+            _settingsService.Set("nav.order", string.Join(",", tags));
+            _settingsService.Save();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: no se pudo guardar el orden del navbar: {ex.Message}");
+        }
+    }
+
+    /// <summary>Aplica el orden guardado ("nav.order"); los tags nuevos van al final.</summary>
+    private void ApplySavedNavOrder()
+    {
+        try
+        {
+            var saved = _settingsService.Get("nav.order", "");
+            if (string.IsNullOrWhiteSpace(saved)) return;
+
+            var menu = NavigationViewControl.MenuItems;
+            var selected = NavigationViewControl.SelectedItem;
+            var byTag = new Dictionary<string, NavigationViewItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var it in menu.OfType<NavigationViewItem>())
+                if (it.Tag is string t) byTag[t] = it;
+
+            int insert = 0;
+            foreach (var tag in saved.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!byTag.Remove(tag, out var item)) continue; // desconocido o ya ubicado
+                menu.Remove(item);
+                menu.Insert(Math.Min(insert, menu.Count), item);
+                insert++;
+            }
+            // Los tags que no estaban en la lista quedan después de los ordenados.
+            // Quitar/reinsertar contenedores puede resetear la selección interna:
+            // re-marcar para que la pestaña activa siga con el highlight.
+            if (selected is NavigationViewItem sel && menu.Contains(sel))
+                NavigationViewControl.SelectedItem = sel;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: no se pudo aplicar el orden del navbar: {ex.Message}");
+        }
     }
 
     // ===== Traducciones: navbar + páginas =====
@@ -1555,7 +2306,8 @@ public sealed partial class MainWindow : Window
         foreach (var item in AllNavItems())
         {
             if (item.Tag is not string tag) continue;
-            if (tag == "configuracion") continue;
+            // El set core no lleva botón ⋮ (no se puede ocultar).
+            if (ComponentRegistry.CoreTags.Contains(tag)) continue;
             if (item.Content is not string s) continue; // ya transformado
             _navEsByTag[tag] = s;
 
@@ -1651,7 +2403,64 @@ public sealed partial class MainWindow : Window
             }
         };
         menu.Items.Add(hide);
+
+        // "Desinstalar" para todo lo que no es core (los core ni siquiera tienen ⋮).
+        // Integrados de fábrica: la pestaña sale del navbar hasta reinstalarla desde
+        // el Workshop. Descargados: desinstalación real (catálogo + registro).
+        var uninstall = new MenuFlyoutItem { Text = I18n.T("Desinstalar") };
+        uninstall.Foreground = Feedback.ErrorBrush; // acción destructiva: en rojo
+        uninstall.Click += (s, e2) => _ = UninstallNavItemAsync(tag);
+        menu.Items.Add(uninstall);
+
         menu.ShowAt(btn);
+    }
+
+    /// <summary>
+    /// "Desinstalar" desde el menú ⋮ de una pestaña. Los componentes descargados se
+    /// desinstalan de verdad (catálogo + registro, el navbar se reconcilia solo); los
+    /// integrados de fábrica se quitan del navbar con "builtin.removed.<id>" y el
+    /// Workshop ofrece "Reinstalar". Los core no llegan acá (no tienen botón ⋮).
+    /// </summary>
+    private async Task UninstallNavItemAsync(string tag)
+    {
+        try
+        {
+            if (Content.XamlRoot is null) return;
+            var comp = _componentRegistry.Find(tag);
+            bool isBuiltin = comp is BuiltinComponent;
+            string name = I18n.T(comp?.Name ?? tag);
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = I18n.T("Desinstalar componente"),
+                Content = isBuiltin
+                    ? I18n.T("¿Desinstalar “{0}”? La pestaña desaparece del navbar. Podés volver a instalarla desde el Workshop cuando quieras.", name)
+                    : I18n.T("¿Desinstalar “{0}”? La pestaña desaparece del navbar y el componente se libera por completo al reiniciar la app. Podés reinstalarlo desde acá cuando quieras.", name),
+                PrimaryButtonText = I18n.T("Desinstalar"),
+                CloseButtonText = I18n.T("Cancelar"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+            if (isBuiltin)
+            {
+                _settingsService.Set("builtin.removed." + tag, true);
+                _settingsService.Set("nav." + tag, false);
+                _settingsService.Save();
+                ApplyNavigationVisibility();
+            }
+            else
+            {
+                App.Services.GetRequiredService<WHPO.Core.Services.ComponentCatalogService>().Uninstall(tag);
+                _componentRegistry.Unregister(tag); // Changed → el navbar se reconcilia
+            }
+            _loggingService.LogInfo($"Navbar: pestaña '{tag}' desinstalada desde el menú ⋮ (integrado={isBuiltin}).");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error desinstalando pestaña {tag}: {ex.Message}");
+        }
     }
 
     private void ApplyLanguageButton()
@@ -1694,7 +2503,18 @@ public sealed partial class MainWindow : Window
         {
             if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is string tag)
             {
+                // Un release que cerró un drag no navega (arrastrar ≠ clic).
+                if (_dragSuppressClick)
+                {
+                    _dragSuppressClick = false;
+                    return;
+                }
                 _loggingService.LogInfo($"Navegando a: {tag}");
+                // Para páginas de componentes dinámicos: pasar el id por la variable
+                // estática del host (Frame.Navigate con parámetro explícito hace
+                // fail-fast nativo en WinUI 3: "unexpected parameters"). Los tags
+                // core/built-in navegan sin parámetro, como siempre.
+                ComponentHostPage.PendingComponentId = tag;
                 _navigationService.NavigateTo(tag);
                 _loggingService.LogInfo($"Navegación completada: {tag}");
             }

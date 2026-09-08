@@ -19,6 +19,8 @@ public sealed partial class ConfiguracionPage : Page
     private readonly ILoggingService _loggingService;
     private readonly IInstalledGamesService _installedGamesService;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly IUsbOverclockService _usbOverclockService;
+    private readonly WHPO_UI.Components.ComponentRegistry _navRegistry;
     private bool _isLoading;
 
     // Pestaña seleccionada del navbar interno (0=Inicio, 1=Actualizaciones, 2=Caché, 3=Navegación, 4=Desarrollo).
@@ -39,6 +41,7 @@ public sealed partial class ConfiguracionPage : Page
         ("overlay", "Overlay de métricas"),
         ("procesos", "Biblioteca de juegos"),
         ("procesosvivos", "Gestión de procesos"),
+        ("overclockusb", "Overclock USB"),
         ("teclado", "Teclado y Macros"),
         ("autoclicker", "Autoclicker"),
         ("estabilidad", "Test de estabilidad"),
@@ -65,6 +68,8 @@ public sealed partial class ConfiguracionPage : Page
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
+        _usbOverclockService = App.Services.GetRequiredService<IUsbOverclockService>();
+        _navRegistry = App.Services.GetRequiredService<WHPO_UI.Components.ComponentRegistry>();
 
         Loaded += OnLoaded;
         _themeService.ThemeChanged += OnThemeChanged;
@@ -142,7 +147,11 @@ public sealed partial class ConfiguracionPage : Page
 
         if (Enum.TryParse<AppTheme>(tag, out var theme))
         {
+            // SetTheme persiste la elección y aplica lo que pueda en caliente; el
+            // reinicio garantiza que la app arranque COMPLETA con la apariencia
+            // nueva (sin repintados parciales página por página).
             _themeService.SetTheme(theme);
+            App.MainWindowInstance?.RestartForThemeChange();
         }
     }
 
@@ -224,8 +233,9 @@ public sealed partial class ConfiguracionPage : Page
 
     // ===== Caché de la aplicación =====
     // Cubre todo lo que la app guarda regenerable en disco: banners e íconos de
-    // juegos (GestionarProcesosPage) y la biblioteca de juegos cacheada. NO toca
-    // settings.json (configuración) ni los logs (botón "Borrar logs").
+    // juegos (GestionarProcesosPage), la biblioteca de juegos cacheada y el
+    // componente descargado de Overclock USB. NO toca settings.json
+    // (configuración) ni los logs (botón "Borrar logs").
 
     private static string WhpoCacheDir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO");
@@ -235,7 +245,7 @@ public sealed partial class ConfiguracionPage : Page
         CacheSizeText.Text = I18n.T("Tamaño de la caché: {0}", FormatBytes(GetCacheSizeBytes()));
     }
 
-    private static long GetCacheSizeBytes()
+    private long GetCacheSizeBytes()
     {
         long total = 0;
         try
@@ -248,6 +258,11 @@ public sealed partial class ConfiguracionPage : Page
             if (fi.Exists) total += fi.Length;
             var tmp = new FileInfo(gamesCache + ".tmp");
             if (tmp.Exists) total += tmp.Length;
+
+ // Componente descargado de Overclock USB (el binario del filtro cacheado).
+            var compDir = _usbOverclockService.ComponentCachePath;
+            if (Directory.Exists(compDir))
+                total += Directory.EnumerateFiles(compDir, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
         }
         catch { }
         return total;
@@ -260,7 +275,7 @@ public sealed partial class ConfiguracionPage : Page
         {
             XamlRoot = XamlRoot,
             Title = I18n.T("Limpiar caché"),
-            Content = I18n.T("¿Borrar toda la caché de la aplicación? Se volverán a descargar los banners de juegos y la biblioteca se re-escanneará. La configuración no se toca."),
+            Content = I18n.T("¿Borrar toda la caché de la aplicación? Se volverán a descargar los banners de juegos, la biblioteca se re-escanneará y el componente de Overclock USB se desinstalará (se vuelve a descargar e instalar cuando abras Overclock USB). La configuración no se toca."),
             PrimaryButtonText = I18n.T("Limpiar"),
             CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Close
@@ -281,6 +296,10 @@ public sealed partial class ConfiguracionPage : Page
 
             // Biblioteca cacheada (memoria + disco): re-escaneo en la próxima visita.
             _installedGamesService.ClearCache();
+
+ // Componente de Overclock USB: se borra la copia descargada para que la
+ // próxima vez que haga falta (reparar/reinstalar) se vuelva a descargar.
+            _usbOverclockService.ClearComponentCache();
 
             UpdateCacheSize();
             Feedback.Success(ClearCacheFeedbackText, I18n.T("Caché borrada: {0} liberados.", FormatBytes(freed)));
@@ -747,7 +766,8 @@ public sealed partial class ConfiguracionPage : Page
             {
                 Content = I18n.T(label),
                 Tag = tag,
-                IsChecked = _settingsService.Get("nav." + tag, true),
+                // Integrados no core: desde la 0.3.0 nacen sin instalar (Workshop).
+                IsChecked = _settingsService.Get("nav." + tag, !_navRegistry.RequiresInstall(tag)),
                 MinHeight = 34
             };
             cb.Checked += OnNavCheckChanged;
@@ -827,6 +847,8 @@ public sealed partial class ConfiguracionPage : Page
     /// </summary>
     private void OnThemeChanged(object? sender, AppTheme theme)
     {
+        // El repintado en caliente quedó reemplazado por el reinicio de la app
+        // (RestartForThemeChange): aquí solo se refleja la elección en el picker.
         try
         {
             var sysDark = theme == AppTheme.SystemDefault

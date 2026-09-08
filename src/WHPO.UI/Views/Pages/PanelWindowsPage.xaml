@@ -7,19 +7,19 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="16" Margin="24">
 
-            <!-- Encabezado (mismo estilo de separación que las secciones de Reparación) -->
+<!-- Encabezado (mismo estilo de separación que las secciones de Reparación) -->
             <StackPanel Spacing="2" Margin="0,12,0,4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <FontIcon Glyph="&#xE770;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                     <TextBlock Text="Panel de Windows" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
                 </StackPanel>
-                <TextBlock Text="Accedé directamente a los paneles clásicos de Windows con un clic. Inspirado en la sección de paneles de WinUtil (Chris Titus Tech)."
+                <TextBlock Text="Accedé directamente a los paneles clásicos de Windows con un clic."
                            FontSize="13"
                            Foreground="{ThemeResource SecondaryTextBrush}"
                            TextWrapping="Wrap"/>
             </StackPanel>
 
-            <!-- Cuadrícula de paneles: 3 columnas por fila (se construye desde código) -->
+<!-- Cuadrícula de paneles: 3 columnas por fila (se construye desde código) -->
             <StackPanel x:Name="PanelsHost" Spacing="0"/>
         </StackPanel>
     </ScrollViewer>

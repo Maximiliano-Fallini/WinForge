@@ -36,11 +36,11 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- Altura FIJA de la card: las fases tienen distinto contenido y, si la
+<!-- Altura FIJA de la card: las fases tienen distinto contenido y, si la
                  card creciera/encogiera, los botones de abajo saltarían de posición
                  (rompe el feedback visual al pasar de fase). El contenido de cada
                  fase se centra en la fila sobrante. -->
-            <!-- El tema del onboarding se aplica SOLO a esta card (la "ventana"):
+<!-- El tema del onboarding se aplica SOLO a esta card (la "ventana"):
                  el fondo (RootGrid: banner + scrim) queda fijo y no cambia al tocar
                  los temas, y los botones de tema usan colores literales fijos.
                  La barra de título de la ventana SÍ reacciona al tema (se colorea
@@ -54,11 +54,11 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Puntos + línea de progreso: su propia fila, arriba y centrados. -->
+<!-- Puntos + línea de progreso: su propia fila, arriba y centrados. -->
                     <StackPanel x:Name="ProgressDots" Grid.Row="0" Orientation="Horizontal"
                                 HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,0,0,20"/>
 
-                    <!-- ===== FASE 1: TEMA ===== -->
+<!-- ===== FASE 1: TEMA ===== -->
                     <StackPanel x:Name="PhaseTheme" Grid.Row="1" Spacing="14" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
                         <StackPanel.RenderTransform>
                             <TranslateTransform Y="0"/>
@@ -74,7 +74,7 @@
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
 
-                            <!-- ===== Oscuro =====
+<!-- ===== Oscuro =====
                                  Colores LITERALES fijos (no reactivos al tema): el preview es
                                  SIEMPRE una mini-ventana oscura con barra de título y líneas de
                                  contenido, toque el tema que se toque. -->
@@ -85,7 +85,7 @@
                                     <Grid Width="84" Height="56" HorizontalAlignment="Center">
                                         <Border CornerRadius="8" Background="#141414" BorderBrush="#454545" BorderThickness="1">
                                             <StackPanel>
-                                                <!-- Barra de título de la mini-ventana -->
+<!-- Barra de título de la mini-ventana -->
                                                 <Border Height="11" Background="#262626" CornerRadius="7,7,0,0">
                                                     <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center" Spacing="3">
                                                         <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
@@ -114,7 +114,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- ===== Claro =====
+<!-- ===== Claro =====
                                  Colores LITERALES fijos: el preview es SIEMPRE una mini-ventana
                                  blanca, independientemente del tema elegido. -->
                             <Border x:Name="ThemeLightCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
@@ -152,7 +152,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- ===== Usar sistema =====
+<!-- ===== Usar sistema =====
                                  Colores LITERALES fijos: el preview es SIEMPRE una mini-ventana
                                  partida (mitad oscura / mitad clara). -->
                             <Border x:Name="ThemeSystemCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
@@ -160,7 +160,7 @@
                                     Background="#FFFFFF" BorderBrush="#C9C9C9">
                                 <StackPanel Spacing="10" HorizontalAlignment="Center">
                                     <Grid Width="84" Height="56" HorizontalAlignment="Center">
-                                        <!-- Mitad oscura (izquierda) -->
+<!-- Mitad oscura (izquierda) -->
                                         <Border Width="42" HorizontalAlignment="Left" CornerRadius="8,0,0,8"
                                                 Background="#141414" BorderBrush="#454545" BorderThickness="1,1,0,1">
                                             <StackPanel>
@@ -177,7 +177,7 @@
                                                 </StackPanel>
                                             </StackPanel>
                                         </Border>
-                                        <!-- Mitad clara (derecha) -->
+<!-- Mitad clara (derecha) -->
                                         <Border Width="42" HorizontalAlignment="Right" CornerRadius="0,8,8,0"
                                                 Background="#FFFFFF" BorderBrush="#C9C9C9" BorderThickness="0,1,1,1">
                                             <StackPanel>
@@ -210,7 +210,7 @@
                         </Grid>
                     </StackPanel>
 
-                    <!-- ===== FASE 2: GRATIS + ESTRELLA ===== -->
+<!-- ===== FASE 2: GRATIS + ESTRELLA ===== -->
                     <StackPanel x:Name="PhaseThanks" Grid.Row="1" Spacing="14" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
                         <StackPanel.RenderTransform>
                             <TranslateTransform Y="0"/>

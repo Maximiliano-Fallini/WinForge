@@ -29,7 +29,7 @@ public sealed class SpeedometerGauge : Grid
     private const int TickCount = 21;
     private const int MajorTickEvery = 5;
 
-    // Dimensiones del dial; se ajustan según ConfigureSize().
+    // Dimensiones del dial; se ajustan según ConfigureSize.
     private double _size = 140;   // diámetro total de la pista
     private double _radius = 65;  // radio medio del arco
     private double _stroke = 10;  // grosor del arco

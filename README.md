@@ -38,6 +38,11 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 - **Detección inteligente**: eventos WMI (cero polling) + detector de ventana fullscreen en primer plano para juegos fuera de la biblioteca (itch.io, DRM-free…).
 - **Lanzamiento desde la bandeja**: click derecho en el ícono → elegí un favorito y el juego arranca con la lógica correcta para cada launcher.
 
+### 🧩 Workshop — instalá solo lo que usás (nuevo en 0.3.0)
+- La app arranca con las 5 pestañas esenciales: **Sistema, Red, Núcleos y Plan de energía, Biblioteca de juegos y Workshop** (más Configuración).
+- El resto de las funciones viven ahora en el **Workshop** como componentes: instalás con un click y la pestaña aparece en el navbar al instante; podés desinstalarlas cuando quieras y reinstalarlas sin perder tu configuración.
+- Catálogo de componentes **descargables** desde GitHub con verificación de integridad (SHA-256), actualización y desinstalación real desde la app.
+
 ### 📊 Monitoreo
 - CPU, memoria, red, sensores de temperatura (CPU/GPU), núcleos y uso en vivo.
 - **Overlay de métricas en el juego** (FPS, CPU, GPU, RAM, temperaturas) con atajos de teclado.
@@ -60,15 +65,15 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.2.1/WinForge-0.2.1.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.2.1_MSI_~87_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.2.1 MSI"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.3.0/WinForge-0.3.0.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.3.0_MSI_~87_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.3.0 MSI"/>
   </a>
   <br/>
-  <sub>(30/8/2026 UTC)</sub>
+  <sub>(8/9/2026 UTC)</sub>
   <br/>
   <br/>
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.2.1">
-    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.2.1_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.3.0">
+    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.3.0_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
   </a>
   &nbsp;
   <img src="https://img.shields.io/badge/self_contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self contained"/>

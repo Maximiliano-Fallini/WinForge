@@ -21,7 +21,7 @@ public interface IMacroService
 
     /// <summary>
     /// Empieza a grabar teclas y mouse en segundo plano. Se detiene con
-    /// StopRecording() o presionando la tecla stopKeyVk (F9 por defecto).
+    /// StopRecording o presionando la tecla stopKeyVk (F9 por defecto).
     /// onStep se invoca en vivo por cada evento capturado (para mostrarlos en la
     /// UI mientras se graba); al terminar se invoca completed (thread de fondo)
     /// con la lista completa. captureMouse: graba clics del mouse.

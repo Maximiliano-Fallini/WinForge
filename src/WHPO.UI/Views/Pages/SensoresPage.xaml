@@ -12,7 +12,7 @@
             <TextBlock x:Name="SensorsStatusText" Text="" FontSize="12" Visibility="Collapsed"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
 
-            <!-- Acciones de la grilla: dos columnas; abrir/cerrar subgrupos debajo de abrir/cerrar grupos -->
+<!-- Acciones de la grilla: dos columnas; abrir/cerrar subgrupos debajo de abrir/cerrar grupos -->
             <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="8" Margin="0,0,0,8">
                 <StackPanel Spacing="6">
                     <Button x:Name="ExpandAllGroupsButton" Content="Abrir grupos"
@@ -28,7 +28,7 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Grilla con borde: encabezado fijo + filas, mismos anchos de columnas -->
+<!-- Grilla con borde: encabezado fijo + filas, mismos anchos de columnas -->
             <Border BorderBrush="{ThemeResource SensorGridLineBrush}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,8">
                 <StackPanel Spacing="0">
                     <Grid ColumnDefinitions="*,100,100,100,100">
@@ -59,7 +59,7 @@
                         </Border>
                     </Grid>
 
-                    <!-- Grilla de filas: hardware (desplegable) -> categoría (desplegable) -> sensores -->
+<!-- Grilla de filas: hardware (desplegable) -> categoría (desplegable) -> sensores -->
                     <Grid x:Name="SensorsGrid" ColumnDefinitions="*,100,100,100,100"/>
                 </StackPanel>
             </Border>

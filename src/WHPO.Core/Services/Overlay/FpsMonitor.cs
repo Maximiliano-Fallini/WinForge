@@ -23,7 +23,7 @@ namespace WHPO.Core.Services.Overlay;
 /// la mediana de los últimos ~30 frames (robusto a outliers). El 1% low / 0.1% low
 /// se calcula promediando los frames más lentos (el peor 1% / 0.1%) del buffer.
 ///
-/// La sesión ETW corre en un hilo de fondo (TraceEventSession.Source.Process()
+/// La sesión ETW corre en un hilo de fondo (TraceEventSession.Source.Process
 /// bloquea hasta detener la sesión). Todo el estado es thread-safe (concurrent
 /// dictionary + volátiles); los consumidores leen desde su propio hilo.
 ///
@@ -288,7 +288,7 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
 
     private ProcessStats GetOrAdd(int pid)
     {
-        // Los objetos se quedan en el diccionario hasta Prune(): mantener la instancia
+        // Los objetos se quedan en el diccionario hasta Prune: mantener la instancia
         // evita reseteos de FPS cuando un proceso alterna entre 2 hilos de present.
         return _processes.GetOrAdd(pid, _ => new ProcessStats());
     }
@@ -316,7 +316,7 @@ public sealed class FpsMonitor : IFpsMonitor, IDisposable
     /// Serie reciente de frametimes, del más viejo al más nuevo (hasta maxSamples),
     /// cada una con su timestamp de llegada (reloj de pared). Es la materia prima
     /// del gráfico de latencia del overlay: cada punto es el delta entre dos
-    /// Present() consecutivos del proceso, anclado a tiempo real.
+    /// Present consecutivos del proceso, anclado a tiempo real.
     /// </summary>
     public FrametimeSample[] GetFrametimeSeries(int pid, int maxSamples)
     {

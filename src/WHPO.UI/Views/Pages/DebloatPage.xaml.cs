@@ -15,7 +15,7 @@ namespace WHPO_UI.Views.Pages;
 /// <summary>
 /// Debloat: eliminación de aplicaciones preinstaladas (bloatware) y optimización
 /// de las aplicaciones que se conservan. Los tweaks viven en TweakService con la
-/// categoría "Debloat" (basados en Win11Debloat / Christitus WinUtil).
+/// categoría "Debloat" (basados en Win11Debloat / ).
 /// </summary>
 public sealed partial class DebloatPage : Page
 {
@@ -229,7 +229,7 @@ public sealed partial class DebloatPage : Page
         // Tooltip del botón de actualizar (se re-aplica al cambiar de idioma).
         ToolTipService.SetToolTip(RefreshButton, I18n.T("Volver a detectar"));
 
-        // Cachear definiciones UNA sola vez (evita GetAllTweaks() por cada tarjeta).
+        // Cachear definiciones UNA sola vez (evita GetAllTweaks por cada tarjeta).
         _allTweaks = _tweakService.GetAllTweaks();
 
         var removeApps = GetRemoveApps();
@@ -336,7 +336,7 @@ public sealed partial class DebloatPage : Page
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // Casilla de selección múltiple (estilo winutil)
+        // Casilla de selección múltiple (estilo consola)
         var checkBox = new CheckBox
         {
             Tag = tweak.Name,
@@ -485,12 +485,12 @@ public sealed partial class DebloatPage : Page
         }
     }
 
-    // ====== CONSOLA (estado en vivo estilo winutil) ======
+    // ====== CONSOLA (estado en vivo estilo consola) ======
 
     private enum ConsoleStatus
     {
         Running,   // ▶ en curso
-        Applied,   // ✓ aplicada/revertida
+        Applied,   // ✓ aplicada
         Skipped,   // ℹ ya estaba en ese estado
         Error,     // ✗ falló
         Neutral    // · información
@@ -561,14 +561,12 @@ public sealed partial class DebloatPage : Page
         }
     }
 
-    private async void ApplySelectedButton_Click(object sender, RoutedEventArgs e) => await ConfirmAndRunBatchAsync(apply: true);
+    private async void ApplySelectedButton_Click(object sender, RoutedEventArgs e) => await ConfirmAndRunBatchAsync();
 
-    private async void RevertSelectedButton_Click(object sender, RoutedEventArgs e) => await ConfirmAndRunBatchAsync(apply: false);
-
-    /// <summary>
-    /// Muestra un diálogo de revisión con los tweaks seleccionados antes de ejecutarlos.
+ /// <summary>
+ /// Muestra un diálogo de revisión con los tweaks seleccionados antes de ejecutarlos.
     /// </summary>
-    private async Task ConfirmAndRunBatchAsync(bool apply)
+    private async Task ConfirmAndRunBatchAsync()
     {
         var selected = _tweakChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
         if (selected.Count == 0)
@@ -581,29 +579,27 @@ public sealed partial class DebloatPage : Page
 
         var dialog = new ContentDialog
         {
-            Title = apply ? I18n.T("Aplicar {0} tweaks", selected.Count) : I18n.T("Revertir {0} tweaks", selected.Count),
-            PrimaryButtonText = apply ? I18n.T("Aplicar") : I18n.T("Revertir"),
+            Title = I18n.T("Aplicar {0} tweaks", selected.Count),
+            PrimaryButtonText = I18n.T("Aplicar"),
             CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = XamlRoot,
-            Content = BuildReviewPanel(selected, apply)
+            Content = BuildReviewPanel(selected)
         };
 
         var result = await dialog.ShowAsync();
         if (result != ContentDialogResult.Primary) return;
 
-        await RunBatchAsync(apply, selected);
+        await RunBatchAsync(selected);
     }
 
-    private UIElement BuildReviewPanel(List<string> selected, bool apply)
+    private UIElement BuildReviewPanel(List<string> selected)
     {
         var root = new StackPanel { Spacing = 10, MaxWidth = 560 };
 
         root.Children.Add(new TextBlock
         {
-            Text = apply
-                ? I18n.T("Se van a aplicar {0} tweaks. Revisá la lista antes de continuar.", selected.Count)
-                : I18n.T("Se van a revertir {0} tweaks. Revisá la lista antes de continuar.", selected.Count),
+            Text = I18n.T("Se van a aplicar {0} tweaks. Revisá la lista antes de continuar.", selected.Count),
             FontSize = 13,
             Foreground = MutedBrush,
             TextWrapping = TextWrapping.Wrap
@@ -669,7 +665,7 @@ public sealed partial class DebloatPage : Page
         return root;
     }
 
-    private async Task RunBatchAsync(bool apply, List<string>? preselected = null)
+    private async Task RunBatchAsync(List<string>? preselected = null)
     {
         var selected = preselected ?? _tweakChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
         if (selected.Count == 0)
@@ -682,7 +678,7 @@ public sealed partial class DebloatPage : Page
         int ok = 0, failed = 0, skipped = 0;
         var failures = new List<string>();
 
-        var verb = apply ? "Aplicar" : "Revertir";
+        var verb = "Aplicar";
         AppendConsole(I18n.T("{0} {1} tweaks seleccionados...", I18n.T(verb), selected.Count), ConsoleStatus.Neutral);
 
         var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Neutral));
@@ -702,28 +698,20 @@ public sealed partial class DebloatPage : Page
                 }
 
                 var isApplied = _tweakService.IsTweakApplied(def.Id);
-                if (apply && isApplied)
+                if (isApplied)
                 {
                     skipped++;
                     AppendConsole(I18n.T("'{0}' ya estaba aplicada", name), ConsoleStatus.Skipped);
                     continue;
                 }
-                if (!apply && !isApplied)
-                {
-                    skipped++;
-                    AppendConsole(I18n.T("'{0}' no estaba aplicada (nada que revertir)", name), ConsoleStatus.Skipped);
-                    continue;
-                }
 
                 AppendConsole(I18n.T("{0} '{1}'...", I18n.T(verb), name), ConsoleStatus.Running);
-                var result = apply
-                    ? await _tweakService.ApplyTweakAsync(def.Id, progress)
-                    : await _tweakService.RevertTweakAsync(def.Id, progress);
+                var result = await _tweakService.ApplyTweakAsync(def.Id, progress);
 
                 if (result.Success)
                 {
                     ok++;
-                    AppendConsole(I18n.T(apply ? "'{0}' aplicada" : "'{0}' revertida", name), ConsoleStatus.Applied);
+                    AppendConsole(I18n.T("'{0}' aplicada", name), ConsoleStatus.Applied);
                 }
                 else
                 {
@@ -754,15 +742,13 @@ public sealed partial class DebloatPage : Page
 
         var summary = I18n.T("{0} aplicadas, {1} omitidas, {2} con error.", ok, skipped, failed);
         AppendConsole(I18n.T("Resumen: {0}", summary), ConsoleStatus.Neutral);
-        ShowNotification(I18n.T("Lote {0}: {1}", I18n.T(apply ? "aplicado" : "revertido"), summary), failed > 0 ? "error" : "success");
+        ShowNotification(I18n.T("Lote {0}: {1}", I18n.T("aplicado"), summary), failed > 0 ? "error" : "success");
     }
 
     private void SetBatchBusy(bool busy)
     {
         ApplySelectedButton.IsEnabled = !busy;
-        RevertSelectedButton.IsEnabled = !busy;
         ApplySelectedButton.Content = busy ? I18n.T("Aplicando...") : I18n.T("Aplicar seleccionados");
-        RevertSelectedButton.Content = busy ? I18n.T("Revirtiendo...") : I18n.T("Revertir seleccionados");
     }
 
     private async Task RefreshBadgesAsync()
@@ -774,7 +760,7 @@ public sealed partial class DebloatPage : Page
             {
                 // Pre-cargar el estado de instalación de todos los paquetes Appx en UN
                 // solo Get-AppxPackage (evita un proceso PowerShell por app). Corre dentro
-                // de Task.Run: su bloqueo sincrónico (GetAwaiter().GetResult()) nunca debe
+                // de Task.Run: su bloqueo sincrónico (GetAwaiter.GetResult) nunca debe
                 // ejecutarse en el hilo de UI o la app se congela.
                 _tweakService.WarmUpAppxChecks();
 
@@ -842,7 +828,7 @@ public sealed partial class DebloatPage : Page
         AddTweak(list, "Microsoft Edge - Eliminar", "Desinstala Microsoft Edge creando un archivo dummy MicrosoftEdge.exe que engaña al desinstalador oficial para una eliminación a nivel de sistema.", "Requiere precaución");
         AddTweak(list, "Microsoft OneDrive - Eliminar", "Deniega permisos para eliminar archivos de usuario de OneDrive, usa su desinstalador para quitarlo y restaura los permisos.", "Requiere precaución");
         AddTweak(list, "Windows AI - Desactivar y eliminar", "Elimina y desactiva todas las funciones y paquetes de IA.", "Compatible con Windows 11");
-        AddTweak(list, "Barra de juegos (Game Bar) - Desinstalar", "Desinstala el paquete Microsoft.XboxGamingOverlay (la app de la barra de juegos), cerrando antes sus procesos. Windows puede reinstalarla con las actualizaciones. Revertir abre la Microsoft Store para reinstalarla.", "Requiere precaución");
+        AddTweak(list, "Barra de juegos (Game Bar) - Desinstalar", "Desinstala el paquete Microsoft.XboxGamingOverlay (la app de la barra de juegos), cerrando antes sus procesos. Windows puede reinstalarla con las actualizaciones.", "Requiere precaución");
         AddTweak(list, "Widgets - Quitar", "Elimina los molestos widgets en la parte inferior izquierda de la barra de tareas.", "Compatible con Windows 10/11");
         AddTweak(list, "Instalación automática de software Razer - Desactivar", "Bloquea TODAS las instalaciones de software Razer. El hardware funciona bien sin software.", "Solo hardware Razer");
         AddTweak(list, "Lista de bloqueo de URL de Adobe - Activar", "Reduce interrupciones bloqueando selectivamente conexiones a servidores de activación y telemetría de Adobe.", "Requiere software Adobe");

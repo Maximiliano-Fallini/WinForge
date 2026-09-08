@@ -24,7 +24,7 @@ using WHPO_UI.Services;
 namespace WHPO_UI.Views.Pages;
 
 /// <summary>
-/// Página "Biblioteca de juegos" (estilo Process Lasso): biblioteca de videojuegos
+/// Página "Biblioteca de juegos" (estilo ): biblioteca de videojuegos
 /// instalados (Steam/Epic/Ubisoft/EA/Blizzard…) en una grilla de 3 o 5 columnas (vista
 /// cambiable en la cabecera) con el
 /// banner del juego, favoritos con estrella y reglas por juego (prioridad de CPU,
@@ -51,6 +51,10 @@ public sealed partial class GestionarProcesosPage : Page
     private const int GridColumns = 3;
     // Búsqueda por nombre (filtro de la grilla); vacío = mostrar todo.
     private string _searchQuery = "";
+ // Filtro de categoría: "all", "games", "console_emu", "mobile_emu".
+ // Por defecto "all" (todos). La clasificación de cada item se hace en
+ // GetItemCategory: los emuladores se dividen en consola vs celular por nombre.
+    private string _currentFilter = "all";
 
     private List<InstalledGame> _installed = new();
     private List<(string Exe, string? Name, string? InstallPath)> _manual = new();
@@ -124,6 +128,10 @@ public sealed partial class GestionarProcesosPage : Page
         // del XAML (WinUI 3: colección Receivers). La elevación (z de
         // card.Translation) se activa al hover.
         _cardShadow.Receivers.Add(CardShadowReceiver);
+ // Selección inicial del desplegable de categorías («Todos»). El
+ // SelectionChanged no reconstruye la grilla porque _currentFilter ya es "all".
+        FilterComboBox.SelectedIndex = 0;
+        UpdateInstalledCount();
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -157,7 +165,10 @@ public sealed partial class GestionarProcesosPage : Page
         I18n.LanguageChanged -= OnLanguageChanged;
         _processService.RunningGamesChanged -= OnRunningGamesChanged;
         _processService.LauncherStateChanged -= OnLauncherStateChanged;
-        // Si la página se deja durante la carga, cortar el pulso del skeleton.
+        // Si se sale de la página (cacheada) estando en la vista de configuración,
+        // volver al estado base para que el próximo ingreso muestre la biblioteca.
+        if (BoostConfigView.Visibility == Visibility.Visible)
+            CloseBoostConfigView(saveChanges: false);
         StopSkeletonPulse();
     }
 
@@ -168,7 +179,7 @@ public sealed partial class GestionarProcesosPage : Page
         // Re-traducir el contador de juegos instalados: es texto dinámico seteado
         // con I18n.T, el walker no puede re-traducirlo solo (la clave es con {0}).
         if (InstalledCountText.Visibility == Visibility.Visible)
-            InstalledCountText.Text = I18n.T("Juegos instalados: {0}", _installed.Count);
+            UpdateInstalledCount();
         // El placeholder del buscador también se re-aplica por si cambió de idioma
         // antes de que la página navegara acá.
         SearchBox.PlaceholderText = I18n.T("Buscar juegos...");
@@ -269,41 +280,108 @@ public sealed partial class GestionarProcesosPage : Page
     /// AGREGADOS por el usuario sí, y se suman desde la lista de procesos en ejecución
     /// con doble clic (sin tipear nombres a mano).
     /// </summary>
-    private async void GameBoostSettingsButton_Click(object sender, RoutedEventArgs e)
+    private void GameBoostSettingsButton_Click(object sender, RoutedEventArgs e) => OpenBoostConfigView();
+
+ // Listas en edición mientras la vista de configuración está abierta: solo se
+ // persisten en el servicio al presionar "Guardar" (volver descarta los cambios).
+    private List<string>? _boostEfficiencyCustom;
+    private List<string>? _boostKillCustom;
+
+ // Auto-actualización de la lista "Procesos en ejecución" de la vista de
+ // configuración: un timer refresca el snapshot mientras la vista está abierta.
+ // El timer se recrea en cada entrada a la vista y se detiene al cerrarla
+ // (CloseBoostConfigView) o al entrar de nuevo (token de generación).
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _boostPickerTimer;
+    private int _boostPickerGeneration;
+
+ /// <summary>
+ /// Cambia la página al estado "Configuración del optimizador": reemplaza al
+ /// ContentDialog (tanta información no tiene sentido en un popup) por una vista
+ /// dedicada dentro de la pestaña, con botón para volver a la biblioteca. El
+ /// contenido se construye nuevo en cada entrada para partir siempre de los
+ /// valores guardados.
+ /// </summary>
+    private void OpenBoostConfigView()
     {
         var defaults = _gameBoostService.GetDefaultBackgroundProcesses();
-        var custom = _gameBoostService.GetBackgroundProcesses()
+        _boostEfficiencyCustom = _gameBoostService.GetBackgroundProcesses()
             .Where(n => !defaults.Contains(n, StringComparer.OrdinalIgnoreCase))
             .ToList();
+        _boostKillCustom = _gameBoostService.GetKillProcesses();
 
-        var processesPanel = BuildProcessesTab(defaults, custom);
-
-        var dialog = new ContentDialog
+        try
         {
-            Title = I18n.T("Configuración del optimizador"),
-            XamlRoot = XamlRoot,
-            PrimaryButtonText = I18n.T("Guardar"),
-            CloseButtonText = I18n.T("Cancelar"),
-            DefaultButton = ContentDialogButton.Primary,
-            Content = processesPanel
-        };
-        // El template del ContentDialog limita el ancho a 548 px por defecto; lo
-        // ampliamos para que las dos columnas respiren y el popup sea más bajo.
-        dialog.Resources["ContentDialogMaxWidth"] = 880d;
+            BoostConfigHost.Content = BuildProfessionalProcessesTab(
+                defaults, _boostEfficiencyCustom, _boostKillCustom);
+        }
+        catch (Exception ex)
+        {
+ // Sin esto, una excepción al construir la vista quedaba como "no controlada"
+ // en el log y el click parecía "no hacer nada". Acá queda asentada con
+ // stack y la UI no se rompe.
+            _loggingService.LogError($"BoostConfig: error construyendo la vista: {ex}");
+            StatusText.Text = I18n.T("No se pudo abrir la configuración del optimizador. Revisá el log de errores.");
+            StatusText.Foreground = Feedback.ErrorBrush;
+            StatusText.Visibility = Visibility.Visible;
+            return;
+        }
 
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        MainView.Visibility = Visibility.Collapsed;
+        BoostConfigView.Visibility = Visibility.Visible;
+    }
 
-        _gameBoostService.SetBackgroundProcesses(custom);
+    private void BoostBackButton_Click(object sender, RoutedEventArgs e) => CloseBoostConfigView(saveChanges: false);
+
+    private void BoostSaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_boostEfficiencyCustom == null || _boostKillCustom == null) return;
+        _gameBoostService.SetBackgroundProcesses(_boostEfficiencyCustom);
+        _gameBoostService.SetKillProcesses(_boostKillCustom);
+        CloseBoostConfigView(saveChanges: true);
+    }
+
+ /// <summary>Vuelve a la vista de biblioteca, opcionalmente con feedback de guardado.</summary>
+    private void CloseBoostConfigView(bool saveChanges)
+    {
+ // Detener la auto-actualización de la lista de procesos: sin vista abierta
+ // no hay nada que refrescar (y el timer no debe sobrevivir al cierre).
+        _boostPickerTimer?.Stop();
+        _boostPickerTimer = null;
+        _boostPickerGeneration++;
+ // Invalidar el snapshot de servicios: cada apertura de la pestaña re-consulta
+ // WMI, así los servicios instalados DESPUÉS de abrir la app (ej. MongoDB
+ // Server) aparecen la próxima vez sin reiniciar WinForge. El filtro también
+ // se resetea porque el TextBox se reconstruye vacío en cada apertura.
+        _allServicesCache = null;
+        _servicesFilter = "";
+        _servicesRecommendedOnly = true;
+        _servicesSearchDebounce?.Stop();
+        _servicesSearchDebounce = null;
+        BoostConfigHost.Content = null;
+        _boostEfficiencyCustom = null;
+        _boostKillCustom = null;
+        BoostConfigView.Visibility = Visibility.Collapsed;
+        MainView.Visibility = Visibility.Visible;
+        if (saveChanges)
+        {
+            StatusText.Text = I18n.T("WinForge Modo juego configuración guardada.");
+            StatusText.Foreground = Feedback.SuccessBrush;
+            StatusText.Visibility = Visibility.Visible;
+        }
     }
 
     /// <summary>Card estándar del popup: fondo/borde de card del tema, esquinas y padding.</summary>
-    private static Border MakeSettingsCard(StackPanel inner) => new()
+    private static Border MakeSettingsCard(UIElement inner) => new()
     {
         Background = ThemeBrushes.Get("CardBackgroundBrush"),
         BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
         BorderThickness = new Thickness(1),
         CornerRadius = new CornerRadius(8),
         Padding = new Thickness(14),
+ // Estiramiento EXPLÍCITO: asegura que el contenido (el grid de filas) ocupe
+ // toda la card. Sin esto no se garantiza que la fila * reparta el sobrante.
+        VerticalAlignment = VerticalAlignment.Stretch,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
         Child = inner
     };
 
@@ -490,257 +568,1003 @@ public sealed partial class GestionarProcesosPage : Page
     }
 
     /// <summary>
-    /// Pestaña Procesos: izquierda = procesos en ejecución (doble clic agrega al boost);
-    /// derecha = lo que ya está en el boost: defaults bloqueados y agregados con su ✗.
-    /// </summary>
-    private UIElement BuildProcessesTab(List<string> defaults, List<string> custom)
+    /// Pestaña Procesos: tres columnas —
+    /// 1) procesos en ejecución (doble clic para agregar a la lista elegida),
+    /// 2) Modo eficiencia: procesos a los que se les baja prioridad + EcoQoS,
+ /// 3) Cerrar al iniciar: procesos que se cierran al lanzar un juego.
+ /// El selector de destino (botones Eficiencia/Cerrar) decide dónde cae el
+ /// proceso al hacer doble clic en la columna izquierda.
+ /// </summary>
+ /// <summary>
+ /// Vista "Configuración del optimizador" (columna izquierda: selector de
+ /// procesos; derecha: modo + destino + servicios).
+ /// La card de servicios muestra el estado REAL de cada servicio en Windows
+ /// (Desactivado / Manual / Activado) con un selector segmentado de 3 opciones
+ /// + punto de color (corriendo o no). Cambiar el selector ejecuta
+ /// <c>sc config</c> en el momento: no hay lista intermedia que guardar.
+ /// </summary>
+    private UIElement BuildProfessionalProcessesTab(List<string> defaults, List<string> efficiencyCustom, List<string> killCustom)
     {
-        var addedRows = new StackPanel { Spacing = 4 };
-
-        // Nunca ofrecemos procesos críticos del sistema, Defender ni la propia app.
+        var accent = ThemeBrushes.Get("AccentBrush");
+        var accentForeground = ThemeBrushes.Get("AccentForegroundBrush");
+        var muted = Feedback.MutedBrush;
+        var borderBrush = ThemeBrushes.Get("CardBorderBrush");
+        var secondaryFill = ThemeBrushes.Get("CardBackgroundFillColorSecondaryBrush");
+        var transparent = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
         var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "System", "Idle", "Registry", "Memory Compression", "MemCompression",
-            "csrss", "smss", "wininit", "winlogon", "lsass", "services", "svchost",
-            "dwm", "fontdrvhost", "conhost", "dllhost", "RuntimeBroker", "audiodg",
-            "MsMpEng", "spoolsv", "WudfHost", "WinForge"
+            "System", "Idle", "Registry", "Memory Compression", "MemCompression", "csrss",
+            "smss", "wininit", "winlogon", "lsass", "services", "svchost", "dwm",
+            "fontdrvhost", "conhost", "dllhost", "RuntimeBroker", "audiodg", "MsMpEng",
+            "spoolsv", "WudfHost", "WinForge"
         };
-
-        // Snapshot de nombres de procesos en ejecución (distintos, sin duplicar).
         var running = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            foreach (var p in Process.GetProcesses())
+            foreach (var process in Process.GetProcesses())
             {
                 try
                 {
-                    var n = p.ProcessName;
-                    if (!string.IsNullOrWhiteSpace(n) && seen.Add(n)) running.Add(n);
+                    if (!string.IsNullOrWhiteSpace(process.ProcessName) && seen.Add(process.ProcessName))
+                        running.Add(process.ProcessName);
                 }
                 catch { }
-                finally { p.Dispose(); }
+                finally { process.Dispose(); }
             }
         }
         catch { }
 
-        var searchBox = new TextBox
+        var efficiencyRows = new StackPanel { Spacing = 3 };
+        var efficiencyLockedRows = new StackPanel { Spacing = 3 };
+        var killRows = new StackPanel { Spacing = 3 };
+        var selectedTarget = "efficiency";
+
+ // Helper: grid de filas (todas Auto excepto la de índice stretchIndex, que
+ // estira su contenido hasta llenar la card, así no queda espacio muerto al
+ // pie). rowCount SIEMPRE tiene que cubrir a todos los hijos: una fila
+ // declarada de menos hace que WinUI apile el último elemento sobre el
+ // anterior y que un ScrollViewer en fila Auto no se restrinja nunca.
+        static Grid MakeRowsGrid(int rowCount, int stretchIndex, double spacing)
         {
-            PlaceholderText = I18n.T("Buscar proceso..."),
-            FontSize = 12
-        };
+            var g = new Grid { RowSpacing = spacing, VerticalAlignment = VerticalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch };
+            for (int i = 0; i < rowCount; i++)
+                g.RowDefinitions.Add(new RowDefinition { Height = i == stretchIndex ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
+            return g;
+        }
+
+ // Helper: encabezado de sección centrado sobre una línea (línea — texto — línea).
+ // Lo usan ambas secciones ("Predeterminados" y "Agregados manualmente") para que
+ // tengan exactamente el mismo estilo (tamaño, peso, color, márgenes).
+        static Grid MakeSectionHeader(string text, SolidColorBrush accent, SolidColorBrush borderBrush)
+        {
+            var grid = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 1, Fill = borderBrush, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center });
+            var headerText = new TextBlock
+            {
+                Text = text,
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = accent,
+                Margin = new Thickness(10, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(headerText, 1);
+            grid.Children.Add(headerText);
+            var rightLine = new Microsoft.UI.Xaml.Shapes.Rectangle { Height = 1, Fill = borderBrush, Opacity = 0.5, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(rightLine, 2);
+            grid.Children.Add(rightLine);
+            return grid;
+        }
+
         var pickerList = new ListView
         {
             SelectionMode = ListViewSelectionMode.Single,
-            MaxHeight = 224,
-            Margin = new Thickness(0, 2, 0, 0)
+            Background = transparent,
+            BorderThickness = new Thickness(0)
         };
-
-        void RebuildPicker()
+        var pickerFrame = new Border
         {
-            var q = searchBox.Text?.Trim() ?? string.Empty;
-            var excluded = new HashSet<string>(defaults, StringComparer.OrdinalIgnoreCase);
-            foreach (var c in custom) excluded.Add(c);
-            foreach (var b in blocked) excluded.Add(b);
-            pickerList.Items.Clear();
-            foreach (var name in running
-                .Where(n => !excluded.Contains(n)
-                            && (q.Length == 0 || n.Contains(q, StringComparison.OrdinalIgnoreCase)))
-                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
-            {
-                pickerList.Items.Add(MakeProcessRow(name));
-            }
-        }
-
-        searchBox.TextChanged += (_, _) => RebuildPicker();
-        pickerList.DoubleTapped += (_, _) =>
-        {
-            if (pickerList.SelectedItem is FrameworkElement fe && fe.Tag is string name) AddProcess(name);
+            MinHeight = 260,
+            Background = secondaryFill,
+            BorderBrush = borderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(4),
+            Child = pickerList
         };
-
-        var leftCard = MakeSettingsCard(new StackPanel
+        var modeTitle = new TextBlock { FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var modeDescription = new TextBlock { FontSize = 11, Foreground = muted, TextWrapping = TextWrapping.Wrap, Opacity = 0.9 };
+ // Procesos con candado (defaults del modo eficiencia) y procesos agregados
+ // por el usuario comparten el MISMO ScrollViewer: los defaults son ~20 y su
+ // lista fija (fuera del scroll) desbordaba la card entera — el ScrollViewer
+ // quedaba reducido a su MinHeight y nunca había scroll. Los candados van
+ // arriba de la lista y el ícono indica que no se pueden quitar.
+        var lockedHost = new StackPanel { Spacing = 3 };
+        lockedHost.Children.Add(efficiencyLockedRows);
+ // Ambas secciones usan el MISMO helper de encabezado (MakeSectionHeader) para que
+ // tengan estilo idéntico: línea — texto centrado — línea, FontSize 12, accent.
+        var lockedSection = new StackPanel { Spacing = 6 };
+        lockedSection.Children.Add(MakeSectionHeader(I18n.T("Predeterminados (no editables)"), accent, borderBrush));
+        lockedSection.Children.Add(lockedHost);
+        var customSection = new StackPanel { Spacing = 6 };
+        customSection.Children.Add(MakeSectionHeader(I18n.T("Agregados manualmente"), accent, borderBrush));
+        customSection.Children.Add(efficiencyRows);
+        customSection.Children.Add(killRows);
+        var targetScrollContent = new StackPanel { Spacing = 12 };
+        targetScrollContent.Children.Add(lockedSection);
+        targetScrollContent.Children.Add(customSection);
+        var targetHost = new ScrollViewer
         {
-            Spacing = 8,
-            Children =
+ // Estiramiento EXPLÍCITO + sin MinHeight: el contenido debe llenar la
+ // fila * del grid y el scroll aparece cuando el contenido lo supera.
+            VerticalAlignment = VerticalAlignment.Stretch,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+ // Padding derecho: el scrollbar de WinUI es overlay (se dibuja ENCIMA del
+ // contenido); sin este hueco tapa el borde de las filas al hacer scroll.
+            Padding = new Thickness(0, 0, 10, 0),
+            Content = targetScrollContent
+        };
+ // Pestaña "Servicios" (todos los servicios del sistema): lista virtualizada
+ // con buscador, llena en background por LoadAllServicesAsync. Se crea acá para
+ // que UpdateMode pueda conmutar su visibilidad; la carga arranca al entrar en
+ // la pestaña por primera vez.
+        Border servicesTabCard = (Border)BuildServicesTab();
+
+        var targetGrid = MakeRowsGrid(3, 2, 8);
+        targetGrid.Children.Add(modeTitle);
+        targetGrid.Children.Add(modeDescription);
+        targetGrid.Children.Add(targetHost);
+        Grid.SetRow(modeDescription, 1);
+        Grid.SetRow(targetHost, 2);
+        var targetCard = MakeSettingsCard(targetGrid);
+
+        var pickerGrid = MakeRowsGrid(2, 1, 10);
+
+ // ===== Auto-actualización + botón de pausa =====
+ // La lista de procesos en ejecución se refresca sola (timer de 5 s) para que
+ // los procesos que se abren/cierran aparezcan sin reabrir la vista. El botón
+ // de la derecha pausa/reanuda la actualización (útil para leer la lista o
+ // hacer doble clic sin que las filas se muevan debajo del cursor).
+        var pickerGen = ++_boostPickerGeneration;
+        var pickerTimer = DispatcherQueue.CreateTimer();
+        _boostPickerTimer?.Stop();
+        _boostPickerTimer = pickerTimer;
+        var pickerPaused = false;
+        var pickerRefreshing = false;
+
+        async Task RefreshRunningAsync()
+        {
+            if (pickerRefreshing) return;
+            pickerRefreshing = true;
+            try
             {
-                new TextBlock { Text = I18n.T("Procesos en ejecución"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 },
-                searchBox,
-                pickerList,
-                new TextBlock
+                var snapshot = await Task.Run(() =>
                 {
-                    Text = I18n.T("Doble clic para agregar"),
-                    FontSize = 11,
-                    Foreground = Feedback.MutedBrush,
-                    Opacity = 0.85
-                }
-            }
-        });
-
-        var defaultsRows = new StackPanel { Spacing = 4 };
-        foreach (var name in defaults)
-        {
-            // [ícono del proceso][nombre][🔒]: los defaults están fijos, el candado lo
-            // comunica sin necesidad de texto extra.
-            var r = new Grid { ColumnSpacing = 6 };
-            r.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            r.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            r.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var icon = new Microsoft.UI.Xaml.Controls.Image
-            {
-                Width = 16,
-                Height = 16,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            EnsureProcessIcon(name, icon);
-            r.Children.Add(icon);
-            var tb = new TextBlock
-            {
-                Text = name,
-                FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center,
-                Foreground = Feedback.MutedBrush
-            };
-            Grid.SetColumn(tb, 1);
-            r.Children.Add(tb);
-            var lockIcon = new FontIcon
-            {
-                Glyph = "\uE72E", // candado
-                FontSize = 10,
-                Foreground = Feedback.MutedBrush,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(lockIcon, 2);
-            r.Children.Add(lockIcon);
-            defaultsRows.Children.Add(r);
-        }
-
-        void RefreshSide()
-        {
-            addedRows.Children.Clear();
-            if (custom.Count == 0)
-            {
-                addedRows.Children.Add(new TextBlock
-                {
-                    Text = "—",
-                    FontSize = 12,
-                    Foreground = Feedback.MutedBrush,
-                    Opacity = 0.6
+                    var list = new List<string>();
+                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    try
+                    {
+                        foreach (var process in Process.GetProcesses())
+                        {
+                            try
+                            {
+                                if (!string.IsNullOrWhiteSpace(process.ProcessName) && seen.Add(process.ProcessName))
+                                    list.Add(process.ProcessName);
+                            }
+                            catch { }
+                            finally { process.Dispose(); }
+                        }
+                    }
+                    catch { }
+                    return list;
                 });
-                return;
+
+ // La vista pudo cerrarse (o reabrirse con otra generación) mientras se
+ // enumeraba: descartar el snapshot para no pisar la vista actual.
+                if (pickerPaused || pickerGen != _boostPickerGeneration || BoostConfigView.Visibility != Visibility.Visible) return;
+                running.Clear();
+                foreach (var name in snapshot) running.Add(name);
+                RefreshPicker();
             }
-            foreach (var name in custom.ToList())
+            finally { pickerRefreshing = false; }
+        }
+
+        var pauseIcon = new FontIcon { Glyph = "\uE769", FontSize = 12 }; // Pause
+        var pauseText = new TextBlock { Text = I18n.T("Pausar"), FontSize = 12 };
+        var pauseButton = new Button
+        {
+            Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { pauseIcon, pauseText } },
+            Padding = new Thickness(10, 4, 10, 4),
+            CornerRadius = new CornerRadius(6),
+            Background = transparent,
+            BorderThickness = new Thickness(1),
+            BorderBrush = borderBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        void UpdatePauseButton()
+        {
+            pauseIcon.Glyph = pickerPaused ? "\uE768" : "\uE769"; // Play / Pause
+            pauseText.Text = I18n.T(pickerPaused ? "Reanudar" : "Pausar");
+            ToolTipService.SetToolTip(pauseButton, new ToolTip
+            {
+                Content = new TextBlock
+                {
+                    Text = pickerPaused
+                        ? I18n.T("Actualización automática pausada")
+                        : I18n.T("La lista se actualiza automáticamente"),
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = 260
+                },
+                Placement = PlacementMode.Bottom
+            });
+        }
+        pauseButton.Click += (_, _) =>
+        {
+            pickerPaused = !pickerPaused;
+            if (pickerPaused)
+            {
+                pickerTimer.Stop();
+            }
+            else
+            {
+                pickerTimer.Start();
+                _ = RefreshRunningAsync();
+            }
+            UpdatePauseButton();
+        };
+        UpdatePauseButton();
+
+ // Encabezado de la card: título/descripción (izquierda) + botón pausa (derecha).
+        var pickerHeader = new Grid { ColumnSpacing = 8 };
+        pickerHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        pickerHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        pickerHeader.Children.Add(MakePanelHeader(I18n.T("Procesos en ejecución"), I18n.T("Elegí un proceso y hacé doble clic para agregarlo al modo seleccionado.")));
+        pickerHeader.Children.Add(pauseButton);
+        Grid.SetColumn(pauseButton, 1);
+
+        pickerGrid.Children.Add(pickerHeader);
+        pickerGrid.Children.Add(pickerFrame);
+        Grid.SetRow(pickerFrame, 1);
+        var pickerCard = MakeSettingsCard(pickerGrid);
+
+        Grid MakePanelHeader(string title, string description)
+        {
+            var panel = new Grid { ColumnSpacing = 10 };
+            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            panel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var icon = new Border
+            {
+                Width = 30, Height = 30, CornerRadius = new CornerRadius(6),
+                Background = accent, Child = new FontIcon { Glyph = "\uE7FC", FontSize = 15, Foreground = accentForeground, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+            };
+            panel.Children.Add(icon);
+            var text = new StackPanel { Spacing = 1, Children =
+            {
+                new TextBlock { Text = title, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                new TextBlock { Text = description, FontSize = 11, Foreground = muted, TextWrapping = TextWrapping.Wrap }
+            }};
+            Grid.SetColumn(text, 1);
+            panel.Children.Add(text);
+            return panel;
+        }
+
+        UIElement MakeProcessRow(string name, bool removable, Action? remove)
+        {
+            var row = new Grid { Height = 30, ColumnSpacing = 8, Padding = new Thickness(5, 0, 3, 0), Tag = name };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var icon = new Microsoft.UI.Xaml.Controls.Image { Width = 18, Height = 18, VerticalAlignment = VerticalAlignment.Center };
+            EnsureProcessIcon(name, icon);
+            row.Children.Add(icon);
+            var label = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+            if (removable)
+            {
+                var delete = new Button { Content = new FontIcon { Glyph = "\uE74D", FontSize = 10 }, Width = 26, Height = 26, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = transparent, Foreground = Feedback.ErrorBrush };
+                delete.Click += (_, _) => remove();
+                Grid.SetColumn(delete, 2);
+                row.Children.Add(delete);
+            }
+            else if (remove == null)
+            {
+                var lockIcon = new FontIcon { Glyph = "\uE72E", FontSize = 10, Foreground = muted, VerticalAlignment = VerticalAlignment.Center };
+                Grid.SetColumn(lockIcon, 2);
+                row.Children.Add(lockIcon);
+            }
+            return row;
+        }
+
+        void RefreshPicker()
+        {
+            var excluded = new HashSet<string>(defaults, StringComparer.OrdinalIgnoreCase);
+            foreach (var name in efficiencyCustom) excluded.Add(name);
+            foreach (var name in killCustom) excluded.Add(name);
+            foreach (var name in blocked) excluded.Add(name);
+            pickerList.Items.Clear();
+            foreach (var name in running.Where(name => !excluded.Contains(name)).OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
+                pickerList.Items.Add(MakeProcessRow(name, removable: false, remove: () => { }));
+        }
+
+        void RefreshTargetRows()
+        {
+            var rows = selectedTarget == "efficiency" ? efficiencyRows : killRows;
+            var list = selectedTarget == "efficiency" ? efficiencyCustom : killCustom;
+            rows.Children.Clear();
+            efficiencyLockedRows.Children.Clear();
+
+ // Los defaults del modo eficiencia (con candado) viven en su propio host
+ // FUERA del ScrollViewer: quedan siempre visibles y el scroll solo cubre
+ // la lista de agregados. En modo "cerrar" el host de candados se vacía
+ // (y colapsa para no dejar espacio muerto).
+ // La sección de candados (encabezado + filas) se muestra solo en modo
+ // eficiencia; la sección de agregados siempre (sus listas se conmutan abajo).
+            lockedSection.Visibility = selectedTarget == "efficiency" && defaults.Count > 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+ // Cada sección del scroll content se muestra solo en su modo: candados y
+ // lista de eficiencia en "Modo eficiencia", lista de cierre en "Cerrar".
+            efficiencyRows.Visibility = selectedTarget == "efficiency" ? Visibility.Visible : Visibility.Collapsed;
+            killRows.Visibility = selectedTarget == "kill" ? Visibility.Visible : Visibility.Collapsed;
+            if (selectedTarget == "efficiency")
+            {
+                foreach (var name in defaults)
+                    efficiencyLockedRows.Children.Add(MakeProcessRow(name, removable: false, remove: null));
+            }
+
+            if (list.Count == 0 && selectedTarget == "efficiency" && defaults.Count > 0)
+                rows.Children.Add(new TextBlock { Text = I18n.T("No hay procesos agregados. Agregá procesos desde la lista de la izquierda."), FontSize = 11, Foreground = muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(5, 6, 5, 0) });
+            if (list.Count == 0 && selectedTarget == "kill")
+                rows.Children.Add(new TextBlock { Text = I18n.T("No hay procesos para cerrar. Agregá procesos desde la lista de la izquierda."), FontSize = 11, Foreground = muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(5, 6, 5, 0) });
+            foreach (var name in list.ToList())
             {
                 var copy = name;
-                var g = new Grid { ColumnSpacing = 8 };
-                g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var icon = new Microsoft.UI.Xaml.Controls.Image
-                {
-                    Width = 16,
-                    Height = 16,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                EnsureProcessIcon(copy, icon);
-                g.Children.Add(icon);
-                var tb = new TextBlock
-                {
-                    Text = copy,
-                    FontSize = 12,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                Grid.SetColumn(tb, 1);
-                g.Children.Add(tb);
-                var del = new Button
-                {
-                    Content = "✗",
-                    Width = 24,
-                    Height = 24,
-                    Padding = new Thickness(0),
-                    FontSize = 11,
-                    Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                    BorderThickness = new Thickness(0),
-                    Foreground = Feedback.ErrorBrush
-                };
-                del.Click += (_, _) =>
-                {
-                    custom.Remove(copy);
-                    RefreshSide();
-                    RebuildPicker();
-                };
-                Grid.SetColumn(del, 2);
-                g.Children.Add(del);
-                addedRows.Children.Add(g);
+                rows.Children.Add(MakeProcessRow(copy, removable: true, remove: () => { list.Remove(copy); RefreshTargetRows(); RefreshPicker(); }));
             }
         }
 
-        void AddProcess(string raw)
+        void AddProcess(string name)
         {
-            raw = raw.Trim();
-            if (raw.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) raw = raw[..^4];
-            if (raw.Length == 0) return;
-            // Sin duplicados contra defaults, contra lo ya agregado ni contra bloqueados.
-            if (defaults.Contains(raw, StringComparer.OrdinalIgnoreCase)
-                || custom.Contains(raw, StringComparer.OrdinalIgnoreCase)
-                || blocked.Contains(raw))
-                return;
-            custom.Add(raw);
-            RefreshSide();
-            RebuildPicker();
+            name = name.Trim().TrimEnd('.');
+            if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
+            if (name.Length == 0 || blocked.Contains(name) || defaults.Contains(name, StringComparer.OrdinalIgnoreCase) || efficiencyCustom.Contains(name, StringComparer.OrdinalIgnoreCase) || killCustom.Contains(name, StringComparer.OrdinalIgnoreCase)) return;
+            if (selectedTarget == "efficiency") efficiencyCustom.Add(name); else killCustom.Add(name);
+            RefreshTargetRows();
+            RefreshPicker();
         }
 
-        var restoreButton = new Button
+        pickerList.DoubleTapped += (_, _) => { if (pickerList.SelectedItem is FrameworkElement row && row.Tag is string name) AddProcess(name); };
+
+ // Selector segmentado: radio de esquina 4 en las mitades para encajar dentro
+ // de la píldora (radio 6 con padding 2). Con radio 6 las esquinas quedaban
+ // "cortadas" contra el borde de la píldora. Tres modos: eficiencia / cerrar / servicios.
+        var efficiencyButton = new Button { Content = I18n.T("Modo eficiencia"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4, 0, 0, 4), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var killButton = new Button { Content = I18n.T("Cerrar al iniciar"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var servicesButton = new Button { Content = I18n.T("Servicios"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0, 4, 4, 0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+
+ // Columna derecha: card destino estirando (ocupa todo el sobrante). Se crea
+ // ANTES de declarar UpdateMode y suscribir los clicks: la local function
+ // captura 'right' y el compilador exige asignación definida previa.
+        Grid right = new();
+        right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        right.Children.Add(targetCard);
+
+ // Conmutación de vistas: procesos (picker + destino) en los dos primeros
+ // modos; la pestaña de servicios ocupa toda la grilla en el tercero.
+        void UpdateMode()
         {
-            Content = I18n.T("Restaurar lista por defecto"),
-            FontSize = 12,
-            Padding = new Thickness(10, 5, 10, 5),
-            CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 10, 0, 0)
-        };
-        restoreButton.Click += (_, _) =>
-        {
-            custom.Clear();
-            RefreshSide();
-            RebuildPicker();
-        };
+            var efficiency = selectedTarget == "efficiency";
+            var services = selectedTarget == "services";
+            efficiencyButton.Background = efficiency ? accent : transparent;
+            efficiencyButton.Foreground = efficiency ? accentForeground : muted;
+            killButton.Background = selectedTarget == "kill" ? accent : transparent;
+            killButton.Foreground = selectedTarget == "kill" ? accentForeground : muted;
+            servicesButton.Background = services ? accent : transparent;
+            servicesButton.Foreground = services ? accentForeground : muted;
+            modeTitle.Text = I18n.T(efficiency ? "Modo eficiencia" : selectedTarget == "kill" ? "Cerrar al iniciar" : "Servicios");
+            modeDescription.Text = efficiency
+                ? I18n.T("Se baja la prioridad y se activa el modo ahorro de energía de estos procesos mientras jugás.")
+                : selectedTarget == "kill"
+                ? I18n.T("Agregá procesos acá. Se cierran automáticamente al lanzar un juego para liberar recursos.")
+                : I18n.T("Todos los servicios de Windows con su estado real. Cambiá el modo de arranque (Desactivado / Manual / Activado); el cambio se aplica al momento.");
+            var processesVisible = services ? Visibility.Collapsed : Visibility.Visible;
+            pickerCard.Visibility = processesVisible;
+            right.Visibility = processesVisible;
+            servicesTabCard.Visibility = services ? Visibility.Visible : Visibility.Collapsed;
+            if (services) _ = LoadAllServicesAsync(servicesTabCard);
+            RefreshTargetRows();
+        }
+        efficiencyButton.Click += (_, _) => { selectedTarget = "efficiency"; UpdateMode(); };
+        killButton.Click += (_, _) => { selectedTarget = "kill"; UpdateMode(); };
+        servicesButton.Click += (_, _) => { selectedTarget = "services"; UpdateMode(); };
 
-        var boostLists = new StackPanel { Spacing = 10 };
-        boostLists.Children.Add(new TextBlock { Text = I18n.T("Por defecto"), FontSize = 11, Foreground = Feedback.MutedBrush });
-        boostLists.Children.Add(defaultsRows);
-        boostLists.Children.Add(new TextBlock { Text = I18n.T("Agregados"), FontSize = 11, Foreground = Feedback.MutedBrush });
-        boostLists.Children.Add(addedRows);
+        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(6), Padding = new Thickness(2), Child = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton } } };
+        Grid.SetColumn(killButton, 1);
+        Grid.SetColumn(servicesButton, 2);
 
-        var rightCard = MakeSettingsCard(new StackPanel
-        {
-            Spacing = 10,
-            Children =
-            {
-                new TextBlock { Text = I18n.T("En el boost"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, FontSize = 13 },
-                // Tope de altura + scroll: la lista de defaults (~17 procesos) no
-                // estira el popup hacia abajo; el popup queda compacto y parejo
-                // con la columna izquierda.
-                new ScrollViewer
-                {
-                    MaxHeight = 218,
-                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                    Content = boostLists
-                },
-                restoreButton
-            }
-        });
-
-        RebuildPicker();
-        RefreshSide();
-
-        var columns = new Grid { ColumnSpacing = 14 };
+ // Layout de 2 filas: selector arriba (Auto, centrado sobre la derecha) y las
+ // dos cards lado a lado estirando al * restante. Ambas cards reciben el mismo
+ // alto y sus pies quedan alineados. La pestaña de servicios ocupa fila 1
+ // abarcando ambas columnas (ColumnSpan 2) y solo es visible en modo "Servicios".
+        var columns = new Grid { ColumnSpacing = 14, RowSpacing = 10 };
+        columns.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        columns.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        columns.Children.Add(leftCard);
-        Grid.SetColumn(rightCard, 1);
-        columns.Children.Add(rightCard);
+        columns.Children.Add(pickerCard);
+        Grid.SetRow(pickerCard, 1);
+        Grid.SetColumn(right, 1);
+        Grid.SetRow(right, 1);
+        columns.Children.Add(right);
+        Grid.SetColumn(servicesTabCard, 0);
+        Grid.SetColumnSpan(servicesTabCard, 2);
+        Grid.SetRow(servicesTabCard, 1);
+        columns.Children.Add(servicesTabCard);
+        servicesTabCard.Visibility = Visibility.Collapsed;
+ // Selector centrado horizontalmente sobre la columna derecha (los tres
+ // opciones del modo). Fila 0, columna 1.
+        Grid.SetColumn(modeSelector, 1);
+        Grid.SetRow(modeSelector, 0);
+        columns.Children.Add(modeSelector);
+        RefreshPicker();
+        UpdateMode();
+
+ // Auto-actualización de la lista de procesos: primer refresh a los 5 s y
+ // luego periódico (el snapshot inicial ya se tomó arriba, al construir).
+        pickerTimer.Interval = TimeSpan.FromSeconds(5);
+        pickerTimer.Tick += (_, _) => _ = RefreshRunningAsync();
+        pickerTimer.Start();
+
         return columns;
+    }
+
+ // ===================== Pestaña Servicios (todos los del sistema) =====================
+
+ // Servicios que la UI NO deja cambiar (arrancarlos con Windows o desactivarlos
+ // puede dejar el sistema inestable o sin sesión). sc config igual fallaría en
+ // varios; el candado evita el intento y el susto.
+    private static readonly HashSet<string> CriticalServices = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "RpcSs", "DcomLaunch", "Winmgmt", "Schedule", "EventLog", "gpsvc",
+        "ProfSvc", "SamSs", "KeyIso", "Netlogon", "LanmanServer", "LanmanWorkstation",
+        "nsi", "Dhcp", "Dnscache", "Themes", "Audiosrv", "AudioEndpointBuilder",
+        "BrokerInfrastructure", "StateRepository", "UserManager", "CryptSvc",
+        "msiserver", "BFE", "mpssvc",        "AppInfo", "DeviceInstall", "PlugPlay",
+        "Power", "winmgmt"
+    };
+
+ // Caché del snapshot de servicios: se consulta WMI UNA vez por apertura de
+ // la vista (la lista es larga y no cambia mientras se mira). Los cambios
+ // hechos en esta sesión se reflejan en la fila (el selector vuelve con el
+ // estado real).
+    private List<SystemServiceInfo>? _allServicesCache;
+    private string _servicesFilter = "";
+ // Alcance del desplegable de la pestaña Servicios: true = solo los servicios
+ // recomendados para gaming (GameBoostService.ManagedServices), false = todos.
+ // "Recomendados" es el default al entrar a la pestaña; se resetea al cerrar.
+    private bool _servicesRecommendedOnly = true;
+ // Referencias directas a la lista y el contador de la pestaña de servicios
+ // (evita buscar descendientes en el árbol visual, que podía agarrar el
+ // TextBlock interno del TextBox de búsqueda).
+    private ListView? _servicesListView;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _servicesSearchDebounce;
+ // Generación de refresco manual: se incrementa al presionar "Refrescar" (y al
+ // cerrar la vista); la consulta en background se descarta si una más nueva
+ // empezó. Evita que un snapshot viejo pise uno nuevo al presionar dos veces.
+    private int _servicesRefreshGeneration;
+ // Switch "Servicios Optimizados Automaticos" de la pestaña Servicios: cuando
+ // está activo, los selectores de las filas se bloquean (la optimización
+ // hardcodeada del boost manda); apagado, el usuario edita libremente.
+    private Microsoft.UI.Xaml.Controls.ToggleSwitch? _servicesAutoOptSwitch;
+
+ // El switch de optimización automática está activo (default true).
+    private bool ServicesAutoOptimizationOn => _servicesAutoOptSwitch?.IsOn ?? true;
+
+ /// <summary>
+ /// Construye la card de la pestaña "Servicios": buscador + lista virtualizada
+ /// de TODOS los servicios de Windows. Cada fila: punto de estado, nombre
+ /// técnico + nombre para mostrar, candado (si es crítico) y selector de 3
+ /// estados que aplica <c>sc config</c> al momento. La carga de datos es en
+ /// background (LoadAllServicesAsync) para no congelar la UI.
+ /// </summary>
+    private UIElement BuildServicesTab()
+    {
+        var muted = Feedback.MutedBrush;
+        var borderBrush = ThemeBrushes.Get("CardBorderBrush");
+        var secondaryFill = ThemeBrushes.Get("CardBackgroundFillColorSecondaryBrush");
+
+ // Lista de servicios: las filas se fabrican en C# (MakeSystemServiceRow) y se
+ // agregan DIRECTAMENTE como items — el mismo patrón de pickerList de procesos
+ // (Items.Add de UIElement), que ya funciona en esta página. Se descartó el
+ // ItemsSource + PrepareContainerForItemOverride: WinUI ignora el Content que
+ // se asigna ahí y presenta el item con ToString(), por lo que se veía el
+ // nombre del tipo ("WHPO.UI...ServiceRow") repetido en vez de las filas.
+        var servicesList = new ListView
+        {
+            SelectionMode = ListViewSelectionMode.None,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Thickness(0)
+        };
+        _servicesListView = servicesList;
+
+        var searchBox = new TextBox
+        {
+            PlaceholderText = I18n.T("Buscar servicio..."),
+            FontSize = 12,
+            Height = 32,
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+ // Desplegable de alcance: "Recomendados" (servicios típicos de tweaks de
+ // gaming: update, telemetría, Hyper-V, Xbox, impresión, legacy — la misma
+ // lista curada que usa el boost/card de servicios) o "Todos". Default: Recomendados.
+        var scopeCombo = new ComboBox
+        {
+            MinWidth = 136,
+            FontSize = 12,
+            Height = 32,
+            CornerRadius = new CornerRadius(6)
+        };
+        scopeCombo.Items.Add(I18n.T("Recomendados"));
+        scopeCombo.Items.Add(I18n.T("Todos"));
+        scopeCombo.SelectedIndex = 0;
+        scopeCombo.SelectionChanged += (_, _) =>
+        {
+            _servicesRecommendedOnly = scopeCombo.SelectedIndex == 0;
+            RefillServicesList(servicesList);
+        };
+
+ // Botón "Actualizar": vuelve a consultar Windows (invalida el snapshot cacheado
+ // de WMI) y rellena la lista con los estados reales del momento. Sirve para
+ // servicios instalados/detenido/arrancados fuera de la app sin reabrir la vista.
+ // Mismo tamaño/estilo que el desplegable de alcance (32px, fuente 12, radio 6,
+ // mismo borde y fondo) para que la fila quede simétrica.
+        var refreshIcon = new FontIcon { Glyph = "\uE72C", FontSize = 12 }; // Refresh
+        var refreshText = new TextBlock { Text = I18n.T("Actualizar"), FontSize = 12 };
+        var refreshButton = new Button
+        {
+            Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { refreshIcon, refreshText } },
+            Height = 32,
+            Padding = new Thickness(12, 0, 12, 0),
+            CornerRadius = new CornerRadius(6),
+            Background = secondaryFill,
+            BorderThickness = new Thickness(1),
+            BorderBrush = borderBrush,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        ToolTipService.SetToolTip(refreshButton, new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = I18n.T("Vuelve a consultar los servicios de Windows con sus estados reales."),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 260
+            },
+            Placement = PlacementMode.Bottom
+        });
+        refreshButton.Click += (_, _) =>
+        {
+            _servicesRefreshGeneration++;
+            _allServicesCache = null;
+            _ = LoadAllServicesAsync(servicesList);
+        };
+
+        var searchRow = new Grid { ColumnSpacing = 10 };
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        searchRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        searchRow.Children.Add(searchBox);
+        searchRow.Children.Add(scopeCombo);
+        searchRow.Children.Add(refreshButton);
+        Grid.SetColumn(scopeCombo, 1);
+        Grid.SetColumn(refreshButton, 2);
+
+ // ===== Switch "Servicios Optimizados Automaticos" =====
+ // Activo por defecto: el boost detiene temporalmente los servicios del
+ // optimizador (Windows Update, BITS, SysMain...) al lanzar un juego y los
+ // restaura al cerrarlo. Apagado: el boost no toca servicios por partida y los
+ // selectores de las filas de abajo se bloquean para que la configuración
+ // automática no se mezcle con cambios manuales.
+        var autoOptSwitch = new ToggleSwitch
+        {
+            IsOn = _gameBoostService.IsAutomaticServiceOptimizationEnabled,
+            OnContent = I18n.T("Optimización automática activa"),
+            OffContent = I18n.T("Sin optimización automática"),
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+        var autoOptInfoButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE946", FontSize = 11 },
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            Foreground = muted,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var autoOptRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { autoOptSwitch, autoOptInfoButton }
+        };
+        ToolTipService.SetToolTip(autoOptInfoButton, new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = I18n.T("El modo automático detiene temporalmente estos servicios al lanzar un juego y los restaura al cerrarlo: Windows Update (wuauserv), Orquestador de actualizaciones (UsoSvc), Transferencia inteligente en segundo plano (BITS), SysMain (Superfetch) y Búsqueda de Windows (WSearch). La telemetría NO entra: se gestiona aparte. Si lo apagás, el boost solo gestiona procesos y quedan valiendo los estados que configuraste a mano."),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320
+            },
+            Placement = PlacementMode.Bottom
+        });
+        autoOptSwitch.Toggled += (_, _) =>
+        {
+            _gameBoostService.IsAutomaticServiceOptimizationEnabled = autoOptSwitch.IsOn;
+            RefillServicesList(servicesList);
+        };
+
+ // Filtrado local (en memoria, instantáneo): por nombre técnico o nombre para
+ // mostrar; el texto del propio TextBox no se pisa (el walker de I18n recuerda
+ // el PlaceholderText original).
+ // Debounce de 200 ms: reescribir ~400 filas por tecla se siente pesado al
+ // filtrar. Cada TextChanged reinicia el timer; el refill corre cuando el
+ // usuario se detiene (se detiene también al cerrar la vista).
+        searchBox.TextChanged += (_, _) =>
+        {
+            _servicesFilter = searchBox.Text ?? "";
+            _servicesSearchDebounce?.Stop();
+            var timer = DispatcherQueue.CreateTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(200);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) => RefillServicesList(servicesList);
+            _servicesSearchDebounce = timer;
+            timer.Start();
+        };
+ // servicesTabCard es null mientras BuildServicesTab construye la card (el
+ // botón se crea antes); en runtime el Click siempre la recibe completa.
+ // 3 filas: buscador (Auto) + switch auto-optimización (Auto) + lista (estira y
+ // scrollea con virtualización). El switch vive entre las pestañas y la lista.
+        var grid = new Grid { RowSpacing = 8 };
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.Children.Add(searchRow);
+        grid.Children.Add(autoOptRow);
+        grid.Children.Add(servicesList);
+        Grid.SetRow(autoOptRow, 1);
+        Grid.SetRow(servicesList, 2);
+ // Referencia para bloquear/desbloquear los selectores de las filas según el
+ // estado del switch de optimización automática.
+        _servicesAutoOptSwitch = autoOptSwitch;
+        var card = MakeSettingsCard(grid);
+        ToolTipService.SetToolTip(searchBox, new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = I18n.T("Filtrá por nombre técnico o nombre para mostrar. El desplegable separa los servicios recomendados para gaming del resto."),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 280
+            },
+            Placement = PlacementMode.Bottom
+        });
+        return card;
+
+
+        void RefillServicesList(ListView list)
+        {
+            var snapshot = _allServicesCache;
+            if (snapshot is null) return;
+            var filter = _servicesFilter.Trim();
+ // Alcance primero (Recomendados/Todos) y después el texto del buscador. El
+ // total del contador es el del alcance: "3 de 30 servicios" (recomendados)
+ // o "3 de 412" (todos).
+            IEnumerable<SystemServiceInfo> query = snapshot;
+            if (_servicesRecommendedOnly)
+            {
+                var recommended = GameBoostService.ManagedServices;
+                query = query.Where(s => recommended.Contains(s.Name, StringComparer.OrdinalIgnoreCase));
+            }
+            if (filter.Length > 0)
+            {
+                query = query.Where(s =>
+                    s.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                    s.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase));
+            }
+ // Orden estable: corriendo primero no (ruido al cambiar); alfabético por
+ // nombre para mostrar y, a igualdad, por nombre técnico.
+            var items = query
+                .OrderBy(s => s.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+ // Filas UI directas: Items.Add (patrón pickerList). Con ItemsSource WinUI
+ // presentaba ServiceRow.ToString() (el nombre del tipo) en vez de la fila.
+            list.Items.Clear();
+            foreach (var info in items)
+                list.Items.Add(MakeSystemServiceRow(new ServiceRow(info)));
+        }
+    }
+
+ /// <summary>Item ligero para la lista virtualizada de servicios.</summary>
+    private sealed class ServiceRow
+    {
+        public SystemServiceInfo Info { get; }
+        public ServiceRow(SystemServiceInfo info) => Info = info;
+    }
+
+ /// <summary>
+ /// Carga el snapshot de todos los servicios en background y llena la lista.
+ /// Con la vista cerrada o reabierta mientras se consulta, el resultado se
+ /// descarta (mismo patrón de generación que la lista de procesos).
+ /// </summary>
+    private async Task LoadAllServicesAsync(UIElement card)
+    {
+        var generationAtStart = _servicesRefreshGeneration;
+        if (_allServicesCache is null)
+        {
+            var snapshot = await Task.Run(() => _gameBoostService.GetAllServicesSnapshot());
+
+ // La vista pudo cerrarse mientras se consultaba (el Content del host se
+ // limpia al cerrar): si la card ya no está en el árbol, descartar. Si el
+ // usuario presionó Refrescar de nuevo mientras se consultaba, el snapshot
+ // es viejo: descartarlo también (una consulta más nueva ya arrancó).
+            if (BoostConfigView.Visibility != Visibility.Visible) return;
+            if (generationAtStart != _servicesRefreshGeneration) return;
+
+            _allServicesCache = snapshot;
+        } // Re-pintar con el snapshot en caché (y el filtro vigente). Referencias
+ // directas a lista y contador (FindDescendant podía agarrar el TextBlock
+ // interno del TextBox y pintaba el contador en el lugar equivocado).
+        if (_servicesListView is null) return;
+
+ // Re-pintar la lista (la primera vez estaba vacía; luego re-filtra).
+        var filter = _servicesFilter.Trim();
+        IEnumerable<SystemServiceInfo> query = _allServicesCache;
+        if (_servicesRecommendedOnly)
+        {
+            var recommended = GameBoostService.ManagedServices;
+            query = query.Where(s => recommended.Contains(s.Name, StringComparer.OrdinalIgnoreCase));
+        }
+        if (filter.Length > 0)
+        {
+            query = query.Where(s =>
+                s.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                s.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase));
+        }
+        var items = query
+            .OrderBy(s => s.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _servicesListView.Items.Clear();
+        foreach (var info in items)
+            _servicesListView.Items.Add(MakeSystemServiceRow(new ServiceRow(info)));
+    }
+
+ /// <summary>Primer descendiente de tipo T en el árbol visual (o null).</summary>
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            var deep = FindDescendant<T>(child);
+            if (deep != null) return deep;
+        }
+        return null;
+    }
+
+ /// <summary>Fila de la lista de servicios: punto + nombre + candado + selector.</summary>
+    private UIElement MakeSystemServiceRow(ServiceRow item)
+    {
+        var s = item.Info;
+        var muted = Feedback.MutedBrush;
+        var critical = CriticalServices.Contains(s.Name);
+ // StartMode Boot/System: sc config no puede cambiarlos a auto/disabled de
+ // forma útil; se muestran como Activado bloqueado.
+        var fixedAuto = s.StartMode is "Boot" or "System";
+
+        var row = new Grid { Height = 36, ColumnSpacing = 8, Padding = new Thickness(8, 0, 6, 0) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                        // punto
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });   // nombre
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                        // selector
+ // Punto de estado en vivo: verde = corriendo, gris = detenido.
+        var dot = new Microsoft.UI.Xaml.Shapes.Ellipse
+        {
+            Width = 7,
+            Height = 7,
+            VerticalAlignment = VerticalAlignment.Center,
+            Fill = s.IsRunning ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80))
+                               : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 128, 128, 128))
+        };
+        ToolTipService.SetToolTip(dot, s.IsRunning ? I18n.T("En ejecución") : I18n.T("Detenido"));
+        row.Children.Add(dot);
+ // Nombre tal como aparece en services.msc (DisplayName) como etiqueta
+ // principal + nombre técnico del SCM como referencia secundaria. Algunos
+ // servicios tienen DisplayName vacío o igual al técnico: caen al nombre
+ // técnico y no se muestra dos veces lo mismo.
+        var primaryName = string.IsNullOrWhiteSpace(s.DisplayName) ? s.Name : s.DisplayName!;
+ // Texto "apagado": los nombres de servicios van en el gris secundario del tema
+ // (así la lista se lee en reposo y resalta solo el estado y los controles).
+        var serviceNameBrush = ThemeBrushes.Get("SecondaryTextBrush");
+        var namePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        namePanel.Children.Add(new TextBlock
+        {
+            Text = primaryName,
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = serviceNameBrush,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 340
+        });
+        if (!string.Equals(primaryName, s.Name, StringComparison.Ordinal))
+            namePanel.Children.Add(new TextBlock
+            {
+                Text = s.Name,
+                FontSize = 11,
+                Foreground = muted,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 220
+            });
+ // Botón (i) al lado del nombre: muestra la descripción del servicio en un
+ // tooltip. La descripción la provee el SO (en el idioma del sistema) y las
+ // etiquetas alrededor usan I18n.T (idioma de la app); como toda la vista se
+ // reconstruye al abrir la configuración, siempre se arma con el idioma vigente.
+        var infoButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE946", FontSize = 11 },
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            Foreground = muted,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        namePanel.Children.Add(infoButton);
+        if (critical || fixedAuto)
+        {
+            namePanel.Children.Add(new FontIcon { Glyph = "\uE72E", FontSize = 10, Foreground = muted, VerticalAlignment = VerticalAlignment.Center });
+        }
+        Grid.SetColumn(namePanel, 1);
+        row.Children.Add(namePanel);
+ // Con "Servicios Optimizados Automaticos" activo, el boost gestiona los
+ // servicios del optimizador por partida: los selectores quedan bloqueados
+ // para que la configuración automática no se mezcle con cambios manuales.
+        var combo = new ComboBox
+        {
+            MinWidth = 118,
+            FontSize = 12,
+            Height = 28,
+            CornerRadius = new CornerRadius(6),
+            IsEnabled = !critical && !fixedAuto && !ServicesAutoOptimizationOn,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        foreach (var st in new[] { I18n.T("Desactivado"), I18n.T("Manual"), I18n.T("Activado") })
+            combo.Items.Add(st);
+ // Estado actual real (GetAllServicesSnapshot ya trae StartMode).
+        var currentState = s.StartMode switch
+        {
+            "Disabled" => ServiceStartState.Disabled,
+            "Manual" => ServiceStartState.Manual,
+            "Auto" => ServiceStartState.Auto,
+            "Boot" or "System" => ServiceStartState.Auto,
+            _ => (ServiceStartState?)null
+        };
+        combo.SelectedIndex = currentState switch
+        {
+            ServiceStartState.Disabled => 0,
+            ServiceStartState.Manual => 1,
+            ServiceStartState.Auto => 2,
+            _ => -1
+        };
+        combo.SelectionChanged += async (_, _) =>
+        {
+            if (!combo.IsEnabled || combo.SelectedIndex < 0) return;
+            var chosen = (ServiceStartState)combo.SelectedIndex;
+            var applied = await Task.Run(() => _gameBoostService.SetServiceStartState(s.Name, chosen));
+ // Si Windows no pudo aplicar (permisos, dependencias), volver al estado real.
+            if (applied != chosen)
+            {
+                combo.SelectedIndex = applied switch
+                {
+                    ServiceStartState.Disabled => 0,
+                    ServiceStartState.Manual => 1,
+                    _ => 2
+                };
+                _loggingService.LogError($"GameBoost: no se pudo cambiar el estado de {s.Name} a {chosen}.", null);
+            }
+        };
+ // Etiqueta de estado a la izquierda del desplegable: "En ejecución" (verde,
+ // igual que el punto) o "Detenido" (gris). Refleja el snapshot del momento
+ // en que se abrió la pestaña, igual que el punto de estado.
+        var startTypePanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        startTypePanel.Children.Add(new TextBlock
+        {
+            Text = I18n.T(s.IsRunning ? "En ejecución" : "Detenido"),
+            FontSize = 11,
+            Foreground = s.IsRunning
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80))
+                : muted,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        startTypePanel.Children.Add(combo);
+        Grid.SetColumn(startTypePanel, 2);
+        row.Children.Add(startTypePanel);
+ // Contenedor visible de la fila: banda redondeada con el fill de grupo de
+ // los ThemeDictionaries (tema claro/oscuro/paletas via {ThemeResource}) y
+ // margen inferior para separar filas. El ListView agrega hover/selection
+ // por encima, igual que en el resto de las listas de la app.
+        var rowHost = new Border
+        {
+            // Pincel LIVE de ThemeBrushes: tema claro/oscuro/paletas correcto y
+            // se repinta solo al cambiar de tema (el lookup directo en
+            // Application.Resources usaría el tema del SISTEMA, no el de la app).
+            Background = ThemeBrushes.Get("SensorGroupFillBrush"),
+            CornerRadius = new CornerRadius(6),
+            Margin = new Thickness(0, 0, 0, 3),
+            Child = row
+        };
+ // Tooltip con la descripción del servicio (del SO, sin traducir) + estado.
+        UIElement MakeTip()
+        {
+            var tip = new StackPanel { Spacing = 4, MaxWidth = 320 };
+            tip.Children.Add(new TextBlock
+            {
+                Text = string.IsNullOrEmpty(s.DisplayName) ? s.Name : $"{s.DisplayName} ({s.Name})",
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap
+            });
+            if (!string.IsNullOrWhiteSpace(s.Description))
+                tip.Children.Add(new TextBlock
+                {
+                    Text = s.Description!,
+                    FontSize = 11,
+                    Foreground = muted,
+                    TextWrapping = TextWrapping.Wrap
+                });
+            tip.Children.Add(new TextBlock
+            {
+                Text = I18n.T("Estado actual: {0} · {1}",
+                    I18n.T(currentState switch
+                    {
+                        ServiceStartState.Disabled => "Desactivado",
+                        ServiceStartState.Manual => "Manual",
+                        _ => "Activado"
+                    }),
+                    s.IsRunning ? I18n.T("En ejecución") : I18n.T("Detenido")),
+                FontSize = 11,
+                Foreground = muted,
+                TextWrapping = TextWrapping.Wrap
+            });
+            if (critical)
+                tip.Children.Add(new TextBlock
+                {
+                    Text = I18n.T("Servicio crítico del sistema: WinForge no permite cambiarlo."),
+                    FontSize = 11,
+                    Foreground = Feedback.ErrorBrush,
+                    TextWrapping = TextWrapping.Wrap
+                });
+            return tip;
+        }        ToolTipService.SetToolTip(infoButton, new ToolTip { Content = MakeTip(), Placement = PlacementMode.Top });
+
+        return rowHost;
     }
 
     /// <summary>
@@ -787,7 +1611,7 @@ public sealed partial class GestionarProcesosPage : Page
                 }
                 if (_counterStatusVisible)
                 {
-                    InstalledCountText.Text = I18n.T("Juegos instalados: {0}", _installed.Count);
+                    UpdateInstalledCount();
                 }
             }
             catch { }
@@ -839,7 +1663,7 @@ public sealed partial class GestionarProcesosPage : Page
             RebuildCards();
             // Traducir el contenido ahora que los elementos reales están en el árbol visual
             I18n.ApplyToVisualTree(this);
-            InstalledCountText.Text = I18n.T("Juegos instalados: {0}", _installed.Count);
+            UpdateInstalledCount();
             InstalledCountText.Visibility = Visibility.Visible;
             _counterStatusVisible = true;
         }
@@ -1253,6 +2077,14 @@ public sealed partial class GestionarProcesosPage : Page
                 .Where(i => (i.name ?? i.exe).Contains(q, StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
+ // Filtro de categoría: "all" (todos), "games", "console_emu", "mobile_emu".
+ // GetItemCategory clasifica cada item; "all" no filtra nada.
+        if (_currentFilter != "all")
+        {
+            items = items
+                .Where(i => GetItemCategory(i.game) == _currentFilter)
+                .ToList();
+        }
 
         // Favoritos aparte del resto (barra diferenciadora): dentro de cada grupo,
         // primero los que están corriendo, después alfabético.
@@ -1284,6 +2116,7 @@ public sealed partial class GestionarProcesosPage : Page
         // ===== Sección de JUEGOS OCULTOS (desplegable, colapsada por defecto) =====
         // Los juegos "ocultados" no desaparecen: viven acá y se restauran con
         // clic derecho → Mostrar en la biblioteca. Los ELIMINADOS no se listan.
+        // Se filtran por la pestaña activa igual que los items visibles.
         var hiddenItems = new List<(InstalledGame? game, string exe, string? name, bool isManual, string? installPath)>();
         foreach (var hExe in _processService.GetHiddenExes())
         {
@@ -1291,9 +2124,14 @@ public sealed partial class GestionarProcesosPage : Page
             var g = _installed.FirstOrDefault(x => string.Equals(x.ExeFileName, hExe, StringComparison.OrdinalIgnoreCase));
             if (g != null)
             {
+ // Filtrar por categoría: solo mostrar ocultos del tipo correcto.
+                if (_currentFilter != "all" && GetItemCategory(g) != _currentFilter) continue;
                 hiddenItems.Add((g, g.ExeFileName, g.Name, false, g.InstallPath));
                 continue;
             }
+ // Juegos manuales ocultos: siempre son "games" (no emuladores),
+ // solo se muestran en "Todos" o "Videojuegos".
+            if (_currentFilter != "all" && _currentFilter != "games") continue;
             var m = _manual.FirstOrDefault(mm => string.Equals(mm.Exe, hExe, StringComparison.OrdinalIgnoreCase));
             hiddenItems.Add((null, hExe, m.Name ?? hExe, m.Exe != null, m.InstallPath));
         }
@@ -1332,17 +2170,31 @@ public sealed partial class GestionarProcesosPage : Page
             LibraryPanel.Children.Add(hiddenExpander);
         }
 
-        // Mensaje distinto cuando el buscador no encuentra nada (vs. biblioteca vacía).
+        // Estado vacío: cuando no hay items para la pestaña/filtro actual.
+        // Mensaje distinto según la pestaña y si hay búsqueda activa.
         if (items.Count == 0)
         {
-            EmptyText.Text = _searchQuery.Trim().Length > 0
-                ? I18n.T("No se encontraron juegos que coincidan con la búsqueda.")
-                : I18n.T("No se encontraron juegos instalados. Probá «Re-detectar» o «Añadir manual».");
-            EmptyText.Visibility = Visibility.Visible;
+            if (_searchQuery.Trim().Length > 0)
+            {
+                EmptyStateText.Text = I18n.T("No se encontraron juegos que coincidan con la búsqueda.");
+                EmptyStateIcon.Glyph = "\uE721;"; // lupa
+            }
+            else
+            {
+                EmptyStateText.Text = _currentFilter switch
+                {
+                    "console_emu" => I18n.T("Instalá un emulador de consolas para verlo en este apartado y configurarlo a tu gusto!"),
+                    "mobile_emu" => I18n.T("Instalá un emulador de celular para verlo en este apartado y configurarlo a tu gusto!"),
+                    "games" => I18n.T("Instalá un juego para verlo en este apartado y configurarlo a tu gusto!"),
+                    _ => I18n.T("Instalá un juego o emulador para verlo en este apartado y configurarlo a tu gusto!")
+                };
+                EmptyStateIcon.Glyph = "\uE7FC;"; // controler
+            }
+            EmptyStatePanel.Visibility = Visibility.Visible;
         }
         else
         {
-            EmptyText.Visibility = Visibility.Collapsed;
+            EmptyStatePanel.Visibility = Visibility.Collapsed;
         }
         UpdateCardWidth();
     }
@@ -1352,6 +2204,88 @@ public sealed partial class GestionarProcesosPage : Page
     {
         _searchQuery = SearchBox.Text ?? "";
         RebuildCards();
+    }
+
+    /// <summary>
+    /// Desplegable de categorías (Todos / Videojuegos / Emuladores de consolas /
+    /// Emuladores de celular): aplica el filtro seleccionado a la grilla.
+    /// El índice 0 («Todos») mapea a "all"; el guard evita rebuilds redundantes.
+    /// </summary>
+    private void FilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        string filter = FilterComboBox.SelectedIndex switch
+        {
+            1 => "games",
+            2 => "console_emu",
+            3 => "mobile_emu",
+            _ => "all"
+        };
+        if (_currentFilter == filter) return;
+        _currentFilter = filter;
+        UpdateInstalledCount();
+        RebuildCards();
+    }
+
+    // Emuladores de celular conocidos (por nombre del InstalledGame.Name).
+    // BlueStacks se detecta como "Independiente" (no "Emulador"), así que se
+    // identifica por nombre también. El resto de emuladores de celular sí
+    // traen Launcher="Emulador".
+    private static readonly HashSet<string> MobileEmulatorNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "BlueStacks 5", "LDPlayer", "NoxPlayer", "MEmu", "Genymotion", "MSI App Player"
+    };
+
+    /// <summary>
+    /// Clasifica un item en su categoría: "games" (videojuegos),
+    /// "console_emu" (emulador de consola) o "mobile_emu" (emulador de celular).
+    /// Los emuladores de consola son los que traen Launcher="Emulador" y NO
+    /// están en la lista de emuladores móviles. Los de celular pueden traer
+    /// Launcher="Emulador" o "Independiente" (BlueStacks) y se identifican por
+    /// nombre. Los juegos manuales (game==null) son siempre "games".
+    /// </summary>
+    private static string GetItemCategory(InstalledGame? game)
+    {
+        if (game == null) return "games";
+    // Emulador de celular por nombre (incluye BlueStacks que trae Launcher="Independiente").
+        if (MobileEmulatorNames.Contains(game.Name)) return "mobile_emu";
+    // El resto con Launcher="Emulador" son de consola.
+        if (string.Equals(game.Launcher, "Emulador", StringComparison.OrdinalIgnoreCase)) return "console_emu";
+    // Todo lo demás es videojuego.
+        return "games";
+    }
+
+    /// <summary>
+    /// Actualiza el contador según la categoría activa. El texto cambia:
+    /// «Items instalados: N» (todos), «Juegos instalados: N» (videojuegos),
+    /// «Emuladores de consolas: N», «Emuladores de celular: N».
+    /// </summary>
+    private void UpdateInstalledCount()
+    {
+        int count = 0;
+        var hidden = _processService.GetHiddenExes();
+        var deleted = _processService.GetDeletedGames();
+        foreach (var g in _installed)
+        {
+            if (hidden.Contains(g.ExeFileName) || deleted.Contains(g.ExeFileName)) continue;
+            if (_currentFilter == "all" || GetItemCategory(g) == _currentFilter) count++;
+        }
+    // Los manuales (sin game) son siempre videojuegos.
+        if (_currentFilter == "all" || _currentFilter == "games")
+        {
+            foreach (var (exe, _, _) in _manual)
+            {
+                if (hidden.Contains(exe) || deleted.Contains(exe)) continue;
+                if (!_installed.Any(g => string.Equals(g.ExeFileName, exe, StringComparison.OrdinalIgnoreCase)))
+                    count++;
+            }
+        }
+        InstalledCountText.Text = _currentFilter switch
+        {
+            "games" => I18n.T("Juegos instalados: {0}", count),
+            "console_emu" => I18n.T("Emuladores de consolas: {0}", count),
+            "mobile_emu" => I18n.T("Emuladores de celular: {0}", count),
+            _ => I18n.T("Items instalados: {0}", count)
+        };
     }
 
     /// <summary>
@@ -2059,7 +2993,7 @@ public sealed partial class GestionarProcesosPage : Page
             using var writer = new DataWriter(inStream);
             writer.WriteBytes(webp);
             await writer.StoreAsync();
-            // OJO: DataWriter.Dispose() dispone el stream subyacente, así que el
+            // OJO: DataWriter.Dispose dispone el stream subyacente, así que el
             // writer vive hasta el final del método (nunca se descarta antes de
             // usar el stream). Descartarlo temprano tira ObjectDisposedException.
             inStream.Seek(0);

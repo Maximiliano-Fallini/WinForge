@@ -11,8 +11,8 @@ using WHPO.Core.Services.Interfaces;
 namespace WHPO.Core.Services;
 
 /// <summary>
-/// Implementación de las secciones "Features", "Fixes" y "Legacy Windows Panels" de
-/// winutil (Chris Titus Tech): https://github.com/ChrisTitusTech/winutil
+/// Implementación de las secciones "Features", "Fixes" y "Legacy Windows Panels"
+/// de la utilidad de ajustes del sistema.
 /// La app corre elevada, así que DISM / bcdedit / schtasks no requieren UAC extra.
 /// </summary>
 public class WinUtilService : IWinUtilService
@@ -231,7 +231,7 @@ public class WinUtilService : IWinUtilService
 
     private Task<CommandResult> EnableRegistryBackupAsync(IProgress<string>? progress, CancellationToken ct)
     {
-        // Script del winutil: habilita el backup periódico y crea la tarea diaria a las 00:30.
+        // Script del : habilita el backup periódico y crea la tarea diaria a las 00:30.
         const string script =
             "New-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Configuration Manager' -Name 'EnablePeriodicBackup' -Type DWord -Value 1 -Force;" +
             "New-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Configuration Manager' -Name 'BackupCount' -Type DWord -Value 2 -Force;" +

@@ -12,11 +12,11 @@ namespace WHPO.Core.Services;
 
 /// <summary>
 /// Detecta juegos instalados leyendo las bibliotecas de los launchers:
-///  - Steam: appmanifest_*.acf en cada carpeta steamapps (libraryfolders.vdf) con
-///    nombre + installdir; el ejecutable se busca en la carpeta del juego.
-///  - Epic: Manifests/*.item (JSON) con DisplayName + LaunchExecutable.
-///  - GOG: registro de desinstalación (Publisher "GOG.com") + clave GOG.com\Games.
-///  - Xbox/Game Pass: paquetes MSIX de la Store con ejecutable grande.
+/// - Steam: appmanifest_*.acf en cada carpeta steamapps (libraryfolders.vdf) con
+/// nombre + installdir; el ejecutable se busca en la carpeta del juego.
+/// - Epic: Manifests/*.item (JSON) con DisplayName + LaunchExecutable.
+/// - GOG: registro de desinstalación (Publisher "GOG.com") + clave GOG.com\Games.
+/// - Xbox/Game Pass: paquetes MSIX de la Store con ejecutable grande.
 /// Todo es best-effort: si un launcher no existe o un juego no tiene ejecutable,
 /// simplemente no aparece (o aparece sin exe, que se usa solo para matchear).
 /// </summary>
@@ -122,6 +122,8 @@ public sealed class InstalledGamesService : IInstalledGamesService
         try { games.AddRange(ScanRiot()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Riot: {ex.Message}"); }
         try { games.AddRange(ScanBlacksmith()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Blacksmith: {ex.Message}"); }
         try { games.AddRange(ScanStandalone()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: independientes: {ex.Message}"); }
+        try { games.AddRange(ScanItch()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Itch.io: {ex.Message}"); }
+        try { games.AddRange(ScanAmazonGames()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Amazon Games: {ex.Message}"); }
         try { games.AddRange(ScanEmulators()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: emuladores: {ex.Message}"); }
         // Llave maestra: ningún launcher/instalador/anti-cheat puede ser un juego.
         // Si cualquier scanner resolviera un stub como exe (ej. BlacksmithBootstrap.exe
@@ -371,9 +373,16 @@ public sealed class InstalledGamesService : IInstalledGamesService
                         using var gameKey = reg.OpenSubKey(sub);
                         var installDir = gameKey?.GetValue("InstallDir") as string;
                         if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir)) continue;
+ // sub es el gameId de Ubisoft Connect (numérico): se guarda
+ // como AppId para futuro lanzamiento vía uplay://launch/<id>/0.
+                        string gameId = sub;
                         string name = Path.GetFileName(installDir.TrimEnd('\\'));
+ // Mejorar el título: buscar "Uplay Install <gameId>" en el
+ // registro de desinstalación, que trae el DisplayName real.
+                        string? betterName = FindUbisoftGameName(gameId);
+                        if (!string.IsNullOrEmpty(betterName)) name = betterName;
                         var exe = FindMainExe(installDir, name);
-                        games.Add(new InstalledGame(name, exe ?? "", "Ubisoft", installDir));
+                        games.Add(new InstalledGame(name, exe ?? "", "Ubisoft", installDir, gameId));
                     }
                     catch { }
                 }
@@ -383,13 +392,47 @@ public sealed class InstalledGamesService : IInstalledGamesService
         return games;
     }
 
+    /// <summary>
+    /// Busca el nombre real de un juego de Ubisoft por su gameId en el registro
+    /// de desinstalación ("Uplay Install <gameId>" → DisplayName). Null si no
+    /// hay entrada, en cuyo caso se usa el nombre de la carpeta.
+    /// </summary>
+    private static string? FindUbisoftGameName(string gameId)
+    {
+        try
+        {
+            string[] uninstallRoots =
+            {
+                @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+                @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+            };
+            foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+            {
+                foreach (var root in uninstallRoots)
+                {
+                    using var reg = hive.OpenSubKey(root);
+                    if (reg == null) continue;
+    // Buscar "Uplay Install <gameId>" como nombre de subclave.
+                    using var app = reg.OpenSubKey($"Uplay Install {gameId}");
+                    if (app != null)
+                    {
+                        var dn = app.GetValue("DisplayName") as string;
+                        if (!string.IsNullOrEmpty(dn)) return dn;
+                    }
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     // ===================== Juegos independientes (Roblox, Minecraft, Genshin, Warframe) =====================
 
     /// <summary>
     /// Detecta juegos que no pasan por Steam/Epic/Ubisoft/EA/Blizzard: instalan su
     /// propio launcher (Roblox, Minecraft, Genshin Impact, Warframe…). Usa dos fuentes:
-    ///  - Registro de desinstalación (Uninstall): DisplayName conocido + InstallLocation.
-    ///  - Rutas típicas de instalación para los que no se registran (Roblox/Minecraft).
+    /// - Registro de desinstalación (Uninstall): DisplayName conocido + InstallLocation.
+    /// - Rutas típicas de instalación para los que no se registran (Roblox/Minecraft).
     /// El exe detectado coincide con el proceso real en ejecución, así las reglas de
     /// prioridad/afinidad se aplican igual que en los juegos de launchers.
     /// </summary>
@@ -757,8 +800,10 @@ public sealed class InstalledGamesService : IInstalledGamesService
 
         // Battle.net moderno ya no expone las instalaciones en product.db en muchas
         // máquinas (los datos van a CachedData.db sin rutas). Complemento con el
-        // escaneo de carpetas típicas (Hearthstone, WoW, Diablo, Overwatch…).
+        // escaneo de carpetas típicas (Hearthstone, WoW, Diablo, Overwatch…) y
+        // con el registro de desinstalación (UninstallString con --uid=<code>).
         try { games.AddRange(ScanBlizzardFolders()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: carpetas Blizzard: {ex.Message}"); }
+        try { games.AddRange(ScanBlizzardUninstall()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Blizzard Uninstall: {ex.Message}"); }
         return games;
     }
 
@@ -820,7 +865,22 @@ public sealed class InstalledGamesService : IInstalledGamesService
         };
         var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var root in roots)
+ // Además de Program Files, buscar en la carpeta "Games" de cada unidad
+ // (Battle.net permite instalar en otras unidades) y en la raíz.
+        var allRoots = new List<string>(roots);
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed))
+            {
+                var dr = drive.Name.TrimEnd('\\');
+                allRoots.Add(dr);
+                allRoots.Add(Path.Combine(dr, "Games"));
+                allRoots.Add(Path.Combine(dr, "Battle.net"));
+            }
+        }
+        catch { }
+
+        foreach (var root in allRoots.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try
             {
@@ -842,6 +902,100 @@ public sealed class InstalledGamesService : IInstalledGamesService
             catch { }
         }
         return games;
+    }
+
+    /// <summary>
+    /// Fallback de Battle.net: lee el registro de desinstalación buscando claves
+    /// cuyo UninstallString contiene "Battle.net.exe --uid=<uid> --product=<code>".
+    /// Cada juego de Battle.net registra su desinstalador así; el código de
+    /// producto (ej. WTCG, Fen, ODIN) está embebido en el --product=<code>.
+    /// En máquinas modernas esto encuentra juegos que product.db no expone.
+    /// </summary>
+    private List<InstalledGame> ScanBlizzardUninstall()
+    {
+        var games = new List<InstalledGame>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string[] uninstallRoots =
+        {
+            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+        };
+        foreach (var hive in new[] { Registry.LocalMachine, Registry.CurrentUser })
+        {
+            foreach (var root in uninstallRoots)
+            {
+                try
+                {
+                    using var reg = hive.OpenSubKey(root);
+                    if (reg == null) continue;
+                    foreach (var sub in reg.GetSubKeyNames())
+                    {
+                        try
+                        {
+                            using var app = reg.OpenSubKey(sub);
+                            var displayName = app?.GetValue("DisplayName") as string;
+                            var uninstallStr = app?.GetValue("UninstallString") as string;
+                            var installLoc = app?.GetValue("InstallLocation") as string;
+                            if (string.IsNullOrEmpty(uninstallStr)) continue;
+                            if (!uninstallStr.Contains("Battle.net", StringComparison.OrdinalIgnoreCase)) continue;
+    // Extraer el código de producto de --product=<code>.
+                            var codeMatch = System.Text.RegularExpressions.Regex.Match(
+                                uninstallStr, "--product=([A-Za-z0-9]+)");
+                            if (!codeMatch.Success) continue;
+                            string code = codeMatch.Groups[1].Value;
+    // Mapear código → nombre conocido (si el DisplayName
+    // trae un nombre mejor, usarlo).
+                            string name = displayName ?? "";
+                            if (string.IsNullOrEmpty(name))
+                            {
+                                name = TryGetBlizzardName(code) ?? code;
+                            }
+    // Instalación: si hay InstallLocation, buscar exe;
+    // sino, la card aparece sin exe (solo para matchear
+    // el lanzamiento vía --exec="launch <code>").
+                            string? exe = null;
+                            string installPath = installLoc ?? "";
+                            if (!string.IsNullOrEmpty(installPath) && Directory.Exists(installPath))
+                                exe = FindMainExe(installPath, name);
+                            if (!seen.Add(name)) continue;
+                            games.Add(new InstalledGame(name, exe ?? "", "Blizzard",
+                                installPath, code, GetBlizzardBannerUrl(code)));
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+        }
+        return games;
+    }
+
+    /// <summary>Nombre humano de un juego de Battle.net por su código (o null si no hay mapeo).</summary>
+    private static string? TryGetBlizzardName(string code)
+    {
+    // Reutiliza el mapa BlizzardBoxArtIds (código → boxId) pero acá
+    // necesitamos código → nombre. Mapeo explícito de los más comunes.
+        return code.ToUpperInvariant() switch
+        {
+            "WTCG" => "Hearthstone",
+            "FEN" => "Diablo IV",
+            "D1" => "Diablo",
+            "D3" => "Diablo III",
+            "OSI" => "Diablo II: Resurrected",
+            "ANBS" => "Diablo Immortal",
+            "VIPR" => "Call of Duty: Black Ops 4",
+            "ZEUS" => "Call of Duty: Black Ops Cold War",
+            "FORE" => "Call of Duty: Vanguard",
+            "ODIN" => "Call of Duty: Modern Warfare",
+            "AUKS" => "Call of Duty",
+            "PRO" => "Overwatch",
+            "S2" => "StarCraft II",
+            "S1" => "StarCraft",
+            "WOW" => "World of Warcraft",
+            "W3" => "Warcraft III",
+            "HERO" => "Heroes of the Storm",
+            _ => null
+        };
     }
 
     // ===================== EA App / Origin =====================
@@ -884,9 +1038,9 @@ public sealed class InstalledGamesService : IInstalledGamesService
 
     /// <summary>
     /// Detecta juegos de GOG Galaxy. Dos fuentes:
-    ///  - Registro de desinstalación: GOG Galaxy registra cada juego instalado con
-    ///    Publisher "GOG.com"; DisplayIcon trae la ruta del exe principal.
-    ///  - Clave clásica HKLM\SOFTWARE\WOW6432Node\GOG.com\Games con gameName/path/exe.
+    /// - Registro de desinstalación: GOG Galaxy registra cada juego instalado con
+    /// Publisher "GOG.com"; DisplayIcon trae la ruta del exe principal.
+    /// - Clave clásica HKLM\SOFTWARE\WOW6432Node\GOG.com\Games con gameName/path/exe.
     /// Los juegos de GOG son DRM-free y el exe es el proceso real en ejecución, así
     /// que las reglas de prioridad/afinidad se aplican normal. El lanzamiento pide
     /// el launcher abierto (la UI decide eso), la detección solo arma la biblioteca.
@@ -1192,7 +1346,7 @@ public sealed class InstalledGamesService : IInstalledGamesService
             string? gameDir = blacksmithRoot == null ? null : FindDarkAndDarkerSubdir(blacksmithRoot);
 
             // 2) Barrido global de unidades: el juego puede estar en otra unidad
-            //    que la del launcher (ej. D:\IRONMACE\Dark and Darker).
+            // que la del launcher (ej. D:\IRONMACE\Dark and Darker).
             if (gameDir == null)
                 gameDir = FindDarkAndDarkerDirsGlobal().FirstOrDefault();
 
@@ -1200,7 +1354,8 @@ public sealed class InstalledGamesService : IInstalledGamesService
 
             var exe = FindDarkAndDarkerExe(gameDir);
             if (exe != null)
-                games.Add(new InstalledGame("Dark and Darker", Path.GetFileName(exe), "Blacksmith", gameDir));
+                games.Add(new InstalledGame("Dark and Darker", Path.GetFileName(exe), "Blacksmith", gameDir,
+                    "", "https://cdn.cloudflare.steamstatic.com/steam/apps/2016590/header.jpg"));
         }
         catch (Exception ex)
         {
@@ -1529,6 +1684,178 @@ public sealed class InstalledGamesService : IInstalledGamesService
         return games;
     }
 
+    // ===================== Itch.io =====================
+
+    /// <summary>
+    /// Detecta juegos instalados con el cliente itch.io. El cliente usa una
+    /// base SQLite (butler.db) en %APPDATA%\itch\db. Cada "cave" (instalación)
+    /// referencia un game con título y cover_url (CDN público de itch). El exe
+    /// real se busca en la carpeta de instalación con el resolver compartido.
+    /// Sin itch instalado: no aparece nada (best-effort).
+    /// </summary>
+    private List<InstalledGame> ScanItch()
+    {
+        var games = new List<InstalledGame>();
+        var dbPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "itch", "db", "butler.db");
+        if (!File.Exists(dbPath)) return games;
+
+        try
+        {
+            var connStr = new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString();
+            using var conn = new SqliteConnection(connStr);
+            conn.Open();
+
+    // Esquema de butler.db (confirmado en clientes modernos):
+    // caves(id, install_location_id, install_folder_name, custom_install_folder, verdict)
+    // games(id, title, cover_url)
+    // install_locations(id, path)
+    // verdict es JSON con el campo "candidates"[].path (exe candidato).
+    // JOIN caves→games por game_id; resolver install dir desde install_locations
+    // + install_folder_name/custom_install_folder.
+            string sql = @"
+                SELECT g.title, g.cover_url,
+                       il.path AS loc_path,
+                       c.install_folder_name, c.custom_install_folder,
+                       c.verdict
+                FROM caves c
+                LEFT JOIN games g ON c.game_id = g.id
+                LEFT JOIN install_locations il ON c.install_location_id = il.id";
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                try
+                {
+                    string? title = reader.IsDBNull(0) ? null : reader.GetString(0);
+                    string? coverUrl = reader.IsDBNull(1) ? reader.GetString(1) : null;
+                    string? locPath = reader.IsDBNull(2) ? null : reader.GetString(2);
+                    string? folderName = reader.IsDBNull(3) ? null : reader.GetString(3);
+                    string? customFolder = reader.IsDBNull(4) ? null : reader.GetString(5);
+                    string? verdictJson = reader.IsDBNull(5) ? null : reader.GetString(5);
+                    if (string.IsNullOrEmpty(title)) continue;
+
+    // Resolver carpeta de instalación.
+                    string installDir = "";
+                    if (!string.IsNullOrEmpty(customFolder))
+                        installDir = customFolder;
+                    else if (!string.IsNullOrEmpty(locPath) && !string.IsNullOrEmpty(folderName))
+                        installDir = Path.Combine(locPath, folderName);
+                    else if (!string.IsNullOrEmpty(locPath))
+                        installDir = locPath;
+
+    // Buscar exe: primero el candidato del verdict (JSON),
+    // sino el resolver compartido por tamaño.
+                    string? exeName = null;
+                    if (!string.IsNullOrEmpty(verdictJson))
+                    {
+                        try
+                        {
+                            using var vdoc = JsonDocument.Parse(verdictJson);
+                            if (vdoc.RootElement.TryGetProperty("candidates", out var cands))
+                            {
+                                foreach (var cand in cands.EnumerateArray())
+                                {
+                                    if (cand.TryGetProperty("path", out var p))
+                                    {
+                                        var cp = p.GetString();
+                                        if (!string.IsNullOrEmpty(cp))
+                                        {
+                                            var full = Path.Combine(installDir, cp);
+                                            if (File.Exists(full)) { exeName = Path.GetFileName(full); break; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                    if (string.IsNullOrEmpty(exeName) && Directory.Exists(installDir))
+                    {
+                        var main = FindMainExe(installDir, title);
+                        if (main != null) exeName = main;
+                    }
+                    if (string.IsNullOrEmpty(exeName)) continue;
+                    games.Add(new InstalledGame(title, exeName, "itch.io", installDir, "", coverUrl ?? ""));
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"InstalledGames: Itch.io butler.db: {ex.Message}");
+        }
+        return games;
+    }
+
+    // ===================== Amazon Games =====================
+
+    /// <summary>
+    /// Detecta juegos instalados con la app de Amazon Games. El cliente usa una
+    /// base SQLite en %LOCALAPPDATA%\Amazon Games\Data\Games\Sql\GameInstallInfo.sqlite
+    /// con tabla DbSet(Id, ProductTitle, InstallDirectory, Installed,
+    /// ProductIconUrl, ProductLogoUrl). El exe real se busca en InstallDirectory
+    /// con el resolver compartido. Lanzamiento vía URI amazon-games://play/<Id>.
+    /// Sin Amazon Games instalado: no aparece nada (best-effort).
+    /// </summary>
+    private List<InstalledGame> ScanAmazonGames()
+    {
+        var games = new List<InstalledGame>();
+        var dbPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Amazon Games", "Data", "Games", "Sql", "GameInstallInfo.sqlite");
+        if (!File.Exists(dbPath)) return games;
+
+        try
+        {
+            var connStr = new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString();
+            using var conn = new SqliteConnection(connStr);
+            conn.Open();
+
+    // DbSet tiene Installed (bit) y los campos de metadatos. Solo listar
+    // los que Installed=1. ProductIconUrl/ProductLogoUrl son CDN público.
+            string sql = "SELECT Id, ProductTitle, InstallDirectory, ProductIconUrl, ProductLogoUrl FROM DbSet WHERE Installed = 1";
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                try
+                {
+                    string? id = reader.IsDBNull(0) ? null : reader.GetString(0);
+                    string? title = reader.IsDBNull(1) ? null : reader.GetString(1);
+                    string? installDir = reader.IsDBNull(2) ? null : reader.GetString(2);
+                    string? iconUrl = reader.IsDBNull(3) ? reader.GetString(3) : null;
+                    string? logoUrl = reader.IsDBNull(4) ? reader.GetString(4) : null;
+                    if (string.IsNullOrEmpty(title) || string.IsNullOrEmpty(installDir)) continue;
+                    if (!Directory.Exists(installDir)) continue;
+                    var exe = FindMainExe(installDir, title);
+                    if (string.IsNullOrEmpty(exe)) continue;
+                    games.Add(new InstalledGame(title, exe, "Amazon",
+                        installDir, id ?? "", iconUrl ?? logoUrl ?? ""));
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"InstalledGames: Amazon Games sqlite: {ex.Message}");
+        }
+        return games;
+    }
+
     // ===================== Emuladores =====================
 
     /// <summary>
@@ -1664,6 +1991,50 @@ public sealed class InstalledGamesService : IInstalledGamesService
             ?? FindInDirs("fbneo64.exe", pf, pf86,
             Path.Combine(pf, "FBNeo"), Path.Combine(pf86, "FBNeo"));
         Add("FBNeo", fbneoExe, "");
+
+ // ==== Emuladores móviles (Android) ====
+ // BlueStacks 5 ya se detecta en ScanStandalone (HD-Player.exe); acá se
+ // cubren los demás emuladores Android de escritorio. Todos usan su propio
+ // exe como proceso real, así que las reglas de prioridad/afinidad y el
+ // badge "En ejecución" funcionan igual que en los demás emuladores.
+
+ // LDPlayer: busca ldnative.exe (>=9) o dnplayer.exe (legacy).
+        var ldDir = GetRegValue(@"SOFTWARE\DnPlayer", "InstallDir")
+            ?? GetRegValue(@"SOFTWARE\WOW6432Node\DnPlayer", "InstallDir");
+        var ldExe = FindInDirs("ldnative.exe", ldDir ?? "", pf, pf86,
+            Path.Combine(pf, "LDPlayer"), Path.Combine(pf86, "LDPlayer"),
+            Path.Combine(pf, "LDPlayer9"), Path.Combine(pf86, "LDPlayer9"))
+            ?? FindInDirs("dnplayer.exe", ldDir ?? "", pf, pf86,
+            Path.Combine(pf, "LDPlayer"), Path.Combine(pf86, "LDPlayer"));
+        Add("LDPlayer", ldExe, ldDir ?? "");
+
+ // Nox: busca Nox.exe. Instala en "Bignox" o "Nox".
+        var noxDir = GetRegValue(@"SOFTWARE\BigNox", "InstallPath")
+            ?? GetRegValue(@"SOFTWARE\WOW6432Node\BigNox", "InstallPath");
+        Add("NoxPlayer", FindInDirs("Nox.exe", noxDir ?? "", pf, pf86,
+            Path.Combine(pf, "Bignox"), Path.Combine(pf86, "Bignox"),
+            Path.Combine(pf, "Nox"), Path.Combine(pf86, "Nox"),
+            Path.Combine(la, "Bignox")), noxDir ?? "");
+
+ // MEmu: busca MEmu.exe. Registro MemuTop\InstallPath o carpeta MEmu.
+        var memuDir = GetRegValue(@"SOFTWARE\MemuTop", "InstallPath")
+            ?? GetRegValue(@"SOFTWARE\WOW6432Node\MemuTop", "InstallPath");
+        Add("MEmu", FindInDirs("MEmu.exe", memuDir ?? "", pf, pf86,
+            Path.Combine(pf, "Microvirt"), Path.Combine(pf86, "Microvirt"),
+            Path.Combine(pf, "MEmu"), Path.Combine(pf86, "MEmu")), memuDir ?? "");
+
+ // Genymotion: busca Genymotion.exe (uso personal/eval). Instala en
+ // Genymobile/Genymotion.
+        Add("Genymotion", FindInDirs("Genymotion.exe", pf, pf86,
+            Path.Combine(pf, "Genymobile"), Path.Combine(pf86, "Genymobile"),
+            Path.Combine(pf, "Genymotion"), Path.Combine(pf86, "Genymotion")), "");
+
+ // MSI App Player: emulador Android de MSI. Busca MSIAppPlayer.exe.
+        Add("MSI App Player", FindInDirs("MSIAppPlayer.exe", pf, pf86,
+            Path.Combine(pf, "MSI"), Path.Combine(pf86, "MSI"),
+            Path.Combine(pf, "MSI App Player"), Path.Combine(pf86, "MSI App Player")), "");
+
+ // Waydroid no se detecta: solo corre en Linux/WSL, no en Windows nativo.
 
         return games;
     }

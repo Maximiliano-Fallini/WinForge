@@ -5,7 +5,7 @@
 
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
-        <!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación / Desarrollo ====== -->
+<!-- ====== NAVBAR INTERNO: Inicio / Actualizaciones / Caché / Navegación / Desarrollo ====== -->
         <Border x:Name="ConfigNavBar" Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="ConfigTabs"
                          Margin="20,10,20,10"
@@ -21,7 +21,7 @@
 
         <Grid Grid.Row="1">
 
-            <!-- ============ PESTAÑA: INICIO ============ -->
+<!-- ============ PESTAÑA: INICIO ============ -->
             <ScrollViewer x:Name="HomeTab" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
 
@@ -160,11 +160,11 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ============ PESTAÑA: ACTUALIZACIONES ============ -->
+<!-- ============ PESTAÑA: ACTUALIZACIONES ============ -->
             <ScrollViewer x:Name="UpdatesTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
 
-                    <!-- Card hero de estado de la actualización -->
+<!-- Card hero de estado de la actualización -->
                     <Border Style="{StaticResource CardStyle}" CornerRadius="20" Padding="28">
                         <StackPanel Spacing="16">
                             <Grid ColumnSpacing="20">
@@ -174,7 +174,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
 
-                                <!-- Badge de estado (círculo con ícono) -->
+<!-- Badge de estado (círculo con ícono) -->
                                 <Border x:Name="UpdateBadge" Width="64" Height="64" CornerRadius="32"
                                         Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                         VerticalAlignment="Center">
@@ -182,7 +182,7 @@
                                               Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 </Border>
 
-                                <!-- Información principal -->
+<!-- Información principal -->
                                 <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
                                     <TextBlock Text="Actualizaciones de WinForge" FontSize="20" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="UpdateStatusText" Text="Comprobando actualizaciones..." FontSize="13"
@@ -192,7 +192,7 @@
                                                TextWrapping="Wrap" Visibility="Collapsed"/>
                                 </StackPanel>
 
-                                <!-- Acciones -->
+<!-- Acciones -->
                                 <StackPanel Grid.Column="2" Spacing="8" VerticalAlignment="Center">
                                     <Button x:Name="InstallUpdateButton" Content="Instalar actualización"
                                             Style="{StaticResource AccentButtonStyle}" FontSize="13" FontWeight="SemiBold"
@@ -205,7 +205,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Card de versiones -->
+<!-- Card de versiones -->
                     <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="20">
                         <StackPanel Spacing="14">
                             <TextBlock Text="Versiones" FontSize="15" FontWeight="SemiBold"/>
@@ -214,7 +214,7 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <!-- Versión instalada -->
+<!-- Versión instalada -->
                                 <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="14">
                                     <StackPanel Spacing="2">
                                         <TextBlock Text="Versión instalada" FontSize="11"
@@ -222,7 +222,7 @@
                                         <TextBlock x:Name="InstalledVersionValue" Text="—" FontSize="20" FontWeight="SemiBold"/>
                                     </StackPanel>
                                 </Border>
-                                <!-- Última publicada -->
+<!-- Última publicada -->
                                 <Border Grid.Column="1" Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="14">
                                     <StackPanel Spacing="2">
                                         <TextBlock Text="Última publicada" FontSize="11"
@@ -240,16 +240,14 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ============ PESTAÑA: CACHÉ (caché de la app + logs de desarrollo) ============ -->
+<!-- ============ PESTAÑA: CACHÉ (caché de la app + logs de desarrollo) ============ -->
             <ScrollViewer x:Name="CacheTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
 
-                    <!-- Caché de la aplicación -->
+<!-- Caché de la aplicación -->
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>
-                            <TextBlock
-                                Text="Borra los banners e íconos de juegos descargados y la biblioteca cacheada. Se regeneran solos la próxima vez. No borra configuración ni logs."
+                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>                            <TextBlock Text="Borra los banners e íconos de juegos descargados, la biblioteca cacheada y desinstala el componente de Overclock USB (servicio, driver y copia descargada; se vuelve a descargar e instalar cuando abras esa sección). Se regeneran solos la próxima vez. No borra configuración ni logs."
                                 FontSize="13"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 TextWrapping="Wrap"/>
@@ -265,7 +263,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Logs de desarrollo -->
+<!-- Logs de desarrollo -->
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch">
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
@@ -304,11 +302,11 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ============ PESTAÑA: NAVEGACIÓN ============ -->
+<!-- ============ PESTAÑA: NAVEGACIÓN ============ -->
             <ScrollViewer x:Name="NavTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
 
-                    <!-- Card hero: estado del menú lateral -->
+<!-- Card hero: estado del menú lateral -->
                     <Border Style="{StaticResource CardStyle}" CornerRadius="20" Padding="28">
                         <StackPanel Spacing="14">
                             <Grid ColumnSpacing="20">
@@ -316,7 +314,7 @@
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <!-- Badge con ícono de menú -->
+<!-- Badge con ícono de menú -->
                                 <Border x:Name="NavBadge" Width="56" Height="56" CornerRadius="16"
                                         Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                         VerticalAlignment="Center">
@@ -330,7 +328,7 @@
                                 </StackPanel>
                             </Grid>
 
-                            <!-- Progreso: cuántas pestañas están visibles -->
+<!-- Progreso: cuántas pestañas están visibles -->
                             <StackPanel Spacing="6">
                                 <Grid ColumnSpacing="10">
                                     <Grid.ColumnDefinitions>
@@ -348,7 +346,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Lista de secciones agrupadas por categoría -->
+<!-- Lista de secciones agrupadas por categoría -->
                     <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="20">
                         <StackPanel Spacing="4">
                             <TextBlock Text="Secciones del menú" FontSize="15" FontWeight="SemiBold"/>
@@ -362,7 +360,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ============ PESTAÑA: DESARROLLO (solo si la build supera la release) ============ -->
+<!-- ============ PESTAÑA: DESARROLLO (solo si la build supera la release) ============ -->
             <ScrollViewer x:Name="DevTab" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
@@ -372,7 +370,7 @@
                             <TextBlock Text="Esta sección solo aparece en builds de desarrollo (versión superior a la publicada en GitHub)."
                                        FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 
-                            <!-- Reposicionamiento de pantalla -->
+<!-- Reposicionamiento de pantalla -->
                             <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Reposicionamiento de ventana" FontSize="14" FontWeight="SemiBold"/>
@@ -390,7 +388,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Logs de desarrollo: se administran desde la pestaña Caché. -->
+<!-- Logs de desarrollo: se administran desde la pestaña Caché. -->
                             <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16" Visibility="Collapsed">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Logs de desarrollo" FontSize="14" FontWeight="SemiBold"/>
@@ -399,7 +397,7 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Info de versión -->
+<!-- Info de versión -->
                             <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="Información de versión" FontSize="14" FontWeight="SemiBold"/>

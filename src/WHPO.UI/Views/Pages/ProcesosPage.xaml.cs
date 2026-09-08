@@ -24,7 +24,7 @@ using WHPO_UI.Services;
 namespace WHPO_UI.Views.Pages;
 
 /// <summary>
-/// Gestión de procesos estilo Process Lasso: tabla en vivo con nombre, usuario,
+/// Gestión de procesos estilo gestor de procesos: tabla en vivo con nombre, usuario,
 /// estado, reglas, prioridades (CPU/GPU), afinidad, %CPU, %GPU, nombre de la
 /// aplicación y ruta del ejecutable. Cada fila permite aplicar las mismas reglas
 /// que los juegos (prioridad de CPU/GPU, afinidad, plan de energía) con alcance
@@ -445,7 +445,7 @@ public sealed partial class ProcesosPage : Page
         _ = DispatcherQueue.TryEnqueue(UpdateScrollbarInsets);
     }
 
-    // ===== Cabecera de columnas (ordenable, como Process Lasso) =====
+    // ===== Cabecera de columnas (ordenable, como los gestores de procesos) =====
 
     private void AddColumns(Grid grid)
     {
@@ -923,7 +923,7 @@ public sealed partial class ProcesosPage : Page
 
     // ===== Snapshot nativo de procesos (NtQuerySystemInformation) =====
     // Una sola llamada al kernel devuelve todos los procesos con su tiempo de CPU
-    // (user+kernel). Es lo que usa el Administrador de tareas y Process Lasso:
+    // (user+kernel). Es lo que usa el Administrador de tareas:
     // cero objetos Process y casi cero syscalls por tick en estado estable.
 
     private const int SystemProcessInformation = 5;
@@ -961,7 +961,7 @@ public sealed partial class ProcesosPage : Page
     /// <summary>
     /// Mapa PID → ParentPid usando CreateToolhelp32Snapshot. Se usa cuando el
     /// snapshot nativo (NtQuerySystemInformation) falla: el fallback managed de
-    /// Process.GetProcesses() no trae el PID del padre, así que sin esto los
+    /// Process.GetProcesses no trae el PID del padre, así que sin esto los
     /// chevrons de árbol nunca aparecen (todos los procesos quedan con ParentPid=0).
     /// </summary>
     private static Dictionary<int, int>? GetParentPidMap()
@@ -1029,18 +1029,18 @@ public sealed partial class ProcesosPage : Page
                     int next = Marshal.ReadInt32((IntPtr)p);
                     // Layout x64 de SYSTEM_PROCESS_INFORMATION (Win10/11), con
                     // alineación a 8 bytes en campos HANDLE/SIZE_T:
-                    //   +0 NextEntryOffset        +4 NumberOfThreads
-                    //   +8 WorkingSetPrivateSize  +16 HardFaultCount
-                    //   +20 ThreadsHighWatermark  +24 CycleTime
-                    //   +32 CreateTime            +40 UserTime
-                    //   +48 KernelTime            +56 ImageName.Length
-                    //   +58 ImageName.MaxLength   +64 ImageName.Buffer
-                    //   +72 BasePriority          +80 UniqueProcessId
-                    //   +88 InheritedFromUniqueProcessId (PID padre)
-                    //   +96 HandleCount           +100 SessionId
-                    //   +104 UniqueProcessKey     +112 PeakVirtualSize
-                    //   +120 VirtualSize          +128 PageFaultCount
-                    //   +136 PeakWorkingSetSize   +144 WorkingSetSize
+                    // +0 NextEntryOffset +4 NumberOfThreads
+                    // +8 WorkingSetPrivateSize +16 HardFaultCount
+                    // +20 ThreadsHighWatermark +24 CycleTime
+                    // +32 CreateTime +40 UserTime
+                    // +48 KernelTime +56 ImageName.Length
+                    // +58 ImageName.MaxLength +64 ImageName.Buffer
+                    // +72 BasePriority +80 UniqueProcessId
+                    // +88 InheritedFromUniqueProcessId (PID padre)
+                    // +96 HandleCount +100 SessionId
+                    // +104 UniqueProcessKey +112 PeakVirtualSize
+                    // +120 VirtualSize +128 PageFaultCount
+                    // +136 PeakWorkingSetSize +144 WorkingSetSize
                     int threads = Marshal.ReadInt32((IntPtr)(p + 4));
                     ushort nameLen = (ushort)Marshal.ReadInt16((IntPtr)(p + 56));
                     IntPtr namePtr = Marshal.ReadIntPtr((IntPtr)(p + 64));
@@ -1818,7 +1818,7 @@ public sealed partial class ProcesosPage : Page
         return ui;
     }
 
-    // ===== Selección de filas (clic izquierdo, estilo Process Lasso) =====
+    // ===== Selección de filas (clic izquierdo, estilo gestor de procesos) =====
 
     private void OnRowTapped(object sender, TappedRoutedEventArgs e)
     {

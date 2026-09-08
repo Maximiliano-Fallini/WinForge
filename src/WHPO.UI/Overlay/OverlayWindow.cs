@@ -1096,10 +1096,10 @@ public sealed class OverlayWindow : Form
 
     /// <summary>
     /// Normaliza las filas de métricas a la invariante del overlay:
-    ///  - cada fila es de UN solo grupo (cpu/gpu/ram/fps),
-    ///  - los grupos aparecen en orden fijo cpu → gpu → ram → fps,
-    ///  - la métrica core (la %) encabeza la primera fila de su grupo,
-    ///  - las sub-filas del grupo siguen a la fila core (preservando el orden).
+    /// - cada fila es de UN solo grupo (cpu/gpu/ram/fps),
+    /// - los grupos aparecen en orden fijo cpu → gpu → ram → fps,
+    /// - la métrica core (la %) encabeza la primera fila de su grupo,
+    /// - las sub-filas del grupo siguen a la fila core (preservando el orden).
     /// Separa filas mezcladas de configs viejas y corrige métricas mal ubicadas
     /// (ej. cpuUsage que quedó "abajo" en la zona de la GPU se devuelve arriba).
     /// </summary>

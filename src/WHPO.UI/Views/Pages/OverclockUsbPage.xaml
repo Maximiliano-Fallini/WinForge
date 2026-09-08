@@ -1,0 +1,406 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="WHPO_UI.Views.Pages.OverclockUsbPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Page.Resources>
+        <Style x:Key="OverclockUsbToolbarButtonStyle" TargetType="Button">
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+            <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="OverclockUsbFeatureRowStyle" TargetType="StackPanel">
+            <Setter Property="Orientation" Value="Horizontal"/>
+            <Setter Property="Spacing" Value="10"/>
+        </Style>
+    </Page.Resources>
+
+    <Grid Background="{ThemeResource AppBackgroundBrush}">
+
+ <!-- ================================================================
+             PANEL PRINCIPAL: grilla de dispositivos (visible cuando los
+             componentes del sistema ya están instalados)
+             ================================================================ -->
+        <Grid x:Name="MainPanel" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+ <!-- ====== CABECERA ====== -->
+            <StackPanel Margin="24,16,24,0" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE88E;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Overclock USB" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock x:Name="StatusText"
+                           Text=""
+                           FontSize="12"
+                           Visibility="Collapsed"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+
+ <!-- ====== BARRA DE ACCIONES (estilo el filtro) ======
+                 Fila 1: selector de hercios + aplicar/reiniciar/restaurar sobre el
+                 dispositivo seleccionado. Fila 2: servicio + filtro por tipo + refrescar. -->
+            <Grid Grid.Row="1" Margin="24,10,24,0" RowSpacing="8">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <ComboBox x:Name="RateCombo"
+                              MinWidth="150"
+                              VerticalAlignment="Center"
+                              ToolTipService.ToolTip="Tasa de sondeo a aplicar al dispositivo seleccionado"/>
+                    <Button x:Name="ApplyRateButton"
+                            Grid.Column="1"
+                            Content="Aplicar y reiniciar"
+                            Click="ApplyRateButton_Click"
+                            Style="{StaticResource OverclockUsbToolbarButtonStyle}"
+                            IsEnabled="False"
+                            VerticalAlignment="Center"/>
+                    <Button x:Name="RestartButton"
+                            Grid.Column="2"
+                            Content="Reiniciar dispositivo"
+                            Click="RestartButton_Click"
+                            Style="{StaticResource OverclockUsbToolbarButtonStyle}"
+                            IsEnabled="False"
+                            VerticalAlignment="Center"/>
+                    <Button x:Name="RestoreButton"
+                            Grid.Column="3"
+                            Content="Restaurar de fábrica"
+                            Click="RestoreButton_Click"
+                            Style="{StaticResource OverclockUsbToolbarButtonStyle}"
+                            IsEnabled="False"
+                            VerticalAlignment="Center"/>
+                    <TextBlock Grid.Column="4"
+                               x:Name="SelectedDeviceHint"
+                               Text="Seleccioná un dispositivo de la lista para usar estas acciones."
+                               FontSize="11"
+                               Foreground="{ThemeResource MutedBrush}"
+                               VerticalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"/>
+                </Grid>
+
+                <Grid Grid.Row="1" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="ServiceButton"
+                            Grid.Column="0"
+                            Click="ServiceButton_Click"
+                            Style="{StaticResource OverclockUsbToolbarButtonStyle}"
+                            VerticalAlignment="Center"/>
+                    <TextBlock x:Name="ServiceStateText"
+                               Grid.Column="1"
+                               FontSize="11"
+                               Foreground="{ThemeResource MutedBrush}"
+                               VerticalAlignment="Center"
+                               Text=""/>
+                    <StackPanel Grid.Column="3"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Center">
+                        <Button x:Name="RefreshButton"
+                                Content="Refrescar"
+                                Click="RefreshButton_Click"
+                                Style="{StaticResource OverclockUsbToolbarButtonStyle}"
+                                VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
+ <!-- ====== GRILLA DE DISPOSITIVOS ======
+                 Estilo Gestión de Procesos: cabecera de ancho fijo por columna
+                 (reordenable arrastrando y redimensionable desde el borde derecho),
+                 filas con scroll propio — la cabecera se desplaza en sincronía con el
+                 scroll horizontal de las filas y los scrollbars van en canaletas
+                 aparte, fuera del viewport, para nunca tapar contenido. -->
+            <Border Grid.Row="2"
+                    Margin="24,10,24,16"
+                    BorderBrush="{ThemeResource SensorGridLineBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+ <!-- Cabecera de columnas (se desplaza en sincronía con las filas). -->
+                    <Grid x:Name="HeaderHost"
+                          Grid.Row="0" Grid.Column="0"
+                          Height="40"
+                          Background="{ThemeResource SensorGroupFillBrush}">
+                        <Grid x:Name="HeaderGrid" Height="40" HorizontalAlignment="Left"/>
+                        <Rectangle Height="1"
+                                   VerticalAlignment="Bottom"
+                                   Fill="{ThemeResource SensorGridLineBrush}"
+                                   IsHitTestVisible="False"/>
+                    </Grid>
+
+ <!-- Filas: ScrollViewer con scrollbars ocultos (se dibujan propios en
+                         las canaletas de abajo y de la derecha, fuera del viewport). -->
+                    <Grid Grid.Row="1" Grid.Column="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <ScrollViewer x:Name="RowsScroll"
+                                      Grid.Row="0"
+                                      HorizontalScrollBarVisibility="Hidden"
+                                      HorizontalScrollMode="Auto"
+                                      VerticalScrollBarVisibility="Hidden"
+                                      VerticalScrollMode="Auto"
+                                      ViewChanged="RowsScroll_ViewChanged">
+                            <StackPanel x:Name="RowsPanel" Spacing="0"/>
+                        </ScrollViewer>
+
+ <!-- Barra horizontal en su canaleta inferior (solo si desborda). -->
+                        <ScrollBar x:Name="HScrollBar"
+                                   Grid.Row="1"
+                                   Orientation="Horizontal"
+                                   Height="12"
+                                   Margin="0,4,0,0"
+                                   IndicatorMode="MouseIndicator"
+                                   Visibility="Collapsed"/>
+                    </Grid>
+
+ <!-- Barra vertical en su canaleta derecha (solo si desborda). -->
+                    <ScrollBar x:Name="VScrollBar"
+                               Grid.Row="1" Grid.Column="1"
+                               Orientation="Vertical"
+                               Width="12"
+                               Margin="4,0,0,0"
+                               IndicatorMode="MouseIndicator"
+                               Visibility="Collapsed"/>
+
+ <!-- Estado vacío (sin dispositivos o sin coincidencias) -->
+                    <StackPanel x:Name="EmptyStatePanel"
+                                Grid.RowSpan="2"
+                                Grid.ColumnSpan="2"
+                                Visibility="Collapsed"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Spacing="10">
+                        <FontIcon Glyph="&#xE88E;" FontSize="34"
+                                  Foreground="{ThemeResource SecondaryTextBrush}"
+                                  HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="EmptyStateText"
+                                   Text=""
+                                   FontSize="13"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   MaxWidth="420"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+ <!-- ================================================================
+             PUERTA DE ENTRADA: descargar e instalar los componentes del
+             sistema para desbloquear esta sección (texto 100% genérico,
+             sin nombres internos de componentes)
+             ================================================================ -->
+        <Grid x:Name="GatePanel">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel MaxWidth="620"
+                            HorizontalAlignment="Center"
+                            Padding="32,28,32,36"
+                            Spacing="0">
+
+ <!-- Tarjeta principal -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            BorderBrush="{ThemeResource SensorGridLineBrush}"
+                            BorderThickness="1"
+                            CornerRadius="12"
+                            Padding="30">
+                        <StackPanel Spacing="0">
+
+ <!-- Encabezado con insignia -->
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <Border Width="46"
+                                        Height="46"
+                                        CornerRadius="10"
+                                        Background="{ThemeResource AppBackgroundBrush}"
+                                        BorderBrush="{ThemeResource AccentBrush}"
+                                        BorderThickness="1.5">
+                                    <FontIcon Glyph="&#xE88E;"
+                                              FontSize="20"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Text="Overclock USB"
+                                               FontSize="20"
+                                               FontWeight="SemiBold"/>
+                                    <TextBlock Text="Tasa de sondeo de tus periféricos"
+                                               FontSize="12"
+                                               Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <TextBlock Text="Descargá los componentes para desbloquear este apartado"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       Margin="0,22,0,0"
+                                       TextWrapping="Wrap"/>
+
+                            <TextBlock Text="Overclock USB ajusta la tasa de sondeo (polling rate) de tus periféricos USB — mouses, teclados y mandos — para reducir la latencia de respuesta. Antes de usarlo, WinForge necesita instalar un pequeño componente del sistema en tu PC."
+                                       FontSize="13"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       Margin="0,10,0,0"
+                                       LineHeight="20"
+                                       TextWrapping="Wrap"/>
+
+ <!-- Qué incluye -->
+                            <StackPanel Margin="0,18,0,0" Spacing="8">
+                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
+                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              VerticalAlignment="Center"/>
+                                    <TextBlock Text="Reducí la latencia de respuesta de tus periféricos"
+                                               FontSize="13" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
+                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              VerticalAlignment="Center"/>
+                                    <TextBlock Text="Consultá la tasa de sondeo real (Hz) de cada dispositivo"
+                                               FontSize="13" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
+                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              VerticalAlignment="Center"/>
+                                    <TextBlock Text="Subí la tasa hasta 1000 Hz o bajala (downclock) para estabilizar"
+                                               FontSize="13" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
+                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              VerticalAlignment="Center"/>
+                                    <TextBlock Text="Restaurá los valores de fábrica con un clic"
+                                               FontSize="13" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Rectangle Height="1"
+                                       Fill="{ThemeResource SensorGridLineBrush}"
+                                       Margin="0,18,0,0"
+                                       IsHitTestVisible="False"/>
+
+ <!-- Nota de transparencia -->
+                            <Grid Margin="0,16,0,0" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE946;"
+                                          FontSize="13"
+                                          Foreground="{ThemeResource AccentBrush}"
+                                          VerticalAlignment="Top"
+                                          Margin="1,1,0,0"/>
+                                <TextBlock Grid.Column="1"
+                                           Text="Es un motor de polling del sistema (software libre y de código abierto). Se descarga solo desde su repositorio oficial por HTTPS, se instala una única vez y no se envía ningún dato."
+                                           FontSize="11"
+                                           Foreground="{ThemeResource MutedBrush}"
+                                           LineHeight="16"
+                                           TextWrapping="Wrap"/>
+                            </Grid>
+
+ <!-- Acción principal -->
+                            <StackPanel Margin="0,20,0,0">
+                                <Button x:Name="DownloadComponentsButton"
+                                        Content="Descargar e instalar componentes"
+                                        Click="DownloadComponentsButton_Click"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        FontWeight="SemiBold"
+                                        CornerRadius="8"
+                                        Padding="26,12"
+                                        MinWidth="340"
+                                        HorizontalAlignment="Center"/>
+                            </StackPanel>
+
+ <!-- Progreso de la instalación -->
+                            <StackPanel x:Name="GateProgressArea"
+                                        Orientation="Horizontal"
+                                        Spacing="10"
+                                        Visibility="Collapsed"
+                                        Margin="0,18,0,0">
+                                <ProgressRing x:Name="GateProgressRing"
+                                              IsActive="False"
+                                              IsIndeterminate="True"
+                                              Width="18"
+                                              Height="18"
+                                              VerticalAlignment="Center"/>
+                                <TextBlock x:Name="GateStatusText"
+                                           Text=""
+                                           FontSize="13"
+                                           Foreground="{ThemeResource SecondaryTextBrush}"
+                                           VerticalAlignment="Center"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+
+ <!-- Error de la descarga -->
+                            <TextBlock x:Name="GateErrorText"
+                                       Text=""
+                                       FontSize="13"
+                                       Foreground="{ThemeResource ErrorBrush}"
+                                       Visibility="Collapsed"
+                                       Margin="0,16,0,0"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="Overclock USB ya está incluido en la app: al instalar los componentes se activa la lista de dispositivos, el ajuste por popup y la restauración de fábrica."
+                               FontSize="11"
+                               Foreground="{ThemeResource MutedBrush}"
+                               Margin="6,14,6,0"
+                               TextWrapping="Wrap"/>
+                    <HyperlinkButton x:Name="HidusbfAdvancedLink"
+                                     Content="¿Cómo funciona esta sección?"
+                                     Click="HowItWorksLink_Click"
+                                     FontSize="11"
+                                     Margin="6,6,6,0"
+                                     HorizontalAlignment="Left"/>
+                    <TextBlock x:Name="HowItWorksDetail"
+                               Text=""
+                               FontSize="11"
+                               Foreground="{ThemeResource MutedBrush}"
+                               Visibility="Collapsed"
+                               Margin="6,4,6,0"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Page>

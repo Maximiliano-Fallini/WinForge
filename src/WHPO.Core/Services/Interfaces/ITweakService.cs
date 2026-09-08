@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 namespace WHPO.Core.Services.Interfaces;
 
 /// <summary>
-/// Servicio para aplicar y revertir tweaks del sistema.
+/// Servicio para aplicar tweaks del sistema.
 /// </summary>
 public interface ITweakService
 {
@@ -27,15 +27,9 @@ public interface ITweakService
 
     /// <summary>
     /// Aplica un tweak del sistema. Si se pasa <paramref name="progress"/>, reporta
-    /// los comandos reales que ejecuta (estilo cmd/winutil).
+    /// los comandos reales que ejecuta (estilo consola).
     /// </summary>
     Task<TweakResult> ApplyTweakAsync(string tweakId, IProgress<string>? progress = null);
-
-    /// <summary>
-    /// Revierte un tweak del sistema. Si se pasa <paramref name="progress"/>, reporta
-    /// los comandos reales que ejecuta (estilo cmd/winutil).
-    /// </summary>
-    Task<TweakResult> RevertTweakAsync(string tweakId, IProgress<string>? progress = null);
 
     /// <summary>
     /// Evento que se dispara cuando cambia el estado de un tweak.
@@ -56,7 +50,7 @@ public interface ITweakService
 }
 
 /// <summary>
-/// Definición completa de un tweak con su acción de aplicar y revertir.
+/// Definición completa de un tweak con su acción de aplicar.
 /// </summary>
 public record TweakDefinition(
     string Id,
@@ -68,7 +62,6 @@ public record TweakDefinition(
     bool RequiresAdmin,
     Func<bool> CheckApplied,
     Func<Task<TweakResult>> ApplyAction,
-    Func<Task<TweakResult>> RevertAction,
     Func<bool>? AppInstalled = null,
     // Nombre alternativo cuando la app asociada NO está instalada (p. ej.
     // "O&O ShutUp10++ - Instalar" vs "- Ejecutar"). Si es null, se usa Name.
@@ -76,7 +69,7 @@ public record TweakDefinition(
 );
 
 /// <summary>
-/// Resultado de aplicar o revertir un tweak.
+/// Resultado de aplicar un tweak.
 /// </summary>
 public record TweakResult(
     bool Success,

@@ -9,8 +9,8 @@
 
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
-        <!-- ====== NAVBAR INTERNO: Núcleos / Gestionar / Comparar ====== -->
-        <!-- Borde de ancho completo con el color del navbar: la franja conecta con
+<!-- ====== NAVBAR INTERNO: Núcleos / Gestionar / Comparar ====== -->
+<!-- Borde de ancho completo con el color del navbar: la franja conecta con
              el panel izquierdo y el borde superior sin quedar recortada por márgenes. -->
         <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="PlanTabs"
@@ -25,9 +25,9 @@
 
         <Grid Grid.Row="1">
 
-            <!-- ====== SKELETON DE CARGA (mismo estilo que Sistema) ====== -->
+<!-- ====== SKELETON DE CARGA (mismo estilo que Sistema) ====== -->
             <StackPanel x:Name="PageSkeleton" Spacing="16" Margin="24,12,24,24" IsHitTestVisible="False">
-                <!-- Card: gráfico de temperatura -->
+<!-- Card: gráfico de temperatura -->
                 <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="14">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -40,7 +40,7 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Cards de métricas (uso / temperatura / clock) -->
+<!-- Cards de métricas (uso / temperatura / clock) -->
                 <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                     <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="16">
                         <StackPanel Spacing="12">
@@ -77,7 +77,7 @@
                     </Border>
                 </Grid>
 
-                <!-- Card: núcleos del procesador -->
+<!-- Card: núcleos del procesador -->
                 <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="14">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -103,7 +103,7 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Card: plan de energía -->
+<!-- Card: plan de energía -->
                 <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="10">
@@ -123,23 +123,23 @@
                 </Border>
             </StackPanel>
 
-            <!-- ==================== PESTAÑA 1: NÚCLEOS (contenido existente) ==================== -->
+<!-- ==================== PESTAÑA 1: NÚCLEOS (contenido existente) ==================== -->
             <ScrollViewer x:Name="PageContent" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
                 <StackPanel Spacing="16" Margin="24,12,24,24">
 
-                    <!-- ============ GRÁFICO DE TEMPERATURA DEL CPU (estilo Administrador de tareas) ============ -->
+<!-- ============ GRÁFICO DE TEMPERATURA DEL CPU (estilo Administrador de tareas) ============ -->
                     <Border Background="{ThemeResource CardBackgroundBrush}"
                             CornerRadius="12"
                             Padding="16">
                         <Grid RowDefinitions="Auto,*" RowSpacing="12">
-                            <!-- Cabecera del gráfico -->
+<!-- Cabecera del gráfico -->
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                                     <FontIcon Glyph="&#xE950;" FontSize="16" Foreground="{ThemeResource MetricUsageBrush}" VerticalAlignment="Center"/>
                                     <TextBlock Text="Temperatura del CPU" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                 </StackPanel>
 
-                                <!-- Leyenda de umbrales térmicos -->
+<!-- Leyenda de umbrales térmicos -->
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Ellipse Width="10" Height="10" Fill="{ThemeResource MetricTempBrush}" VerticalAlignment="Center"/>
@@ -156,14 +156,14 @@
                                 </StackPanel>
                             </Grid>
 
-                            <!-- Gráfico + eje Y -->
+<!-- Gráfico + eje Y -->
                             <Grid Grid.Row="1" ColumnDefinitions="40,*" ColumnSpacing="10">
-                                <!-- Eje Y (temperaturas): fondo oscuro en ambos temas para que la
+<!-- Eje Y (temperaturas): fondo oscuro en ambos temas para que la
                                      zona del gráfico se lea como una "pantalla" única (el plot también
                                      es oscuro) y las etiquetas mantengan buen contraste en modo claro. -->
                                 <Canvas x:Name="YAxisCanvas" Width="40" Height="248" VerticalAlignment="Top" Background="{ThemeResource ChartBackgroundBrush}"/>
 
-                                <!-- Gráfico con scroll horizontal -->
+<!-- Gráfico con scroll horizontal -->
                                 <Grid Grid.Column="1">
                                     <ScrollViewer x:Name="ChartScroll"
                                                   HorizontalScrollBarVisibility="Auto"
@@ -173,12 +173,12 @@
                                                   ZoomMode="Disabled">
                                         <Grid x:Name="ChartInner" Width="1200" Height="248">
                                             <Canvas x:Name="ChartCanvas" Width="1200" Height="248" Background="{ThemeResource ChartBackgroundBrush}"/>
-                                            <!-- Capa de hover: cruz + etiqueta con temperatura exacta y hora -->
+<!-- Capa de hover: cruz + etiqueta con temperatura exacta y hora -->
                                             <Canvas x:Name="HoverCanvas" Width="1200" Height="248" IsHitTestVisible="False"/>
                                         </Grid>
                                     </ScrollViewer>
 
-                                    <!-- Aviso térmico (a la derecha del gráfico) -->
+<!-- Aviso térmico (a la derecha del gráfico) -->
                                     <Border x:Name="ThermalWarningBadge"
                                             HorizontalAlignment="Right"
                                             VerticalAlignment="Top"
@@ -197,11 +197,11 @@
                         </Grid>
                     </Border>
 
-                    <!-- ============ CARDS DE MÉTRICAS (actual + mínimo + máximo) ============ -->
-                    <!-- OJO: cada card necesita su Grid.Column; sin él todas caen en la columna 0
+<!-- ============ CARDS DE MÉTRICAS (actual + mínimo + máximo) ============ -->
+<!-- OJO: cada card necesita su Grid.Column; sin él todas caen en la columna 0
                          y se superponen (solo se veía la última, la de frecuencia). -->
                     <Grid x:Name="MetricsGrid" ColumnDefinitions="*,*,*" ColumnSpacing="12">
-                        <!-- Uso del procesador -->
+<!-- Uso del procesador -->
                         <Border x:Name="CardUsageBorder" Grid.Column="0" Background="{ThemeResource CardBackgroundBrush}"
                                 CornerRadius="10"
                                 Padding="16">
@@ -225,7 +225,7 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- Temperatura -->
+<!-- Temperatura -->
                         <Border x:Name="CardTempBorder" Grid.Column="1" Background="{ThemeResource CardBackgroundBrush}"
                                 CornerRadius="10"
                                 Padding="16">
@@ -248,7 +248,7 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- Frecuencia (Clock) -->
+<!-- Frecuencia (Clock) -->
                         <Border x:Name="CardClockBorder" Grid.Column="2" Background="{ThemeResource CardBackgroundBrush}"
                                 CornerRadius="10"
                                 Padding="16">
@@ -272,7 +272,7 @@
                         </Border>
                     </Grid>
 
-                    <!-- ============ NÚCLEOS DEL PROCESADOR ============ -->
+<!-- ============ NÚCLEOS DEL PROCESADOR ============ -->
                     <Border Background="{ThemeResource CardBackgroundBrush}"
                             CornerRadius="12"
                             Padding="16">
@@ -283,7 +283,7 @@
                                     <TextBlock Text="Núcleos del procesador" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                 </StackPanel>
 
-                                <!-- Leyenda -->
+<!-- Leyenda -->
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <Border Width="14" Height="14" CornerRadius="3" Background="{ThemeResource MetricTempBrush}"/>
@@ -296,7 +296,7 @@
                                 </StackPanel>
                             </Grid>
 
-                            <!-- Barras por núcleo (se crean desde código) -->
+<!-- Barras por núcleo (se crean desde código) -->
                             <ItemsControl x:Name="CoresHost">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -307,7 +307,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ============ PLAN DE ENERGÍA (selector, se mantiene) ============ -->
+<!-- ============ PLAN DE ENERGÍA (selector, se mantiene) ============ -->
                     <Border Background="{ThemeResource CardBackgroundBrush}"
                             CornerRadius="12"
                             Padding="16">
@@ -344,7 +344,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ==================== PESTAÑA 2: GESTIONAR PLANES DE ENERGÍA ==================== -->
+<!-- ==================== PESTAÑA 2: GESTIONAR PLANES DE ENERGÍA ==================== -->
             <ScrollViewer x:Name="GestionarTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
                 <StackPanel Spacing="16" Margin="24,12,24,24">
                     <Border Background="{ThemeResource CardBackgroundBrush}"
@@ -360,7 +360,7 @@
                                        Foreground="{ThemeResource SecondaryTextBrush}"
                                        TextWrapping="Wrap"/>
 
-                            <!-- Cabecera de columnas -->
+<!-- Cabecera de columnas -->
                             <Grid ColumnDefinitions="2*,1.1*,3*,0.7*" ColumnSpacing="12" Padding="4,0,4,4">
                                 <TextBlock Text="Nombre" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 <TextBlock Grid.Column="1" Text="ID" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
@@ -399,7 +399,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- ===== INSTALAR PLANES DE ENERGÍA ===== -->
+<!-- ===== INSTALAR PLANES DE ENERGÍA ===== -->
                     <Border Background="{ThemeResource CardBackgroundBrush}"
                             CornerRadius="12"
                             Padding="16">
@@ -413,7 +413,7 @@
                                        Foreground="{ThemeResource SecondaryTextBrush}"
                                        TextWrapping="Wrap"/>
 
-                            <!-- Cabecera de columnas -->
+<!-- Cabecera de columnas -->
                             <Grid ColumnDefinitions="1.6*,2.4*,0.9*,0.9*" ColumnSpacing="12" Padding="4,0,4,4">
                                 <TextBlock Text="Plan" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 <TextBlock Grid.Column="1" Text="Descripción" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
@@ -441,11 +441,11 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ==================== PESTAÑA 3: COMPARAR PLANES DE ENERGÍA ==================== -->
+<!-- ==================== PESTAÑA 3: COMPARAR PLANES DE ENERGÍA ==================== -->
             <ScrollViewer x:Name="CompararTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
                 <StackPanel Spacing="16" Margin="24,12,24,24">
 
-                    <!-- Configuración de la comparación -->
+<!-- Configuración de la comparación -->
                     <Border Background="{ThemeResource CardBackgroundBrush}"
                             CornerRadius="12"
                             Padding="16">
@@ -506,7 +506,7 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Resultado: dos cuadrículas lado a lado dentro del MISMO scroll.
+<!-- Resultado: dos cuadrículas lado a lado dentro del MISMO scroll.
                          OJO: el scroll queda deshabilitado en el interno a propósito:
                          si está activo, se traga la rueda del mouse sobre las cuadrículas
                          y la página no scrollea. El vertical lo maneja el ScrollViewer de
@@ -520,7 +520,7 @@
                                   HorizontalScrollMode="Disabled"
                                   ZoomMode="Disabled">
                         <StackPanel Spacing="10">
-                            <!-- Botones para expandir/cerrar todos los subgrupos: aparecen
+<!-- Botones para expandir/cerrar todos los subgrupos: aparecen
                                  después de comparar, junto con la cuadrícula de resultados. -->
                             <StackPanel x:Name="CompareActionsPanel"
                                         Orientation="Horizontal"

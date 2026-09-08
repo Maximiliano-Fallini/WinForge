@@ -356,7 +356,7 @@ public class CpuPowerService : ICpuPowerService
 
             foreach (var line in lines)
             {
-                // Formato:  [GUID  (Nombre)  *]
+                // Formato: [GUID (Nombre) *]
                 var match = Regex.Match(line, @"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s*\(([^)]*)\)");
                 if (!match.Success) continue;
 
@@ -632,7 +632,7 @@ public class CpuPowerService : ICpuPowerService
             if (string.IsNullOrWhiteSpace(planGuid) || string.IsNullOrWhiteSpace(newName))
                 return new CommandResult(false, "Se necesita el GUID y el nuevo nombre del plan.");
 
-            var output = await Task.Run(() => RunPowerCfg($"/setname {planGuid} \"{newName}\""));
+            var output = await Task.Run(() => RunPowerCfg($"/changename {planGuid} \"{newName}\""));
             if (ContainsPowerCfgError(output))
             {
                 _loggingService.LogWarning($"Error renombrando plan {planGuid}: {output.Trim()}");
@@ -718,7 +718,7 @@ public class CpuPowerService : ICpuPowerService
             }
 
             // 2) Renombrar.
-            var rename = await Task.Run(() => RunPowerCfg($"/setname {newGuid} \"{name}\""));
+            var rename = await Task.Run(() => RunPowerCfg($"/changename {newGuid} \"{name}\""));
             if (ContainsPowerCfgError(rename))
             {
                 _loggingService.LogWarning($"Error renombrando plan custom {newGuid}: {rename.Trim()}");
@@ -735,10 +735,11 @@ public class CpuPowerService : ICpuPowerService
                 });
             }
 
-            // 4) Activar para que los valores queden efectivos.
-            await Task.Run(() => RunPowerCfg($"/setactive {newGuid}"));
-
-            _loggingService.LogInfo($"Plan custom creado: {name} ({newGuid})");
+            // 4) SIN activar: el plan queda creado con sus tunings guardados y el
+ // usuario lo activa explícitamente con el botón "Activar" (igual que
+ // InstallBuiltInSchemeAsync). Activarlo acá cambiaba el plan activo
+ // del usuario de golpe sin pedirlo.
+            _loggingService.LogInfo($"Plan custom creado: {name} ({newGuid}) (sin activar)");
             return new CommandResult(true, $"Plan \"{name}\" instalado correctamente.", "Plan \"{0}\" instalado correctamente.", new object?[] { name });
         }
         catch (Exception ex)

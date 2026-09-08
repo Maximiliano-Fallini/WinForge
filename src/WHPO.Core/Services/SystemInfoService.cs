@@ -29,10 +29,25 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     private readonly List<PerformanceCounter> _networkReceiveCounters = new();
     private readonly List<PerformanceCounter> _networkSendCounters = new();
     private readonly List<PerformanceCounter> _gpuCounters = new();
+ // Uso de GPU por adaptador: los contadores "GPU Engine" llevan el LUID del
+ // adaptador en el nombre de instancia (pid_x_luid_0xHHHH_0xLLLL_phys_...).
+ // La clave es "{HighPart:X8}{LowPart:X8}" en minúsculas, igual que la que
+ // genera BuildGpuLuidNameMap (EnumDisplayDevices + D3DKMTOpenAdapterFromHdc).
+    private readonly Dictionary<string, List<PerformanceCounter>> _gpuCountersByLuid = new(StringComparer.OrdinalIgnoreCase);
+ // Mapa LUID → nombre visible de la GPU , se
+ // construye una sola vez bajo demanda con EnumDisplayDevices + D3DKMT.
+    private Dictionary<string, string>? _gpuLuidNameMap;
+    private bool _gpuLuidNameMapBuilt;
     private PerformanceCounter? _gpuTempCounter;
     private bool _diskCountersInitialized;
     private bool _networkCountersInitialized;
     private bool _gpuCountersInitialized;
+
+    // GPU seleccionada para las métricas en vivo (desplegable de la card de GPU
+    // en SistemaPage). Null = la primaria (la dedicada si hay). El setter puede
+    // llamarse desde la UI mientras UpdateMetricsAsync corre en background:
+    // la asignación de la referencia string es atómica.
+    public string? SelectedGpuName { get; set; }
 
     // Contadores de uso por procesador lógico (por núcleo)
     private readonly List<PerformanceCounter> _cpuCoreCounters = new();
@@ -267,7 +282,10 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 
                 try
                 {
-                    // El uso total de GPU es la suma de todas las instancias 3D
+                    // El uso total de GPU es la suma de todas las instancias 3D.
+                    // Además se agrupa por LUID del adaptador (viene en el nombre de
+                    // instancia) para poder dar uso POR GPU cuando el equipo tiene
+                    // más de una (dedicada + integrada).
                     foreach (var instance in engineInstances)
                     {
                         try
@@ -275,11 +293,19 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                             var counter = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, true);
                             counter.NextValue();
                             _gpuCounters.Add(counter);
+
+                            var luidKey = TryParseLuidKey(instance);
+                            if (luidKey != null)
+                            {
+                                if (!_gpuCountersByLuid.TryGetValue(luidKey, out var list))
+                                    _gpuCountersByLuid[luidKey] = list = new List<PerformanceCounter>();
+                                list.Add(counter);
+                            }
                         }
                         catch { }
                     }
                     Thread.Sleep(100);
-                    _loggingService.LogInfo($"Contadores GPU Engine inicializados: {_gpuCounters.Count} instancias 3D");
+                    _loggingService.LogInfo($"Contadores GPU Engine inicializados: {_gpuCounters.Count} instancias 3D ({_gpuCountersByLuid.Count} adaptadores)");
                 }
                 catch (Exception ex)
                 {
@@ -298,6 +324,165 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         {
             _loggingService.LogError($"No se pudo inicializar contador de GPU: {ex.Message}", ex);
         }
+    }
+
+ // ===== Uso de GPU por adaptador (card multi-GPU de Sistema) =====
+
+ /// <summary>
+ /// Extrae el LUID del nombre de instancia de "GPU Engine"
+ /// (…luid_0xHHHHHHHH_0xLLLLLLLL_phys… → "{High:X8}{Low:X8}"), o null si no trae.
+ /// </summary>
+    private static string? TryParseLuidKey(string instanceName)
+    {
+        try
+        {
+            var parts = instanceName.Split('_');
+            for (int i = 0; i < parts.Length - 2; i++)
+            {
+                if (!parts[i].Equals("luid", StringComparison.OrdinalIgnoreCase)) continue;
+                if (uint.TryParse(parts[i + 1].Replace("0x", ""), System.Globalization.NumberStyles.HexNumber, null, out var high) &&
+                    uint.TryParse(parts[i + 2].Replace("0x", ""), System.Globalization.NumberStyles.HexNumber, null, out var low))
+                    return $"{high:X8}{low:X8}";
+                break;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+ /// <summary>
+ /// Mapa LUID → nombre visible de la GPU. Se construye UNA vez con el mismo
+ /// mecanismo que la temperatura D3DKMT: cada dispositivo de pantalla
+ /// (EnumDisplayDevices, cuyo DeviceString coincide con el nombre WMI de la
+ /// GPU) abre su adaptador desde el DC y D3DKMTOpenAdapterFromHdc devuelve el
+ /// AdapterLuid. Nota: solo aparecen GPUs con display conectado; el resto cae
+ /// al fallback de suma total.
+ /// </summary>
+    private Dictionary<string, string> GetGpuLuidNameMap()
+    {
+        if (_gpuLuidNameMapBuilt && _gpuLuidNameMap != null)
+            return _gpuLuidNameMap;
+
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            for (uint i = 0; ; i++)
+            {
+                var dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
+                if (!EnumDisplayDevices(null, i, ref dd, 0))
+                    break;
+
+                IntPtr hdc = CreateDC("DISPLAY", dd.DeviceName, null, IntPtr.Zero);
+                if (hdc == IntPtr.Zero) continue;
+                try
+                {
+                    var open = new D3DKMT_OPENADAPTERFROMHDC { hDc = hdc, hAdapter = 0 };
+                    if (D3DKMTOpenAdapterFromHdc(ref open) == 0 && open.hAdapter != 0)
+                    {
+                        try
+                        {
+                            var key = $"{open.AdapterLuid.HighPart:X8}{open.AdapterLuid.LowPart:X8}".ToLowerInvariant();
+                            if (!map.ContainsKey(key) && !string.IsNullOrWhiteSpace(dd.DeviceString))
+                                map[key] = dd.DeviceString;
+                        }
+                        finally
+                        {
+                            var close = new D3DKMT_CLOSEADAPTER { hAdapter = open.hAdapter };
+                            D3DKMTCloseAdapter(ref close);
+                        }
+                    }
+                }
+                finally
+                {
+                    DeleteDC(hdc);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo mapear LUID→GPU (uso por adaptador degradado a suma total): {ex.Message}");
+        }
+
+        _loggingService.LogInfo($"Mapa LUID→GPU: {map.Count} adaptadores con display");
+        _gpuLuidNameMap = map;
+        _gpuLuidNameMapBuilt = true;
+        return map;
+    }
+
+ /// <summary>Resuelve la clave LUID de una GPU por nombre (match normalizado contenido/contenido), o null.</summary>
+    private string? ResolveGpuLuidKey(string gpuName)
+    {
+        var map = GetGpuLuidNameMap();
+        if (map.Count == 0) return null;
+
+        var normalized = NormalizeName(gpuName);
+        if (normalized.Length == 0) return null;
+
+        foreach (var kv in map)
+        {
+            var devNorm = NormalizeName(kv.Value);
+            if (devNorm.Length == 0) continue;
+            if (IsSameGpuName(normalized, devNorm))
+                return kv.Key;
+        }
+
+        // Segunda fuente: el mapa LUID→nombre de DXGI (no requiere display
+        // conectado; se llena al leer la VRAM dedicada en GetGpuInfo).
+        if (_dxgiVramEnumerated)
+        {
+            foreach (var kv in _vramByLuid)
+            {
+                var devNorm = NormalizeName(kv.Value.Name);
+                if (devNorm.Length == 0) continue;
+                if (IsSameGpuName(normalized, devNorm))
+                    return kv.Key;
+            }
+        }
+        return null;
+    }
+
+ /// <summary>
+ /// Una sola lectura por contador de uso por tick: los contadores de tasa
+ /// ("Utilization Percentage") calculan un delta entre lecturas y se
+ /// invalidan si el mismo contador se lee dos veces en el mismo intervalo.
+ /// </summary>
+    private Dictionary<string, double> ReadGpuUsageByLuid()
+    {
+        var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in _gpuCountersByLuid)
+        {
+            double sum = 0;
+            foreach (var c in kv.Value)
+            {
+                try { sum += c.NextValue(); } catch { }
+            }
+            result[kv.Key] = Math.Min(sum, 100);
+        }
+        return result;
+    }
+
+    private static double SumUsageByLuid(Dictionary<string, double> usageByLuid)
+    {
+        double total = 0;
+        foreach (var v in usageByLuid.Values) total += v;
+        return Math.Min(total, 100);
+    }
+
+ /// <summary>
+ /// Uso de una GPU concreto desde la lectura por LUID. Si no se pudo mapear
+ /// el nombre a un LUID (p. ej. dGPU sin display conectado), cae a la suma
+ /// total de todos los adaptadores: el comportamiento previo de la app.
+ /// </summary>
+    private double ResolveGpuUsage(string gpuName, Dictionary<string, double> usageByLuid)
+    {
+        if (usageByLuid.Count == 0) return 0;
+        var key = ResolveGpuLuidKey(gpuName);
+        if (key != null && usageByLuid.TryGetValue(key, out var usage))
+            return usage;
+        // Fallback legado (sumar todos los adaptadores) SOLO con un adaptador.
+        // Con varios, sumar haría que al elegir una GPU sin mapear (iGPU sin
+        // display) se muestre el uso de la OTRA GPU.
+        return usageByLuid.Count == 1 ? SumUsageByLuid(usageByLuid) : 0;
     }
 
     public CpuInfo GetCpuInfo()
@@ -424,7 +609,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     }
 
     /// <summary>
-    /// Detección completa vía CPUID usando System.Runtime.Intrinsics.X86.X86Base.CpuId().
+    /// Detección completa vía CPUID usando System.Runtime.Intrinsics.X86.X86Base.CpuId.
     /// </summary>
     private List<string> DetectCpuidFlags()
     {
@@ -546,10 +731,10 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 if (relationship == RelationProcessorExtended)
                 {
                     // Layout de PROCESSOR_RELATIONSHIP (union dentro de SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX):
-                    //   offset 0:  Flags(1) + EfficiencyClass(1) + Reserved[20] = 22 bytes
-                    //   offset 22: GroupCount (WORD = 2 bytes)
-                    //   offset 24: GroupMask[GroupCount] (GROUP_AFFINITY: IntPtr.Size + Group(2) + Reserved[6])
-                    //   después:   ProcessorFeatures[2] (128 bits = 16 bytes)
+                    // offset 0: Flags(1) + EfficiencyClass(1) + Reserved[20] = 22 bytes
+                    // offset 22: GroupCount (WORD = 2 bytes)
+                    // offset 24: GroupMask[GroupCount] (GROUP_AFFINITY: IntPtr.Size + Group(2) + Reserved[6])
+                    // después: ProcessorFeatures[2] (128 bits = 16 bytes)
                     int groupCount = Marshal.ReadInt16(ptr, 8 + 22) & 0xFFFF;
                     int affinitySize = IntPtr.Size + 8;  // x64: 16, x86: 12
                     int featuresOffset = 8 + 22 + 2 + (groupCount * affinitySize);
@@ -641,7 +826,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     private double GetCurrentCpuFrequency()
     {
         // 1) Preferir el contador de rendimiento "Processor Frequency": refleja la
-        //    frecuencia dinámica real (turbo boost), igual que el Administrador de tareas.
+        // frecuencia dinámica real (turbo boost), igual que el Administrador de tareas.
         try
         {
             if (_cpuFreqCounter != null)
@@ -778,7 +963,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     // Windows expone el estado real en el contador de rendimiento
     // "Processor Information\Parking Status" (una instancia por procesador
     // lógico, valor 0 = activo / 1 = estacionado). Es la misma fuente que usan
-    // ParkControl y el Administrador de tareas. Importante: un núcleo con 0% de
+    // y el Administrador de tareas. Importante: un núcleo con 0% de
     // uso NO está necesariamente estacionado — el estado viene de este contador.
     // =====================================================================
 
@@ -1074,7 +1259,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                         .ToList();
 
                     // 1) Sensor principal con lectura válida (Tctl/Tdie, Package, Die,
-                    //    Core Max, Average, ...). Estable y representativo.
+                    // Core Max, Average, ...). Estable y representativo.
                     foreach (var sensor in sensors)
                     {
                         if (sensor.Value is float f && f > 0 && f < 120)
@@ -1085,9 +1270,9 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                     }
 
                     // 2) Si ningún sensor principal leyó (p. ej. Tctl/Tdie en 0, caso
-                    //    conocido en algunos AMD), usar el MÁXIMO de los sensores por
-                    //    núcleo: es lo que representa Tctl/Tdie y evita que un solo
-                    //    núcleo al azar haga fluctuar el gráfico con la migración de hilos.
+                    // conocido en algunos AMD), usar el MÁXIMO de los sensores por
+                    // núcleo: es lo que representa Tctl/Tdie y evita que un solo
+                    // núcleo al azar haga fluctuar el gráfico con la migración de hilos.
                     double maxCore = 0;
                     string maxCoreName = "";
                     foreach (var sensor in sensors)
@@ -1182,11 +1367,11 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     // Fallbacks adicionales de temperatura (para PCs variadas con Windows)
     //
     // 1) Win32_PerfFormattedData_Counters_ThermalZoneInformation: la zona
-    //    térmica ACPI expuesta como contador de rendimiento (Temperature en
-    //    décimas de Kelvin). Funciona en algunos equipos donde MSAcpi falla.
+    // térmica ACPI expuesta como contador de rendimiento (Temperature en
+    // décimas de Kelvin). Funciona en algunos equipos donde MSAcpi falla.
     // 2) Win32_TemperatureProbe: sonda térmica del hardware (CurrentReading en
-    //    décimas de Kelvin). Rara vez está poblada, pero existe en equipos con
-    //    drivers de monitoreo.
+    // décimas de Kelvin). Rara vez está poblada, pero existe en equipos con
+    // drivers de monitoreo.
     // Ambas se validan con rangos de cordura (0-120 °C) para descartar lecturas
     // basura o en unidades distintas. Son compartidas entre CPU y GPU.
     // =====================================================================
@@ -1346,7 +1531,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     [DllImport("gdi32.dll", SetLastError = true)]
     private static extern int D3DKMTQueryAdapterInfo(ref D3DKMT_QUERYADAPTERINFO pData);
 
-    private readonly Dictionary<string, (double Temp, DateTime Checked)> _gpuTempCache = new();
+    private readonly Dictionary<string, (double Temp, DateTime Checked, string? Source, TimeSpan Ttl)> _gpuTempCache = new();
     private readonly object _gpuTempLock = new();
     private bool _gpuTempWmiFailed;
     private bool _gpuTempD3dFailed;
@@ -1356,22 +1541,43 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         var key = NormalizeName(gpuName);
         if (key.Length == 0) return 0;
 
-        // Caché POR GPU (5s): si la consulta de una GPU falla (ej. iGPU AMD sin
-        // display), no debe bloquear el resultado de la otra GPU (dGPU NVIDIA).
+        // Caché POR GPU con TTL por fuente: D3DKMT/LHM son lecturas nativas
+        // baratas (1.2s ≈ el tick del monitor, como el Administrador de tareas);
+        // nvidia-smi spawnea un proceso (5s). Si la consulta de una GPU falla
+        // (ej. iGPU AMD sin display), no bloquea a la otra GPU.
         lock (_gpuTempLock)
         {
             if (_gpuTempCache.TryGetValue(key, out var cached) &&
-                (DateTime.Now - cached.Checked).TotalSeconds < 5)
+                (DateTime.Now - cached.Checked).TotalSeconds < cached.Ttl.TotalSeconds)
                 return cached.Temp;
         }
 
-        double temp = QueryGpuTemperature(gpuName);
+        var (temp, source) = QueryGpuTemperature(gpuName);
+        var ttl = source != null && source.StartsWith("nvidia-smi", StringComparison.Ordinal)
+            ? TimeSpan.FromSeconds(5)
+            : TimeSpan.FromSeconds(1.2);
 
         lock (_gpuTempLock)
-            _gpuTempCache[key] = (temp, DateTime.Now);
+        {
+            _gpuTempCache[key] = (temp, DateTime.Now, source, ttl);
+
+            // Loguear el DISPOSITIVO del que salió el dato, solo cuando cambia
+            // (cada 5s sería spam). Si la fuente cambia (p. ej. LHM deja de tener
+            // la GPU y cae a D3DKMT), queda registrado — imposible de confundir
+            // con la temperatura de la OTRA GPU.
+            _gpuTempSource ??= new Dictionary<string, string>(StringComparer.Ordinal);
+            var shown = source is { Length: > 0 } s ? s : "sin sensor";
+            if (!_gpuTempSource.TryGetValue(key, out var prev) || prev != shown)
+            {
+                _gpuTempSource[key] = shown;
+                _loggingService.LogInfo($"Temp GPU [{gpuName.Trim()}] = {temp:F0}°C vía {shown}");
+            }
+        }
 
         return temp;
     }
+
+    private Dictionary<string, string>? _gpuTempSource;
 
     // ===== Temperatura GPU pública (para bandeja/UI sin la consulta completa de GetGpuInfo) =====
     private readonly List<string> _gpuNames = new();
@@ -1521,54 +1727,83 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return 0;
     }
 
-    private double QueryGpuTemperature(string gpuName)
+    /// <returns>(Temperatura, origen: dispositivo/sensor real del que salió el dato)</returns>
+    private (double Temp, string? Source) QueryGpuTemperature(string gpuName)
     {
         var gpuNameLower = gpuName.ToLowerInvariant();
 
-        // 1) LibreHardwareMonitor: lee la temperatura directo del sensor de la GPU
-        //    (NVIDIA/AMD/Intel) vía su driver, sin aplicaciones externas.
-        double temp = GetGpuTemperatureViaLhm(gpuName);
-        if (temp > 0)
-            return temp;
+        // 1) D3DKMTQueryAdapterInfo (KMTQAITYPE_ADAPTERPERFDATA): la MISMA fuente
+        // que usa el Administrador de tareas de Windows (WDDM 2.4+) — la
+        // referencia con la que el usuario compara. Se actualiza cada segundo y
+        // es estrictamente por adaptador (solo el que coincide por nombre).
+        var (d3dTemp, d3dSrc) = GetGpuTemperatureViaD3D(gpuName);
+        if (d3dTemp > 0)
+            return (d3dTemp, d3dSrc);
 
-        // 2) D3DKMTQueryAdapterInfo (KMTQAITYPE_ADAPTERPERFDATA): la misma fuente
-        //    que usa el Administrador de tareas de Windows (WDDM 2.4+).
-        temp = GetGpuTemperatureViaD3D(gpuName);
-        if (temp > 0)
-            return temp;
+        // 2) LibreHardwareMonitor: sensor directo de la GPU pedida (match por
+        // nombre). NUNCA acepta la otra GPU: si LHM solo ve una GPU y NO es la
+        // pedida, se devuelve 0 y se sigue (antes, con 1 GPU visible en LHM, la
+        // dGPU le prestaba su temperatura a la iGPU o viceversa).
+        var (lhmTemp, lhmSrc) = GetGpuTemperatureViaLhm(gpuName);
+        if (lhmTemp > 0)
+            return (lhmTemp, lhmSrc);
 
-        // 3) Fallback NVIDIA: nvidia-smi
+        // 3) Fallback nvidia-smi: solo si hay UNA sola GPU NVIDIA en el sistema
+        // (si hay varias, la línea 0 puede ser la otra y el dato sería de otro
+        // dispositivo).
         if (gpuNameLower.Contains("nvidia") || gpuNameLower.Contains("geforce") || gpuNameLower.Contains("rtx") || gpuNameLower.Contains("gtx") || gpuNameLower.Contains("quadro"))
         {
-            temp = GetGpuTemperatureViaNvidiaSmi();
-            if (temp > 0)
-                return temp;
-        }
-        // 4) Fallback AMD/Intel: zona térmica WMI (aproximada, puede fallar)
-        else if (gpuNameLower.Contains("amd") || gpuNameLower.Contains("radeon") || gpuNameLower.Contains("intel"))
-        {
-            temp = GetGpuTemperatureViaWmi();
-            if (temp > 0)
-                return temp;
+            if (CountNvidiaAdapters() <= 1)
+            {
+                var nTemp = GetGpuTemperatureViaNvidiaSmi();
+                if (nTemp > 0)
+                    return (nTemp, "nvidia-smi");
+            }
+            else
+            {
+                return (0, $"nvidia-smi omitido: {CountNvidiaAdapters()} NVIDIA en el sistema");
+            }
         }
 
-        // 5) Fallbacks genéricos finales (último recurso en cualquier equipo):
-        //    zona térmica vía contador de rendimiento y sonda de temperatura.
-        temp = ReadPerfThermalZoneTemperature();
-        if (temp > 0)
-            return temp;
-
-        return ReadTemperatureProbe();
+        // 4) Las zonas térmicas (WMI MSAcpi_ThermalZoneTemperature, contadores de
+        // rendimiento y sondas) miden la PLACA o el CPU, NO la GPU pedida:
+        // mostrarlas como "temperatura de GPU" mostraba un dato de otro
+        // dispositivo. Sin sensor real de esta GPU → 0 (la UI no muestra nada).
+        return (0, null);
     }
 
-    private double GetGpuTemperatureViaLhm(string gpuName)
+    private int? _nvidiaAdapterCount;
+
+    /// <summary>Cantidad de adaptadores NVIDIA (Win32_VideoController, consultado una vez).</summary>
+    private int CountNvidiaAdapters()
+    {
+        if (_nvidiaAdapterCount.HasValue)
+            return _nvidiaAdapterCount.Value;
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
+            var count = 0;
+            foreach (ManagementObject obj in searcher.Get())
+            {
+                var n = obj["Name"]?.ToString()?.ToLowerInvariant() ?? "";
+                if (n.Contains("nvidia") || n.Contains("geforce") || n.Contains("quadro"))
+                    count++;
+            }
+            _nvidiaAdapterCount = count;
+        }
+        catch { _nvidiaAdapterCount = 1; }
+        return _nvidiaAdapterCount.Value;
+    }
+
+    /// <returns>(Temperatura, "LHM[nombre del hardware/sensor]"); el fallback de GPU única SOLO si corresponde a la pedida.</returns>
+    private (double Temp, string? Source) GetGpuTemperatureViaLhm(string gpuName)
     {
         EnsureLhmInitialized();
-        if (_computer == null) return 0;
+        if (_computer == null) return (0, null);
         try
         {
             var normalized = NormalizeName(gpuName);
-            if (normalized.Length == 0) return 0;
+            if (normalized.Length == 0) return (0, null);
 
             lock (_lhmLock)
             {
@@ -1581,15 +1816,13 @@ public class SystemInfoService : ISystemInfoService, IDisposable
 
                     var hwNorm = NormalizeName(hardware.Name);
                     if (hwNorm.Length == 0) continue;
-                    if (!hwNorm.Contains(normalized, StringComparison.Ordinal) &&
-                        !normalized.Contains(hwNorm, StringComparison.Ordinal))
+                    if (!IsSameGpuName(normalized, hwNorm))
                         continue;
 
                     hardware.Update();
 
                     // Preferir el sensor "GPU Core" (el que muestra el Administrador
                     // de tareas); Hot Spot y Memory Junction quedan como respaldo.
-                    // Se recorren en orden de prioridad tomando el primero con valor válido.
                     var sensors = hardware.Sensors
                         .Where(s => s.SensorType == SensorType.Temperature)
                         .OrderByDescending(s => ScoreGpuTempSensor(s.Name))
@@ -1598,19 +1831,19 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                     foreach (var sensor in sensors)
                     {
                         if (sensor.Value is float f && f > 0 && f < 120)
-                            return f;
+                            return (f, $"LHM[{hardware.Name}/{sensor.Name}]");
                     }
                 }
 
-                // Si el nombre de la GPU de WMI no coincide con el de LHM (p. ej. lo
-                // reporta distinto), usar la única GPU disponible como último recurso
-                // dentro de LHM. Solo si hay exactamente una, para no mezclar GPUs.
+                // Último recurso dentro de LHM: si hay UNA sola GPU en LHM debe ser
+                // la pedida (mismo nombre tolerante); si no lo es, es la OTRA GPU y
+                // NO se usa — antes la dGPU le prestaba su temperatura a la iGPU.
                 var gpus = _computer.Hardware
                     .Where(h => h.HardwareType == HardwareType.GpuNvidia ||
                                 h.HardwareType == HardwareType.GpuAmd ||
                                 h.HardwareType == HardwareType.GpuIntel)
                     .ToList();
-                if (gpus.Count == 1)
+                if (gpus.Count == 1 && IsSameGpuName(normalized, NormalizeName(gpus[0].Name)))
                 {
                     gpus[0].Update();
                     foreach (var sensor in gpus[0].Sensors
@@ -1618,7 +1851,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                                  .OrderByDescending(s => ScoreGpuTempSensor(s.Name)))
                     {
                         if (sensor.Value is float f && f > 0 && f < 120)
-                            return f;
+                            return (f, $"LHM[{gpus[0].Name}/{sensor.Name}]");
                     }
                 }
             }
@@ -1631,7 +1864,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 _loggingService.LogWarning($"Error leyendo temperatura GPU via LibreHardwareMonitor: {ex.Message}");
             }
         }
-        return 0;
+        return (0, null);
     }
 
     private static int ScoreGpuTempSensor(string sensorName)
@@ -1644,17 +1877,18 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return 0;
     }
 
-    private double GetGpuTemperatureViaD3D(string gpuName)
+    /// <returns>(Temperatura, "D3DKMT[nombre del adaptador de pantalla]")</returns>
+    private (double Temp, string? Source) GetGpuTemperatureViaD3D(string gpuName)
     {
         try
         {
             var normalized = NormalizeName(gpuName);
-            if (normalized.Length == 0) return 0;
+            if (normalized.Length == 0) return (0, null);
 
             // Enumerar dispositivos de pantalla: el DeviceString coincide con el
-            // nombre WMI de la GPU (ej. "NVIDIA GeForce RTX 4060 Ti").
+            // nombre WMI de la GPU .
             // Nota: solo aparecen las GPUs que manejan al menos un display;
-            // una dGPU sin display conectado cae a los fallbacks (nvidia-smi/WMI).
+            // una dGPU sin display conectado cae a los fallbacks (nvidia-smi).
             for (uint i = 0; ; i++)
             {
                 var dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
@@ -1662,13 +1896,11 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                     break;
 
                 var deviceNorm = NormalizeName(dd.DeviceString);
-                if (deviceNorm.Length > 0 &&
-                    (deviceNorm.Contains(normalized, StringComparison.Ordinal) ||
-                     normalized.Contains(deviceNorm, StringComparison.Ordinal)))
+                if (deviceNorm.Length > 0 && IsSameGpuName(normalized, deviceNorm))
                 {
                     var temp = QueryAdapterTemperatureViaHdc(dd.DeviceName);
                     if (temp > 0)
-                        return temp;
+                        return (temp, $"D3DKMT[{dd.DeviceString.Trim()}]");
                 }
             }
         }
@@ -1681,7 +1913,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 _loggingService.LogWarning($"Error obteniendo temperatura GPU vía D3DKMT: {ex.Message}");
             }
         }
-        return 0;
+        return (0, null);
     }
 
     private static double QueryAdapterTemperatureViaHdc(string deviceName)
@@ -1745,6 +1977,32 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return new string(chars);
     }
 
+    /// <summary>
+    /// Match tolerante de nombres de GPU entre fuentes. Además del substring
+    /// normalizado mutuo, acepta prefijo común cuando UNO de los nombres es el
+    /// genérico de WMI para iGPU: "AMD Radeon(TM) Graphics" (WMI) vs
+    /// "AMD Radeon 780M" (LibreHardwareMonitor) no se contienen entre sí, pero
+    /// comparten el prefijo "amdradeon" y el genérico trae el marcador
+    /// "(TM) Graphics". El requisito de marcador genérico evita confundir dos
+    /// dedicadas parecidas (RTX 4060 Ti vs RTX 3060 comparten prefijo).
+    /// </summary>
+    private static bool IsSameGpuName(string normA, string normB)
+    {
+        if (normA.Length == 0 || normB.Length == 0) return false;
+        if (normA.Contains(normB, StringComparison.Ordinal) ||
+            normB.Contains(normA, StringComparison.Ordinal))
+            return true;
+
+        bool genericA = normA.Contains("graphics", StringComparison.Ordinal) || normA.Contains("tm", StringComparison.Ordinal);
+        bool genericB = normB.Contains("graphics", StringComparison.Ordinal) || normB.Contains("tm", StringComparison.Ordinal);
+        if (!genericA && !genericB) return false;
+
+        int common = 0;
+        int max = Math.Min(normA.Length, normB.Length);
+        while (common < max && normA[common] == normB[common]) common++;
+        return common >= 8; // "amdradeon" = 9 caracteres
+    }
+
     private double GetGpuTemperatureViaNvidiaSmi()
     {
         // nvidia-smi suele estar en el System32 real (lo instala el driver).
@@ -1792,7 +2050,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     /// <summary>
     /// VRAM total vía nvidia-smi (memory.total en MB) para GPUs NVIDIA.
     /// Win32_VideoController.AdapterRAM es un UInt32 y con GPUs de más de 4 GB
-    /// devuelve 0 o valores truncados (una RTX 4060 Ti de 8 GB reporta 4 GB).
+    /// devuelve 0 o valores truncados (una una GPU dedicada de 8 GB reporta 4 GB).
     /// </summary>
     private static long GetGpuVramBytes(string gpuName)
     {
@@ -1829,6 +2087,196 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         }
         catch { }
         return 0;
+    }
+
+    // ===== VRAM dedicada por DXGI (única vía válida para iGPUs) =====
+
+    [DllImport("dxgi.dll")]
+    private static extern int CreateDXGIFactory1(ref Guid riid, out IntPtr ppFactory);
+
+    [ComImport]
+    [Guid("770AAE78-F26F-4DBA-AF29-2153761F60E2")] // IID_IDXGIFactory1
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIFactory1
+    {
+        // Slots de vtable en orden EXACTO: IUnknown(3) + IDXGIObject(4) +
+        // IDXGIFactory(5) + IDXGIFactory1(2). Los primeros 4 no se llaman,
+        // pero deben existir para respetar el layout de la vtable.
+        [PreserveSig] int SetPrivateData(IntPtr pName, uint Data, IntPtr pData);
+        [PreserveSig] int SetPrivateDataInterface(IntPtr pName, IntPtr pData);
+        [PreserveSig] int GetPrivateData(IntPtr name, ref uint pDataSize, IntPtr pData);
+        [PreserveSig] int GetParent(ref Guid riid, out IntPtr parent);
+        [PreserveSig] int EnumAdapters(uint adapterIndex, out IntPtr adapter);
+        [PreserveSig] int MakeWindowAssociation(IntPtr window, uint flags);
+        [PreserveSig] int GetWindowAssociation(out IntPtr window);
+        [PreserveSig] int CreateSwapChain(IntPtr device, IntPtr desc, out IntPtr swapChain);
+        [PreserveSig] int CreateSoftwareAdapter(IntPtr module, out IntPtr adapter);
+        [PreserveSig] int EnumAdapters1(uint adapterIndex, out IDXGIAdapter1 adapter);
+        [PreserveSig] int IsCurrent();
+    }
+
+    [ComImport]
+    [Guid("29038F61-3839-4626-91FD-086879911A05")] // IID_IDXGIAdapter1
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IDXGIAdapter1
+    {
+        // IUnknown(3) + IDXGIObject(4) + IDXGIAdapter.EnumOutputs + GetDesc.
+        [PreserveSig] int SetPrivateData(IntPtr name, uint dataSize, IntPtr data);
+        [PreserveSig] int SetPrivateDataInterface(IntPtr name, IntPtr data);
+        [PreserveSig] int GetPrivateData(IntPtr name, ref uint dataSize, IntPtr data);
+        [PreserveSig] int GetParent(ref Guid riid, out IntPtr parent);
+        [PreserveSig] int EnumOutputs(uint outputIndex, out IntPtr output);
+        [PreserveSig] int GetDesc(out DXGI_ADAPTER_DESC1 desc);
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DXGI_ADAPTER_DESC1
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description;
+        public uint VendorId;
+        public uint DeviceId;
+        public uint SubSysId;
+        public uint Revision;
+        public Luid AdapterLuid;
+        public nuint DedicatedVideoMemory;
+        public nuint DedicatedSystemMemory;
+        public nuint SharedSystemMemory;
+    }
+
+    // LUID → (VRAM dedicada, memoria compartida, descripción del adaptador).
+    // Una sola enumeración DXGI por proceso: el desc no cambia (es hardware).
+    private readonly Dictionary<string, (long Dedicated, long Shared, string Name)> _vramByLuid = new(StringComparer.OrdinalIgnoreCase);
+    private bool _dxgiVramEnumerated;
+
+    /// <summary>
+    /// Memoria DEDICADA del adaptador vía DXGI_ADAPTER_DESC1. Es la única vía
+    /// que funciona para iGPUs: la integrada AMD reporta ~512 MB dedicados
+    /// (recorte de la RAM del sistema) y su memoria compartida es la del
+    /// sistema. nvidia-smi no cubre iGPUs (no es NVIDIA) y AdapterRAM (UInt32)
+    /// se trunca > 4 GB y da 0 en integradas. El match con el nombre de
+    /// Win32_VideoController es primero por LUID y luego por nombre normalizado
+    /// (la Description de DXGI coincide con el nombre WMI, incluso con el
+    /// adaptador deshabilitado, porque DXGI lo enumera por registro).
+    /// Devuelve null si no se pudo determinar (el caller cae a AdapterRAM).
+    /// </summary>
+    private long? GetGpuDedicatedBytes(string gpuName)
+    {
+        try
+        {
+            if (!_dxgiVramEnumerated)
+            {
+                _dxgiVramEnumerated = true;
+                var iidFactory = new Guid("770AAE78-F26F-4DBA-AF29-2153761F60E2");
+                var hr = CreateDXGIFactory1(ref iidFactory, out var factoryPtr);
+                _loggingService.LogInfo($"DXGI: CreateDXGIFactory1 hr=0x{hr:X8}");
+                if (hr == 0 && factoryPtr != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var factory = (IDXGIFactory1)Marshal.GetObjectForIUnknown(factoryPtr);
+                        for (uint i = 0; ; i++)
+                        {
+                            var enumHr = factory.EnumAdapters1(i, out var adapter);
+                            if (enumHr != 0 || adapter == null)
+                            {
+                                if (i == 0)
+                                    _loggingService.LogInfo($"DXGI: EnumAdapters1(0) hr=0x{enumHr:X8}");
+                                break;
+                            }
+                            try
+                            {
+                                var descHr = adapter.GetDesc(out var desc);
+                                if (descHr == 0)
+                                {
+                                    var key = $"{desc.AdapterLuid.HighPart:X8}{desc.AdapterLuid.LowPart:X8}".ToLowerInvariant();
+                                    _vramByLuid[key] = ((long)desc.DedicatedVideoMemory, (long)desc.SharedSystemMemory, desc.Description ?? "");
+                                    _loggingService.LogInfo($"DXGI: {desc.Description} | dedicated={(long)desc.DedicatedVideoMemory >> 20} MB | shared={(long)desc.SharedSystemMemory >> 20} MB");
+                                }
+                                else
+                                {
+                                    _loggingService.LogInfo($"DXGI: GetDesc({i}) hr=0x{descHr:X8}");
+                                }
+                            }
+                            finally
+                            {
+                                Marshal.ReleaseComObject(adapter);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.Release(factoryPtr);
+                    }
+                }
+                _loggingService.LogInfo($"DXGI: {_vramByLuid.Count} adaptadores con VRAM dedicada leída");
+            }
+
+            // 1) Match por LUID (mapa display→LUID existente; solo GPUs con display).
+            var luidKey = ResolveGpuLuidKey(gpuName);
+            if (luidKey != null && _vramByLuid.TryGetValue(luidKey, out var hit))
+                return hit.Dedicated;
+
+            // 2) Match por nombre: la iGPU DESHABILITADA no aparece en
+            //    EnumDisplayDevices (paso 1 no la encuentra), pero su Description
+            //    de DXGI coincide con el nombre de Win32_VideoController.
+            var normalized = NormalizeName(gpuName);
+            if (normalized.Length > 0)
+            {
+                foreach (var kv in _vramByLuid)
+                {
+                    var devNorm = NormalizeName(kv.Value.Name);
+                    if (devNorm.Length > 0 && IsSameGpuName(normalized, devNorm))
+                        return kv.Value.Dedicated;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error leyendo VRAM dedicada vía DXGI: {ex.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Memoria COMPARTIDA del adaptador (RAM del sistema que la GPU puede usar
+    /// como VRAM, según DXGI). Es lo que hace visible cuánta RAM aprovecha una
+    /// iGPU. Misma resolución que GetGpuDedicatedBytes; null si no se determinó.
+    /// </summary>
+    private long? GetGpuSharedBytes(string gpuName)
+    {
+        try
+        {
+            if (!_dxgiVramEnumerated)
+                GetGpuDedicatedBytes(gpuName); // fuerza la enumeración DXGI
+
+            var luidKey = ResolveGpuLuidKey(gpuName);
+            if (luidKey != null && _vramByLuid.TryGetValue(luidKey, out var hit))
+                return hit.Shared;
+
+            var normalized = NormalizeName(gpuName);
+            if (normalized.Length > 0)
+            {
+                foreach (var kv in _vramByLuid)
+                {
+                    var devNorm = NormalizeName(kv.Value.Name);
+                    if (devNorm.Length > 0 && IsSameGpuName(normalized, devNorm))
+                        return kv.Value.Shared;
+                }
+            }
+        }
+        catch { }
+
+        // Fallback (y lo que muestra el Administrador de tareas): la memoria
+        // "compartida" de cualquier GPU es la mitad de la RAM física del
+        // sistema — el pool máximo que Windows le presta como VRAM.
+        try
+        {
+            var ms = new MemoryStatusEx { dwLength = (uint)Marshal.SizeOf<MemoryStatusEx>() };
+            if (GlobalMemoryStatusEx(ms) && ms.ullTotalPhys > 0)
+                return (long)(ms.ullTotalPhys / 2);
+        }
+        catch { }
+        return null;
     }
 
     private double GetGpuTemperatureViaWmi()
@@ -1909,7 +2357,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             {
                 2 => "Dual Channel",
                 3 => "Triple Channel",
-                >= 4 => "Quad Channel",
+ >= 4 => "Quad Channel",
                 _ => "Single Channel"
             };
 
@@ -2044,6 +2492,11 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         var gpus = new List<GpuInfo>();
         try
         {
+ // Una sola lectura por contador: los contadores de tasa se invalidan
+ // si el mismo contador se lee dos veces en el mismo intervalo (antes
+ // se releían por cada GPU de la lista).
+            var usageByLuid = ReadGpuUsageByLuid();
+
             using var searcher = new ManagementObjectSearcher("SELECT Name, AdapterRAM, DriverVersion, DriverDate, VideoProcessor FROM Win32_VideoController");
             foreach (ManagementObject obj in searcher.Get())
             {
@@ -2053,46 +2506,26 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 var driverDate = obj["DriverDate"]?.ToString() ?? "";
                 var videoProcessor = obj["VideoProcessor"]?.ToString()?.Trim() ?? "";
 
-                // AdapterRAM es un UInt32: con GPUs de más de 4 GB devuelve 0 o valores
-                // truncados (ej. una RTX 4060 Ti de 8 GB reporta 4 GB). Para NVIDIA se usa
-                // nvidia-smi (memory.total en MB) como fuente confiable.
-                var vramBytes = GetGpuVramBytes(name);
+                // VRAM: 1) DXGI DedicatedVideoMemory (válido para iGPUs y sin el
+                // truncado de 4 GB de AdapterRAM), 2) nvidia-smi (solo NVIDIA),
+                // 3) AdapterRAM (UInt32: se trunca > 4 GB y en iGPUs da 0).
+                var (dxgiDedicated, dxgiShared) = (GetGpuDedicatedBytes(name), GetGpuSharedBytes(name));
+                var vramBytes = dxgiDedicated ?? GetGpuVramBytes(name);
                 if (vramBytes <= 0)
                     vramBytes = adapterRam > 0 ? adapterRam : 0;
+                var sharedBytes = dxgiShared ?? 0;
 
-                double gpuUsage = 0;
                 double gpuTemp = 0;
                 double coreClock = 0;
                 double memClock = 0;
 
                 _loggingService.LogInfo($"GPU detectada: {name} | VRAM: {FormatBytes(vramBytes)}");
-                
-                // Intentar obtener uso de GPU desde PerformanceCounter
-                if (_gpuCounters.Count > 0)
-                {
-                    try
-                    {
-                        // El uso total de GPU es la suma de todas las instancias 3D
-                        foreach (var counter in _gpuCounters)
-                        {
-                            try
-                            {
-                                gpuUsage += counter.NextValue();
-                            }
-                            catch { }
-                        }
-                        gpuUsage = Math.Min(gpuUsage, 100);
-                        _loggingService.LogInfo($"GPU Usage: {gpuUsage:F1}%");
-                    }
-                    catch (Exception ex)
-                    {
-                        _loggingService.LogWarning($"Error leyendo uso GPU: {ex.Message}");
-                    }
-                }
-                else
-                {
-                    _loggingService.LogWarning("GPU Counter es NULL");
-                }
+
+ // Uso de ESTA GPU (por LUID del adaptador). Si el nombre no pudo
+ // mapearse a un LUID (dGPU sin display, por ejemplo) el Resolve
+ // cae a la suma total de todos los adaptadores.
+                double gpuUsage = ResolveGpuUsage(name, usageByLuid);
+                _loggingService.LogInfo($"GPU Usage: {gpuUsage:F1}%");
                 
                 // Intentar obtener temperatura de GPU (nvidia-smi para NVIDIA, WMI para AMD/Intel)
                 gpuTemp = GetGpuTemperature(name);
@@ -2110,7 +2543,7 @@ public class SystemInfoService : ISystemInfoService, IDisposable
                 gpus.Add(new GpuInfo(
                     Name: name,
                     DedicatedMemoryBytes: vramBytes,
-                    SharedMemoryBytes: 0,
+                    SharedMemoryBytes: sharedBytes,
                     UsagePercent: gpuUsage,
                     TemperatureCelsius: gpuTemp,
                     CoreClockMHz: coreClock,
@@ -2473,31 +2906,25 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             // Memoria: consulta WMI ligera (es rápida)
             var memoryInfo = await Task.Run(() => GetMemoryInfo());
 
-            // GPU: solo leer contadores, sin WMI
-            double gpuUsage = 0;
+            // GPU: solo leer contadores, sin WMI. La GPU reportada es la seleccionada
+ // en el desplegable de la card de GPU de Sistema (SelectedGpuName);
+ // null/vacío = la primaria (la dedicada si hay), como siempre.
+            string selectedGpuName = string.IsNullOrWhiteSpace(SelectedGpuName)
+                ? _primaryGpuName
+                : SelectedGpuName!;
+            var gpuUsageByLuid = ReadGpuUsageByLuid();
+            double gpuUsage = ResolveGpuUsage(selectedGpuName, gpuUsageByLuid);
             double gpuTemp = 0;
             if (_cachedGpuInfo != null)
             {
-                // Leer temperatura desde caché (se actualiza cada 5s internamente)
-                var primaryGpu = _cachedGpuInfo.FirstOrDefault(g => g.Name == _primaryGpuName)
+                // Leer temperatura desde caché (se actualiza cada 5s internamente).
+ // Si la GPU seleccionada ya no existe (se desenchufó), cae a la primaria.
+                var selected = _cachedGpuInfo.FirstOrDefault(g => g.Name.Equals(selectedGpuName, StringComparison.OrdinalIgnoreCase))
+                    ?? _cachedGpuInfo.FirstOrDefault(g => g.Name == _primaryGpuName)
                     ?? _cachedGpuInfo.FirstOrDefault();
-                if (primaryGpu != null)
+                if (selected != null)
                 {
-                    gpuTemp = GetGpuTemperature(primaryGpu.Name);
-                }
-
-                // Leer uso de GPU desde performance counters
-                if (_gpuCounters.Count > 0)
-                {
-                    try
-                    {
-                        foreach (var counter in _gpuCounters)
-                        {
-                            try { gpuUsage += counter.NextValue(); } catch { }
-                        }
-                        gpuUsage = Math.Min(gpuUsage, 100);
-                    }
-                    catch { }
+                    gpuTemp = GetGpuTemperature(selected.Name);
                 }
             }
 

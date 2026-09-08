@@ -5,11 +5,12 @@
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
     Title="WinForge">
 
-    <!-- El fondo del navbar vive en los recursos de tema de la app (App.xaml +
+<!-- El fondo del navbar vive en los recursos de tema de la app (App.xaml +
          AccentOverrides.xaml): el key NavigationViewDefaultPaneBackground también
          lo define WinUI, y por eso se redefine en un diccionario mergeado DESPUÉS
          de XamlControlsResources para que el override gane (si se define solo en
          el raíz de App.xaml, el panel queda con el AcrylicBrush por defecto). -->
+    <Grid>
     <muxc:NavigationView
         x:Name="NavigationViewControl"
         PaneDisplayMode="Left"
@@ -21,15 +22,13 @@
         Padding="0,0,0,0"
         Background="{ThemeResource NavigationViewDefaultPaneBackground}">
 
+<!-- ====== SET CORE: pestañas "si o si" con la app ====== -->
+<!-- Estas 5 + Configuración (footer) NUNCA se ocultan: el resto del navbar se
+             genera en código desde ComponentRegistry (navbar dinámico del Workshop). -->
         <muxc:NavigationView.MenuItems>
             <muxc:NavigationViewItem Content="Sistema" Tag="sistema">
                 <muxc:NavigationViewItem.Icon>
                     <muxc:SymbolIcon Symbol="AllApps" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Monitor de sensores" Tag="sensores">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE957;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Red" Tag="red">
@@ -37,24 +36,9 @@
                     <muxc:SymbolIcon Symbol="Globe" />
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Memoria" Tag="memoria">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xEEA0;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Resolución del Temporizador" Tag="temporizador">
-                <muxc:NavigationViewItem.Icon>
-                    <muxc:SymbolIcon Symbol="Clock" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Núcleos y Plan de energía" Tag="nucleos">
                 <muxc:NavigationViewItem.Icon>
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE950;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Overlay de métricas" Tag="overlay">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE95A;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Biblioteca de juegos" Tag="procesos">
@@ -62,59 +46,9 @@
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE7FC;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Gestión de procesos" Tag="procesosvivos">
+            <muxc:NavigationViewItem Content="Workshop" Tag="workshop">
                 <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE21D;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Teclado y Macros" Tag="teclado">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE765;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Autoclicker" Tag="autoclicker">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE962;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Test de estabilidad" Tag="estabilidad">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE9D2;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Optimizaciones" Tag="optimizaciones">
-                <muxc:NavigationViewItem.Icon>
-                    <muxc:SymbolIcon Symbol="Repair" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Debloat" Tag="debloat">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE74D;" FontSize="16"/>
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Herramientas y funciones" Tag="herramientas">
-                <muxc:NavigationViewItem.Icon>
-                    <muxc:SymbolIcon Symbol="Manage" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Panel de Windows" Tag="panelwindows">
-                <muxc:NavigationViewItem.Icon>
-                    <muxc:SymbolIcon Symbol="NewWindow" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Reparación" Tag="reparacion">
-                <muxc:NavigationViewItem.Icon>
-                    <muxc:SymbolIcon Symbol="Refresh" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Windows Update" Tag="actualizaciones">
-                <muxc:NavigationViewItem.Icon>
-                    <muxc:SymbolIcon Symbol="Download" />
-                </muxc:NavigationViewItem.Icon>
-            </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Limpieza del dispositivo" Tag="limpieza">
-                <muxc:NavigationViewItem.Icon>
-                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE74D;" FontSize="16"/>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE719;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
         </muxc:NavigationView.MenuItems>
@@ -127,7 +61,7 @@
             </muxc:NavigationViewItem>
         </muxc:NavigationView.FooterMenuItems>
 
-        <!-- Selector de idiomas: DENTRO del navbar, en la misma fila del botón ☰ de
+<!-- Selector de idiomas: DENTRO del navbar, en la misma fila del botón ☰ de
              achicar, pegado al extremo derecho del panel. PaneHeader se dibuja en la
              fila superior del panel (columna estirable a la derecha del ☰) y el
              template del control lo colapsa solo cuando el panel queda compacto
@@ -135,7 +69,7 @@
         <muxc:NavigationView.PaneHeader>
             <Grid Margin="0,0,12,0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <!-- Botón de actualización de la app: aparece con un chequear al
+<!-- Botón de actualización de la app: aparece con un chequear al
                          abrir (MainWindow.BeginUpdateCheck). Con versión más nueva en el
                          repo muestra el ícono de descarga con tooltip "Actualizar a vX";
                          si la build está adelantada al repo (en desarrollo) muestra el
@@ -171,4 +105,17 @@
             <muxc:Frame x:Name="ContentFrame" Margin="0,0,0,0" />
         </muxc:NavigationView.Content>
     </muxc:NavigationView>
+
+<!-- Overlay de arrastre: línea indicadora de dónde va a caer la pestaña que se
+     arrastra. IsHitTestVisible=False: es solo feedback visual, no roba input.
+     Vive en la misma celda del Grid que el NavigationView, por lo que sus
+     coordenadas son 1:1 con las que calcula el drag en MainWindow.xaml.cs. -->
+    <Canvas x:Name="NavDragLayer" IsHitTestVisible="False">
+        <Border x:Name="NavDragIndicator"
+                Height="3"
+                CornerRadius="1.5"
+                Background="{ThemeResource AccentFillColorDefaultBrush}"
+                Visibility="Collapsed" />
+    </Canvas>
+    </Grid>
 </Window>

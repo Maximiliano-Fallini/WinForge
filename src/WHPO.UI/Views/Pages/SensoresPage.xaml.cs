@@ -153,7 +153,7 @@ public sealed partial class SensoresPage : Page
         if (_pollTimer == null)
         {
             _pollTimer = DispatcherQueue.CreateTimer();
-            // 1 s: cada lectura hace un Update() completo de LHM (todos los sensores);
+            // 1 s: cada lectura hace un Update completo de LHM (todos los sensores);
             // a 500 ms se pagaba el doble sin ganancia visible (los sensores HW
             // cambian ~1 vez por segundo de todos modos).
             _pollTimer.Interval = TimeSpan.FromSeconds(1);

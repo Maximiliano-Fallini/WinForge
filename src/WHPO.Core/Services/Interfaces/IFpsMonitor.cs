@@ -1,7 +1,7 @@
 namespace WHPO.Core.Services.Interfaces;
 
 /// <summary>
-/// Una muestra de tiempo de frame: cuánto duró el frame (ms, delta entre Present()
+/// Una muestra de tiempo de frame: cuánto duró el frame (ms, delta entre Present
 /// consecutivos), el timestamp ETW del evento (reloj QPC del sistema, uniforme
 /// entre presents — es el reloj correcto para el eje X) y el timestamp de LLEGADA
 /// (reloj de pared, UTC ticks — el ancla que permite drenar las muestras viejas

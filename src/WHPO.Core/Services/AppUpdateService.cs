@@ -191,7 +191,7 @@ public sealed class AppUpdateService : IAppUpdateService
 
             var status = cmp switch
             {
-                > 0 => AppUpdateStatus.UpdateAvailable,
+ > 0 => AppUpdateStatus.UpdateAvailable,
                 < 0 => AppUpdateStatus.DevelopmentBuild,
                 _ => AppUpdateStatus.UpToDate
             };

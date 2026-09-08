@@ -9,10 +9,10 @@ namespace WHPO.Core.Services;
 /// Resuelve el ejecutable REAL de un juego dentro de su carpeta de instalación,
 /// saltándose los stubs que no representan al juego. Sin esto, la detección de
 /// "exe principal" elige al más grande y termina con basura:
-///   - SMITE 2 → Windows\start_protected_game.exe (stub lanzador de Easy Anti-Cheat;
-///     el juego real es Hemingway.exe) → el ícono de bandeja era el de EAC.
-///   - CS2 → game\bin\win64\vconsole2.exe (consola de depuración, más grande que
-///     cs2.exe) → el ícono de cs2.exe nunca se usaba.
+/// - SMITE 2 → Windows\start_protected_game.exe (stub lanzador de Easy Anti-Cheat;
+/// el juego real es Hemingway.exe) → el ícono de bandeja era el de EAC.
+/// - CS2 → game\bin\win64\vconsole2.exe (consola de depuración, más grande que
+/// cs2.exe) → el ícono de cs2.exe nunca se usaba.
 /// Se comparte entre el escaneo de la biblioteca (InstalledGamesService) y la
 /// extracción de íconos (bandeja + cards), para que todos resuelvan igual.
 /// </summary>

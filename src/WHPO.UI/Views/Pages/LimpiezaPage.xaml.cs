@@ -24,10 +24,10 @@ namespace WHPO_UI.Views.Pages;
 
 /// <summary>
 /// Limpieza del dispositivo (estilo CCleaner):
-///  - Chequeo: navegadores instalados con checks de caché / cookies / historial.
-///    Si un navegador está abierto, hay que marcar "cerrarlo" para poder limpiarlo.
-///  - Limpieza personalizada: categorías (Sistema, Multimedia, Utilidades,
-///    Descargas de Windows, Avanzado) con cada elemento marcable.
+/// - Chequeo: navegadores instalados con checks de caché / cookies / historial.
+/// Si un navegador está abierto, hay que marcar "cerrarlo" para poder limpiarlo.
+/// - Limpieza personalizada: categorías (Sistema, Multimedia, Utilidades,
+/// Descargas de Windows, Avanzado) con cada elemento marcable.
 /// </summary>
 public sealed partial class LimpiezaPage : Page
 {
@@ -82,7 +82,6 @@ public sealed partial class LimpiezaPage : Page
 
     private CancellationTokenSource? _chequeoCts;
     private CancellationTokenSource? _customScanCts;
-    private bool _customScanned;
 
     // ---- Íconos reales de navegadores: extraídos de sus .exe con IconExtractor ----
     private static readonly string BrowserIconDir = Path.Combine(
@@ -94,7 +93,7 @@ public sealed partial class LimpiezaPage : Page
     private static readonly HashSet<string> BrowserIconFailed = new(StringComparer.OrdinalIgnoreCase);
 
     // ---- Íconos reales de apps en segundo plano: extraídos del .exe del proceso,
-    //      cacheados por ruta del ejecutable (varias apps comparten exe) ----
+    // cacheados por ruta del ejecutable (varias apps comparten exe) ----
     private static readonly Dictionary<string, BitmapImage> AppIconReady = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> AppIconFailed = new(StringComparer.OrdinalIgnoreCase);
 
@@ -768,7 +767,11 @@ public sealed partial class LimpiezaPage : Page
             ChequeoProgressPanel.Visibility = Visibility.Visible;
 
             IReadOnlyCollection<BrowserSubItem> allItems = [BrowserSubItem.Cache, BrowserSubItem.Cookies, BrowserSubItem.History];
-            var sysIds = new[] { "sys_temp", "sys_usertemp", "sys_crashdumps", "sys_wer" };
+ // Reemplaza a la vieja card "Limpieza de disco" (Herramientas): cubre
+ // Temp de Windows (C:\Windows\Temp), Temporal del usuario (%TEMP%),
+ // volcados, reportes de error y la caché de Windows Update
+ // (SoftwareDistribution\Download), como la card original.
+            var sysIds = new[] { "sys_temp", "sys_usertemp", "sys_crashdumps", "sys_wer", "dl_wsus" };
             var cacheIds = new[] { "mm_thumbs", "mm_iconcache", "mm_wmp" };
             var rbIds = new[] { "sys_recyclebin" };
 
@@ -802,7 +805,7 @@ public sealed partial class LimpiezaPage : Page
             }
 
             // ---- Popup: si hay navegadores abiertos, avisar para cerrarlos antes
-            //      de seguir (o continuar sin cerrar / cancelar el análisis). ----
+            // de seguir (o continuar sin cerrar / cancelar el análisis). ----
             var stillOpen = await PromptCloseRunningBrowsersAsync(browsers, ct);
             _logging.LogDebug($"[Chequeo] Navegadores instalados={browsers.Count}, abiertos={browsers.Count(b => b.IsRunning)}");
             if (stillOpen == null)
@@ -1896,9 +1899,9 @@ public sealed partial class LimpiezaPage : Page
     /// Si hay navegadores abiertos, muestra un popup que pide cerrarlos antes de
     /// seguir con el análisis: cada navegador abierto aparece con su ícono real y
     /// un check para decidir si se cierra. Devuelve:
-    ///  - null si el usuario canceló (se aborta el análisis);
-    ///  - lista vacía si no había navegadores abiertos o se cerraron todos;
-    ///  - los navegadores que siguen abiertos (no se marcaron para cerrar).
+    /// - null si el usuario canceló (se aborta el análisis);
+    /// - lista vacía si no había navegadores abiertos o se cerraron todos;
+    /// - los navegadores que siguen abiertos (no se marcaron para cerrar).
     /// </summary>
     private static HashSet<string> GetRunningBrowserProcesses()
     {
@@ -2179,7 +2182,6 @@ public sealed partial class LimpiezaPage : Page
     /// </summary>
     private void RebuildCustomCategories()
     {
-        _customScanned = false;
         RebuildCustomGroupChecks();
 
         if (_customSelection.Count > 0)
@@ -2456,7 +2458,6 @@ public sealed partial class LimpiezaPage : Page
             if (detalles.Count > 0)
                 _logging.LogDebug("[Personalizada] Detalle: " + string.Join(", ", detalles));
 
-            _customScanned = true;
             CustomTotals.Text = I18n.T("Total: {0}", FormatBytes(total));
             CustomTotals.Visibility = Visibility.Visible;
 

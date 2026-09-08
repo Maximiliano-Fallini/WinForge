@@ -21,7 +21,7 @@
                        FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
 
             <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
-                <!-- Predeterminado -->
+<!-- Predeterminado -->
                 <Border x:Name="DefaultCard" Tag="Default" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
                         BorderBrush="Transparent" BorderThickness="1" Tapped="ProfileCard_Tapped">
                     <StackPanel Spacing="8">
@@ -36,7 +36,7 @@
                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="13" />
                     </StackPanel>
                 </Border>
-                <!-- Recomendado -->
+<!-- Recomendado -->
                 <Border Grid.Column="1" x:Name="RecommendedCard" Tag="Recommended" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16"
                         BorderBrush="Transparent" BorderThickness="1" Tapped="ProfileCard_Tapped">
                     <StackPanel Spacing="8">
@@ -51,7 +51,7 @@
                                    TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="13" />
                     </StackPanel>
                 </Border>
-                <!-- Desactivar -->
+<!-- Desactivar -->
                 <Border Grid.Column="2" x:Name="DisabledCard" Tag="Disabled" Background="{ThemeResource DisabledCardBackgroundBrush}" BorderBrush="{StaticResource ErrorBrush}" BorderThickness="1" CornerRadius="12" Padding="16"
                         Tapped="ProfileCard_Tapped">
                     <StackPanel Spacing="8">

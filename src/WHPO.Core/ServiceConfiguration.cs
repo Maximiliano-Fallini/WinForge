@@ -56,6 +56,7 @@ public static class ServiceConfiguration
         services.AddSingleton<IDuplicateFinderService, DuplicateFinderService>();
         services.AddSingleton<IDriveWatcherService, DriveWatcherService>();
         services.AddSingleton<IStartupManagerService, StartupManagerService>();
+        services.AddSingleton<IUsbOverclockService, UsbOverclockService>();
 
         // Overlay de métricas de juegos (FPS por ETW + muestreo de hardware)
         services.AddSingleton<IFpsMonitor, FpsMonitor>();

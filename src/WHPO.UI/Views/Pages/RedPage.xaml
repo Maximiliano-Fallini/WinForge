@@ -7,7 +7,7 @@
         <StackPanel Spacing="16" Margin="24">
             <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
-            <!-- ====== SECCIÓN 1: DNS ====== -->
+<!-- ====== SECCIÓN 1: DNS ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <SymbolIcon Symbol="Globe" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock Text="Servidores DNS" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
@@ -34,7 +34,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- ====== SECCIÓN 2: TEST DE DNS (DNS Jumper) ====== -->
+<!-- ====== SECCIÓN 2: TEST DE DNS (DNS Jumper) ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <SymbolIcon Symbol="Setting" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock Text="Test de DNS" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
@@ -49,7 +49,7 @@
                         <TextBlock Text="Ejecuta el test completo y aplica automáticamente el DNS con menor latencia." FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </StackPanel>
 
-                    <!-- DNS manuales (opcional): se agregan a la lista a probar con "+" -->
+<!-- DNS manuales (opcional): se agregan a la lista a probar con "+" -->
                     <Grid ColumnDefinitions="*,*,Auto" ColumnSpacing="8" Margin="0,4,0,0">
                         <TextBox x:Name="ManualDns1TextBox" Header="DNS Manual 1 (opcional)" PlaceholderText="Ej: 1.2.3.4"/>
                         <TextBox Grid.Column="1" x:Name="ManualDns2TextBox" Header="DNS Manual 2 (opcional)" PlaceholderText="Ej: 4.5.6.7"/>
@@ -57,7 +57,7 @@
                     </Grid>
                     <StackPanel x:Name="ManualDnsListPanel" Spacing="4" Margin="0,4,0,0"/>
 
-                    <!-- Pestaña de resultados: cerrable, con scroll propio para no alargar la página -->
+<!-- Pestaña de resultados: cerrable, con scroll propio para no alargar la página -->
                     <Border x:Name="DnsResultsTab" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1" Visibility="Collapsed">
                         <StackPanel>
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Padding="12,8,8,8">
@@ -80,7 +80,7 @@
 
             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
 
-            <!-- ====== SECCIÓN 5: PACKET LOSS TEST ====== -->
+<!-- ====== SECCIÓN 5: PACKET LOSS TEST ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <SymbolIcon Symbol="Repair" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock x:Name="PacketLossTitleText" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
@@ -111,7 +111,7 @@
                         </StackPanel>
                     </Grid>
 
-                    <!-- Indicadores circulares -->
+<!-- Indicadores circulares -->
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="16" Margin="0,8,0,0">
                         <Grid x:Name="SentRingHost" HorizontalAlignment="Center"/>
                         <Grid Grid.Column="1" x:Name="TimeRingHost" HorizontalAlignment="Center"/>
@@ -122,7 +122,7 @@
                             Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}" FontWeight="SemiBold" CornerRadius="6" Padding="16,8"/>
                     <TextBlock x:Name="PacketLossStatusText" Text="" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" HorizontalAlignment="Center"/>
 
-                    <!-- Resultados finales -->
+<!-- Resultados finales -->
                     <Grid x:Name="PacketLossResultsPanel" ColumnDefinitions="*,*,*,*" ColumnSpacing="8" RowSpacing="8" Visibility="Collapsed">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="8" Padding="12">
                             <StackPanel Spacing="4">
@@ -155,7 +155,7 @@
 
             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
 
-            <!-- ====== SECCIÓN 6: TCP AVANZADO ====== -->
+<!-- ====== SECCIÓN 6: TCP AVANZADO ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <SymbolIcon Symbol="Globe" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock Text="TCP / Red avanzado" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
@@ -164,7 +164,7 @@
 
             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
 
-            <!-- ====== SECCIÓN 7: ADAPTADORES (al final; el optimizador WLAN vive
+<!-- ====== SECCIÓN 7: ADAPTADORES (al final; el optimizador WLAN vive
                   inline en la card del adaptador Wi-Fi) ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <FontIcon Glyph="&#xE839;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>

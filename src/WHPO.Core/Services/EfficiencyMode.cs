@@ -6,10 +6,10 @@ namespace WHPO.Core.Services;
 /// <summary>
 /// Efficiency Mode de Windows (EcoQoS): marca un proceso como "no crítico" para que el
 /// planificador lo trate como tarea de fondo. Efectos:
-///   · En CPUs híbridas (Intel 12° gen+, con P/E cores): sus hilos van a los E-cores,
-///     dejando los P-cores libres para el juego.
-///   · Power throttling: Windows limita la frecuencia efectiva del proceso.
-///   · Prioridad de scheduling de fondo.
+/// · En CPUs híbridas (Intel 12° gen+, con P/E cores): sus hilos van a los E-cores,
+/// dejando los P-cores libres para el juego.
+/// · Power throttling: Windows limita la frecuencia efectiva del proceso.
+/// · Prioridad de scheduling de fondo.
 /// Es el mismo mecanismo que usa Windows para las pestañas de fondo del navegador y lo
 /// que muestra el Administrador de tareas con el ícono de hojita.
 ///

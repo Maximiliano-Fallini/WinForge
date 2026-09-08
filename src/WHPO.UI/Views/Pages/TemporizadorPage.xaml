@@ -6,7 +6,7 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
         <StackPanel Spacing="16" Margin="24">
 
-            <!-- ====== TEMPORIZADOR: estado actual + ajuste de resolución en una sola card ====== -->
+<!-- ====== TEMPORIZADOR: estado actual + ajuste de resolución en una sola card ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Temporizador" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
@@ -14,7 +14,7 @@
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="14">
 
-                    <!-- Estado actual -->
+<!-- Estado actual -->
                     <TextBlock Text="Estado actual" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
@@ -45,12 +45,37 @@
 
                     <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}"/>
 
-                    <!-- Ajustar resolución -->
+<!-- Ajustar resolución -->
                     <TextBlock Text="Ajustar resolución" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+
+ <!-- Switch: petición global (solo aporta en Win11; badge recomendado) -->
+                    <Border x:Name="GlobalRequestCard" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Usar GlobalTimerResolutionRequest" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                    <Border x:Name="GlobalRecommendedBadge" CornerRadius="6" Padding="6,2" Background="#2D4CAF50" VerticalAlignment="Center" Visibility="Collapsed">
+                                        <TextBlock Text="(Recomendado)" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}"/>
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock x:Name="GlobalDescText"
+                                           FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="GlobalWin10Note" Text="Solo aporta en Windows 11." FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Visibility="Collapsed"/>
+                            </StackPanel>
+                            <ToggleSwitch x:Name="GlobalTimerToggle" Grid.Column="1" Style="{StaticResource CompactToggleSwitchStyle}"
+                                          HorizontalAlignment="Right" VerticalAlignment="Center" Toggled="GlobalTimerToggle_Toggled"/>
+                        </Grid>
+                    </Border>
+
                     <StackPanel Spacing="6" MaxWidth="280" HorizontalAlignment="Left">
                         <TextBlock Text="Resolución deseada (ms)" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         <TextBox x:Name="DesiredResolutionTextBox" Text="0.5" BeforeTextChanging="NumericTextBox_BeforeTextChanging"/>
-                        <TextBlock Text="Un valor bajo (0,5 ms) mejora la latencia de audio y juegos, pero consume algo más de energía. Valores típicos: 0,5 / 1,0 / 1,5 ms."
+                        <TextBlock Text="Valores bajos (0,5 ms) reducen la latencia de audio y el retraso de entrada, pero consume más energía y podría llegar a subir las temperaturas del procesador."
                                    FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="12">

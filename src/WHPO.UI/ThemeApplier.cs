@@ -16,7 +16,7 @@ public class ThemeApplier : IThemeApplier
 
     /// <summary>
     /// Establece la ventana raíz a la que se le aplicará el tema.
-    /// Si ya se aplicó un tema antes (p. ej. ThemeService.Initialize() corrió
+    /// Si ya se aplicó un tema antes (p. ej. ThemeService.Initialize corrió
     /// antes de que la ventana existiera), se reaplica ahora para que el arranque
     /// respete el tema guardado (claro/oscuro).
     /// </summary>
@@ -67,6 +67,11 @@ public class ThemeApplier : IThemeApplier
             }
             rootElement.RequestedTheme = elementTheme;
         }
+
+        // Repintar los pinceles live de ThemeBrushes: la UI construida en
+        // code-behind referencia SIEMPRE las mismas instancias; mutar su Color
+        // en sitio es lo que la hace cambiar de tema sin recrear páginas.
+        ThemeBrushes.Refresh(ThemePalettes.BaseThemeFor(theme) == AppTheme.Light ? "Light" : "Dark");
     }
 
     public AppTheme GetSystemTheme()

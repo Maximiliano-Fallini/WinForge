@@ -23,6 +23,10 @@ public sealed partial class SistemaPage : Page
     private long _totalStorage;
     private string _cpuCoresText = "--";
 
+    // GPUs de la card de Sistema (para el desplegable multi-GPU) y flag para no
+    // reaccionar a SelectionChanged mientras se llena el ComboBox.
+    private List<GpuInfo>? _gpus;
+
     // El skeleton debe permanecer visible un mínimo de tiempo para que el
     // efecto de carga se aprecie, aunque los datos lleguen en milisegundos.
     private static readonly System.Diagnostics.Stopwatch SkeletonWatch = System.Diagnostics.Stopwatch.StartNew();
@@ -136,7 +140,7 @@ public sealed partial class SistemaPage : Page
             : moduleInfo.ChannelMode;
         await RevealCardAsync(RamSkeleton, RamContent);
 
-        // GPU (preferir dedicada)
+        // GPU (preferir dedicada; con más de una, desplegable para elegir)
         _loggingService.LogInfo("SistemaPage: cargando GPU...");
         var gpus = await Task.Run(() => _systemInfoService.GetGpuInfo());
         _loggingService.LogInfo($"SistemaPage: GPUs obtenidas: {gpus.Count}");
@@ -152,14 +156,27 @@ public sealed partial class SistemaPage : Page
                 ?? gpus.FirstOrDefault(g => !g.Name.Contains("Radeon(TM)", StringComparison.OrdinalIgnoreCase) && !g.Name.Contains("Intel", StringComparison.OrdinalIgnoreCase))
                 ?? gpus[0];
 
-            GpuNameText.Text = primaryGpu.Name.Trim();
-            SetGpuLogo(primaryGpu.Name);
-            GpuUsageText.Text = "0%";
-            GpuUsageBar.Value = 0;
-            GpuTempText.Text = "";
-            GpuVramText.Text = primaryGpu.DedicatedMemoryBytes > 0
-                ? $"VRAM: {FormatVram(primaryGpu.DedicatedMemoryBytes)}"
-                : "";
+ // Orden para el desplegable: la dedicada primero, después el resto por
+ // VRAM descendente (las iGPU, con 0 dedicada, quedan al final).
+            var ordered = new List<GpuInfo> { primaryGpu };
+            ordered.AddRange(gpus.Where(g => !ReferenceEquals(g, primaryGpu))
+                                 .OrderByDescending(g => g.DedicatedMemoryBytes));
+            _gpus = ordered;
+
+            ConfigureGpuSelector(ordered.Count > 1);
+            ShowGpuDetails(primaryGpu);
+
+            if (ordered.Count > 1)
+            {
+ // Mostrar el chevron y marcar la GPU activa en el menú (el menú se llena
+ // en ConfigureGpuSelector con la lista ordenada).
+                GpuNameText.Text = primaryGpu.Name.Trim();
+            }
+
+        // La GPU que reportan las métricas en vivo: la elegida si hay selector
+        // (coincide con la primaria al arrancar), null si solo hay una (la
+ // lógica de primaria del servicio decide, como siempre).
+            _systemInfoService.SelectedGpuName = ordered.Count > 1 ? primaryGpu.Name : null;
         }
         await RevealCardAsync(GpuSkeleton, GpuContent);
 
@@ -232,7 +249,7 @@ public sealed partial class SistemaPage : Page
     /// <summary>
     /// Rellena las cards de seguridad del firmware (TPM / Secure Boot / IOMMU)
     /// con el estado detectado. Se usa al cargar y al cambiar de idioma: los
-    /// estados son textos traducibles, así que se re-aplican con I18n.T().
+    /// estados son textos traducibles, así que se re-aplican con I18n.T.
     /// </summary>
     private void ApplySecurityFeatures()
     {
@@ -485,6 +502,92 @@ public sealed partial class SistemaPage : Page
             GpuLogoImage.Source = new BitmapImage(new Uri(logoPath));
         }
         catch { }
+    }
+
+ /// <summary>
+ /// Con más de una GPU aparece la flechita (chevron) junto al nombre: el nombre
+ /// sigue siendo el mismo TextBlock de siempre y al hacer clic en el conjunto
+ /// abre un MenuFlyout para elegir qué GPU reporta las métricas de la card.
+ /// Los ítems son MenuFlyoutItem (NO ToggleMenuFlyoutItem): el toggle reserva
+ /// columna fija de check a la izquierda y metía sangría en el desplegable.
+ /// Acá el check va a la derecha (Icon="✓") con el texto pegado a la izquierda.
+ /// </summary>
+    private void ConfigureGpuSelector(bool multiGpu)
+    {
+        GpuChevron.Visibility = multiGpu ? Visibility.Visible : Visibility.Collapsed;
+        if (multiGpu)
+        {
+            if (GpuNameSelector.ContextFlyout is MenuFlyout menu)
+            {
+                menu.Items.Clear();
+                var current = GpuNameText.Text;
+                if (_gpus != null)
+                {
+                    foreach (var g in _gpus)
+                    {
+                        var name = g.Name.Trim();
+                        var item = new MenuFlyoutItem
+                        {
+                            Text = name,
+                            Icon = string.Equals(name, current, StringComparison.Ordinal) ? new FontIcon { Glyph = "\uE73E", FontSize = 12 } : null,
+                            Tag = string.Equals(name, current, StringComparison.Ordinal)
+                        };
+                        item.Click += (_, _) =>
+                        {
+                            GpuNameText.Text = name;
+ // Re-marcar el check dentro del mismo menú (check a la derecha).
+                            foreach (var it in menu.Items.OfType<MenuFlyoutItem>())
+                            {
+                                var active = string.Equals(it.Text, name, StringComparison.Ordinal);
+                                it.Icon = active ? new FontIcon { Glyph = "\uE73E", FontSize = 12 } : null;
+                                it.Tag = active;
+                            }
+ // Misma lógica que tenía el SelectionChanged del ComboBox.
+                            var gpu = _gpus?.FirstOrDefault(g => string.Equals(g.Name.Trim(), name, StringComparison.Ordinal));
+                            if (gpu != null) ShowGpuDetails(gpu);
+                            _systemInfoService.SelectedGpuName = name;
+                            _loggingService.LogInfo($"SistemaPage: GPU seleccionada: {name}");
+                        };
+                        menu.Items.Add(item);
+                    }
+                }
+            }
+            if (ToolTipService.GetToolTip(GpuNameSelector) == null)
+                ToolTipService.SetToolTip(GpuNameSelector, I18n.T("Elegí qué GPU mostrar"));
+        }
+    }
+
+ /// <summary>
+ /// Abre el menú de selección de GPU al hacer clic en el nombre (texto + chevron).
+ /// El MenuFlyout ya vive en el ContextFlyout del StackPanel; FocusedIndex lo
+ /// posiciona bajo el elemento.
+ /// </summary>
+    private void GpuNameSelector_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        if (GpuChevron.Visibility != Visibility.Visible) return; // mono-GPU: nada que elegir
+        if (GpuNameSelector.ContextFlyout is MenuFlyout menu)
+        {
+            menu.ShowAt(GpuNameSelector, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Bottom });
+        }
+    }
+
+ /// <summary>Refresca los datos estáticos de la card (logo, VRAM) y resetea las métricas en vivo.</summary>
+    private void ShowGpuDetails(GpuInfo gpu)
+    {
+        GpuNameText.Text = gpu.Name.Trim();
+        SetGpuLogo(gpu.Name);
+        GpuUsageText.Text = "0%";
+        GpuUsageBar.Value = 0;
+        GpuTempText.Text = "";
+        // iGPU: poca memoria dedicada (recorte del BIOS) pero usa la RAM del
+        // sistema como VRAM — mostrarla porque es la cifra que importa.
+        // El separador es el mismo puntito "·" de las demás cards (CPU, RAM).
+        if (gpu.DedicatedMemoryBytes > 0 && gpu.SharedMemoryBytes > 0 && gpu.DedicatedMemoryBytes < 2L * 1024 * 1024 * 1024)
+            GpuVramText.Text = $"VRAM: {FormatVram(gpu.DedicatedMemoryBytes)} · {FormatVram(gpu.SharedMemoryBytes)} compartida";
+        else
+            GpuVramText.Text = gpu.DedicatedMemoryBytes > 0
+                ? $"VRAM: {FormatVram(gpu.DedicatedMemoryBytes)}"
+                : "";
     }
 
     private static string FormatBytes(long bytes)

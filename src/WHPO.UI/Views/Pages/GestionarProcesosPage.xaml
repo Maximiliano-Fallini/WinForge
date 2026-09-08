@@ -6,18 +6,18 @@
 
     <Grid x:Name="RootGrid" Background="{ThemeResource AppBackgroundBrush}">
 
-        <!-- ====== VISTA 1: BIBLIOTECA ====== -->
+<!-- ====== VISTA 1: BIBLIOTECA ====== -->
         <Grid x:Name="MainView">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- ====== CABECERA ====== -->
-            <!-- Sin card de fondo ni título: botones + contador de instalados arriba,
+<!-- ====== CABECERA ====== -->
+<!-- Sin card de fondo ni título: botones + contador de instalados arriba,
                  buscador centrado debajo, feedback (StatusText) al final. -->
             <StackPanel Margin="24,20,24,0" Spacing="10">
-                <!-- Fila 1: botones centrados, contador de juegos instalados a la derecha. -->
+<!-- Fila 1: botones centrados, contador de juegos instalados a la derecha. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -43,7 +43,7 @@
                                 Background="{ThemeResource AccentBrush}"
                                 Foreground="{ThemeResource AccentForegroundBrush}"/>
                     </StackPanel>
-                    <!-- Contador de juegos instalados, a la derecha de los botones. -->
+<!-- Contador de juegos instalados, a la derecha de los botones. -->
                     <TextBlock x:Name="InstalledCountText"
                                Grid.Column="2"
                                Text=""
@@ -54,24 +54,42 @@
                                VerticalAlignment="Center"
                                Visibility="Collapsed"/>
                 </Grid>
-                <!-- Buscador de juegos por nombre: centrado, ancho doble (480). La lupa
-                     es un FontIcon monocromo (E721) superpuesto a la izquierda — no un
-                     emoji a color. -->
-                <Grid Width="480" HorizontalAlignment="Center">
-                    <TextBox x:Name="SearchBox"
-                             PlaceholderText="Buscar juegos..."
-                             TextChanged="SearchBox_TextChanged"
-                             Padding="36,6,8,6"/>
-                    <FontIcon Glyph="&#xE721;"
-                              FontSize="14"
-                              Foreground="{ThemeResource SecondaryTextBrush}"
-                              HorizontalAlignment="Left"
+<!-- Buscador de juegos por nombre (480) + desplegable de categorías a
+                     su derecha. La lupa es un FontIcon monocromo (E721) superpuesto a
+                     la izquierda — no un emoji a color. -->
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                    <Grid Width="480">
+                        <TextBox x:Name="SearchBox"
+                                 PlaceholderText="Buscar juegos..."
+                                 TextChanged="SearchBox_TextChanged"
+                                 Padding="36,6,8,6"/>
+                        <FontIcon Glyph="&#xE721;"
+                                  FontSize="14"
+                                  Foreground="{ThemeResource SecondaryTextBrush}"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  Margin="12,0,0,0"
+                                  IsHitTestVisible="False"/>
+                    </Grid>
+ <!-- Desplegable de categorías: Todos / Videojuegos / Emuladores de
+                         consolas / Emuladores de celular. Sustituye a la fila de
+                         botones de filtro que estaba debajo del feedback. La selección
+                         inicial se hace en el constructor (no acá) para que el
+                         SelectionChanged no dispare antes de que los servicios estén
+                         inyectados. -->
+                    <ComboBox x:Name="FilterComboBox"
+                              Width="185"
+                              FontSize="13"
                               VerticalAlignment="Center"
-                              Margin="12,0,0,0"
-                              IsHitTestVisible="False"/>
-                </Grid>
-                <!-- Modo juego de WinForge (BETA) -->
-                <!-- Tapped en todo el panel: el ToggleSwitch de WinUI es chico (barrita +
+                              SelectionChanged="FilterComboBox_SelectionChanged">
+                        <ComboBoxItem Content="Todos"/>
+                        <ComboBoxItem Content="Videojuegos"/>
+                        <ComboBoxItem Content="Emuladores de consolas"/>
+                        <ComboBoxItem Content="Emuladores de celular"/>
+                    </ComboBox>
+                </StackPanel>
+<!-- Modo juego de WinForge (BETA) -->
+<!-- Tapped en todo el panel: el ToggleSwitch de WinUI es chico (barrita +
                      círculo) y el texto lo supera en área, así que los clics que caen en la
                      etiqueta "no agarraban" el switch. Acá toda la fila togglea. -->
                 <StackPanel x:Name="GameBoostPanel" Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center" Background="Transparent"
@@ -91,55 +109,135 @@
                             Foreground="{ThemeResource MutedBrush}"
                             CornerRadius="4"
                             VerticalAlignment="Center"/>
-                    <!-- Tuerca de configuración: lista de procesos en segundo plano. -->
+<!-- Tuerca de configuración: lista de procesos en segundo plano. -->
                     <Button x:Name="GameBoostSettingsButton"
                             Click="GameBoostSettingsButton_Click"
-                            Width="22"
-                            Height="22"
-                            Padding="0"
+                            Padding="8,4"
                             Background="Transparent"
-                            Foreground="{ThemeResource MutedBrush}"
+                            Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                             CornerRadius="4"
                             VerticalAlignment="Center">
-                        <FontIcon Glyph="&#xE713;" FontSize="12"/>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE713;" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="Configuración"
+                                       FontSize="12"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Button>
                     <ToggleSwitch x:Name="GameBoostSwitch"
                                   Toggled="GameBoostSwitch_Toggled"
                                   OnContent="" OffContent=""
                                   VerticalAlignment="Center"/>
                 </StackPanel>
-                <!-- Feedback temporal (errores, lanzamientos): debajo de todo. -->
+<!-- Feedback temporal (errores, lanzamientos): debajo de todo. -->
                 <TextBlock x:Name="StatusText"
                            Text=""
                            FontSize="12"
                            Visibility="Collapsed"
                            TextWrapping="Wrap"/>
-                <TextBlock x:Name="EmptyText"
-                           Text="No se encontraron juegos instalados. Probá «Re-detectar» o «Añadir manual»."
-                           FontSize="12"
-                           Foreground="{ThemeResource SecondaryTextBrush}"
-                           TextWrapping="Wrap"
-                           Visibility="Collapsed"/>
             </StackPanel>
 
-            <!-- ====== GRILLA DE JUEGOS (3 o 5 columnas según la vista; favoritos separados con barra) ====== -->
+<!-- ====== GRILLA DE JUEGOS (3 o 5 columnas según la vista; favoritos separados con barra) ====== -->
             <ScrollViewer x:Name="LibraryScroll"
                           Grid.Row="1"
                           Margin="24,16,24,24"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollMode="Disabled"
                           SizeChanged="LibraryScroll_SizeChanged">
-                <!-- Canaleta fija a la derecha: el scrollbar nativo es overlay (se dibuja
+<!-- Canaleta fija a la derecha: el scrollbar nativo es overlay (se dibuja
                      ENCIMA del contenido), así que se reserva SIEMPRE el espacio (14 px)
                      para que nunca tape las cards y las cards no cambien de ancho al
                      aparecer/desaparecer el scrollbar. -->
                 <Grid>
-                    <!-- Receptor de la sombra de las cards (ThemeShadow exige un
+<!-- Receptor de la sombra de las cards (ThemeShadow exige un
                          receptor que NO sea ancestro del caster): hermano detrás. -->
                     <Border x:Name="CardShadowReceiver"/>
                     <StackPanel x:Name="LibraryPanel" Spacing="16" Margin="0,0,14,0"/>
+ <!-- Estado vacío: se muestra cuando no hay videojuegos o
+                         emuladores para la pestaña seleccionada. -->
+                    <StackPanel x:Name="EmptyStatePanel"
+                                Visibility="Collapsed"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                Spacing="12"
+                                Margin="0,80,0,0">
+                        <FontIcon x:Name="EmptyStateIcon"
+                                  Glyph="&#xE7FC;"
+                                  FontSize="40"
+                                  Foreground="{ThemeResource SecondaryTextBrush}"/>
+                        <TextBlock x:Name="EmptyStateText"
+                                   Text="Instalá un juego para verlo en este apartado y configurarlo a tu gusto!"
+                                   FontSize="15"
+                                   FontWeight="SemiBold"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   MaxWidth="360"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
                 </Grid>
             </ScrollViewer>
+        </Grid>
+
+ <!-- ====== VISTA 2: CONFIGURACIÓN DEL OPTIMIZADOR ====== -->
+ <!-- Estado alterno de la pestaña: reemplaza al ContentDialog (tanta información
+             no tiene sentido en un popup). El botón "Volver a la biblioteca" restaura
+             la vista 1. El contenido se inyecta desde el code-behind al entrar. -->
+        <Grid x:Name="BoostConfigView" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+ <!-- Cabecera: volver (izquierda) + título/subtítulo + Guardar (derecha). -->
+            <Grid Margin="24,20,24,0" ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="6">
+                    <Button x:Name="BoostBackButton"
+                            Click="BoostBackButton_Click"
+                            Padding="10,6"
+                            CornerRadius="6"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE72B;" FontSize="14"/>
+                            <TextBlock Text="Volver a la biblioteca" FontSize="12"/>
+                        </StackPanel>
+                    </Button>
+                    <TextBlock Text="WinForge Modo juego configuración"
+                               FontSize="20"
+                               FontWeight="SemiBold"/>
+                    <TextBlock Text="Personalizá los procesos y servicios que se optimizan al iniciar un juego. Los cambios se aplican al guardar."
+                               FontSize="12"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               TextWrapping="Wrap"
+                               MaxWidth="720"
+                               HorizontalAlignment="Left"/>
+                </StackPanel>
+                <Button x:Name="BoostSaveButton"
+                        Grid.Column="1"
+                        Click="BoostSaveButton_Click"
+                        Content="Guardar"
+                        CornerRadius="6"
+                        Padding="18,8"
+                        FontWeight="SemiBold"
+                        Background="{ThemeResource AccentBrush}"
+                        Foreground="{ThemeResource AccentForegroundBrush}"
+                        VerticalAlignment="Top"/>
+            </Grid>
+
+ <!-- Contenido de configuración (BuildProfessionalProcessesTab). -->
+            <ContentControl x:Name="BoostConfigHost"
+                            Grid.Row="1"
+                            Margin="24,16,24,24"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            VerticalContentAlignment="Stretch"/>
         </Grid>
     </Grid>
 </Page>

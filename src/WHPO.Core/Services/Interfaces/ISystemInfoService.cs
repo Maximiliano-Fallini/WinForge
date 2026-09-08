@@ -147,6 +147,14 @@ public interface ISystemInfoService
     double GetGpuClockMHz();
 
     /// <summary>
+    /// Nombre de la GPU cuyas métricas en vivo (SystemMetrics.Gpu) se reportan.
+    /// Null o vacío = la GPU primaria (la dedicada si hay). La página de Sistema
+    /// lo cambia desde el desplegable de la card de GPU cuando el equipo tiene
+    /// más de una (dedicada e integrada).
+    /// </summary>
+    string? SelectedGpuName { get; set; }
+
+    /// <summary>
     /// Evento que se dispara cuando hay nuevos datos de métricas.
     /// </summary>
     event Action<SystemMetrics> OnMetricsUpdated;

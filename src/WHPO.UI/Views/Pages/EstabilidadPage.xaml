@@ -10,7 +10,7 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Spacing="16" Margin="24">
 
-            <!-- ==================== GRÁFICO: USO DE CPU ==================== -->
+<!-- ==================== GRÁFICO: USO DE CPU ==================== -->
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
@@ -32,7 +32,7 @@
                                           VerticalScrollMode="Disabled" ZoomMode="Disabled">
                                 <Grid x:Name="UsageInner" Width="1200" Height="160">
                                     <Canvas x:Name="UsagePlot" Width="1200" Height="160" Background="{ThemeResource ChartBackgroundBrush}"/>
-                                    <!-- Capa de hover: cruz + etiqueta con valor exacto y hora -->
+<!-- Capa de hover: cruz + etiqueta con valor exacto y hora -->
                                     <Canvas x:Name="UsageHover" Width="1200" Height="160" IsHitTestVisible="False"/>
                                 </Grid>
                             </ScrollViewer>
@@ -41,7 +41,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- ==================== GRÁFICO: TEMPERATURA ==================== -->
+<!-- ==================== GRÁFICO: TEMPERATURA ==================== -->
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
@@ -71,7 +71,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- ==================== GRÁFICO: POTENCIA (W) ==================== -->
+<!-- ==================== GRÁFICO: POTENCIA (W) ==================== -->
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
@@ -101,7 +101,7 @@
                 </StackPanel>
             </Border>
 
-            <!-- ==================== CONFIGURACIÓN DEL TEST ==================== -->
+<!-- ==================== CONFIGURACIÓN DEL TEST ==================== -->
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
                     <StackPanel Orientation="Horizontal" Spacing="10">
@@ -123,7 +123,7 @@
                         </StackPanel>
                     </Grid>
 
-                    <!-- Tiempo restante + estado -->
+<!-- Tiempo restante + estado -->
                     <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14">
                         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="16">
                             <StackPanel Spacing="2" VerticalAlignment="Center">

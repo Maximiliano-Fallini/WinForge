@@ -108,6 +108,10 @@ public sealed partial class NucleosPage : Page
     // ---- Cards de núcleos: fondo y pista desde los recursos de tema (en el tema base
     // coinciden con los valores originales; las variantes los redefinen). ----
     private static SolidColorBrush CoreCardBrush => ThemeBrushes.Get("CoreCardBackgroundBrush");
+
+ /// <summary>Fondo de las filas de planes: un tono distinto a la card para que se lean como tabla.</summary>
+    private static SolidColorBrush RowBackgroundBrush =>
+        ThemeBrushes.Get(ThemeBrushes.ActiveThemeKey() == "Light" ? "ChartHoverBadgeBgBrush" : "ChartBackgroundBrush");
     private static SolidColorBrush CoreTrackBrush => ThemeBrushes.Get("CoreTrackBackgroundBrush");
 
     // ---- Barras por núcleo ----
@@ -889,16 +893,29 @@ public sealed partial class NucleosPage : Page
     private void ChartScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
         if (e.IsIntermediate) return;
-        _atRightEdge = ChartScroll.HorizontalOffset >= ChartScroll.ScrollableWidth - 6;
+ // La tolerancia debe superar el avance por muestra (3 px): si una muestra
+ // agranda el lienzo entre nuestro ChangeView y este evento, el offset queda
+ // por detrás del nuevo máximo y con poca tolerancia el seguimiento se cortaba.
+        _atRightEdge = ChartScroll.HorizontalOffset >= ChartScroll.ScrollableWidth - (ChartPxPerSample + 2);
     }
 
     private void ScrollToLatest()
     {
-        DispatcherQueue.TryEnqueue(() =>
+ // Objetivo determinista: el máximo desplazable DESPUÉS de que el layout
+ // aplique el ancho recién asignado al lienzo. Leer ChartScroll.ScrollableWidth
+ // aquí devuelve el valor viejo (el layout aún no procesó el nuevo ancho) y el
+ // ChangeView quedaba apuntando a la posición actual: el gráfico crecía fuera
+ // de pantalla sin moverse. Se difiere al próximo pase de layout (one-shot) y
+ // recién ahí se empuja la vista al borde derecho.
+        double target = Math.Max(0, _chartWidth - ChartScroll.ViewportWidth);
+        EventHandler<object>? onLayout = null;
+        onLayout = (s, e) =>
         {
-            try { ChartScroll.ChangeView(ChartScroll.ScrollableWidth, null, null, true); }
+            ChartScroll.LayoutUpdated -= onLayout;
+            try { ChartScroll.ChangeView(target, null, null, true); }
             catch { }
-        });
+        };
+        ChartScroll.LayoutUpdated += onLayout;
     }
 
     // ===================== Núcleos =====================
@@ -913,13 +930,35 @@ public sealed partial class NucleosPage : Page
             var bar = new CoreBar();
             const double trackH = 104;
 
+ // Cabecera: nombre a la izquierda + temperatura a la derecha. El nombre
+ // va atenuado (el dato importante es el %) y con recorte por si el
+ // texto traducido no entra en el ancho fijo de la card.
             var name = new TextBlock
             {
                 Text = $"{I18n.T("Núcleo")} {i}",
-                FontSize = 12,
+                FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Center
+                Foreground = ThemeBrush("SecondaryTextBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
             };
+
+            bar.Temp = new TextBlock
+            {
+                Text = "--",
+                FontSize = 10.5,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = BTimeLabel
+            };
+
+            var header = new Grid { ColumnSpacing = 6 };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(name, 0);
+            Grid.SetColumn(bar.Temp, 1);
+            header.Children.Add(name);
+            header.Children.Add(bar.Temp);
 
             bar.Fill = new Border
             {
@@ -943,40 +982,45 @@ public sealed partial class NucleosPage : Page
             bar.Usage = new TextBlock
             {
                 Text = "--%",
-                FontSize = 14,
-                FontWeight = FontWeights.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground = BGreen
-            };
-
-            bar.Temp = new TextBlock
-            {
-                Text = "--",
-                FontSize = 11,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Foreground = BTimeLabel
-            };
-
-            bar.Status = new TextBlock
-            {
-                Text = "—",
-                FontSize = 10,
+                FontSize = 15,
                 FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Foreground = BNeutral
             };
 
+ // Estado como badge: texto dentro de una píldora con fondo tenue.
+ // UpdateCoreBars solo cambia Text/Foreground del TextBlock, así que
+ // el color de estado se sigue aplicando igual.
+            bar.Status = new TextBlock
+            {
+                Text = "—",
+                FontSize = 9.5,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Foreground = BNeutral
+            };
+
+            var statusPill = new Border
+            {
+                CornerRadius = new CornerRadius(9),
+                Padding = new Thickness(9, 2, 9, 3),
+                Background = CoreTrackBrush,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Child = bar.Status
+            };
+
             var sp = new StackPanel { Spacing = 8 };
-            sp.Children.Add(name);
+            sp.Children.Add(header);
             sp.Children.Add(track);
             sp.Children.Add(bar.Usage);
-            sp.Children.Add(bar.Temp);
-            sp.Children.Add(bar.Status);
+            sp.Children.Add(statusPill);
 
             var root = new Border
             {
                 Background = CoreCardBrush,
-                CornerRadius = new CornerRadius(10),
+                BorderBrush = ThemeBrush("CardBorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12),
                 Padding = new Thickness(12, 10, 12, 10),
                 Width = 116,
                 Margin = new Thickness(0, 0, 10, 10),
@@ -1024,7 +1068,7 @@ public sealed partial class NucleosPage : Page
             }
 
             // Temperatura del núcleo físico (con SMT varios hilos comparten sensor).
-            // Si el hardware no expone sensores por núcleo (p. ej. este Ryzen 5 7600
+            // Si el hardware no expone sensores por núcleo (p. ej. este
             // solo expone Tctl/Tdie), el campo de temperatura se oculta directamente.
             if (coreTemps.Length > 0)
             {
@@ -1189,9 +1233,66 @@ public sealed partial class NucleosPage : Page
         }
     }
 
+ // Plantilla plana para los ítems de las listas de planes: sin los visuales
+ // por defecto de ListViewItem (hover/selección del sistema), que asomaban
+ // alrededor de la card y generaban un "doble fondo". El hover y la selección
+ // se manejan a mano con los mismos brushes del navbar (CardHover/CardSelected).
+    private static Microsoft.UI.Xaml.Controls.ControlTemplate? _flatListItemTemplate;
+    private static Microsoft.UI.Xaml.Controls.ControlTemplate FlatListItemTemplate()
+    {
+        if (_flatListItemTemplate == null)
+        {
+            const string xaml =
+                "<ControlTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" " +
+                "TargetType=\"ListViewItem\">" +
+                "<ContentPresenter HorizontalAlignment=\"Stretch\" VerticalAlignment=\"Stretch\"/>" +
+                "</ControlTemplate>";
+            _flatListItemTemplate = (Microsoft.UI.Xaml.Controls.ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);
+        }
+        return _flatListItemTemplate;
+    }
+
+ // Estados visuales de una card de plan: normal / hover / seleccionada.
+    private static void PlanRow_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is ListViewItem { IsSelected: false } lv && lv.Content is Border b)
+            b.Background = ThemeBrushes.Get("CardHoverBrush");
+    }
+
+    private static void PlanRow_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is ListViewItem { IsSelected: false } lv && lv.Content is Border b)
+            b.Background = RowBackgroundBrush;
+    }
+
+    private static void RefreshPlanRowVisuals(ListView list)
+    {
+        foreach (var i in list.Items)
+            if (i is ListViewItem lv && lv.Content is Border b)
+                b.Background = lv.IsSelected
+                    ? ThemeBrushes.Get("CardSelectedBrush")
+                    : RowBackgroundBrush;
+    }
+
+    private static ListViewItem BuildPlanContainer(object tag, Border card)
+    {
+        var lvItem = new ListViewItem
+        {
+            Content = card,
+            Tag = tag,
+            Template = FlatListItemTemplate(),
+            Margin = new Thickness(0, 0, 0, 4),
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        lvItem.PointerEntered += PlanRow_PointerEntered;
+        lvItem.PointerExited += PlanRow_PointerExited;
+        return lvItem;
+    }
+
     private static ListViewItem BuildManageRow(PlanListItem item)
     {
-        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
+        var row = new Grid { ColumnSpacing = 12 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
@@ -1237,11 +1338,22 @@ public sealed partial class NucleosPage : Page
         Grid.SetColumn(active, 3);
         row.Children.Add(active);
 
-        return new ListViewItem { Content = row, Tag = item, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+ // Card del plan con UN solo fondo: la plantilla plana del contenedor elimina
+ // el hover/selección por defecto del sistema; el estilo de selección replica
+ // el de las pestañas del navbar (CardSelectedBrush).
+        var card = new Border
+        {
+            Background = RowBackgroundBrush,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8),
+            Child = row
+        };
+        return BuildPlanContainer(item, card);
     }
 
     private void PlansList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        RefreshPlanRowVisuals(PlansList);
         var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
         bool has = item != null;
         RenamePlanButton.IsEnabled = has;
@@ -1351,6 +1463,7 @@ public sealed partial class NucleosPage : Page
         if (result.Success)
         {
             await LoadManagePlansAsync();
+            await LoadInstallPresetsAsync(); // el estado "Instalado" de la lista depende de los planes reales
             _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
         }
     }
@@ -1404,10 +1517,10 @@ public sealed partial class NucleosPage : Page
 
     private static List<InstallPreset> BuildInstallPresets() => new()
     {
-        new InstallPreset(I18n.T("Máximo rendimiento"), I18n.T("Plan oculto de Windows para máximo desempeño (Ultimate Performance)."), I18n.T("Oficial"), builtInGuid: UltimatePerfSchemeGuid),
-        new InstallPreset(I18n.T("Alto rendimiento"), I18n.T("Plan oficial de Windows para alto desempeño."), I18n.T("Oficial"), builtInGuid: HighPerfSchemeGuid),
-        new InstallPreset(I18n.T("Ahorro de energía"), I18n.T("Plan oficial de Windows para reducir el consumo."), I18n.T("Oficial"), builtInGuid: PowerSaverSchemeGuid),
-        new InstallPreset(I18n.T("Equilibrado"), I18n.T("Plan oficial de Windows: balance entre rendimiento y consumo."), I18n.T("Oficial"), builtInGuid: BalancedSchemeGuid),
+        new InstallPreset(I18n.T("Máximo rendimiento"), I18n.T("Plan oculto de Windows para máximo desempeño (Ultimate Performance)."), I18n.T("Windows"), builtInGuid: UltimatePerfSchemeGuid),
+        new InstallPreset(I18n.T("Alto rendimiento"), I18n.T("Plan oficial de Windows para alto desempeño."), I18n.T("Windows"), builtInGuid: HighPerfSchemeGuid),
+        new InstallPreset(I18n.T("Ahorro de energía"), I18n.T("Plan oficial de Windows para reducir el consumo."), I18n.T("Windows"), builtInGuid: PowerSaverSchemeGuid),
+        new InstallPreset(I18n.T("Equilibrado"), I18n.T("Plan oficial de Windows: balance entre rendimiento y consumo."), I18n.T("Windows"), builtInGuid: BalancedSchemeGuid),
         new InstallPreset(I18n.T("Ryzen Balanced"), I18n.T("Preset estilo 1usmus para CPU AMD Ryzen: mínimo 99%, boost eficiente agresivo y modo autónomo desactivado."), I18n.T("Ryzen"), baseGuid: BalancedSchemeGuid, tunings: new[]
         {
             new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 99, 99),
@@ -1422,7 +1535,7 @@ public sealed partial class NucleosPage : Page
             new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 2, 2),
             new PowerPlanTuning(SubProcessorGuid, PerfAutonomousGuid, 0, 0)
         }),
-        new InstallPreset(I18n.T("Bitsum Highest Performance"), I18n.T("Preset de Bitsum (Process Lasso/ParkControl): mínimo 100% para evitar el parking de núcleos y boost agresivo."), I18n.T("Comunidad"), baseGuid: HighPerfSchemeGuid, tunings: new[]
+        new InstallPreset(I18n.T("Bitsum Highest Performance"), I18n.T("Preset de la comunidad: mínimo 100% para evitar el parking de núcleos y boost agresivo."), I18n.T("Comunidad"), baseGuid: HighPerfSchemeGuid, tunings: new[]
         {
             new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 100, 100),
             new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
@@ -1447,7 +1560,8 @@ public sealed partial class NucleosPage : Page
             foreach (var preset in presets)
             {
                 bool installed = preset.BuiltInGuid != null
-                    ? plans.Any(p => string.Equals(p.Guid, preset.BuiltInGuid, StringComparison.OrdinalIgnoreCase))
+                    ? plans.Any(p => string.Equals(p.Guid, preset.BuiltInGuid, StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(p.Name, preset.Name, StringComparison.OrdinalIgnoreCase))
                     : plans.Any(p => string.Equals(p.Name, preset.Name, StringComparison.OrdinalIgnoreCase));
                 InstallPlansList.Items.Add(BuildInstallRow(preset, installed));
             }
@@ -1465,7 +1579,7 @@ public sealed partial class NucleosPage : Page
 
     private static ListViewItem BuildInstallRow(InstallPreset preset, bool installed)
     {
-        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
+        var row = new Grid { ColumnSpacing = 12 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
@@ -1511,16 +1625,20 @@ public sealed partial class NucleosPage : Page
         Grid.SetColumn(status, 3);
         row.Children.Add(status);
 
-        return new ListViewItem
+ // Card del plan, misma mecánica que en Gestionar planes.
+        var card = new Border
         {
-            Content = row,
-            Tag = new InstallRowItem(preset, installed),
-            HorizontalContentAlignment = HorizontalAlignment.Stretch
+            Background = RowBackgroundBrush,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8),
+            Child = row
         };
+        return BuildPlanContainer(new InstallRowItem(preset, installed), card);
     }
 
     private void InstallPlansList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        RefreshPlanRowVisuals(InstallPlansList);
         var item = (InstallPlansList.SelectedItem as ListViewItem)?.Tag as InstallRowItem;
         InstallPlanButton.IsEnabled = item != null && !item.Installed;
     }

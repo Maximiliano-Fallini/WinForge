@@ -12,12 +12,12 @@ namespace WHPO_UI;
 /// fallback en cadena: idioma elegido → en-US → español (fuente).
 ///
 /// Cómo se traduce la UI:
-///  - XAML y texto estático: I18n.ApplyToVisualTree() recorre el árbol visual y
-///    traduce Text/Content/PlaceholderText/etc. El texto original (español) se
-///    recuerda por elemento, así al cambiar de idioma se vuelve a traducir sin
-///    pisar textos que se actualizaron dinámicamente.
-///  - Código: los strings visibles se envuelven en I18n.T("..."). Feedback.Set
-///    traduce automáticamente los mensajes que recibe.
+/// - XAML y texto estático: I18n.ApplyToVisualTree recorre el árbol visual y
+/// traduce Text/Content/PlaceholderText/etc. El texto original (español) se
+/// recuerda por elemento, así al cambiar de idioma se vuelve a traducir sin
+/// pisar textos que se actualizaron dinámicamente.
+/// - Código: los strings visibles se envuelven en I18n.T("..."). Feedback.Set
+/// traduce automáticamente los mensajes que recibe.
 /// </summary>
 public static class I18n
 {

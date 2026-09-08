@@ -8,19 +8,19 @@ using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services;
 
-/// <summary>    /// Implementación del "Modo juego de WinForge (BETA)".
+/// <summary> /// Implementación del "Modo juego de WinForge (BETA)".
 ///
 /// Al aplicar (juego corriendo y switch activo) se guarda un snapshot del estado
 /// previo y se hacen los cambios; al cerrar el juego se restaura exactamente ese
 /// snapshot:
-///   · Servicios: solo se re-arrancan los que estaban corriendo antes (nunca se
-///     enciende algo que ya estaba detenido/deshabilitado).
-///   · Prioridades: se devuelve la prioridad ORIGINAL a los procesos de segundo
-///     plano que se bajaron (no al juego: su prioridad la manejan sus reglas).
-///     Si un proceso cerró en el camino o su PID fue reutilizado, se omite.
-///   · Notificaciones: las toasts se pausan mientras dura el boost y al cerrar el
-///     juego se restaura el estado exacto anterior (equivale al modo foco "solo
-///     alarmas").
+/// · Servicios: solo se re-arrancan los que estaban corriendo antes (nunca se
+/// enciende algo que ya estaba detenido/deshabilitado).
+/// · Prioridades: se devuelve la prioridad ORIGINAL a los procesos de segundo
+/// plano que se bajaron (no al juego: su prioridad la manejan sus reglas).
+/// Si un proceso cerró en el camino o su PID fue reutilizado, se omite.
+/// · Notificaciones: las toasts se pausan mientras dura el boost y al cerrar el
+/// juego se restaura el estado exacto anterior (equivale al modo foco "solo
+/// alarmas").
 ///
 /// No se cambia el tipo de arranque de ningún servicio ni se escribe ninguna
 /// política de Windows Update: todo es temporal y reversible.
@@ -52,20 +52,102 @@ public sealed class GameBoostService : IGameBoostService
     private sealed record ProcessSnapshot(int Pid, string Name, ProcessPriorityClass OriginalClass);
     private sealed record ServiceSnapshot(string Name, string StartType);
 
-    // Pausa temporal de Windows Update: solo se detienen los servicios, sin cambiar
-    // su tipo de inicio, así al reiniciar Windows vuelven a la normalidad solos.
-    private static readonly string[] WindowsUpdateServices = { "wuauserv", "UsoSvc", "BITS" };
-
-    // Servicios de mantenimiento/diagnóstico/telemetría que se detienen mientras se juega.
-    private static readonly string[] MaintenanceServices =
+    // Servicios con impacto directo en la actividad del sistema mientras se juega.
+    private static readonly string[] DefaultKillServices =
     {
+        "wuauserv",         // Windows Update
+        "UsoSvc",           // Update Orchestrator
+        "BITS",             // Background Intelligent Transfer Service
         "SysMain",          // Superfetch/SysMain (prefetch agresivo)
-        "DiagTrack",        // Diagnósticos y telemetría
-        "WerSvc",           // Informe de errores de Windows
-        "dmwappushservice", // WAP Push (telemetría de dispositivos)
-        "DusmSvc",          // Uso de datos
         "WSearch"           // Búsqueda de Windows (indexado)
     };
+
+    // Servicios de telemetría: se muestran en la UI con su estado REAL de Windows
+    // (mismo control de 3 estados que el resto) pero NO entran al conjunto que el
+    // boost detiene al iniciar el juego: su gestión pertenece al apartado de
+    // telemetría/debloat, no a la partida. (La definición ya vive en
+    // ServiceGroups, grupo "telemetry"; el array quedó unificado ahí.)
+
+    // Servicios de Hyper-V / virtualización: dejarlos Desactivado es el tweak
+    // clásico de latencia para gaming (elimina la capa de hipervisor del arranque
+    // y libera recursos). Igual que la telemetría, son cambios persistentes: no
+    // entran al boost por partida. Los nombres existen en Win10/11 con Hyper-V,
+    // Virtual Machine Platform o WSL2; si el equipo no los tiene, la card los
+    // oculta solos (GetServiceStates no devuelve los que no existen).
+
+    // Definición de la card: grupos en orden de aparición. Cada servicio lleva su
+    // descripción (clave de traducción) para el tooltip de la UI.
+    public static readonly (string Key, string NameKey, (string Service, string DescriptionKey)[] Services)[] ServiceGroups =
+    {
+        ("boost", "Servicios del optimizador", new (string, string)[]
+        {
+            ("wuauserv", "Windows Update: descarga e instala actualizaciones de Windows. Desactivarlo detiene las actualizaciones automáticas."),
+            ("UsoSvc", "Orquestador de actualizaciones: coordina cuándo se buscan e instalan las actualizaciones de Windows."),
+            ("BITS", "Transferencia inteligente en segundo plano: descarga archivos de Windows Update y la Store sin interrumpir al usuario."),
+            ("SysMain", "Precarga en memoria de apps usadas frecuentemente (ex Superfetch). Puede generar lectura de disco constante mientras jugás."),
+            ("WSearch", "Indexado de archivos para la búsqueda de Windows. Consume disco y CPU mientras indexa contenido nuevo."),
+        }),
+        ("hyperv", "Hyper-V y virtualización", new (string, string)[]
+        {
+            ("vmcompute", "Cómputo de host: administra máquinas virtuales y contenedores (Hyper-V, WSL2, Docker). Si no usás ninguna, puede ir Desactivado."),
+            ("HvHost", "Host de hipervisor: presta servicios internos al hipervisor de Hyper-V."),
+            ("hns", "Red de host: administra la red virtual de Hyper-V y contenedores. Deshabilitarlo rompe la red de WSL2 y Docker, no solo las VMs."),
+            ("vmicguestinterface", "Interfaz de invitado: canal de comunicación entre el host y la máquina virtual."),
+            ("vmicshutdown", "Apagado de invitado: permite apagar la máquina virtual desde el administrador de Hyper-V."),
+            ("vmicheartbeat", "Latido: informa al host que la máquina virtual arrancó y está funcionando."),
+            ("vmicvmsession", "PowerShell Direct: permite ejecutar comandos dentro de la VM sin red."),
+            ("vmicrdv", "Escritorio remoto virtualizado: redirección de dispositivos RDP hacia la VM."),
+            ("vmickvpexchange", "Intercambio de datos: deja que el host lea datos básicos de la VM (nombre, sistema operativo)."),
+            ("vmictimesync", "Sincronización de hora: mantiene el reloj de la VM alineado con el del host."),
+            ("vmicvss", "Solicitante de instantáneas: coordina copias de seguridad de la VM desde el host."),
+        }),
+        ("telemetry", "Telemetría", new (string, string)[]
+        {
+            ("DiagTrack", "Telemetría de diagnóstico: envía datos de uso y diagnóstico a Microsoft. Es seguro desactivarla."),
+            ("WerSvc", "Informe de errores: envía reportes a Microsoft cuando un programa falla."),
+            ("dmwappushservice", "WAP Push: gestión de dispositivos móviles y telemetría asociada. No se usa en PCs de escritorio normales."),
+            ("DusmSvc", "Uso de datos: estadísticas de consumo de red por aplicación (panel de Datos de uso)."),
+        }),
+    // Grupos extra: como telemetría e Hyper-V, son gestión PERSISTENTE (3
+    // estados leídos de Windows); no entran al boost por partida. La card
+    // oculta sola los servicios que no existen en esta instalación.
+        ("xbox", "Xbox y Game Bar", new (string, string)[]
+        {
+            ("XblAuthManager", "Autenticación de Xbox Live: inicia sesión en Xbox Live para juegos de la Store y Game Pass. Desactivarla rompe el login de Game Pass."),
+            ("XblGameSave", "Guardado de Xbox: sincroniza partidas de juegos de la Store y Game Pass con la nube. Si no jugás títulos de la Store, puede ir Desactivado."),
+            ("XboxNetApiSvc", "Redes de Xbox Live: multijugador y matchmaking de juegos con integración Xbox. Desactivarlo rompe el multijugador de esos juegos."),
+            ("XboxGipSvc", "Accesorios Xbox: empareja y administra periféricos con protocolo Xbox (controles y auriculares inalámbricos)."),
+        }),
+        ("printing", "Impresión y escáner", new (string, string)[]
+        {
+            ("Spooler", "Cola de impresión: administra los trabajos de impresión. Sin impresora puede ir Desactivado; también se puede apagar solo durante la partida."),
+            ("PrintNotify", "Extensiones de impresora: avisos de tinta, estado y apps del fabricante. No afecta a imprimir en sí."),
+            ("StiSvc", "Adquisición de imágenes (WIA): comunicación con escáneres y cámaras. Sin escáner puede ir Desactivado."),
+        }),
+        ("location", "Ubicación y mapas", new (string, string)[]
+        {
+            ("lfsvc", "Geolocalización: calcula la posición del equipo (Wi-Fi, GPS). Los juegos de escritorio casi nunca la usan."),
+            ("MapsBroker", "Mapas sin conexión: descarga y actualiza mapas para la app Mapas. Puede ir Desactivado."),
+        }),
+        ("legacy", "Legado / sin uso en PC", new (string, string)[]
+        {
+            ("Fax", "Fax: envía y recibe faxes con la configuración de fax de Windows. Sin uso práctico hoy."),
+            ("RemoteRegistry", "Registro remoto: permite a administradores remotos leer el registro de este equipo. Desactivarlo también es una mejora de seguridad."),
+            ("RetailDemo", "Modo demo de tienda: configuración para PCs en exhibición en comercios. Nunca se usa en una PC personal."),
+            ("PhoneSvc", "Telefonía: administra dispositivos de telefonía (módems dial-up, SIP). Sin uso en PCs modernas."),
+        }),
+    };
+
+    /// <summary>
+    /// Conjunto completo de servicios gestionados por la card (todos los grupos):
+    /// es lo que la UI consulta para pintar los 3 estados.
+    /// </summary>
+    public static string[] ManagedServices =>
+        ServiceGroups.SelectMany(g => g.Services.Select(s => s.Service)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    /// <summary>Servicios que el boost DETIENE al iniciar el juego (excluye telemetría e Hyper-V).</summary>
+    public static string[] BoostStopServices =>
+        (string[])DefaultKillServices.Clone();
 
     // Procesos en segundo plano a los que se aplica el boost POR DEFECTO (la lista es
     // configurable desde la UI: ver GetBackgroundProcesses). IMPORTANTE: esta lista
@@ -82,6 +164,27 @@ public sealed class GameBoostService : IGameBoostService
     };
 
     private const string BackgroundProcessesKey = "gameboost.backgroundProcesses";
+    private const string KillProcessesKey = "gameboost.killProcesses";
+    private const string AutoServiceOptimizationKey = "gameboost.automaticServiceOptimization";
+
+ /// <summary>
+ /// Switch "Servicios Optimizados Automaticos" (pestaña Servicios de la
+ /// configuración del boost): activo por defecto. Cuando está activo, el boost
+ /// detiene temporalmente los servicios de <see cref="BoostStopServices"/> al
+ /// lanzar un juego y los restaura al cerrarlo. Cuando está apagado, el boost
+ /// NO toca ningún servicio por partida. Es independiente de los cambios
+ /// persistentes que el usuario haga en la pestaña Servicios (sc config).
+ /// </summary>
+    public bool IsAutomaticServiceOptimizationEnabled
+    {
+        get => _settings.Get(AutoServiceOptimizationKey, true);
+        set
+        {
+            _settings.Set(AutoServiceOptimizationKey, value);
+            _settings.Save();
+            _logging.LogInfo($"GameBoost: optimización automática de servicios {(value ? "activada" : "desactivada")} (por partida).");
+        }
+    }
 
     public GameBoostService(ISettingsService settings, ILoggingService logging, IProcessService processService)
     {
@@ -151,6 +254,145 @@ public sealed class GameBoostService : IGameBoostService
     public List<string> GetDefaultBackgroundProcesses()
         => new(DefaultBackgroundProcesses);
 
+ /// <summary>Procesos que el usuario eligió CERRAR al iniciar un juego.</summary>
+    public List<string> GetKillProcesses()
+    {
+        var saved = _settings.Get(KillProcessesKey, new List<string>());
+        if (saved == null) return new();
+        return saved
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Select(n => n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? n[..^4] : n)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+ /// <summary>Persiste la lista de procesos a cerrar al iniciar un juego.</summary>
+    public void SetKillProcesses(List<string> processes)
+    {
+        var clean = (processes ?? new())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n.Trim())
+            .Select(n => n.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? n[..^4] : n)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _settings.Set(KillProcessesKey, clean);
+        _settings.Save();
+        _logging.LogInfo($"GameBoost: procesos a cerrar actualizados ({clean.Count}).");
+    }
+
+ // ===== Estado de servicios en Windows (3 estados: Desactivado/Manual/Activado) =====
+ // IMPORTANTE: el estado se lee por WMI (Win32_Service), NO por `sc qc`/`sc query`:
+ // la salida de sc.exe está localizada (en Windows en español la línea es
+ // "TIPO_INICIO", no "START_TYPE", y "EJECUTANDO", no "RUNNING"), mientras que WMI
+ // devuelve valores de enumeración en inglés (Auto/Manual/Disabled/Running)
+ // independientes del idioma del sistema.
+
+ /// <summary>
+ /// Consulta por WMI (una sola pasada sobre Win32_Service) el StartMode y el
+ /// State de los servicios pedidos. Los que no existen no aparecen.
+ /// </summary>
+    private Dictionary<string, (string StartMode, string State)> QueryServicesWmi(IEnumerable<string> serviceNames)
+    {
+        var wanted = new HashSet<string>(serviceNames, StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                "SELECT Name, StartMode, State FROM Win32_Service");
+            foreach (var mo in searcher.Get())
+            {
+                var name = mo["Name"]?.ToString();
+                if (name == null || !wanted.Contains(name)) continue;
+                result[name] = (mo["StartMode"]?.ToString() ?? "", mo["State"]?.ToString() ?? "");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"GameBoost: consulta WMI de servicios falló: {ex.Message}");
+        }
+        return result;
+    }
+
+    public Dictionary<string, ServiceStartState> GetServiceStates(IEnumerable<string> serviceNames)
+    {
+        var result = new Dictionary<string, ServiceStartState>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, (startMode, _)) in QueryServicesWmi(serviceNames))
+        {
+            var state = startMode switch
+            {
+                "Disabled" => ServiceStartState.Disabled,
+                "Manual" => ServiceStartState.Manual,
+                "Auto" or "Boot" or "System" => ServiceStartState.Auto,
+                _ => (ServiceStartState?)null
+            };
+            if (state.HasValue)
+                result[name] = state.Value;
+        }
+        return result;
+    }
+
+    public Dictionary<string, bool> GetServicesRunning(IEnumerable<string> serviceNames)
+    {
+        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, (_, state)) in QueryServicesWmi(serviceNames))
+            result[name] = state.Equals("Running", StringComparison.OrdinalIgnoreCase);
+        return result;
+    }
+
+    public bool IsServiceRunningNow(string serviceName)
+        => GetServicesRunning(new[] { serviceName }).GetValueOrDefault(serviceName);
+
+    public ServiceStartState SetServiceStartState(string serviceName, ServiceStartState state)
+    {
+        var startValue = state switch
+        {
+            ServiceStartState.Disabled => "disabled",
+            ServiceStartState.Manual => "demand",
+            _ => "auto"
+        };
+        RunServiceArgs($"config {serviceName} start= {startValue}");
+        var actual = GetServiceStates(new[] { serviceName }).GetValueOrDefault(serviceName, state);
+        _logging.LogInfo($"GameBoost: {serviceName} → {state} (quedó {actual}).");
+        return actual;
+    }
+
+ /// <summary>
+ /// Snapshot de todos los servicios del sistema con UNA consulta WMI (la misma
+ /// tabla Win32_Service que ya se consulta por lotes, ahora sin filtro de
+ /// nombres). Incluye DisplayName y Description para la UI. Corre en hilo de
+ /// fondo: la página lo llama dentro de Task.Run.
+ /// </summary>
+    public List<SystemServiceInfo> GetAllServicesSnapshot()
+    {
+        var result = new List<SystemServiceInfo>(200);
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                "SELECT Name, DisplayName, StartMode, State, Description FROM Win32_Service");
+            foreach (var mo in searcher.Get())
+            {
+                try
+                {
+                    var name = mo["Name"]?.ToString();
+                    if (string.IsNullOrEmpty(name)) continue;
+                    result.Add(new SystemServiceInfo(
+                        name!,
+                        mo["DisplayName"]?.ToString() ?? name!,
+                        mo["StartMode"]?.ToString() ?? "",
+                        string.Equals(mo["State"]?.ToString(), "Running", StringComparison.OrdinalIgnoreCase),
+                        mo["Description"]?.ToString()));
+                }
+                catch { /* fila malformada: saltar */ }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"GameBoost: snapshot de todos los servicios falló: {ex.Message}");
+        }
+        return result;
+    }
+
     public Task ApplyAsync()
     {
         lock (_lock)
@@ -191,17 +433,27 @@ public sealed class GameBoostService : IGameBoostService
 
             // Lista configurable de procesos en segundo plano (tuerca del switch).
             var backgroundProcesses = GetBackgroundProcesses();
+ // Servicios que el boost detiene al iniciar el juego (los gestionados
+ // NO telemetría). Los deshabilitados por el usuario ya no corren: el
+ // snapshot los saltea solos. El switch "Servicios Optimizados Automaticos"
+ // apagado = el boost no detiene servicios por partida (solo gestiona procesos).
+            var autoServiceOptimization = IsAutomaticServiceOptimizationEnabled;
+            var userKillServices = autoServiceOptimization ? BoostStopServices : Array.Empty<string>();
+            if (!autoServiceOptimization)
+                _logging.LogInfo("GameBoost: optimización automática de servicios DESACTIVADA — no se detiene ningún servicio en esta partida.");
 
             // 1) Snapshot del estado previo, ANTES de tocar nada.
-            var servicesToRestart = SnapshotRunningServices();
+            var servicesToRestart = SnapshotRunningServices(userKillServices);
+            if (autoServiceOptimization)
+                _logging.LogInfo($"GameBoost: servicios a detener por partida: {string.Join(", ", userKillServices)} ({servicesToRestart.Count} corriendo ahora; se restauran al cerrar el juego).");
             var processesToRestore = SnapshotBackgroundPriorities(backgroundProcesses);
             _toastsSnapshot = ReadToastsEnabled();
 
             // 2) Comprometer el snapshot de forma atómica con la reserva de _active:
-            //    si una restauración (juego cerrado muy rápido, switch apagado o la app
-            //    en cierre) se ejecutó mientras hacíamos el snapshot, ya no queda nada
-            //    que aplicar — commitear igual dejaría cambios aplicados con _active = false
-            //    (sin dueño que los restaure).
+            // si una restauración (juego cerrado muy rápido, switch apagado o la app
+            // en cierre) se ejecutó mientras hacíamos el snapshot, ya no queda nada
+            // que aplicar — commitear igual dejaría cambios aplicados con _active = false
+            // (sin dueño que los restaure).
             bool shouldApply;
             lock (_lock)
             {
@@ -220,7 +472,9 @@ public sealed class GameBoostService : IGameBoostService
             }
 
             // 3) Aplicar los cambios.
-            StopServices(WindowsUpdateServices.Concat(MaintenanceServices));
+ // Solo se detienen los servicios seleccionados en la configuración.
+            StopServices(userKillServices);
+            KillUserProcesses();
             DeprioritizeBackgroundProcesses(backgroundProcesses);
             PauseToasts();
 
@@ -232,16 +486,22 @@ public sealed class GameBoostService : IGameBoostService
         }
     }
 
-    private List<ServiceSnapshot> SnapshotRunningServices()
+    private List<ServiceSnapshot> SnapshotRunningServices(IEnumerable<string> services)
     {
         var running = new List<ServiceSnapshot>();
-        foreach (var svc in WindowsUpdateServices.Concat(MaintenanceServices))
+ // Una sola consulta WMI para todos los servicios: StartMode + State.
+        var all = QueryServicesWmi(services);
+        foreach (var svc in services)
         {
-            if (IsServiceRunning(svc))
+            if (!all.TryGetValue(svc, out var info))
             {
-                var startType = GetServiceStartType(svc);
-                running.Add(new ServiceSnapshot(svc, startType ?? ""));
-                _logging.LogDebug($"GameBoost: {svc} estaba corriendo (tipo {startType}) — se restaurará al cerrar.");
+                _logging.LogDebug($"GameBoost: {svc} no existe — se omite.");
+                continue;
+            }
+            if (info.State.Equals("Running", StringComparison.OrdinalIgnoreCase))
+            {
+                running.Add(new ServiceSnapshot(svc, info.StartMode));
+                _logging.LogDebug($"GameBoost: {svc} estaba corriendo (modo {info.StartMode}) — se restaurará al cerrar.");
             }
             else
             {
@@ -265,14 +525,20 @@ public sealed class GameBoostService : IGameBoostService
                         if (p.HasExited) continue;
                         snap.Add(new ProcessSnapshot(p.Id, p.ProcessName, p.PriorityClass));
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        _logging.LogDebug($"GameBoost: no se pudo registrar un proceso en el snapshot: {ex.Message}");
+                    }
                     finally
                     {
                         p.Dispose();
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logging.LogDebug($"GameBoost: snapshot de procesos incompleto: {ex.Message}");
+            }
         }
         return snap;
     }
@@ -281,6 +547,60 @@ public sealed class GameBoostService : IGameBoostService
     {
         foreach (var svc in services)
             RunServiceCommand(svc, "stop");
+    }
+
+ /// <summary>
+ /// Cierra los procesos que el usuario eligió para la lista de "cerrar". No se
+ /// hace snapshot ni se restauran: el usuario los eligió cerrar, así que se
+ /// quedan cerrados. Se salte procesos críticos y la propia app.
+ /// </summary>
+    private void KillUserProcesses()
+    {
+        var toKill = GetKillProcesses();
+        if (toKill.Count == 0) return;
+
+ // Lista de procesos que NUNCA se cierran, aunque el usuario los agregue.
+        var protectedProcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "System", "Idle", "Registry", "Memory Compression", "MemCompression",
+            "csrss", "smss", "wininit", "winlogon", "lsass", "services", "svchost",
+            "dwm", "fontdrvhost", "conhost", "dllhost", "RuntimeBroker", "audiodg",
+            "MsMpEng", "spoolsv", "WudfHost", "WinForge"
+        };
+
+        _logging.LogInfo($"GameBoost: cerrando {toKill.Count} procesos seleccionados por el usuario...");
+        int killed = 0;
+        foreach (var name in toKill)
+        {
+            if (protectedProcs.Contains(name))
+            {
+                _logging.LogDebug($"GameBoost: no se cierra '{name}' (protegido).");
+                continue;
+            }
+            try
+            {
+                foreach (var p in Process.GetProcessesByName(name))
+                {
+                    try
+                    {
+                        if (p.HasExited) continue;
+                        p.Kill();
+                        killed++;
+                        _logging.LogDebug($"GameBoost: cerrado {name} (pid {p.Id}).");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logging.LogDebug($"GameBoost: no se pudo cerrar {name} (pid {p.Id}): {ex.Message}");
+                    }
+                    finally { p.Dispose(); }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logging.LogWarning($"GameBoost: cierre de procesos incompleto: {ex.Message}");
+            }
+        }
+        _logging.LogInfo($"GameBoost: {killed} procesos cerrados.");
     }
 
     private void DeprioritizeBackgroundProcesses(List<string> backgroundProcesses)
@@ -313,7 +633,10 @@ public sealed class GameBoostService : IGameBoostService
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logging.LogWarning($"GameBoost: restauración de procesos incompleta: {ex.Message}");
+            }
         }
     }
 
@@ -395,8 +718,8 @@ public sealed class GameBoostService : IGameBoostService
             {
                 // Si el usuario deshabilitó el servicio durante la sesión de juego,
                 // NO lo re-arrancamos: no hay que "encender" lo que el usuario apagó.
-                var currentType = GetServiceStartType(svc.Name);
-                if (currentType is not null && currentType.Contains("DISABLED", StringComparison.OrdinalIgnoreCase))
+                var currentState = GetServiceStates(new[] { svc.Name }).GetValueOrDefault(svc.Name);
+                if (currentState == ServiceStartState.Disabled)
                 {
                     _logging.LogInfo($"GameBoost: {svc.Name} está deshabilitado ahora — se omite su re-arranque.");
                     continue;
@@ -486,70 +809,17 @@ public sealed class GameBoostService : IGameBoostService
     // ===== Utilidades =====
 
     private bool IsServiceRunning(string serviceName)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("sc.exe", $"query {serviceName}")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var p = Process.Start(psi);
-            if (p is null) return false;
-
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-            return output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Devuelve la línea "START_TYPE ..." de <c>sc qc</c>, o null si no se pudo leer.
-    /// Se usa para detectar si un servicio quedó deshabilitado (DISABLED) y no debe re-arrancarse.
-    /// </summary>
-    private string? GetServiceStartType(string serviceName)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("sc.exe", $"qc {serviceName}")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var p = Process.Start(psi);
-            if (p is null) return null;
-
-            var output = p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-
-            foreach (var line in output.Split('\n'))
-            {
-                if (line.Contains("START_TYPE", StringComparison.OrdinalIgnoreCase))
-                    return line.Trim();
-            }
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
+        => GetServicesRunning(new[] { serviceName }).GetValueOrDefault(serviceName);
 
     private void RunServiceCommand(string serviceName, string action)
+        => RunServiceArgs($"{action} {serviceName}");
+
+ /// <summary>Ejecuta <c>sc.exe {args}</c> y registra la salida.</summary>
+    private void RunServiceArgs(string args)
     {
         try
         {
-            var psi = new ProcessStartInfo("sc.exe", $"{action} {serviceName}")
+            var psi = new ProcessStartInfo("sc.exe", args)
             {
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -560,7 +830,7 @@ public sealed class GameBoostService : IGameBoostService
             using var p = Process.Start(psi);
             if (p is null)
             {
-                _logging.LogWarning($"GameBoost: no se pudo iniciar sc {action} {serviceName}");
+                _logging.LogWarning($"GameBoost: no se pudo iniciar sc {args}");
                 return;
             }
 
@@ -568,11 +838,11 @@ public sealed class GameBoostService : IGameBoostService
             var errTask = p.StandardError.ReadToEndAsync();
             p.WaitForExit();
             var text = (outTask.Result + errTask.Result).Trim();
-            _logging.LogDebug($"GameBoost: sc {action} {serviceName} → {(string.IsNullOrEmpty(text) ? "OK" : text)}");
+            _logging.LogDebug($"GameBoost: sc {args} → {(string.IsNullOrEmpty(text) ? "OK" : text)}");
         }
         catch (Exception ex)
         {
-            _logging.LogWarning($"GameBoost: error al ejecutar sc {action} {serviceName}: {ex.Message}");
+            _logging.LogWarning($"GameBoost: error al ejecutar sc {args}: {ex.Message}");
         }
     }
 }

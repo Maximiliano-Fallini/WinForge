@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -22,8 +22,8 @@ public partial class App : Application
     private static bool _createdNew = false;
 
     /// <summary>
-    /// Initializes the singleton application object.  This is the first line of authored code
-    /// executed, and as such is the logical equivalent of main() or WinMain().
+    /// Initializes the singleton application object. This is the first line of authored code
+    /// executed, and as such is the logical equivalent of main or WinMain.
     /// </summary>
     public App()
     {
@@ -44,10 +44,43 @@ public partial class App : Application
         // Singleton: el keep-alive del bloqueo de escaneo Wi-Fi debe sobrevivir a
         // la navegación entre pestañas (RedPage se recrea al salir/entrar).
         services.AddSingleton<WlanOptimizerService>();
+        // Workshop: catálogo/descarga de componentes y registro único del navbar.
+        services.AddSingleton<WHPO.Core.Services.ComponentCatalogService>();
+        services.AddSingleton<WHPO_UI.Components.ComponentRegistry>();
 
         Services = services.BuildServiceProvider();
 
-        // Evitar múltiples instancias de la aplicación (como ISLC: single-instance por sesión)
+        // Evitar múltiples instancias de la aplicación (como herramientas similares: single-instance por sesión)
+        // Relanzamiento de tema (--theme-restart): la instancia vieja sigue viva unos
+        // instantes mientras se cierra, así que esperamos a que libere el mutex en
+        // vez de morir al instante (el reinicio "no funciona" silenciosamente).
+        bool themeRestart = Environment.GetCommandLineArgs().Contains("--theme-restart");
+        if (themeRestart)
+        {
+            try
+            {
+                using var probe = System.Threading.Mutex.OpenExisting(@"Local\WHPO.UI.SingleInstance");
+                // La instancia previa sigue cerrándose: esperar hasta 5 s a que
+                // suelte el mutex. Si la adquirimos, SOLTARLA enseguida: si no,
+                // el Mutex(true, ...) de abajo vería createdNew=false y moriría.
+                if (probe.WaitOne(TimeSpan.FromSeconds(5)))
+                    probe.ReleaseMutex();
+            }
+            catch (System.Threading.WaitHandleCannotBeOpenedException)
+            {
+                // La instancia previa ya terminó: seguir normal.
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    Services.GetRequiredService<ILoggingService>()
+                        .LogWarning($"Relanzamiento de tema: sonda de mutex: {ex.Message}");
+                }
+                catch { }
+            }
+        }
+
         _instanceMutex = new System.Threading.Mutex(true, @"Local\WHPO.UI.SingleInstance", out _createdNew);
         if (!_createdNew)
         {
@@ -147,6 +180,22 @@ public partial class App : Application
         // también lo asegura al navegar).
         Services.GetRequiredService<MacroHotkeyService>().EnsureStarted();
 
+        // Workshop: limpieza de desinstalaciones pendientes (*.uninstalled-*) y
+        // carga de los componentes descargados ANTES de crear la ventana — el
+        // navbar se arma a partir del registro en el constructor de MainWindow.
+        try
+        {
+            var componentCatalog = Services.GetRequiredService<WHPO.Core.Services.ComponentCatalogService>();
+            var componentRegistry = Services.GetRequiredService<WHPO_UI.Components.ComponentRegistry>();
+            componentCatalog.CleanupPendingUninstalls();
+            foreach (var component in componentCatalog.LoadInstalledComponents())
+                componentRegistry.Register(component);
+        }
+        catch (Exception ex)
+        {
+            Services.GetRequiredService<ILoggingService>().LogWarning($"Workshop: carga de componentes instalados: {ex.Message}");
+        }
+
         // Marcador de sesión en el log: ayuda a separar corridas en fase de desarrollo.
         Services.GetRequiredService<ILoggingService>().LogInfo("===== WinForge iniciado =====");
 
@@ -162,7 +211,7 @@ public partial class App : Application
         // Capturar los pinceles ORIGINALES de los diccionarios Light/Dark ANTES de
         // aplicar el tema guardado: RestoreBase (al salir de Rosa/Blanco o
         // Negro/Azul) vuelve a estos valores, así Claro/Oscuro/Sistema quedan
-        // exactamente como estaban. Debe correr antes de ts.Initialize().
+        // exactamente como estaban. Debe correr antes de ts.Initialize.
         ThemePalettes.Initialize();
 
         if (themeService is ThemeService ts)

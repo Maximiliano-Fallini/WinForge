@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <Page.Resources>
-        <!-- Botón de barra de herramientas (filtros + vista plana/árbol).
+<!-- Botón de barra de herramientas (filtros + vista plana/árbol).
              Template PROPIO: el template por defecto del Button oscurece el fondo
              en su estado PointerOver, y como el color activo (azul) + texto oscuro
              lo gobierna el code-behind, el hover lo dejaba ilegible. Con este
@@ -26,7 +26,7 @@
                             <VisualStateManager.VisualStateGroups>
                                 <VisualStateGroup x:Name="CommonStates">
                                     <VisualState x:Name="Normal"/>
-                                    <!-- PointerOver: sin cambio de fondo (el code-behind
+<!-- PointerOver: sin cambio de fondo (el code-behind
                                          maneja el hover con colores con contraste). -->
                                     <VisualState x:Name="PointerOver"/>
                                     <VisualState x:Name="Pressed">
@@ -71,7 +71,7 @@
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- ====== CABECERA (título simple, estilo monitor de sensores) ====== -->
+<!-- ====== CABECERA (título simple, estilo monitor de sensores) ====== -->
         <StackPanel Margin="24,16,24,0" Spacing="4">
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xE21D;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
@@ -89,7 +89,7 @@
                        TextWrapping="Wrap"/>
         </StackPanel>
 
-        <!-- ====== BARRA DE HERRAMIENTAS (botones compactos, sin card) ====== -->
+<!-- ====== BARRA DE HERRAMIENTAS (botones compactos, sin card) ====== -->
         <Grid Grid.Row="1" Margin="24,10,24,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -97,7 +97,7 @@
             </Grid.ColumnDefinitions>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
-                <!-- Filtro de procesos: todos o solo los del usuario actual. -->
+<!-- Filtro de procesos: todos o solo los del usuario actual. -->
                 <Button x:Name="FilterAllButton"
                         Click="FilterAllButton_Click"
                         Style="{StaticResource ToolbarButtonStyle}">
@@ -127,7 +127,7 @@
                     </StackPanel>
                 </Button>
 
-                <!-- Alterna vista plana (Admin de tareas) / vista árbol. -->
+<!-- Alterna vista plana (Admin de tareas) / vista árbol. -->
                 <Button x:Name="TreeButton"
                         Click="TreeButton_Click"
                         Style="{StaticResource ToolbarButtonStyle}">
@@ -138,7 +138,7 @@
                 </Button>
             </StackPanel>
 
-            <!-- Conteo en vivo (sale del mismo snapshot nativo: sin polling extra). -->
+<!-- Conteo en vivo (sale del mismo snapshot nativo: sin polling extra). -->
             <TextBlock x:Name="ProcCountText"
                        Grid.Column="1"
                        VerticalAlignment="Center"
@@ -146,7 +146,7 @@
                        Foreground="{ThemeResource SecondaryTextBrush}"/>
         </Grid>
 
-        <!-- ====== TABLA (borde + cabecera fija + filas, estilo monitor de sensores) ====== -->
+<!-- ====== TABLA (borde + cabecera fija + filas, estilo monitor de sensores) ====== -->
         <Border Grid.Row="2"
                 Margin="24,10,24,16"
                 BorderBrush="{ThemeResource SensorGridLineBrush}"
@@ -162,7 +162,7 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Cabecera de columnas (se desplaza en sincronía con las filas). -->
+<!-- Cabecera de columnas (se desplaza en sincronía con las filas). -->
                 <Grid x:Name="HeaderHost"
                       Grid.Row="0" Grid.Column="0"
                       Height="32"
@@ -174,7 +174,7 @@
                                IsHitTestVisible="False"/>
                 </Grid>
 
-                <!-- Filas + scrollbars propios en sus canaletas: los scrollbars nativos
+<!-- Filas + scrollbars propios en sus canaletas: los scrollbars nativos
                      del ScrollViewer son overlay (se dibujan ENCIMA del contenido y tapan
                      la fila/columna del borde), así que ambos se ocultan y se dibujan como
                      ScrollBar nativos en columnas/filas separadas, FUERA del viewport:
@@ -195,7 +195,7 @@
                         <StackPanel x:Name="RowsPanel" Spacing="0"/>
                     </ScrollViewer>
 
-                    <!-- Barra horizontal en su canaleta inferior (visible solo si desborda). -->
+<!-- Barra horizontal en su canaleta inferior (visible solo si desborda). -->
                     <ScrollBar x:Name="HScrollBar"
                                Grid.Row="1"
                                Orientation="Horizontal"
@@ -205,7 +205,7 @@
                                Visibility="Collapsed"/>
                 </Grid>
 
-                <!-- Barra vertical en su canaleta derecha (visible solo si desborda). -->
+<!-- Barra vertical en su canaleta derecha (visible solo si desborda). -->
                 <ScrollBar x:Name="VScrollBar"
                            Grid.Row="1" Grid.Column="1"
                            Orientation="Vertical"

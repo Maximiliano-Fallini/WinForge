@@ -16,7 +16,7 @@ public enum FeatureState
 }
 
 /// <summary>
-/// Característica opcional de Windows activable/desactivable (Features de winutil).
+/// Característica opcional de Windows activable/desactivable (Features).
 /// </summary>
 public record WinFeatureInfo(
     string Id,
@@ -26,7 +26,7 @@ public record WinFeatureInfo(
     bool NeedsRestart = false);
 
 /// <summary>
-/// Utilidad de un solo uso (Fixes de winutil).
+/// Utilidad de un solo uso (Fixes).
 /// </summary>
 public record WinFixInfo(
     string Id,
@@ -37,7 +37,7 @@ public record WinFixInfo(
     bool SupportsRevert = false);
 
 /// <summary>
-/// Panel clásico de Windows que se abre con un botón (Legacy Windows Panels de winutil).
+/// Panel clásico de Windows que se abre con un botón (Legacy Windows Panels).
 /// </summary>
 public record WindowsPanelInfo(
     string Id,
@@ -46,8 +46,8 @@ public record WindowsPanelInfo(
     string LaunchCommand);
 
 /// <summary>
-/// Servicio con las secciones "Features", "Fixes" y "Legacy Windows Panels" de winutil
-/// (Chris Titus Tech), adaptadas a WinForge.
+/// Servicio con las secciones "Features", "Fixes" y "Legacy Windows Panels"
+/// , adaptadas a WinForge.
 /// </summary>
 public interface IWinUtilService
 {

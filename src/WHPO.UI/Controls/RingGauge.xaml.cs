@@ -10,10 +10,10 @@ namespace WHPO_UI.Controls;
 /// <summary>
 /// Anillo circular con progreso (gauge). Construido 100% en código C#.
 /// Tiene dos modos:
-///  - Modo arco clásico: Progress (0.0 a 1.0) dibuja un arco alrededor del círculo.
-///  - Modo casillas: ConfigureCells(n) arma el anillo con casillas (una por paquete).
-///    Cada casilla representa un paquete y su color depende del estado del paquete:
-///    verde si se envió/recibió correctamente y rojo si llegó tarde o falló.
+/// - Modo arco clásico: Progress (0.0 a 1.0) dibuja un arco alrededor del círculo.
+/// - Modo casillas: ConfigureCells(n) arma el anillo con casillas (una por paquete).
+/// Cada casilla representa un paquete y su color depende del estado del paquete:
+/// verde si se envió/recibió correctamente y rojo si llegó tarde o falló.
 /// </summary>
 public sealed class RingGauge : Grid
 {

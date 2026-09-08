@@ -25,7 +25,7 @@
 
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Dark">
-            <!-- Azul de la app (mismo #8AB4F8 que AccentBrush) -->
+<!-- Azul de la app (mismo #8AB4F8 que AccentBrush) -->
             <Color x:Key="SystemAccentColor">#FF8AB4F8</Color>
             <Color x:Key="SystemAccentColorLight1">#FFA2C2FA</Color>
             <Color x:Key="SystemAccentColorLight2">#FF8AB4F8</Color>
@@ -41,7 +41,7 @@
             <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF8AB4F8" Opacity="0.9"/>
             <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF8AB4F8" Opacity="0.8"/>
 
-            <!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
+<!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
                  XamlControlsResources (si se define solo en el raíz de App.xaml,
                  WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
                  cards (#151517) para que toda la UI sea un solo bloque. -->
@@ -69,7 +69,7 @@
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 
-    <!-- Separador del navbar (entre el menú principal y el footer de
+<!-- Separador del navbar (entre el menú principal y el footer de
          Configuración): el default de WinUI es 0,3,0,4 (asimétrico).
          Lo hacemos simétrico 0,4,0,4. Theme-independent: va al nivel raíz
          del diccionario y gana por orden de merge en App.xaml. -->

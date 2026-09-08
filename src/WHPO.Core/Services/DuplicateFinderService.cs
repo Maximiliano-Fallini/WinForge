@@ -127,8 +127,8 @@ public sealed class DuplicateFinderService : IDuplicateFinderService
 
         // ----- Fase 2: hasheado en dos pasadas EN PARALELO -----
         // 2a) Hash parcial (primeros 64 KB) de TODOS los candidatos a la vez:
-        //     casi siempre separa archivos distintos sin leerlos enteros. Con
-        //     varios núcleos y solo 64 KB por archivo, esta pasada vuela.
+        // casi siempre separa archivos distintos sin leerlos enteros. Con
+        // varios núcleos y solo 64 KB por archivo, esta pasada vuela.
         // ----- Fase 2-pre: colapsar enlaces duros -----
         // Varias rutas pueden apuntar AL MISMO archivo físico (hardlinks; típico
         // del almacén de componentes de Windows: WinSxS ↔ System32/SystemApps).
@@ -183,8 +183,8 @@ public sealed class DuplicateFinderService : IDuplicateFinderService
             });
 
         // 2b) Solo los grupos que CHOCARON en el hash parcial se hashean completos:
-        //     el hash parcial es de 64 KB, dos archivos distintos pueden coincidir
-        //     por azar; acá se confirma con el archivo entero.
+        // el hash parcial es de 64 KB, dos archivos distintos pueden coincidir
+        // por azar; acá se confirma con el archivo entero.
         var collided = partialBuckets.Where(kv => kv.Value.Count > 1).ToList();
         long fullTotal = collided.Sum(kv => kv.Value.Count);
         if (fullTotal == 0)

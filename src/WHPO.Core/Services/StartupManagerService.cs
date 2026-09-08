@@ -15,10 +15,10 @@ namespace WHPO.Core.Services;
 /// Administración de inicio estilo Administrador de Tareas de Windows.
 ///
 /// Fuentes (las mismas que usa Task Manager):
-///  1. Registry Run keys (HKLM y HKCU, incluidas las subclaves de 32-bit en WOW6432Node).
-///  2. Startup folders (usuario y común).
-///  3. Apps empaquetadas (MSIX/UWP) con tarea de arranque declarada en su manifest
-///     (startupTask) — el estado se guarda en AppModel\SystemAppData.
+/// 1. Registry Run keys (HKLM y HKCU, incluidas las subclaves de 32-bit en WOW6432Node).
+/// 2. Startup folders (usuario y común).
+/// 3. Apps empaquetadas (MSIX/UWP) con tarea de arranque declarada en su manifest
+/// (startupTask) — el estado se guarda en AppModel\SystemAppData.
 ///
 /// El estado enabled/disabled se lee de las claves StartupApproved del Explorador
 /// (las mismas que mira Task Manager), no de un prefijo propio.
@@ -157,9 +157,9 @@ public sealed class StartupManagerService : IStartupManagerService
 
     /// <summary>
     /// Escribe o borra la entrada en StartupApproved.
-    /// enable=true  → borra la clave (así Windows la trata como enabled por defecto).
+    /// enable=true → borra la clave (así Windows la trata como enabled por defecto).
     /// enable=false → escribe el blob [03 00 00 00 ...]: primer byte IMPAR = disabled,
-    ///                que es lo que ve Task Manager al mostrar "Deshabilitado".
+    /// que es lo que ve Task Manager al mostrar "Deshabilitado".
     /// </summary>
     private static void WriteApproved(RegistryKey hive, string subkey, string valueName, bool enable)
     {
@@ -371,9 +371,9 @@ public sealed class StartupManagerService : IStartupManagerService
     /// Cada paquete vive en %ProgramFiles%\WindowsApps\&lt;PFN&gt;_&lt;ver&gt;_&lt;arch&gt;_&lt;hash&gt;\
     /// (accesible para la app, que corre elevada). El estado enabled/disabled se
     /// guarda POR USUARIO en:
-    ///   HKCU\...\AppModel\SystemAppData\&lt;PFN&gt;\&lt;TaskId&gt;\State
+    /// HKCU\...\AppModel\SystemAppData\&lt;PFN&gt;\&lt;TaskId&gt;\State
     /// con los valores del enum oficial StartupTaskState de Windows:
-    ///   0=Disabled · 1=DisabledByUser · 2=DisabledByPolicy · 3=Enabled · 4=DisabledByManager
+    /// 0=Disabled · 1=DisabledByUser · 2=DisabledByPolicy · 3=Enabled · 4=DisabledByManager
     /// Task Manager muestra "Habilitado" solo con State=3 (o si la clave no
     /// existe, vale el atributo Enabled del manifest).
     /// </summary>

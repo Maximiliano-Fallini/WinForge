@@ -6,15 +6,15 @@
     xmlns:local="using:WHPO_UI">
     <Application.Resources>
         <ResourceDictionary>
-            <!-- Pinceles semánticos por tema (claro/oscuro): el resto de la app usa estos
+<!-- Pinceles semánticos por tema (claro/oscuro): el resto de la app usa estos
                  recursos para que el modo claro se vea coherente y legible. -->
             <ResourceDictionary.ThemeDictionaries>
-                <!-- Paleta: el NAVBAR es negro en oscuro / blanco en claro, y el fondo del
+<!-- Paleta: el NAVBAR es negro en oscuro / blanco en claro, y el fondo del
                      contenido es GRIS (más claro que el negro, más oscuro que el blanco) para
                      que el sidebar siempre se diferencie de las vistas. Las cards se separan
                      del fondo por color + borde. -->
                 <ResourceDictionary x:Key="Dark">
-                    <!-- Paleta base oscura = ex "Oscuro Negro Test" (estilo Blur-AutoClicker:
+<!-- Paleta base oscura = ex "Oscuro Negro Test" (estilo Blur-AutoClicker:
                          fondo negro puro #0C0C0E, superficies grises) con el acento AZUL
                          de la app en vez del verde original. El navbar y las cards
                          comparten el gris #151517 (definido también en AccentOverrides.xaml). -->
@@ -23,11 +23,11 @@
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3A3A3C"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF9FA0A2"/>
 
-                    <!-- Acento de la app: azul claro (identidad de la app). -->
+<!-- Acento de la app: azul claro (identidad de la app). -->
                     <SolidColorBrush x:Key="AccentBrush" Color="#FF8AB4F8"/>
                     <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
 
-                    <!-- Gráficas (uso/temperatura/potencia): fondo y paleta de series. -->
+<!-- Gráficas (uso/temperatura/potencia): fondo y paleta de series. -->
                     <SolidColorBrush x:Key="ChartBackgroundBrush" Color="#FF0A0A0C"/>
                     <SolidColorBrush x:Key="ChartBackgroundHotBrush" Color="#FF150B0B"/>
                     <SolidColorBrush x:Key="ChartGridBrush" Color="#FF202022"/>
@@ -37,27 +37,27 @@
                     <SolidColorBrush x:Key="ChartHoverBadgeBorderBrush" Color="#FF3A3A3C"/>
                     <SolidColorBrush x:Key="ChartHoverTextBrush" Color="#FFF2F4F8"/>
 
-                    <!-- Colores semánticos de métricas (series y valores destacados). -->
+<!-- Colores semánticos de métricas (series y valores destacados). -->
                     <SolidColorBrush x:Key="MetricUsageBrush" Color="#FF4CC2C9"/>
                     <SolidColorBrush x:Key="MetricTempBrush" Color="#FF4CC257"/>
                     <SolidColorBrush x:Key="MetricPowerBrush" Color="#FFFFC93C"/>
 
-                    <!-- Grilla del Monitor de sensores (grupos = color de card/navbar). -->
+<!-- Grilla del Monitor de sensores (grupos = color de card/navbar). -->
                     <SolidColorBrush x:Key="SensorGridLineBrush" Color="#FF3A3A3C"/>
                     <SolidColorBrush x:Key="SensorGroupFillBrush" Color="#FF151517"/>
                     <SolidColorBrush x:Key="SensorCategoryFillBrush" Color="#FF141416"/>
 
-                    <!-- Card "Desactivar actualizaciones" (intencionalmente oscura/roja). -->
+<!-- Card "Desactivar actualizaciones" (intencionalmente oscura/roja). -->
                     <SolidColorBrush x:Key="DisabledCardBackgroundBrush" Color="#FF2B1C1C"/>
                     <SolidColorBrush x:Key="DisabledCardTextBrush" Color="#FFFFC1BC"/>
 
-                    <!-- Hover/selección de cards en code-behind (Optimizaciones) y tint del acento (Panel Windows). -->
+<!-- Hover/selección de cards en code-behind (Optimizaciones) y tint del acento (Panel Windows). -->
                     <SolidColorBrush x:Key="CardHoverBrush" Color="#FF242424"/>
                     <SolidColorBrush x:Key="CardSelectedBrush" Color="#FF262626"/>
                     <SolidColorBrush x:Key="AccentTintBrush" Color="#228AB4F8"/>
                     <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9A9C"/>
 
-                    <!-- Asistente de primera configuración: fondo con gradiente oscuro. -->
+<!-- Asistente de primera configuración: fondo con gradiente oscuro. -->
                     <LinearGradientBrush x:Key="OnboardingBackdropBrush" StartPoint="0,0" EndPoint="1,1">
                         <LinearGradientBrush.GradientStops>
                             <GradientStop Offset="0.0" Color="#FF0C0C0E"/>
@@ -66,14 +66,14 @@
                         </LinearGradientBrush.GradientStops>
                     </LinearGradientBrush>
 
-                    <!-- Capa sobre el banner del asistente: oscurece en tema oscuro. -->
+<!-- Capa sobre el banner del asistente: oscurece en tema oscuro. -->
                     <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#55000000"/>
                     <SolidColorBrush x:Key="OnboardingSurfaceBrush" Color="#D9151517"/>
 
-                    <!-- Chips de instrucciones del procesador (Sistema). -->
+<!-- Chips de instrucciones del procesador (Sistema). -->
                     <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FF262626"/>
 
-                    <!-- Cards de núcleos (Núcleos): mismo color que las cards/navbar. -->
+<!-- Cards de núcleos (Núcleos): mismo color que las cards/navbar. -->
                     <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FF151517"/>
                     <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FF0F0F11"/>
                 </ResourceDictionary>
@@ -83,11 +83,11 @@
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFD8DDE3"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF5C6470"/>
 
-                    <!-- Acento de la app en claro: azul más saturado, legible sobre blanco. -->
+<!-- Acento de la app en claro: azul más saturado, legible sobre blanco. -->
                     <SolidColorBrush x:Key="AccentBrush" Color="#FF3D7EDB"/>
                     <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
 
-                    <!-- Gráficas: fondo claro con series más oscuras para contraste. -->
+<!-- Gráficas: fondo claro con series más oscuras para contraste. -->
                     <SolidColorBrush x:Key="ChartBackgroundBrush" Color="#FFF4F6F8"/>
                     <SolidColorBrush x:Key="ChartBackgroundHotBrush" Color="#FFFBE9EC"/>
                     <SolidColorBrush x:Key="ChartGridBrush" Color="#FFD8DEE6"/>
@@ -113,7 +113,7 @@
                     <SolidColorBrush x:Key="AccentTintBrush" Color="#223D7EDB"/>
                     <SolidColorBrush x:Key="MutedBrush" Color="#FF6E7683"/>
 
-                    <!-- Asistente de primera configuración: fondo con gradiente claro. -->
+<!-- Asistente de primera configuración: fondo con gradiente claro. -->
                     <LinearGradientBrush x:Key="OnboardingBackdropBrush" StartPoint="0,0" EndPoint="1,1">
                         <LinearGradientBrush.GradientStops>
                             <GradientStop Offset="0.0" Color="#FFEFF2F7"/>
@@ -122,7 +122,7 @@
                         </LinearGradientBrush.GradientStops>
                     </LinearGradientBrush>
 
-                    <!-- Capa sobre el banner del asistente: aclara en tema claro. -->
+<!-- Capa sobre el banner del asistente: aclara en tema claro. -->
                     <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#73FFFFFF"/>
                     <SolidColorBrush x:Key="OnboardingSurfaceBrush" Color="#E6FFFFFF"/>
 
@@ -134,11 +134,11 @@
             </ResourceDictionary.ThemeDictionaries>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
-                <!-- Override del acento del sistema: DEBE ir después de XamlControlsResources
+<!-- Override del acento del sistema: DEBE ir después de XamlControlsResources
                      para que sus claves ganen el lookup (si va antes, el diccionario de
                      XamlControlsResources pisa el azul con el acento del sistema). -->
                 <ResourceDictionary Source="Controls/AccentOverrides.xaml"/>
-                <!-- Reusable Controls - Phase 4 -->
+<!-- Reusable Controls - Phase 4 -->
                 <ResourceDictionary Source="Controls/Buttons.xaml"/>
                 <ResourceDictionary Source="Controls/Cards.xaml"/>
                 <ResourceDictionary Source="Controls/Toggles.xaml"/>
@@ -146,11 +146,11 @@
                 <ResourceDictionary Source="Controls/Notifications.xaml"/>
                 <ResourceDictionary Source="Controls/CustomControls.xaml"/>
             </ResourceDictionary.MergedDictionaries>
-            <!-- Paleta de estado (coincide con Feedback.cs) -->
+<!-- Paleta de estado (coincide con Feedback.cs) -->
             <SolidColorBrush x:Key="SuccessBrush" Color="#FF4CAF50"/>
             <SolidColorBrush x:Key="WarningBrush" Color="#FFFFC107"/>
             <SolidColorBrush x:Key="ErrorBrush" Color="#FFF0616D"/>
-            <!-- Other app resources here -->
+<!-- Other app resources here -->
         </ResourceDictionary>
     </Application.Resources>
 </Application>

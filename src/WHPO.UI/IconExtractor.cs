@@ -194,7 +194,7 @@ internal static class IconExtractor
             if (match != null) return match;
 
             // 2) Nombres típicos de ícono del juego, en la carpeta del exe y (si el
-            //    exe está anidado, ej. Windows\game.exe) en la raíz de instalación.
+            // exe está anidado, ej. Windows\game.exe) en la raíz de instalación.
             string[] roots = { dir };
             var parent = Path.GetDirectoryName(dir.TrimEnd('\\'));
             if (!string.IsNullOrEmpty(parent)

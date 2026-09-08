@@ -8,11 +8,11 @@ namespace WHPO_UI.Services;
 
 /// <summary>
 /// Orquesta la superposición de métricas de juegos:
-///  - Ciclo de vida: crea/oculta la ventana overlay, arranca y detiene el muestreo
-///    de métricas (hardware + FPS por ETW) cuando el overlay está activado.
-///  - Hotkeys globales configurables: mostrar/ocultar (Ctrl+Alt+X por defecto) y
-///    bloquear/desbloquear (Ctrl+Alt+C por defecto), con flanco de subida.
-///  - Persistencia del estado (activado, visible, bloqueado) en los settings.
+/// - Ciclo de vida: crea/oculta la ventana overlay, arranca y detiene el muestreo
+/// de métricas (hardware + FPS por ETW) cuando el overlay está activado.
+/// - Hotkeys globales configurables: mostrar/ocultar (Ctrl+Alt+X por defecto) y
+/// bloquear/desbloquear (Ctrl+Alt+C por defecto), con flanco de subida.
+/// - Persistencia del estado (activado, visible, bloqueado) en los settings.
 ///
 /// La ventana overlay es WinForms y vive en el hilo de UI: todo acceso se hace por
 /// el DispatcherQueue capturado al crear el servicio (en el constructor de MainWindow).

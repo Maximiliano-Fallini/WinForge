@@ -6,9 +6,9 @@
 
     <Grid Background="{ThemeResource AppBackgroundBrush}">
 
-        <!-- ====== SKELETON DE CARGA (mientras se detecta instalado / no instalado) ====== -->
+<!-- ====== SKELETON DE CARGA (mientras se detecta instalado / no instalado) ====== -->
         <StackPanel x:Name="PageSkeleton" Spacing="16" Margin="24,12,24,24" IsHitTestVisible="False">
-            <!-- Header -->
+<!-- Header -->
             <StackPanel Spacing="2" Margin="0,12,0,4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <Rectangle Width="20" Height="20" RadiusX="10" RadiusY="10"
@@ -20,14 +20,14 @@
                            Fill="{ThemeResource ControlFillColorSecondaryBrush}" Margin="0,10,0,0" HorizontalAlignment="Left"/>
             </StackPanel>
 
-            <!-- Dos columnas de cards -->
+<!-- Dos columnas de cards -->
             <Grid ColumnSpacing="16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Columna izquierda: Desinstalar apps -->
+<!-- Columna izquierda: Desinstalar apps -->
                 <StackPanel Spacing="8">
                     <Rectangle Width="190" Height="18" RadiusX="9" RadiusY="9"
                                Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
@@ -68,7 +68,7 @@
                     </Border>
                 </StackPanel>
 
-                <!-- Columna derecha: Optimizaciones de aplicaciones -->
+<!-- Columna derecha: Optimizaciones de aplicaciones -->
                 <StackPanel Grid.Column="1" Spacing="8">
                     <Rectangle Width="220" Height="18" RadiusX="9" RadiusY="9"
                                Fill="{ThemeResource ControlFillColorSecondaryBrush}" HorizontalAlignment="Left"/>
@@ -103,24 +103,24 @@
                 </StackPanel>
             </Grid>
 
-            <!-- Botones de lote -->
+<!-- Botones de lote -->
             <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" Margin="0,4,0,0">
                 <Rectangle Width="170" Height="32" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
                 <Rectangle Width="160" Height="32" RadiusX="6" RadiusY="6" Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
             </StackPanel>
         </StackPanel>
 
-        <!-- ====== CONTENIDO REAL ====== -->
+<!-- ====== CONTENIDO REAL ====== -->
         <ScrollViewer x:Name="PageContent" Visibility="Collapsed">
-        <!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
+<!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
         <StackPanel Spacing="16" Margin="24">
 
             <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
-            <!-- ====== HEADER ====== -->
+<!-- ====== HEADER ====== -->
             <StackPanel Spacing="2" Margin="0,12,0,4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
-                    <!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
+<!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
                     <FontIcon Glyph="&#xE74D;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                     <TextBlock Text="Debloat" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
                 </StackPanel>
@@ -129,7 +129,7 @@
                            Foreground="{ThemeResource SecondaryTextBrush}"
                            TextWrapping="Wrap"/>
 
-                <!-- Volver a detectar instalado/no instalado (con skeleton de carga). -->
+<!-- Volver a detectar instalado/no instalado (con skeleton de carga). -->
                 <Button x:Name="RefreshButton"
                         HorizontalAlignment="Center"
                         Margin="0,8,0,0"
@@ -143,10 +143,10 @@
                 </Button>
             </StackPanel>
 
-            <!-- ====== PANEL DE NOTIFICACIONES ====== -->
+<!-- ====== PANEL DE NOTIFICACIONES ====== -->
             <StackPanel x:Name="NotificationPanel" Spacing="8" Visibility="Collapsed"/>
 
-            <!-- ====== CONSOLA DE EJECUCIÓN (estado en vivo estilo winutil) ====== -->
+<!-- ====== CONSOLA DE EJECUCIÓN (estado en vivo estilo consola) ====== -->
             <Border x:Name="ConsolePanel" CornerRadius="10" Padding="12,10"
                     Background="{ThemeResource CardBackgroundBrush}"
                     Visibility="Collapsed">
@@ -178,21 +178,16 @@
                 </StackPanel>
             </Border>
 
-            <!-- ====== LISTA DE TWEAKS (2 columnas) ====== -->
+<!-- ====== LISTA DE TWEAKS (2 columnas) ====== -->
             <StackPanel x:Name="TweaksPanel" Spacing="12"/>
 
-            <!-- ====== BOTONES DE LOTE (centrados) ====== -->
+<!-- ====== BOTONES DE LOTE (centrados) ====== -->
             <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" Margin="0,4,0,0">
                 <Button x:Name="ApplySelectedButton"
                         Content="Aplicar seleccionados"
                         Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}"
                         FontWeight="SemiBold" CornerRadius="6" Padding="16,8" MinWidth="170"
                         Click="ApplySelectedButton_Click"/>
-                <Button x:Name="RevertSelectedButton"
-                        Content="Revertir seleccionados"
-                        Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
-                        CornerRadius="6" Padding="16,8" MinWidth="160"
-                        Click="RevertSelectedButton_Click"/>
             </StackPanel>
         </StackPanel>
         </ScrollViewer>

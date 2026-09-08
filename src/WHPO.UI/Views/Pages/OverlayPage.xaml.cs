@@ -1345,11 +1345,11 @@ public sealed partial class OverlayPage : Page
         try
         {
             // 1) Desprender TODOS los badges usando la referencia de sus FILAS
-            //    (no badge.Parent): en WinUI 3, una fila detachada del panel deja
-            //    a sus hijos con Parent null pero SIGUEN siendo de esa fila —
-            //    agregarlos a otra fila lanzaba COMException 0x800F1000
-            //    "Element is already the child of another element" y el panel
-            //    quedaba vacío ("al soltar desaparecen todas").
+            // (no badge.Parent): en WinUI 3, una fila detachada del panel deja
+            // a sus hijos con Parent null pero SIGUEN siendo de esa fila —
+            // agregarlos a otra fila lanzaba COMException 0x800F1000
+            // "Element is already the child of another element" y el panel
+            // quedaba vacío ("al soltar desaparecen todas").
             var rows = MetricBadgePanel.Children.OfType<StackPanel>().ToList();
             foreach (var r in rows) r.Children.Clear();
             MetricBadgePanel.Children.Clear();

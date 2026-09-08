@@ -1181,7 +1181,7 @@ public sealed class ProcessService : IProcessService
             // Prioridad de nacimiento: si la regla define prioridad de CPU, el exe
             // nace con ella (PerfOptions); si no, se limpia la clave que pueda haber.
             // En hilo de fondo porque enumera los exes de la carpeta de instalación.
-            _ = Task.Run(() => { try { SyncBirthPriority(exe, rule); } catch { } });
+            _ = Task.Run(() => { try { SyncBirthPriority(exe, rule); } catch (Exception ex) { _logging.LogDebug($"ProcessService: sincronizar prioridad de nacimiento de {exe}: {ex.Message}"); } });
         }
         _settings.Set("process.rules", rules);
         _settings.Save();
@@ -1380,7 +1380,7 @@ public sealed class ProcessService : IProcessService
             for (int i = 0; i < 50 && !HasKnownPaths(); i++) Thread.Sleep(200);
             foreach (var (exe, rule) in GetRules())
             {
-                try { SyncBirthPriority(exe, rule); } catch { }
+                try { SyncBirthPriority(exe, rule); } catch (Exception ex) { _logging.LogDebug($"ProcessService: reconciliar prioridad de nacimiento de {exe}: {ex.Message}"); }
             }
         }
         catch (Exception ex)
@@ -1499,7 +1499,10 @@ public sealed class ProcessService : IProcessService
                 _appliedPlanExe = exe;
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"ProcessService: no se pudo activar el plan de energía para {exe}: {ex.Message}");
+        }
     }
 
     public void RevertPowerPlanIfApplied(string exe)
@@ -1592,7 +1595,10 @@ public sealed class ProcessService : IProcessService
                             ApplyEffectiveRule(p.Id, ruleKey, session, rules);
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _logging.LogDebug($"ProcessService: aplicar la regla efectiva a un proceso del juego: {ex.Message}");
+                }
             }
 
             lock (_runningLock)
@@ -1799,7 +1805,7 @@ public sealed class ProcessService : IProcessService
         try
         {
             // 1) Early exit: ¿el OS reporta una app fullscreen? (PRESENTATION_MODE
-            //    es PowerPoint, no cuenta como juego).
+            // es PowerPoint, no cuenta como juego).
             if (SHQueryUserNotificationState(out var state) != 0 ||
                 (state != QueryUserNotificationState.Busy &&
                  state != QueryUserNotificationState.RunningD3DFullScreen))
@@ -1818,7 +1824,7 @@ public sealed class ProcessService : IProcessService
                 TryGetProcessPath(p, out var ppath);
 
                 // 3) Filtros: blacklist, procesos del sistema, ya conocidos
-                //    (biblioteca) o ya rastreados (regla o el propio watcher).
+                // (biblioteca) o ya rastreados (regla o el propio watcher).
                 if (FullscreenExclusions.Contains(pname)) return;
                 if (ppath != null &&
                     ppath.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows),

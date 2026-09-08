@@ -12,16 +12,16 @@ namespace WHPO_UI;
 /// Cada tema hereda la estructura de un diccionario base (Light o Dark) y pisa
 /// sus pinceles de identidad en DOS lugares, cada clave en el diccionario donde
 /// vive originalmente (así gana la lookup igual que el valor que reemplaza):
-///  - Pinceles semánticos (AppBackgroundBrush, AccentBrush, cards...) →
-///    ThemeDictionaries de App.xaml.
-///  - SystemAccentColor* (como Color), SystemAccentColorBrush,
-///    AccentFillColor* y NavigationView* → diccionario mergeado
-///    AccentOverrides.xaml. Escribir los SystemAccentColor* como COLOR (no como
-///    pincel) es lo que hace reactivos a ToggleSwitch, CheckBox, ProgressBar y
-///    botones de acento, porque los pinceles internos de WinUI derivan de esos
-///    colores en runtime.
+/// - Pinceles semánticos (AppBackgroundBrush, AccentBrush, cards...) →
+/// ThemeDictionaries de App.xaml.
+/// - SystemAccentColor* (como Color), SystemAccentColorBrush,
+/// AccentFillColor* y NavigationView* → diccionario mergeado
+/// AccentOverrides.xaml. Escribir los SystemAccentColor* como COLOR (no como
+/// pincel) es lo que hace reactivos a ToggleSwitch, CheckBox, ProgressBar y
+/// botones de acento, porque los pinceles internos de WinUI derivan de esos
+/// colores en runtime.
 ///
-/// Initialize() captura los valores originales al arrancar; RestoreBase() los
+/// Initialize captura los valores originales al arrancar; RestoreBase los
 /// devuelve exactos al salir del tema, así Claro/Oscuro/Sistema quedan intactos.
 /// </summary>
 public static class ThemePalettes

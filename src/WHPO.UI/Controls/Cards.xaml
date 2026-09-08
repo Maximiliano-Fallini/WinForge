@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
 
-    <!-- Base Card Style -->
+<!-- Base Card Style -->
     <Style x:Key="CardStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
         <Setter Property="CornerRadius" Value="8"/>
@@ -12,7 +12,7 @@
         <Setter Property="Padding" Value="16"/>
     </Style>
 
-    <!-- Elevated Card Style -->
+<!-- Elevated Card Style -->
     <Style x:Key="ElevatedCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
@@ -23,25 +23,25 @@
         </Setter>
     </Style>
 
-    <!-- Outlined Card Style -->
+<!-- Outlined Card Style -->
     <Style x:Key="OutlinedCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
     </Style>
 
-    <!-- Filled Card Style -->
+<!-- Filled Card Style -->
     <Style x:Key="FilledCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorSecondaryBrush}"/>
         <Setter Property="BorderThickness" Value="0"/>
     </Style>
 
-    <!-- Interactive Card Style (for clickable cards) -->
+<!-- Interactive Card Style (for clickable cards) -->
     <Style x:Key="InteractiveCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
     </Style>
 
-    <!-- Card Header Template -->
+<!-- Card Header Template -->
     <DataTemplate x:Key="CardHeaderTemplate">
         <StackPanel Spacing="4">
             <TextBlock 
@@ -56,70 +56,70 @@
         </StackPanel>
     </DataTemplate>
 
-    <!-- Card Content Template -->
+<!-- Card Content Template -->
     <DataTemplate x:Key="CardContentTemplate">
         <ContentControl Content="{Binding Content}"/>
     </DataTemplate>
 
-    <!-- Card Footer Template -->
+<!-- Card Footer Template -->
     <DataTemplate x:Key="CardFooterTemplate">
         <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
             <ContentControl Content="{Binding Actions}"/>
         </StackPanel>
     </DataTemplate>
 
-    <!-- Metric Card Style -->
+<!-- Metric Card Style -->
     <Style x:Key="MetricCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="MinWidth" Value="200"/>
         <Setter Property="MinHeight" Value="120"/>
     </Style>
 
-    <!-- Info Card Style -->
+<!-- Info Card Style -->
     <Style x:Key="InfoCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="BorderBrush" Value="{ThemeResource SystemAccentColorBrush}"/>
         <Setter Property="BorderThickness" Value="2,0,0,0"/>
     </Style>
 
-    <!-- Warning Card Style -->
+<!-- Warning Card Style -->
     <Style x:Key="WarningCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="BorderBrush" Value="{ThemeResource SystemFillColorCautionBrush}"/>
         <Setter Property="BorderThickness" Value="2,0,0,0"/>
         <Setter Property="Background" Value="{ThemeResource SystemFillColorCautionBrush}"/>
     </Style>
 
-    <!-- Error Card Style -->
+<!-- Error Card Style -->
     <Style x:Key="ErrorCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="BorderBrush" Value="{ThemeResource SystemFillColorCriticalBrush}"/>
         <Setter Property="BorderThickness" Value="2,0,0,0"/>
         <Setter Property="Background" Value="{ThemeResource SystemFillColorCriticalBrush}"/>
     </Style>
 
-    <!-- Success Card Style -->
+<!-- Success Card Style -->
     <Style x:Key="SuccessCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="BorderBrush" Value="{ThemeResource SystemFillColorSuccessBrush}"/>
         <Setter Property="BorderThickness" Value="2,0,0,0"/>
         <Setter Property="Background" Value="{ThemeResource SystemFillColorSuccessBrush}"/>
     </Style>
 
-    <!-- Compact Card Style -->
+<!-- Compact Card Style -->
     <Style x:Key="CompactCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Padding" Value="12"/>
         <Setter Property="CornerRadius" Value="6"/>
     </Style>
 
-    <!-- Large Card Style -->
+<!-- Large Card Style -->
     <Style x:Key="LargeCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Padding" Value="24"/>
         <Setter Property="CornerRadius" Value="12"/>
     </Style>
 
-    <!-- Card with Image Style -->
+<!-- Card with Image Style -->
     <Style x:Key="CardWithImageStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Padding" Value="0"/>
         <Setter Property="CornerRadius" Value="8"/>
     </Style>
 
-    <!-- Card with Icon Style -->
+<!-- Card with Icon Style -->
     <Style x:Key="CardWithIconStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
         <Setter Property="Padding" Value="12"/>
     </Style>

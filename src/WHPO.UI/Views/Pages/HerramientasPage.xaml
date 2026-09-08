@@ -5,19 +5,16 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
-        <!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
+<!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
         <StackPanel Spacing="16" Margin="24">
 
-            <!-- ====== FUNCIONES (Features) ====== -->
+<!-- ====== FUNCIONES (Features) ====== -->
             <StackPanel x:Name="FeaturesPanel" Spacing="12"/>
 
-            <!-- ====== FIXES ====== -->
+<!-- ====== FIXES ====== -->
             <StackPanel x:Name="FixesPanel" Spacing="12"/>
 
-            <!-- ====== UTILIDADES ====== -->
-            <StackPanel x:Name="UtilitiesPanel" Spacing="12"/>
-
-            <!-- ====== CONSOLA DE EJECUCIÓN ====== -->
+<!-- ====== CONSOLA DE EJECUCIÓN ====== -->
             <Border x:Name="ConsolePanel" CornerRadius="10" Padding="12,10"
                     Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                     Visibility="Collapsed">

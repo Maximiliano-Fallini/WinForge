@@ -10,7 +10,7 @@
 
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
         <Grid.Resources>
-            <!-- Card genérica de sección de resultados (Chequeo): fondo + borde + esquinas. -->
+<!-- Card genérica de sección de resultados (Chequeo): fondo + borde + esquinas. -->
             <Style x:Key="AnalysisCardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
                 <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
@@ -20,7 +20,7 @@
             </Style>
         </Grid.Resources>
 
-        <!-- ====== NAVBAR INTERNO: Chequeo / Limpieza personalizada / Buscador de duplicados / Admin. de inicio ====== -->
+<!-- ====== NAVBAR INTERNO: Chequeo / Limpieza personalizada / Buscador de duplicados / Admin. de inicio ====== -->
         <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="LimpiezaTabs"
                          Margin="20,10,20,4"
@@ -35,7 +35,7 @@
 
         <Grid Grid.Row="1">
 
-            <!-- ==================== PESTAÑA 1: CHEQUEO (estilo CCleaner) ====================
+<!-- ==================== PESTAÑA 1: CHEQUEO (estilo CCleaner) ====================
                  La card de total vive FUERA del ScrollViewer: queda fija arriba de la
                  pestaña, pero solo se muestra DESPUÉS de analizar (nunca antes del
                  botón Analizar). El contenido (inicio / progreso / resultados) scrollea
@@ -46,7 +46,7 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Card hero (estilo profesional): total + fases + acción, fija arriba.
+<!-- Card hero (estilo profesional): total + fases + acción, fija arriba.
                      Visibility=Collapsed: solo aparece al terminar el análisis. -->
                 <Border x:Name="ChequeoHeroCard" Grid.Row="0"
                         Visibility="Collapsed"
@@ -56,7 +56,7 @@
                         Margin="24,16,24,0">
                         <StackPanel Spacing="16">
 
-                            <!-- Total encontrado: chip de icono + etiqueta + valor grande -->
+<!-- Total encontrado: chip de icono + etiqueta + valor grande -->
                             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
                                 <Border Width="44" Height="44" CornerRadius="12"
                                         Background="{ThemeResource AccentTintBrush}"
@@ -76,13 +76,13 @@
                                 </StackPanel>
                             </Grid>
 
-                            <!-- Detalles (fases + acción): se muestran solo tras el análisis. -->
+<!-- Detalles (fases + acción): se muestran solo tras el análisis. -->
                             <StackPanel x:Name="ChequeoHeroDetails" Spacing="14" Visibility="Collapsed">
 
-                                <!-- Separador entre el total y las fases -->
+<!-- Separador entre el total y las fases -->
                                 <Border Height="1" Background="{ThemeResource CardBorderBrush}" Opacity="0.7"/>
 
-                                <!-- Stepper de fases: puntos + línea (estilo onboarding),
+<!-- Stepper de fases: puntos + línea (estilo onboarding),
                                      centrados. Cada punto es clickeable para saltar. -->
                                 <StackPanel Spacing="6" HorizontalAlignment="Center">
                                     <StackPanel x:Name="ChequeoPhaseDots" Orientation="Horizontal"
@@ -91,7 +91,7 @@
                                                HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"/>
                                 </StackPanel>
 
-                                <!-- Acción de la fase activa + Saltar a la siguiente -->
+<!-- Acción de la fase activa + Saltar a la siguiente -->
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
                                     <Button x:Name="ChequeoPhaseActionButton" Content="Limpiar"
                                             Style="{StaticResource AccentButtonStyle}" CornerRadius="10" Padding="30,12"
@@ -111,7 +111,7 @@
                 </Border>
 
                 <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <!-- Filas estrella: centran el panel de inicio/progreso sin MinHeight
+<!-- Filas estrella: centran el panel de inicio/progreso sin MinHeight
                          binding que genere scroll fantasma en la vista inicial. El panel
                          de resultados abarca las 3 filas (RowSpan) con alineación Top
                          para arrancar arriba, sin centrado vertical. -->
@@ -122,7 +122,7 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                    <!-- Botón central de Analizar (antes de escanear) -->
+<!-- Botón central de Analizar (antes de escanear) -->
                     <StackPanel x:Name="ChequeoStartPanel"
                                 Grid.Row="1"
                                 HorizontalAlignment="Center"
@@ -159,12 +159,12 @@
                         </Border>
                     </StackPanel>
 
-                    <!-- Progreso del escaneo -->
+<!-- Progreso del escaneo -->
                     <StackPanel x:Name="ChequeoProgressPanel" Grid.Row="1" Spacing="12" Visibility="Collapsed"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center"
                                 Width="260">
-                        <!-- Velocímetro de progreso del análisis -->
+<!-- Velocímetro de progreso del análisis -->
                         <controls:SpeedometerGauge x:Name="ChequeoRing"
                                                    HorizontalAlignment="Center"/>
                         <TextBlock x:Name="ChequeoProgressText"
@@ -184,17 +184,17 @@
                                 MinWidth="120"/>
                     </StackPanel>
 
-                    <!-- Área de resultados (aparece después de escanear; la card de total
+<!-- Área de resultados (aparece después de escanear; la card de total
                          queda fija arriba, fuera del scroll). Abarca las 3 filas con Top:
                          las cards arrancan arriba del todo, sin centrado vertical. -->
                     <StackPanel x:Name="ChequeoResultsPanel" Grid.Row="0" Grid.RowSpan="3" Spacing="16" Visibility="Collapsed"
                                 VerticalAlignment="Top"
                                 Margin="24,16,24,24">
 
-                        <!-- ============ VISTA FASE 1: LIMPIEZA DE ARCHIVOS ============ -->
+<!-- ============ VISTA FASE 1: LIMPIEZA DE ARCHIVOS ============ -->
                         <StackPanel x:Name="ChequeoPhase1View" Spacing="16">
 
-                        <!-- ===== Sección 1: Navegadores ===== -->
+<!-- ===== Sección 1: Navegadores ===== -->
                         <StackPanel x:Name="ChequeoBrowserSection" Spacing="10" Visibility="Collapsed">
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
@@ -216,7 +216,7 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- ===== Sección 2: Sistema ===== -->
+<!-- ===== Sección 2: Sistema ===== -->
                         <StackPanel x:Name="ChequeoSystemSection" Spacing="10" Visibility="Collapsed">
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
@@ -238,7 +238,7 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- ===== Sección 3: Caché de aplicaciones ===== -->
+<!-- ===== Sección 3: Caché de aplicaciones ===== -->
                         <StackPanel x:Name="ChequeoAppCacheSection" Spacing="10" Visibility="Collapsed">
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
@@ -260,7 +260,7 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- ===== Sección 4: Papelera ===== -->
+<!-- ===== Sección 4: Papelera ===== -->
                         <StackPanel x:Name="ChequeoRecycleSection" Spacing="10" Visibility="Collapsed">
                             <Border Style="{StaticResource AnalysisCardStyle}">
                                 <StackPanel Spacing="8">
@@ -283,7 +283,7 @@
                         </StackPanel>
                         </StackPanel>
 
-                        <!-- ============ VISTA FASE 2: APLICACIONES EN SEGUNDO PLANO ============ -->
+<!-- ============ VISTA FASE 2: APLICACIONES EN SEGUNDO PLANO ============ -->
                         <StackPanel x:Name="ChequeoPhase2View" Spacing="16" Visibility="Collapsed">
                             <StackPanel x:Name="ChequeoAppsSection" Spacing="10" Visibility="Collapsed">
                                 <Border Style="{StaticResource AnalysisCardStyle}">
@@ -309,7 +309,7 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <!-- ============ VISTA FASE 3: APLICACIONES DE INICIO ============ -->
+<!-- ============ VISTA FASE 3: APLICACIONES DE INICIO ============ -->
                         <StackPanel x:Name="ChequeoPhase3View" Spacing="16" Visibility="Collapsed">
                             <StackPanel x:Name="ChequeoStartupSection" Spacing="10" Visibility="Collapsed">
                                 <Border Style="{StaticResource AnalysisCardStyle}">
@@ -340,10 +340,10 @@
                 </ScrollViewer>
             </Grid>
 
-            <!-- ==================== PESTAÑA 2: LIMPIEZA PERSONALIZADA ==================== -->
+<!-- ==================== PESTAÑA 2: LIMPIEZA PERSONALIZADA ==================== -->
             <Grid x:Name="CustomTab" Visibility="Collapsed">
                 <ScrollViewer x:Name="CustomScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                    <!-- Las filas estrella (arriba/abajo) centran el panel de inicio sin
+<!-- Las filas estrella (arriba/abajo) centran el panel de inicio sin
                          MinHeight binding ni margins que generen scroll fantasma. El
                          contenido tras analizar abarca las 3 filas (RowSpan) con Top
                          para arrancar arriba, sin centrado vertical. -->
@@ -354,7 +354,7 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <!-- Panel de inicio: texto + opciones agrupadas + Analizar (estilo CCleaner) -->
+<!-- Panel de inicio: texto + opciones agrupadas + Analizar (estilo CCleaner) -->
                         <StackPanel x:Name="CustomStartPanel"
                                     Grid.Row="1"
                                     HorizontalAlignment="Center"
@@ -367,7 +367,7 @@
                                        TextAlignment="Center"
                                        MaxWidth="480"/>
 
-                            <!-- Opciones: grupos de carpetas que se analizan -->
+<!-- Opciones: grupos de carpetas que se analizan -->
                             <Border Background="{ThemeResource CardBackgroundBrush}"
                                     BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                                     CornerRadius="12" Padding="16"
@@ -400,13 +400,13 @@
                                     MinHeight="44"/>
                         </StackPanel>
 
-                        <!-- Contenido: aparece después de analizar, con las tarjetas expandidas.
+<!-- Contenido: aparece después de analizar, con las tarjetas expandidas.
                              Abarca las 3 filas con Top: las cards arrancan arriba del todo. -->
                         <StackPanel x:Name="CustomContentPanel" Grid.Row="0" Grid.RowSpan="3" Spacing="16" Visibility="Collapsed"
                                     VerticalAlignment="Top"
                                     Margin="24,16,24,24">
 
-                            <!-- Card hero: total encontrado + acciones (re-analizar / limpiar) -->
+<!-- Card hero: total encontrado + acciones (re-analizar / limpiar) -->
                             <Border Background="{ThemeResource CardBackgroundBrush}"
                                     BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                                     CornerRadius="12" Padding="18">
@@ -437,12 +437,12 @@
                             <StackPanel x:Name="CategoriesHost" Spacing="12"/>
                         </StackPanel>
 
-                        <!-- Progreso del análisis: velocímetro con % central, como en Chequeo -->
+<!-- Progreso del análisis: velocímetro con % central, como en Chequeo -->
                         <StackPanel x:Name="CustomProgressPanel" Grid.Row="1" Spacing="12" Visibility="Collapsed"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
                                     Width="260">
-                            <!-- Velocímetro de progreso del análisis -->
+<!-- Velocímetro de progreso del análisis -->
                             <controls:SpeedometerGauge x:Name="CustomRing"
                                                        HorizontalAlignment="Center"/>
                             <TextBlock x:Name="CustomProgressText"
@@ -465,11 +465,11 @@
                 </ScrollViewer>
             </Grid>
 
-            <!-- ==================== PESTAÑA 3: BUSCADOR DE DUPLICADOS ==================== -->
+<!-- ==================== PESTAÑA 3: BUSCADOR DE DUPLICADOS ==================== -->
             <ScrollViewer x:Name="DupTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
                 <StackPanel Spacing="16" Margin="24,16,24,24">
 
-                    <!-- Configuración: unidad o carpeta a escanear + scan -->
+<!-- Configuración: unidad o carpeta a escanear + scan -->
                     <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                         <StackPanel Spacing="10">
                             <TextBlock Text="Unidad o carpeta a escanear" FontSize="15" FontWeight="SemiBold"/>
@@ -491,7 +491,7 @@
                                         </DataTemplate>
                                     </ComboBox.ItemTemplate>
                                 </ComboBox>
-                                <!-- Oculto: la lógica de scan sigue leyendo de acá -->
+<!-- Oculto: la lógica de scan sigue leyendo de acá -->
                                 <TextBox x:Name="DupPathBox" Visibility="Collapsed"/>
                                 <Button x:Name="DupScanButton"
                                         Grid.Column="1"
@@ -503,19 +503,19 @@
                                         MinWidth="100"/>
                             </Grid>
 
-                            <!-- Papelera opcional (estilo CCleaner): por defecto activada,
+<!-- Papelera opcional (estilo CCleaner): por defecto activada,
                                  los borrados quedan recuperables -->
                             <CheckBox x:Name="DupRecycleToggle"
                                       Content="Enviar los borrados a la papelera de reciclaje (recuperable)"
                                       FontSize="12"
                                       IsChecked="True"/>
 
-                            <!-- Progreso del escaneo: anillo + carpeta actual + cancelar -->
+<!-- Progreso del escaneo: anillo + carpeta actual + cancelar -->
                             <StackPanel x:Name="DupProgressPanel"
                                         Spacing="10"
                                         HorizontalAlignment="Center"
                                         Visibility="Collapsed">
-                                <!-- Velocímetro de progreso del escaneo -->
+<!-- Velocímetro de progreso del escaneo -->
                                 <controls:SpeedometerGauge x:Name="DupRing"
                                                            HorizontalAlignment="Center"/>
                                 <TextBlock x:Name="DupProgressText" Text="" FontSize="12"
@@ -535,13 +535,13 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Resultados -->
+<!-- Resultados -->
                     <Border x:Name="DupResultsCard" Background="{ThemeResource CardBackgroundBrush}"
                             BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                             CornerRadius="12" Padding="16" Visibility="Collapsed">
                         <StackPanel Spacing="12">
 
-                            <!-- Resumen hero: grupos, archivos y espacio liberable + botón de borrado -->
+<!-- Resumen hero: grupos, archivos y espacio liberable + botón de borrado -->
                             <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
                                     CornerRadius="10" Padding="14">
                                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
@@ -581,7 +581,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <!-- ==================== PESTAÑA 4: ADMINISTRACIÓN DE INICIO ==================== -->
+<!-- ==================== PESTAÑA 4: ADMINISTRACIÓN DE INICIO ==================== -->
             <ScrollViewer x:Name="StartupTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
                 <StackPanel Spacing="14" Margin="24,16,24,24">
 
@@ -600,7 +600,7 @@
                             <TextBlock Text="Activá o desactivá las entradas. La app que tildes como desactivada deja de arrancar al iniciar sesión sin borrarla."
                                        FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
 
-                            <!-- Cabecera de columnas -->
+<!-- Cabecera de columnas -->
                             <Grid ColumnDefinitions="Auto,1.6*,0.5*,0.5*" ColumnSpacing="8" Padding="4,2,4,4">
                                 <TextBlock Text="" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
                                 <TextBlock Grid.Column="1" Text="Comando" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>

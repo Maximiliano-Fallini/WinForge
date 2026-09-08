@@ -15,11 +15,11 @@ namespace WHPO.Core.Services;
 /// aplicaciones y navegadores mediante rutas seguras y conocidas.
 ///
 /// Reglas de seguridad:
-///  - Cada ítem borra el CONTENIDO de su carpeta pero conserva la raíz.
-///  - Los archivos en uso (bloqueados) se omiten y se reportan como advertencia,
-///    nunca se reintenta furiosamente ni se tira la operación completa.
-///  - Los ítems de "solo análisis" (ruta de entorno PATH) no borran nada.
-///  - Para limpiar un navegador abierto hay que cerrarlo explícitamente.
+/// - Cada ítem borra el CONTENIDO de su carpeta pero conserva la raíz.
+/// - Los archivos en uso (bloqueados) se omiten y se reportan como advertencia,
+/// nunca se reintenta furiosamente ni se tira la operación completa.
+/// - Los ítems de "solo análisis" (ruta de entorno PATH) no borran nada.
+/// - Para limpiar un navegador abierto hay que cerrarlo explícitamente.
 /// </summary>
 public sealed class CleanupService : ICleanupService
 {

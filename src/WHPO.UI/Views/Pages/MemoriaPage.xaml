@@ -7,14 +7,14 @@
         <StackPanel Spacing="16" Margin="24">
             <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
-            <!-- ====== SECCIÓN 1: STANDBY LIST CLEANER ====== -->
+<!-- ====== SECCIÓN 1: STANDBY LIST CLEANER ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <FontIcon Glyph="&#xE7F1;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Standby List Cleaner" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
-                    <!-- Estadísticas de memoria: fila 1 -->
+<!-- Estadísticas de memoria: fila 1 -->
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                             <StackPanel Spacing="2">
@@ -36,7 +36,7 @@
                         </Border>
                     </Grid>
 
-                    <!-- Estadísticas de memoria: fila 2 -->
+<!-- Estadísticas de memoria: fila 2 -->
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                             <StackPanel Spacing="2">
@@ -66,7 +66,7 @@
 
                     <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,2"/>
 
-                    <!-- Configuración de limpieza automática -->
+<!-- Configuración de limpieza automática -->
                     <TextBlock Text="Limpieza automática" FontSize="14" FontWeight="SemiBold"/>
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <StackPanel Spacing="6">

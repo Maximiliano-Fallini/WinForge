@@ -5,19 +5,19 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
-        <!-- Margen reducido para que el contenido quede pegado al navbar (NavigationView). -->
-        <!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
+<!-- Margen reducido para que el contenido quede pegado al navbar (NavigationView). -->
+<!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
         <StackPanel Spacing="16" Margin="24">
 
             <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
-            <!-- ====== PRECONFIGURACIONES ====== -->
+<!-- ====== PRECONFIGURACIONES ====== -->
             <StackPanel Spacing="12">
-                <!-- Misma geometría que "Panel de Windows" y las secciones de Reparación:
+<!-- Misma geometría que "Panel de Windows" y las secciones de Reparación:
                      emoji 20px + título 22px SemiBold, ambos centrados verticalmente, Spacing 10. -->
                 <StackPanel Spacing="2" Margin="0,12,0,4">
                     <StackPanel Orientation="Horizontal" Spacing="10">
-                        <!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
+<!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
                         <FontIcon Glyph="&#xE713;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                         <TextBlock Text="Preconfiguraciones" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
                     </StackPanel>
@@ -29,10 +29,10 @@
                 <StackPanel x:Name="PresetsPanel" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center"/>
             </StackPanel>
 
-            <!-- ====== PANEL DE NOTIFICACIONES ====== -->
+<!-- ====== PANEL DE NOTIFICACIONES ====== -->
             <StackPanel x:Name="NotificationPanel" Spacing="8"/>
 
-            <!-- ====== CONSOLA DE EJECUCIÓN (estado en vivo estilo winutil) ====== -->
+<!-- ====== CONSOLA DE EJECUCIÓN (estado en vivo estilo consola) ====== -->
             <Border x:Name="ConsolePanel" CornerRadius="10" Padding="12,10"
                     Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                     Visibility="Collapsed">
@@ -64,21 +64,16 @@
                 </StackPanel>
             </Border>
 
-            <!-- ====== LISTA DE TWEAKS (2 columnas) ====== -->
+<!-- ====== LISTA DE TWEAKS (2 columnas) ====== -->
             <StackPanel x:Name="TweaksPanel" Spacing="12"/>
 
-            <!-- ====== BOTONES DE LOTE (centrados) ====== -->
+<!-- ====== BOTONES DE LOTE (centrados) ====== -->
             <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" Margin="0,4,0,0">
                 <Button x:Name="ApplySelectedButton"
                         Content="Aplicar seleccionados"
                         Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}"
                         FontWeight="SemiBold" CornerRadius="6" Padding="16,8" MinWidth="170"
                         Click="ApplySelectedButton_Click"/>
-                <Button x:Name="RevertSelectedButton"
-                        Content="Revertir seleccionados"
-                        Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
-                        CornerRadius="6" Padding="16,8" MinWidth="160"
-                        Click="RevertSelectedButton_Click"/>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

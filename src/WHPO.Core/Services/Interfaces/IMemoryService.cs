@@ -49,7 +49,9 @@ public interface IMemoryService
     PerformanceTimerInfo GetPerformanceTimerInfo();
 
     /// <summary>
-    /// Establece la resolución del temporizador del sistema.
+    /// Establece la resolución del temporizador del sistema. La petición es SIEMPRE normal
+    /// (sin flag global), equivalente: el alcance global lo controla la clave de registro
+    /// del kernel GlobalTimerResolutionRequests (ver SetGlobalTimerResolutionRequestEnabled).
     /// </summary>
     /// <param name="resolution100ns">Resolución en unidades de 100ns (mínimo 5000 = 0.5ms).</param>
     Task<CommandResult> SetTimerResolutionAsync(int resolution100ns);
@@ -63,6 +65,18 @@ public interface IMemoryService
     /// Obtiene el número de solicitudes globales de resolución de temporizador activas.
     /// </summary>
     int GetGlobalTimerResolutionRequests();
+
+    /// <summary>
+    /// Devuelve true si la clave del kernel GlobalTimerResolutionRequests está activada (1).
+    /// Es el mecanismo real (no el flag 0x80000000).
+    /// </summary>
+    bool IsGlobalTimerResolutionRequestEnabled();
+
+    /// <summary>
+    /// Escribe (1) o borra la clave del kernel GlobalTimerResolutionRequests, a nivel global.
+    /// Requiere administrador; el kernel la aplica desde el próximo reinicio.
+    /// </summary>
+    Task<CommandResult> SetGlobalTimerResolutionRequestEnabledAsync(bool enabled);
 
     /// <summary>
     /// Inicia la limpieza automática de la lista standby con las condiciones especificadas.

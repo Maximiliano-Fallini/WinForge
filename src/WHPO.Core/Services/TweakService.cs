@@ -7,6 +7,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading.Tasks;
 using Microsoft.Win32;
+using System.Management;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services;
@@ -14,7 +15,7 @@ namespace WHPO.Core.Services;
 /// <summary>
 /// Implementación del servicio de tweaks del sistema.
 /// Aplica y revierte modificaciones al registro, servicios y configuraciones de Windows.
-/// Basado en los tweaks de Christitus WinUtil (https://github.com/christitustech/winutil)
+/// Basado en los tweaks de herramientas de la comunidad
 /// </summary>
 public class TweakService : ITweakService
 {
@@ -22,7 +23,7 @@ public class TweakService : ITweakService
     private readonly Dictionary<string, TweakDefinition> _tweaks;
 
     // Progreso "ambient" para reportar los comandos reales al ejecutar un tweak
-    // (estilo cmd/winutil). Se setea al inicio de Apply/Revert y se limpia al final;
+    // (estilo consola). Se setea al inicio de Apply y se limpia al final;
     // los helpers de registro/comandos reportan a él si está activo.
     private IProgress<string>? _progress;
 
@@ -32,7 +33,7 @@ public class TweakService : ITweakService
     {
         _loggingService = loggingService;
         _tweaks = BuildTweaksDictionary();
-        _loggingService.LogInfo($"TweakService inicializado con {_tweaks.Count} tweaks de Christitus WinUtil");
+        _loggingService.LogInfo($"TweakService inicializado con {_tweaks.Count} tweaks del sistema");
     }
 
     public List<TweakDefinition> GetAllTweaks() => new(_tweaks.Values);
@@ -148,48 +149,7 @@ public class TweakService : ITweakService
         }
     }
 
-    public async Task<TweakResult> RevertTweakAsync(string tweakId, IProgress<string>? progress = null)
-    {
-        if (!_tweaks.TryGetValue(tweakId, out var tweak))
-        {
-            return new TweakResult(false, $"Tweak no encontrado: {tweakId}");
-        }
-
-        if (!tweak.IsReversible)
-        {
-            return new TweakResult(false, "Este tweak no es reversible.");
-        }
-
-        _progress = progress;
-        try
-        {
-            _loggingService.LogInfo($"Revirtiendo tweak: {tweak.Name}");
-            var result = await tweak.RevertAction();
-
-            if (result.Success)
-            {
-                _loggingService.LogInfo($"Tweak revertido correctamente: {tweak.Name}");
-                TweakStateChanged?.Invoke(tweakId, false);
-            }
-            else
-            {
-                _loggingService.LogWarning($"Reversión falló: {tweak.Name} - {result.Message}");
-            }
-
-            return result;
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogError($"Error revirtiendo tweak {tweakId}", ex);
-            return new TweakResult(false, ex.Message);
-        }
-        finally
-        {
-            _progress = null;
-        }
-    }
-
-    // ====== Utilidades ======
+ // ====== Utilidades ======
 
     private void Report(string message) => _progress?.Report(message);
 
@@ -258,7 +218,7 @@ public class TweakService : ITweakService
             var outputTask = process.StandardOutput.ReadToEndAsync();
             var errorTask = process.StandardError.ReadToEndAsync();
             // ConfigureAwait(false) es CRÍTICO: si un llamador bloquea sincrónicamente
-            // desde el hilo de UI (GetAwaiter().GetResult()), los awaits de acá no deben
+            // desde el hilo de UI (GetAwaiter.GetResult), los awaits de acá no deben
             // volver al contexto de UI o se produce un deadlock (la UI congelada espera
             // la continuación que solo la UI puede ejecutar).
             await process.WaitForExitAsync().ConfigureAwait(false);
@@ -352,49 +312,15 @@ public class TweakService : ITweakService
         }
     }
 
-    private TweakResult RemoveRegistryValue(RegistryHive hive, string path, string name)
-    {
-        Report($"Remove-ItemProperty -Path \"{HiveName(hive)}{path}\" -Name \"{name}\"");
-        try
-        {
-            var baseKey = GetBaseKey(hive);
-            if (baseKey == null)
-                return new TweakResult(false, $"Hive no soportado: {hive}");
-            using var key = baseKey.OpenSubKey(path, true);
-            if (key == null)
-                return new TweakResult(true, "La clave no existe, nada que revertir.");
-            if (key.GetValue(name) == null)
-                return new TweakResult(true, "El valor no existe, nada que revertir.");
-            key.DeleteValue(name);
-            return new TweakResult(true, "OK");
-        }
-        catch (Exception ex)
-        {
-            return new TweakResult(false, ex.Message);
-        }
-    }
-
-    /// <summary>
-    /// Aplica múltiples valores de registro en una sola operación.
-    /// </summary>
+ /// <summary>
+ /// Aplica múltiples valores de registro en una sola operación.
+ /// </summary>
     private TweakResult SetMultipleRegistryValues(params (RegistryHive hive, string path, string name, object value, RegistryValueKind kind)[] entries)
     {
         foreach (var (hive, path, name, value, kind) in entries)
         {
             var result = SetRegistryValue(hive, path, name, value, kind);
             if (!result.Success) return result;
-        }
-        return new TweakResult(true, "OK");
-    }
-
-    /// <summary>
-    /// Elimina múltiples valores de registro en una sola operación.
-    /// </summary>
-    private TweakResult RemoveMultipleRegistryValues(params (RegistryHive hive, string path, string name)[] entries)
-    {
-        foreach (var (hive, path, name) in entries)
-        {
-            RemoveRegistryValue(hive, path, name);
         }
         return new TweakResult(true, "OK");
     }
@@ -409,6 +335,35 @@ public class TweakService : ITweakService
             if (CheckRegistryValue(hive, path, name, value)) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// "Aplicado" = BitLocker no protege el volumen del sistema: ProtectionStatus
+    /// OFF vía WMI (Win32_EncryptableVolume.GetProtectionStatus), o el namespace/
+ /// volumen no existe (ediciones sin BitLocker). Ante cualquier fallo devuelve
+ /// false para que el apply idempotente decida.
+ /// </summary>
+    private static bool IsBitLockerOff()
+    {
+        try
+        {
+            var drive = Environment.GetEnvironmentVariable("SystemDrive");
+            if (string.IsNullOrEmpty(drive)) drive = "C:";
+            using var searcher = new ManagementObjectSearcher(
+                @"root\cimv2\security\microsoftvolumeencryption",
+                $"SELECT * FROM Win32_EncryptableVolume WHERE DriveLetter='{drive.TrimEnd('\\')}'");
+            using var results = searcher.Get();
+            using var vol = results.Cast<ManagementObject>().FirstOrDefault();
+            if (vol == null) return true; // sin proveedor WMI / sin volumen: BitLocker no disponible
+            var args = new object[1];
+            var ret = Convert.ToUInt32(vol.InvokeMethod("GetProtectionStatus", args));
+            if (ret != 0) return false; // fallo del método WMI
+            return Convert.ToUInt32(args[0]) == 0; // 0 = ProtectionOff
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -529,7 +484,7 @@ public class TweakService : ITweakService
         return false;
     }
 
-    // ====== Diccionario de Tweaks (Solo Christitus WinUtil) ======
+    // ====== Diccionario de Tweaks (Solo ) ======
 
     private Dictionary<string, TweakDefinition> BuildTweaksDictionary()
     {
@@ -547,11 +502,7 @@ public class TweakService : ITweakService
             () => Task.FromResult(SetMultipleRegistryValues(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "EnableActivityFeed", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "PublishUserActivities", 0, RegistryValueKind.DWord),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "UploadUserActivities", 0, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "EnableActivityFeed"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "PublishUserActivities"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "UploadUserActivities"))));
+                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "UploadUserActivities", 0, RegistryValueKind.DWord))));
 
         AddTweak(dict, "WPFTweaksHiber", "Hibernación - Desactivar",
             "La hibernación está pensada para portátiles. Realmente nunca debería usarse en escritorios.",
@@ -564,13 +515,6 @@ public class TweakService : ITweakService
                     (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings", "ShowHibernateOption", 0, RegistryValueKind.DWord));
                 if (!regResult.Success) return regResult;
                 return RunCommandAsync("powercfg.exe", "/hibernate off").Result;
-            }),
-            () => Task.Run(() =>
-            {
-                SetMultipleRegistryValues(
-                    (RegistryHive.LocalMachine, @"System\CurrentControlSet\Control\Session Manager\Power", "HibernateEnabled", 1, RegistryValueKind.DWord),
-                    (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings", "ShowHibernateOption", 1, RegistryValueKind.DWord));
-                return RunCommandAsync("powercfg.exe", "/hibernate on").Result;
             }));
 
         AddTweak(dict, "WPFTweaksWidget", "Widgets - Quitar",
@@ -578,7 +522,6 @@ public class TweakService : ITweakService
             "Compatible con Windows 10/11", true, "Debloat", true,
             () => false,
             () => RunCommandAsync("powershell", "-Command \"Get-Process *Widget* | Stop-Process -Force; Get-AppxPackage Microsoft.WidgetsPlatformRuntime -AllUsers | Remove-AppxPackage -AllUsers; Get-AppxPackage MicrosoftWindows.Client.WebExperience -AllUsers | Remove-AppxPackage -AllUsers\""),
-            () => RunCommandAsync("powershell", "-Command \"Get-AppxPackage -AllUsers Microsoft.WidgetsPlatformRuntime | Foreach {Add-AppxPackage -DisableDevelopmentMode -Register $($_.InstallLocation)\\AppXManifest.xml}; Get-AppxPackage -AllUsers MicrosoftWindows.Client.WebExperience | Foreach {Add-AppxPackage -DisableDevelopmentMode -Register $($_.InstallLocation)\\AppXManifest.xml}\""),
             () => !IsAppxPackageMissing("Microsoft.WidgetsPlatformRuntime") || !IsAppxPackageMissing("MicrosoftWindows.Client.WebExperience"));
         _appxPackageIds.Add("Microsoft.WidgetsPlatformRuntime");
         _appxPackageIds.Add("MicrosoftWindows.Client.WebExperience");
@@ -587,15 +530,13 @@ public class TweakService : ITweakService
             "Restaura el diseño antiguo del menú Inicio anterior al despliegue gradual del nuevo en 25H2. En versiones nuevas de Windows no funcionará.",
             "Compatible con Windows 11 25H2", true, "Essential Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3036241548", "EnabledState", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3036241548", "EnabledState", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3036241548", "EnabledState")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3036241548", "EnabledState", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableStoreSearch", "Resultados recomendados de Microsoft Store - Desactivar",
             "No mostrará apps recomendadas de Microsoft Store al buscar en el menú Inicio.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", false,
             () => IsStoreSearchBlocked(),
-            () => RunCommandAsync("powershell", "-Command \"icacls \\\"$Env:LocalAppData\\Packages\\Microsoft.WindowsStore_8wekyb3d8bbwe\\LocalState\\store.db\\\" /deny *S-1-1-0:F\""),
-            () => RunCommandAsync("powershell", "-Command \"icacls \\\"$Env:LocalAppData\\Packages\\Microsoft.WindowsStore_8wekyb3d8bbwe\\LocalState\\store.db\\\" /grant *S-1-1-0:F\""));
+            () => RunCommandAsync("powershell", "-Command \"icacls \\\"$Env:LocalAppData\\Packages\\Microsoft.WindowsStore_8wekyb3d8bbwe\\LocalState\\store.db\\\" /deny *S-1-1-0:F\""));
 
         AddTweak(dict, "WPFTweaksLocation", "Seguimiento de ubicación - Desactivar",
             "Desactiva el seguimiento de ubicación.",
@@ -607,11 +548,7 @@ public class TweakService : ITweakService
             () => Task.FromResult(SetMultipleRegistryValues(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location", "Value", "Deny", RegistryValueKind.String),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4FDB-90F6-51056BFE4B44}", "SensorPermissionState", 0, RegistryValueKind.DWord),
-                (RegistryHive.LocalMachine, @"SYSTEM\Maps", "AutoUpdateEnabled", 0, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location", "Value"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4FDB-90F6-51056BFE4B44}", "SensorPermissionState"),
-                (RegistryHive.LocalMachine, @"SYSTEM\Maps", "AutoUpdateEnabled"))));
+                (RegistryHive.LocalMachine, @"SYSTEM\Maps", "AutoUpdateEnabled", 0, RegistryValueKind.DWord))));
 
         AddTweak(dict, "WPFTweaksServices", "Servicios - Configurar en Manual",
             "Configura algunos servicios en Manual y ajusta SvcHostSplitThresholdInKB para reducir significativamente la cantidad de procesos svchost.exe.",
@@ -626,11 +563,6 @@ public class TweakService : ITweakService
                 var regResult = SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control", "SvcHostSplitThresholdInKB", GetTotalMemoryKB(), RegistryValueKind.DWord);
                 if (!regResult.Success) return regResult;
                 return RunCommandAsync("powershell", "-Command \"Set-Service -Name CscService -StartupType Disabled; Set-Service -Name DiagTrack -StartupType Disabled; Set-Service -Name MapsBroker -StartupType Manual; Set-Service -Name StorSvc -StartupType Manual; Set-Service -Name SharedAccess -StartupType Disabled\"").Result;
-            }),
-            () => Task.Run(() =>
-            {
-                SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control", "SvcHostSplitThresholdInKB", 384000, RegistryValueKind.DWord);
-                return RunCommandAsync("powershell", "-Command \"Set-Service -Name CscService -StartupType Manual; Set-Service -Name DiagTrack -StartupType Automatic; Set-Service -Name MapsBroker -StartupType Automatic; Set-Service -Name StorSvc -StartupType Automatic; Set-Service -Name SharedAccess -StartupType Automatic\"").Result;
             }));
 
         AddTweak(dict, "WPFTweaksBraveDebloat", "Brave Browser - Desbloat",
@@ -641,7 +573,6 @@ public class TweakService : ITweakService
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\BraveSoftware\Brave", "BraveWalletDisabled", 1),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\BraveSoftware\Brave", "MetricsReportingEnabled", 0)),
             () => RunCommandAsync("powershell", "-Command \"$regPath = 'HKLM:\\SOFTWARE\\Policies\\BraveSoftware\\Brave'; if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force }; Set-ItemProperty -Path $regPath -Name BraveRewardsDisabled -Value 1 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveWalletDisabled -Value 1 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveVPNDisabled -Value 1 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveAIChatEnabled -Value 0 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveStatsPingEnabled -Value 0 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveNewsDisabled -Value 1 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveTalkDisabled -Value 1 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name TorDisabled -Value 1 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name BraveP3AEnabled -Value 0 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name UrlKeyedAnonymizedDataCollectionEnabled -Value 0 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name SafeBrowsingExtendedReportingEnabled -Value 0 -Type DWord -Force; Set-ItemProperty -Path $regPath -Name MetricsReportingEnabled -Value 0 -Type DWord -Force; Write-Output 'Brave debloat aplicado'\""),
-            () => RunCommandAsync("powershell", "-Command \"Remove-Item -Path 'HKLM:\\SOFTWARE\\Policies\\BraveSoftware\\Brave' -Recurse -Force -ErrorAction SilentlyContinue; Write-Output 'Brave debloat revertido'\""),
             () => Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "BraveSoftware"))
                 || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "BraveSoftware")));
 
@@ -658,12 +589,6 @@ public class TweakService : ITweakService
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "DefaultBrowserSettingEnabled", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "UserFeedbackAllowed", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "SafeBrowsingExtendedReportingEnabled", 0, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "MetricsReportingEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "BackgroundModeEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "DefaultBrowserSettingEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "UserFeedbackAllowed"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Google\Chrome", "SafeBrowsingExtendedReportingEnabled"))),
             () => Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "Chrome"))
                 || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Google", "Chrome")));
 
@@ -679,12 +604,6 @@ public class TweakService : ITweakService
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DisablePocket", 1, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DisableFeedbackCommands", 1, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DontCheckDefaultBrowser", 1, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DisableTelemetry"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DisableFirefoxStudies"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DisablePocket"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DisableFeedbackCommands"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Mozilla\Firefox", "DontCheckDefaultBrowser"))),
             () => Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Mozilla Firefox"))
                 || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Mozilla Firefox")));
 
@@ -700,12 +619,6 @@ public class TweakService : ITweakService
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "DefaultBrowserSettingEnabled", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "UserFeedbackAllowed", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "SafeBrowsingExtendedReportingEnabled", 0, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "MetricsReportingEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "BackgroundModeEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "DefaultBrowserSettingEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "UserFeedbackAllowed"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Opera Software\Opera Stable", "SafeBrowsingExtendedReportingEnabled"))),
             () => Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Opera"))
                 || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Opera")));
 
@@ -718,10 +631,7 @@ public class TweakService : ITweakService
                 (RegistryHive.CurrentUser, @"Software\Microsoft\Terminal Server Client", "RdpLaunchConsentAccepted", 1)),
             () => Task.FromResult(SetMultipleRegistryValues(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\Client", "RedirectionWarningDialogVersion", 1, RegistryValueKind.DWord),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Terminal Server Client", "RdpLaunchConsentAccepted", 1, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\Client", "RedirectionWarningDialogVersion"),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Terminal Server Client", "RdpLaunchConsentAccepted"))));
+                (RegistryHive.CurrentUser, @"Software\Microsoft\Terminal Server Client", "RdpLaunchConsentAccepted", 1, RegistryValueKind.DWord))));
 
         AddTweak(dict, "WPFTweaksEdgeDebloat", "Microsoft Edge - Desbloat",
             "Desactiva varias opciones de telemetría, popups y otras molestias en Edge.",
@@ -761,24 +671,6 @@ public class TweakService : ITweakService
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "WalletDonationEnabled", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "DefaultBrowserSettingsCampaignEnabled", 0, RegistryValueKind.DWord),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallBlocklist", "1", "ofefcgjbeghpigppfmkologfjadafddi", RegistryValueKind.String))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\EdgeUpdate", "CreateDesktopShortcutDefault"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "PersonalizationReportingEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "ShowRecommendationsEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "HideFirstRunExperience"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "UserFeedbackAllowed"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "ConfigureDoNotTrack"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "AlternateErrorPagesEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "EdgeCollectionsEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "EdgeShoppingAssistantEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "MicrosoftEdgeInsiderPromotionEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "ShowMicrosoftRewards"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "WebWidgetAllowed"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "DiagnosticData"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "EdgeAssetDeliveryServiceEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "WalletDonationEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "DefaultBrowserSettingsCampaignEnabled"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Edge", "ExtensionInstallBlocklist"))),
             () => Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge"))
                 || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge")));
 
@@ -786,8 +678,7 @@ public class TweakService : ITweakService
             "Detiene instalaciones promocionadas de apps y reduce sugerencias de Microsoft Store.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksTelemetry", "Telemetría - Desactivar",
             "Desactiva la telemetría de Microsoft.",
@@ -822,57 +713,40 @@ public class TweakService : ITweakService
                     (RegistryHive.CurrentUser, @"Software\Microsoft\Siuf\Rules", "NumberOfSIUFInPeriod", 0, RegistryValueKind.DWord));
                 if (!regResult.Success) return regResult;
                 return RunCommandAsync("powershell", "-Command \"Set-MpPreference -SubmitSamplesConsent 2; Set-Service -Name diagtrack -StartupType Disabled; Set-Service -Name wermgr -StartupType Disabled; [Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', '1', 'Machine'); Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Siuf\\Rules' -Name PeriodInNanoSeconds -ErrorAction SilentlyContinue\"").Result;
-            }),
-            () => Task.Run(() =>
-            {
-                RemoveMultipleRegistryValues(
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo", "Enabled"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy", "HasAccepted"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Input\TIPC", "Enabled"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\InputPersonalization", "RestrictImplicitInkCollection"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\InputPersonalization", "RestrictImplicitTextCollection"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\InputPersonalization\TrainedDataStore", "HarvestContacts"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Personalization\Settings", "AcceptedPrivacyPolicy"),
-                    (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection", "AllowTelemetry"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "Start_TrackProgs"),
-                    (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "PublishUserActivities"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Siuf\Rules", "NumberOfSIUFInPeriod"));
-                return RunCommandAsync("powershell", "-Command \"Set-MpPreference -SubmitSamplesConsent 1; Set-Service -Name diagtrack -StartupType Automatic; Set-Service -Name wermgr -StartupType Automatic; [Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', '', 'Machine')\"").Result;
             }));
 
         AddTweak(dict, "WPFTweaksDeliveryOptimization", "Optimización de entrega - Desactivar",
             "Evita que Windows use tu ancho de banda para subir actualizaciones a otros equipos en internet o red local.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "DODownloadMode", 0),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "DODownloadMode", 0, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "DODownloadMode")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "DODownloadMode", 0, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksRemoveEdge", "Microsoft Edge - Eliminar",
             "Desinstala Microsoft Edge creando un archivo dummy MicrosoftEdge.exe que engaña al desinstalador oficial para una eliminación a nivel de sistema.",
             "Requiere precaución", true, "Debloat", true,
             () => false,
             () => RunCommandAsync("powershell", "-Command \"$Path = Resolve-Path -Path \\\"$Env:ProgramFiles (x86)\\Microsoft\\Edge\\Application\\*\\Installer\\setup.exe\\\" | Select-Object -Last 1; if (Test-Path $Path) { New-Item -Path \\\"$Env:SystemRoot\\SystemApps\\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\\MicrosoftEdge.exe\\\" -Force; Start-Process -FilePath $Path -ArgumentList '--uninstall --system-level --force-uninstall --delete-profile' -Wait; Write-Output 'Microsoft Edge fue eliminado' } else { Write-Output 'Microsoft Edge no está instalado'; exit 1 }\""),
-            () => RunCommandAsync("powershell", "-Command \"winget install Microsoft.Edge --source winget --silent\""),
             () => Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge"))
                 || Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge")));
 
         AddTweak(dict, "WPFTweaksDisableBitLocker", "BitLocker - Desactivar",
             "Desactiva BitLocker.",
             "Solo si no usas cifrado de disco", true, "Essential Tweaks", true,
-            () => false,
-            // -ErrorAction Stop: si el volumen no está cifrado, Disable-BitLocker
-            // tira un error NO terminante (exit 0) y el tweak reportaba "aplicado"
-            // sin haber hecho nada. Con Stop, falla de verdad y se muestra el error.
-            () => RunCommandAsync("powershell", "-Command \"Disable-BitLocker -MountPoint $Env:SystemDrive -ErrorAction Stop\""),
-            () => RunCommandAsync("powershell", "-Command \"Enable-BitLocker -MountPoint $Env:SystemDrive\""));
+ // Check real via WMI: "aplicado" = la protección BitLocker del volumen del
+            // sistema está OFF (o BitLocker no existe en esta edición, p. ej. Home).
+            // Antes era => false y el apply con -ErrorAction Stop fallaba con
+            // HRESULT 0x80310008 cuando BitLocker ya estaba desactivado.
+            IsBitLockerOff,
+ // Idempotente: si Get-BitLockerVolume no existe (ediciones sin BitLocker)
+ // o la protección no está On, sale 0; solo entonces corre Disable-BitLocker
+ // con -ErrorAction Stop para que un fallo real se reporte como error.
+            () => RunCommandAsync("powershell", "-Command \"try { $v = Get-BitLockerVolume -MountPoint $Env:SystemDrive -ErrorAction Stop } catch { Write-Output 'BitLocker no disponible en esta edicion'; exit 0 }; if ($v.ProtectionStatus -ne 'On') { Write-Output 'BitLocker ya esta desactivado'; exit 0 }; Disable-BitLocker -MountPoint $Env:SystemDrive -ErrorAction Stop\""));
 
         AddTweak(dict, "WPFTweaksUTC", "Fecha y hora - Configurar en UTC",
             "Esencial para equipos con dual-boot. Corrige la sincronización horaria con sistemas Linux.",
             "Solo dual-boot con Linux", true, "Advanced Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", 1, RegistryValueKind.QWord)),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", 0, RegistryValueKind.QWord)));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", 1, RegistryValueKind.QWord)));
 
         AddTweak(dict, "WPFTweaksRemoveOneDrive", "Microsoft OneDrive - Eliminar",
             "Deniega permisos para eliminar archivos de usuario de OneDrive, usa su desinstalador para quitarlo y restaura los permisos.",
@@ -883,7 +757,6 @@ public class TweakService : ITweakService
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 @"Microsoft\OneDrive\OneDrive.exe")),
             () => RunCommandAsync("powershell", "-Command \"icacls $Env:OneDrive /deny '*S-1-5-32-544:(D,DC)'; Start-Process -FilePath (Join-Path $Env:SystemRoot 'System32\\OneDriveSetup.exe') -ArgumentList '/uninstall' -Wait; Stop-Process -Name FileCoAuth,Explorer -ErrorAction SilentlyContinue; Remove-Item \\\"$Env:LocalAppData\\Microsoft\\OneDrive\\\" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item \\\"$Env:ProgramData\\Microsoft OneDrive\\\" -Recurse -Force -ErrorAction SilentlyContinue; icacls $Env:OneDrive /grant '*S-1-5-32-544:(D,DC)'; if (-not (Get-ChildItem -Path $Env:OneDrive)) { Remove-Item -Path $Env:OneDrive -Recurse -Force; [Environment]::SetEnvironmentVariable('OneDrive', $null, 'User') }; Set-Service -Name OneSyncSvc -StartupType Disabled\""),
-            () => RunCommandAsync("powershell", "-Command \"winget install Microsoft.Onedrive --source winget --silent; Set-Service -Name OneSyncSvc -StartupType Automatic\""),
             () => File.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Microsoft\OneDrive\OneDrive.exe")));
 
         AddTweak(dict, "WPFTweaksRemoveHomeAndGallery", "Inicio y Galería del Explorador - Desactivar",
@@ -896,11 +769,7 @@ public class TweakService : ITweakService
             () => Task.FromResult(SetMultipleRegistryValues(
                 (RegistryHive.CurrentUser, @"Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}", "System.IsPinnedToNameSpaceTree", 0, RegistryValueKind.DWord),
                 (RegistryHive.CurrentUser, @"Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", "System.IsPinnedToNameSpaceTree", 0, RegistryValueKind.DWord),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "LaunchTo", 1, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.CurrentUser, @"Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}", "System.IsPinnedToNameSpaceTree"),
-                (RegistryHive.CurrentUser, @"Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", "System.IsPinnedToNameSpaceTree"),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "LaunchTo"))));
+                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "LaunchTo", 1, RegistryValueKind.DWord))));
 
         AddTweak(dict, "WPFTweaksDisplay", "Efectos visuales - Configurar en Máximo rendimiento",
             "Configura las preferencias del sistema a rendimiento. Puedes hacerlo manualmente con sysdm.cpl.",
@@ -925,31 +794,13 @@ public class TweakService : ITweakService
                     (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Search", "SearchboxTaskbarMode", 0, RegistryValueKind.DWord));
                 if (!regResult.Success) return regResult;
                 return RunCommandAsync("powershell", "-Command \"Set-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name 'UserPreferencesMask' -Type Binary -Value ([byte[]](144,18,3,128,16,0,0,0))\"").Result;
-            }),
-            () => Task.Run(() =>
-            {
-                RemoveMultipleRegistryValues(
-                    (RegistryHive.CurrentUser, @"Control Panel\Desktop", "DragFullWindows"),
-                    (RegistryHive.CurrentUser, @"Control Panel\Desktop", "MenuShowDelay"),
-                    (RegistryHive.CurrentUser, @"Control Panel\Desktop\WindowMetrics", "MinAnimate"),
-                    (RegistryHive.CurrentUser, @"Control Panel\Keyboard", "KeyboardDelay"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "ListviewAlphaSelect"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "ListviewShadow"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarAnimations"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects", "VisualFXSetting"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\DWM", "EnableAeroPeek"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarMn"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "ShowTaskViewButton"),
-                    (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Search", "SearchboxTaskbarMode"));
-                return RunCommandAsync("powershell", "-Command \"Remove-ItemProperty -Path 'HKCU:\\Control Panel\\Desktop' -Name 'UserPreferencesMask' -ErrorAction SilentlyContinue\"").Result;
             }));
 
         AddTweak(dict, "WPFTweaksReservedStorage", "Almacenamiento reservado - Desactivar",
             "Desactiva el almacenamiento reservado de Windows (7-10 GB para actualizaciones). Solo recomendado en discos pequeños. Re-activar antes de grandes actualizaciones.",
             "Solo en discos pequeños", true, "Advanced Tweaks", true,
             () => false,
-            () => RunCommandAsync("powershell", "-Command \"DISM /Online /Set-ReservedStorageState /State:Disabled\""),
-            () => RunCommandAsync("powershell", "-Command \"DISM /Online /Set-ReservedStorageState /State:Enabled\""));
+            () => RunCommandAsync("powershell", "-Command \"DISM /Online /Set-ReservedStorageState /State:Disabled\""));
 
         AddTweak(dict, "WPFTweaksRestorePoint", "Punto de restauración - Crear",
             "Crea un punto de restauración en tiempo de ejecución por si se necesita revertir modificaciones.",
@@ -957,36 +808,62 @@ public class TweakService : ITweakService
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore", "SystemRestorePointCreationFrequency", 0),
             () => Task.Run(() =>
             {
-                // WinUtil escribe SystemRestorePointCreationFrequency=0 para que
+                // escribe SystemRestorePointCreationFrequency=0 para que
                 // Checkpoint-Computer no falle por el límite de un punto por día.
                 var regResult = SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore", "SystemRestorePointCreationFrequency", 0, RegistryValueKind.DWord);
                 if (!regResult.Success) return regResult;
-                return RunCommandAsync("powershell", "-Command \"if (-not (Get-ComputerRestorePoint)) { Enable-ComputerRestore -Drive $Env:SystemDrive }; Checkpoint-Computer -Description 'System Restore Point created by WinUtil' -RestorePointType MODIFY_SETTINGS; Write-Output 'System Restore Point Created Successfully'\"").Result;
-            }),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore", "SystemRestorePointCreationFrequency", 1440, RegistryValueKind.DWord)));
+                return RunCommandAsync("powershell", "-Command \"if (-not (Get-ComputerRestorePoint)) { Enable-ComputerRestore -Drive $Env:SystemDrive }; Checkpoint-Computer -Description 'System Restore Point created by WinForge' -RestorePointType MODIFY_SETTINGS; Write-Output 'System Restore Point Created Successfully'\"").Result;
+            }));
 
         AddTweak(dict, "WPFTweaksEndTaskOnTaskbar", "Finalizar tarea con clic derecho - Activar",
             "Habilita la opción de finalizar tarea al hacer clic derecho en un programa de la barra de tareas.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings", "TaskbarEndTask", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings", "TaskbarEndTask", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings", "TaskbarEndTask")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings", "TaskbarEndTask", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksStorage", "Storage Sense - Desactivar",
             "Storage Sense elimina archivos temporales automáticamente.",
             "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01", 0),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01", 0, RegistryValueKind.DWord)),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01", 1, RegistryValueKind.DWord)));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01", 0, RegistryValueKind.DWord)));
 
+ // NOTA: en el tweak combina una sección "registry" (políticas) con el
+ // InvokeScript (desinstalación). Al portarlo, la parte de registro se perdió:
+ // el apply no escribía las políticas que el check mira, y el check no
+ // verificaba la desinstalación. Resultado: podía aparecer "aplicado" (claves
+ // creadas por otra herramienta o por ) con los paquetes de IA aún
+ // instalados, y al aplicar, la parte de registro quedaba sin hacer.
         AddTweak(dict, "WPFTweaksWindowsAI", "Windows AI - Desactivar y eliminar",
             "Elimina y desactiva todas las funciones y paquetes de IA.",
             "Compatible con Windows 11", true, "Debloat", true,
+ // Aplicado = políticas escritas Y paquete CoreAI desinstalado.
             () => CheckAnyRegistryValue(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer", "SettingsPageVisibility", "hide:aicomponents"),
-                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\WindowsNotepad", "DisableAIFeatures", 1)),
-            () => RunCommandAsync("powershell", "-Command \"$Appx = (Get-AppxPackage MicrosoftWindows.Client.CoreAI).PackageFullName; $Sid = (Get-LocalUser $Env:UserName).Sid.Value; New-Item \\\"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\EndOfLife\\$Sid\\$Appx\\\" -Force; Get-AppxPackage -AllUsers '*Copilot*' | Remove-AppxPackage -AllUsers; winget uninstall -e --name 'Copilot' --silent --force --accept-source-agreements 2>$null; Get-AppxPackage -AllUsers Microsoft.MicrosoftOfficeHub | Remove-AppxPackage -AllUsers; if ($Appx) { Remove-AppxPackage $Appx }; Set-Service -Name WSAIFabricSvc -StartupType Disabled; Disable-WindowsOptionalFeature -FeatureName Recall -Online -NoRestart; Write-Output 'Windows AI Disabled'\""),
-            () => Task.FromResult(new TweakResult(true, "Revertir Windows AI requiere reinstalar los paquetes eliminados.")),
+                (RegistryHive.LocalMachine, @"SOFTWARE\Policies\WindowsNotepad", "DisableAIFeatures", 1))
+                && IsAppxPackageMissing("MicrosoftWindows.Client.CoreAI"),
+            () => Task.Run(async () =>
+            {
+ // 1) Políticas que define el check: escribirlas aquí, no solo en el
+ // comando, para que apply y check estén alineados.
+                var regResult = SetMultipleRegistryValues(
+                    (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer", "SettingsPageVisibility", "hide:aicomponents", RegistryValueKind.String),
+                    (RegistryHive.LocalMachine, @"SOFTWARE\Policies\WindowsNotepad", "DisableAIFeatures", 1, RegistryValueKind.DWord));
+                if (!regResult.Success) return regResult;
+
+ // 2) Desinstalación. El exit code refleja el resultado REAL:
+ // PowerShell continúa ante errores no terminantes y saldría 0
+ // aunque no se hubiera desinstalado nada, marcando el tweak
+ // como aplicado en falso. El SID se obtiene de la identidad de
+ // Windows (Get-LocalUser devuelve null con cuentas Microsoft).
+                var result = await RunCommandAsync("powershell",
+                    "-Command \"$ErrorActionPreference = 'SilentlyContinue'; $Sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $Appx = (Get-AppxPackage -AllUsers MicrosoftWindows.Client.CoreAI).PackageFullName; if ($Appx) { New-Item \\\"HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Appx\\AppxAllUserStore\\EndOfLife\\$Sid\\$Appx\\\" -Force | Out-Null }; Get-AppxPackage -AllUsers '*Copilot*' | Remove-AppxPackage -AllUsers; Get-AppxPackage -AllUsers Microsoft.MicrosoftOfficeHub | Remove-AppxPackage -AllUsers; winget uninstall -e --name 'Copilot' --silent --force --accept-source-agreements 2>$null; if ($Appx) { Get-AppxPackage -AllUsers MicrosoftWindows.Client.CoreAI | Remove-AppxPackage -AllUsers }; Set-Service -Name WSAIFabricSvc -StartupType Disabled; Disable-WindowsOptionalFeature -FeatureName Recall -Online -NoRestart; if (Get-AppxPackage -AllUsers MicrosoftWindows.Client.CoreAI) { exit 1 }; Write-Output 'Windows AI Disabled'\"");
+
+ // El estado de los paquetes cambió: invalidar la caché para que los
+ // badges reflejen el estado real sin esperar a que expire (10 s).
+                InvalidateAppxCache("MicrosoftWindows.Client.CoreAI");
+                InvalidateAppxCache("XP9CXNGPPJ97XX");
+                return result;
+            }),
             () => !IsAppxPackageMissing("MicrosoftWindows.Client.CoreAI") || !IsAppxPackageMissing("XP9CXNGPPJ97XX"));
         _appxPackageIds.Add("MicrosoftWindows.Client.CoreAI");
         _appxPackageIds.Add("XP9CXNGPPJ97XX");
@@ -995,15 +872,13 @@ public class TweakService : ITweakService
             "WPBT permite que el fabricante ejecute programas al iniciar, como software antirrobo o instalaciones forzadas sin consentimiento. Riesgo de seguridad.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager", "DisableWpbtExecution", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager", "DisableWpbtExecution", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager", "DisableWpbtExecution")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager", "DisableWpbtExecution", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksPreventDeviceMetadataFromNetwork", "Prevenir apps complementarias de dispositivos",
             "Evita que se instale software adicional al conectar dispositivos (ej. anuncios al conectar un monitor). Riesgo de seguridad.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\Device Metadata", "PreventDeviceMetadataFromNetwork", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\Device Metadata", "PreventDeviceMetadataFromNetwork", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\Device Metadata", "PreventDeviceMetadataFromNetwork")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\Device Metadata", "PreventDeviceMetadataFromNetwork", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksRazerBlock", "Instalación automática de software Razer - Desactivar",
             "Bloquea TODAS las instalaciones de software Razer. El hardware funciona bien sin software.",
@@ -1019,7 +894,6 @@ public class TweakService : ITweakService
                 if (!regResult.Success) return regResult;
                 return RunCommandAsync("powershell", "-Command \"$RazerPath = \\\"$Env:SystemRoot\\Installer\\Razer\\\"; if (Test-Path $RazerPath) { Remove-Item $RazerPath\\* -Recurse -Force } else { New-Item -Path $RazerPath -ItemType Directory }; icacls $RazerPath /deny '*S-1-1-0:(W)'\"").Result;
             }),
-            () => RunCommandAsync("powershell", "-Command \"icacls \\\"$Env:SystemRoot\\Installer\\Razer\\\" /remove:d *S-1-1-0\""),
             () => IsProductInstalled("Razer"));
 
         AddTweak(dict, "WPFTweaksDisableNotifications", "Notificaciones del sistema y calendario - Desactivar",
@@ -1030,93 +904,76 @@ public class TweakService : ITweakService
                 (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled", 0)),
             () => Task.FromResult(SetMultipleRegistryValues(
                 (RegistryHive.CurrentUser, @"Software\Policies\Microsoft\Windows\Explorer", "DisableNotificationCenter", 1, RegistryValueKind.DWord),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled", 0, RegistryValueKind.DWord))),
-            () => Task.FromResult(RemoveMultipleRegistryValues(
-                (RegistryHive.CurrentUser, @"Software\Policies\Microsoft\Windows\Explorer", "DisableNotificationCenter"),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled"))));
+                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled", 0, RegistryValueKind.DWord))));
 
         AddTweak(dict, "WPFTweaksBlockAdobeNet", "Lista de bloqueo de URL de Adobe - Activar",
             "Reduce interrupciones bloqueando selectivamente conexiones a servidores de activación y telemetría de Adobe.",
             "Requiere software Adobe", true, "Debloat", true,
             () => IsAdobeHostsBlocked(),
             () => RunCommandAsync("powershell", "-Command \"$hostsUrl = Invoke-RestMethod -Uri https://github.com/Ruddernation-Designs/Adobe-URL-Block-List/raw/refs/heads/master/hosts; Add-Content -Path \\\"$Env:SystemRoot\\System32\\drivers\\etc\\hosts\\\" -Value \"`n#New Ver Adobe Block List`n$hostsUrl\"; ipconfig /flushdns; Write-Output 'Added Adobe url block list from host file'\""),
-            () => RunCommandAsync("powershell", "-Command \"Set-Content \\\"$Env:SystemRoot\\System32\\drivers\\etc\\hosts\\\" ((Get-Content \\\"$Env:SystemRoot\\System32\\drivers\\etc\\hosts\\\") -join \"`n\" -replace '(?s)#New Ver.*', ''); ipconfig /flushdns; Write-Output 'Removed Adobe url block list from host file'\""),
             () => IsProductInstalled("Adobe"));
 
         AddTweak(dict, "WPFTweaksRightClickMenu", "Menú contextual anterior - Activar",
             "Restaura el menú contextual clásico del Explorador, reemplazando la versión simplificada de Windows 11.",
             "Compatible con Windows 11", true, "Advanced Tweaks", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32", "", ""),
-            () => RunCommandAsync("powershell", "-Command \"New-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' -Name InprocServer32 -Value '' -Force; Stop-Process -Name explorer\""),
-            () => RunCommandAsync("powershell", "-Command \"Remove-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' -Recurse -Force\""));
+            () => RunCommandAsync("powershell", "-Command \"New-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' -Name InprocServer32 -Value '' -Force; Stop-Process -Name explorer\""));
 
         AddTweak(dict, "WPFTweaksDiskCleanup", "Limpieza de disco - Ejecutar",
             "Ejecuta la limpieza del disco C: y elimina actualizaciones de Windows antiguas.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", true,
             () => false,
-            () => RunCommandAsync("powershell", "-Command \"cleanmgr.exe /d C: /VERYLOWDISK; Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase\""),
-            () => Task.FromResult(new TweakResult(true, "No es posible revertir la limpieza de disco.")));
+            () => RunCommandAsync("powershell", "-Command \"cleanmgr.exe /d C: /VERYLOWDISK; Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase\""));
 
         AddTweak(dict, "WPFTweaksDeleteTempFiles", "Archivos temporales - Eliminar",
             "Borra las carpetas TEMP.",
             "Compatible con Windows 10/11", true, "Essential Tweaks", false,
             () => false,
-            () => RunCommandAsync("powershell", "-Command \"Remove-Item -Path \\\"$Env:Temp\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path \\\"$Env:SystemRoot\\Temp\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue\""),
-            () => Task.FromResult(new TweakResult(true, "No es necesario revertir la eliminación de temporales.")));
+            () => RunCommandAsync("powershell", "-Command \"Remove-Item -Path \\\"$Env:Temp\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path \\\"$Env:SystemRoot\\Temp\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue\""));
 
         AddTweak(dict, "WPFTweaksIPv46", "IPv6 - Configurar IPv4 como preferido",
             "Configurar la preferencia IPv4 puede tener beneficios de latencia y seguridad en redes privadas sin IPv6.",
             "Compatible con Windows 10/11", true, "Advanced Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 32),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 32, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 32, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksTeredo", "Teredo - Desactivar",
             "Teredo es un túnel IPv6 que puede causar latencia adicional, aunque puede causar problemas con algunos juegos.",
             "Compatible con Windows 10/11", true, "Advanced Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableIPv6", "IPv6 - Desactivar",
             "Desactiva IPv6.",
             "Requiere precaución", true, "Advanced Tweaks", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 255),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 255, RegistryValueKind.DWord)),
-            () => Task.FromResult(RemoveRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents")));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 255, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableBGapps", "Apps en segundo plano - Desactivar",
             "Desactiva todas las apps de Microsoft Store en segundo plano, lo que debe hacerse individualmente desde Windows 11.",
             "Compatible con Windows 10/11", true, "Advanced Tweaks", true,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 0, RegistryValueKind.DWord)));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableFSO", "Optimizaciones de pantalla completa - Desactivar",
             "Desactiva FSO en todas las aplicaciones. NOTA: Desactivará la gestión de color en pantalla completa exclusiva.",
             "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible", 1),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible", 1, RegistryValueKind.DWord)),
-            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible", 0, RegistryValueKind.DWord)));
+            () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksGameBar", "Barra de juegos (Game Bar) - Desactivar",
-            "Desactiva la barra de juegos de Xbox (Win+G) y la grabación en segundo plano (Game DVR), que pueden robar rendimiento en juegos. Revertible desde la app.",
+            "Desactiva la barra de juegos de Xbox (Win+G) y la grabación en segundo plano (Game DVR), que pueden robar rendimiento en juegos.",
             "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 0)
                 && CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled", 0)
                 && CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\GameBar", "UseNexusForGameBarEnabled", 0),
-            () => ApplyGameBarDisableAsync(),
-            () => Task.FromResult(SetMultipleRegistryValues(
-                (RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 1, RegistryValueKind.DWord),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled", 1, RegistryValueKind.DWord),
-                (RegistryHive.CurrentUser, @"Software\Microsoft\GameBar", "UseNexusForGameBarEnabled", 1, RegistryValueKind.DWord))));
+            () => ApplyGameBarDisableAsync());
 
         AddTweak(dict, "WPFTweaksGameBarUninstall", "Barra de juegos (Game Bar) - Desinstalar",
-            "Desinstala el paquete Microsoft.XboxGamingOverlay (la app de la barra de juegos), cerrando antes sus procesos. Windows puede reinstalarla con las actualizaciones. Revertir abre la Microsoft Store para reinstalarla.",
+            "Desinstala el paquete Microsoft.XboxGamingOverlay (la app de la barra de juegos), cerrando antes sus procesos. Windows puede reinstalarla con las actualizaciones.",
             "Requiere precaución", true, "Debloat", false,
             () => IsGameBarPackageMissing(),
             () => UninstallGameBarAsync(),
-            () => RunCommandAsync("powershell", "-Command \"Start-Process 'ms-windows-store://pdp/?ProductId=9NZKPSTSNW4P'\""),
             () => !IsGameBarPackageMissing());
 
         AddTweak(dict, "WPFTweaksDisableExplorerAutoDiscovery", "Detección automática de carpetas en Explorador - Desactivar",
@@ -1125,10 +982,9 @@ public class TweakService : ITweakService
             () => CheckRegistryValue(RegistryHive.CurrentUser,
                 @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell",
                 "FolderType", "NotSpecified"),
-            () => RunCommandAsync("powershell", "-Command \"$bags = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\Bags'; $bagMRU = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU'; Remove-Item -Path $bags -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path $bagMRU -Recurse -Force -ErrorAction SilentlyContinue; $allFolders = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\Bags\\AllFolders\\Shell'; if (-not (Test-Path $allFolders)) { New-Item -Path $allFolders -Force }; New-ItemProperty -Path $allFolders -Name 'FolderType' -Value 'NotSpecified' -PropertyType String -Force; Write-Output 'Please sign out and back in, or restart your computer to apply the changes!' \""),
-            () => RunCommandAsync("powershell", "-Command \"$bags = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\Bags'; $bagMRU = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU'; Remove-Item -Path $bags -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path $bagMRU -Recurse -Force -ErrorAction SilentlyContinue; Write-Output 'Please sign out and back in, or restart your computer to apply the changes!' \""));
+            () => RunCommandAsync("powershell", "-Command \"$bags = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\Bags'; $bagMRU = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU'; Remove-Item -Path $bags -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path $bagMRU -Recurse -Force -ErrorAction SilentlyContinue; $allFolders = 'HKCU:\\Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\Bags\\AllFolders\\Shell'; if (-not (Test-Path $allFolders)) { New-Item -Path $allFolders -Force }; New-ItemProperty -Path $allFolders -Name 'FolderType' -Value 'NotSpecified' -PropertyType String -Force; Write-Output 'Please sign out and back in, or restart your computer to apply the changes!' \""));
 
-        // ===== BUTTONS AND COMBOBOX (from Christitus) =====
+        // ===== BUTTONS AND COMBOBOX =====
 
         // La card muestra "- Ejecutar" si O&O está instalado y "- Instalar" si no
         // (NameWhenNotInstalled): aplicar sin estar instalado abre la página de
@@ -1151,7 +1007,6 @@ public class TweakService : ITweakService
                 return await RunCommandAsync("powershell",
                     "-Command \"$p = @('C:\\Program Files\\O&O ShutUp10\\OOSU10.exe','C:\\Program Files (x86)\\O&O ShutUp10\\OOSU10.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1; if ($p) { Start-Process $p -ArgumentList '/quiet' } else { Write-Output 'O&O ShutUp10 no encontrado'; exit 1 }\"");
             },
-            () => Task.FromResult(new TweakResult(true, "No es posible revertir automáticamente los cambios de O&O ShutUp10.")),
             () => IsOosu10Installed(),
             "O&O ShutUp10++ - Instalar");
 
@@ -1162,27 +1017,27 @@ public class TweakService : ITweakService
 
         AddAppxUninstallTweak(dict, "WPFDebloatCortana", "Cortana - Desinstalar",
             "Elimina el asistente de voz de Microsoft (discontinuado).",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.549981C3F5F10", "Cortana");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.549981C3F5F10");
 
         AddAppxUninstallTweak(dict, "WPFDebloatCandyCrush", "Candy Crush Saga - Desinstalar",
             "Elimina el clásico juego de King preinstalado en Windows.",
-            "Se puede reinstalar desde Microsoft Store", "king.com.CandyCrushSaga", "Candy Crush Saga");
+            "Se puede reinstalar desde Microsoft Store", "king.com.CandyCrushSaga");
 
         AddAppxUninstallTweak(dict, "WPFDebloatClipchamp", "Clipchamp - Desinstalar",
             "Elimina el editor de video de Microsoft.",
-            "Se puede reinstalar desde Microsoft Store", "Clipchamp.Clipchamp", "Clipchamp");
+            "Se puede reinstalar desde Microsoft Store", "Clipchamp.Clipchamp");
 
         AddAppxUninstallTweak(dict, "WPFDebloatSolitaire", "Colección Solitario - Desinstalar",
             "Elimina la colección de solitario de Microsoft.",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.MicrosoftSolitaireCollection", "Solitaire Collection");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.MicrosoftSolitaireCollection");
 
         AddAppxUninstallTweak(dict, "WPFDebloatSkype", "Skype - Desinstalar",
             "Elimina la versión UWP de Skype (discontinuada).",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.SkypeApp", "Skype");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.SkypeApp");
 
         AddAppxUninstallTweak(dict, "WPFDebloatOneNote", "OneNote - Desinstalar",
             "Elimina la versión UWP de OneNote.",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.Office.OneNote", "OneNote");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.Office.OneNote");
 
         AddTweak(dict, "WPFDebloatTeams", "Teams - Desinstalar",
             "Elimina las versiones de Microsoft Teams (nueva y clásica).",
@@ -1195,22 +1050,21 @@ public class TweakService : ITweakService
                 return RunCommandAsync("powershell",
                     "-Command \"Get-AppxPackage MicrosoftTeams -ErrorAction SilentlyContinue | Remove-AppxPackage; Get-AppxPackage MSTeams -ErrorAction SilentlyContinue | Remove-AppxPackage\"");
             },
-            () => ReinstallAppxFromStoreAsync("Microsoft Teams"),
             () => !AreAllAppxPackagesMissing(new[] { "MicrosoftTeams", "MSTeams" }));
         _appxPackageIds.Add("MicrosoftTeams");
         _appxPackageIds.Add("MSTeams");
 
         AddAppxUninstallTweak(dict, "WPFDebloatTikTok", "TikTok - Desinstalar",
             "Elimina la app preinstalada de TikTok.",
-            "Se puede reinstalar desde Microsoft Store", "BytedancePte.Ltd.TikTok", "TikTok");
+            "Se puede reinstalar desde Microsoft Store", "BytedancePte.Ltd.TikTok");
 
         AddAppxUninstallTweak(dict, "WPFDebloatSpotify", "Spotify - Desinstalar",
             "Elimina la app preinstalada de Spotify.",
-            "Se puede reinstalar desde Microsoft Store", "SpotifyAB.SpotifyMusic", "Spotify");
+            "Se puede reinstalar desde Microsoft Store", "SpotifyAB.SpotifyMusic");
 
         AddAppxUninstallTweak(dict, "WPFDebloatMailCalendar", "Correo y calendario - Desinstalar",
             "Elimina la app de correo y calendario (discontinuada, reemplazada por Outlook).",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.windowscommunicationsapps", "Mail and Calendar");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.windowscommunicationsapps");
 
         AddTweak(dict, "WPFDebloatNews", "Noticias - Desinstalar",
             "Elimina la app de noticias de Microsoft.",
@@ -1223,30 +1077,29 @@ public class TweakService : ITweakService
                 return RunCommandAsync("powershell",
                     "-Command \"Get-AppxPackage Microsoft.BingNews -ErrorAction SilentlyContinue | Remove-AppxPackage; Get-AppxPackage Microsoft.News -ErrorAction SilentlyContinue | Remove-AppxPackage\"");
             },
-            () => ReinstallAppxFromStoreAsync("Microsoft News"),
             () => !AreAllAppxPackagesMissing(new[] { "Microsoft.BingNews", "Microsoft.News" }));
         _appxPackageIds.Add("Microsoft.BingNews");
         _appxPackageIds.Add("Microsoft.News");
 
         AddAppxUninstallTweak(dict, "WPFDebloatFilmsTV", "Películas y TV - Desinstalar",
             "Elimina la app de video de Microsoft.",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.ZuneVideo", "Films & TV");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.ZuneVideo");
 
         AddAppxUninstallTweak(dict, "WPFDebloatOfficeHub", "Office Hub - Desinstalar",
             "Elimina el hub de acceso a las aplicaciones de Office.",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.MicrosoftOfficeHub", "Microsoft 365");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.MicrosoftOfficeHub");
 
         AddAppxUninstallTweak(dict, "WPFDebloatPhoneLink", "Phone Link - Desinstalar",
             "Elimina la integración con el teléfono (antes Tu Teléfono).",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.YourPhone", "Phone Link");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.YourPhone");
 
         AddAppxUninstallTweak(dict, "WPFDebloatXboxApp", "Xbox (app) - Desinstalar",
             "Elimina la app de Xbox. OJO: es necesaria para instalar algunos juegos de PC.",
-            "Se puede reinstalar desde Microsoft Store", "Microsoft.GamingApp", "Xbox");
+            "Se puede reinstalar desde Microsoft Store", "Microsoft.GamingApp");
 
         AddAppxUninstallTweak(dict, "WPFDebloatCopilot", "Copilot - Desinstalar",
             "Elimina el asistente de IA integrado de Windows.",
-            "Se puede reinstalar desde Microsoft Store", "XP9CXNGPPJ97XX", "Copilot");
+            "Se puede reinstalar desde Microsoft Store", "XP9CXNGPPJ97XX");
 
         return dict;
     }
@@ -1270,7 +1123,7 @@ public class TweakService : ITweakService
     private static extern bool GlobalMemoryStatusEx([In, Out] MemoryStatusEx lpBuffer);
 
     /// <summary>
-    /// RAM física total en KB, igual que WinUtil (Get-CimInstance Win32_PhysicalMemory ... / 1KB).
+    /// RAM física total en KB, igual que (Get-CimInstance Win32_PhysicalMemory ... / 1KB).
     /// Antes estaba hardcodeado a 384000 KB y el tweak "Servicios - Configurar en Manual"
     /// escribía el valor por defecto en vez del umbral según la memoria real.
     /// </summary>
@@ -1352,7 +1205,7 @@ public class TweakService : ITweakService
     // Caché corta para los checks de desinstalación: consultar Appx vía PowerShell es
     // lento y el check se llama también desde la UI al abrir diálogos de confirmación.
     // El lock protege la caché porque los checks corren en background (refresco de
-    // badges) a la vez que un lote aplica/revierte (que invalida la caché).
+    // badges) a la vez que un lote aplica (que invalida la caché).
     private readonly object _checkStateLock = new();
     private readonly Dictionary<string, (DateTime Stamp, bool Missing)> _appxCheckCache = new();
     // Ids de paquetes Appx que usan los tweaks de debloat: se consultan EN LOTE
@@ -1390,21 +1243,14 @@ public class TweakService : ITweakService
         }
     }
 
-    /// <summary>Reinstala una app desde la Microsoft Store (búsqueda por nombre).</summary>
-    private Task<TweakResult> ReinstallAppxFromStoreAsync(string searchTerm)
-    {
-        var encoded = Uri.EscapeDataString(searchTerm);
-        return RunCommandAsync("powershell", $"-Command \"Start-Process 'ms-windows-store://search/?query={encoded}'\"");
-    }
-
     /// <summary>
-    /// Registra un tweak de debloat que desinstala un paquete Appx del usuario actual
-    /// (Remove-AppxPackage). Revertir abre la Microsoft Store para reinstalarlo.
-    /// </summary>
+ /// Registra un tweak de debloat que desinstala un paquete Appx del usuario actual
+ /// (Remove-AppxPackage). Se puede reinstalar desde la Microsoft Store.
+ /// </summary>
     private void AddAppxUninstallTweak(
         Dictionary<string, TweakDefinition> dict,
         string id, string name, string description, string compatibility,
-        string packageId, string storeSearchName)
+        string packageId)
     {
         _appxPackageIds.Add(packageId);
         AddTweak(dict, id, name, description, compatibility, true, "Debloat", false,
@@ -1415,7 +1261,6 @@ public class TweakService : ITweakService
                 return RunCommandAsync("powershell",
                     $"-Command \"$pkg = Get-AppxPackage {packageId}; if ($pkg) {{ $pkg | Remove-AppxPackage }}\"");
             },
-            () => ReinstallAppxFromStoreAsync(storeSearchName),
             () => !IsAppxPackageMissing(packageId)); // appInstalled: detecta si el paquete está instalado (scan de la página)
     }
 
@@ -1425,10 +1270,9 @@ public class TweakService : ITweakService
         bool isReversible, string category, bool requiresAdmin,
         Func<bool> checkApplied,
         Func<Task<TweakResult>> applyAction,
-        Func<Task<TweakResult>> revertAction,
         Func<bool>? appInstalled = null,
         string? nameWhenNotInstalled = null)
     {
-        dict[id] = new TweakDefinition(id, name, description, compatibility, isReversible, category, requiresAdmin, checkApplied, applyAction, revertAction, appInstalled, nameWhenNotInstalled);
+        dict[id] = new TweakDefinition(id, name, description, compatibility, isReversible, category, requiresAdmin, checkApplied, applyAction, appInstalled, nameWhenNotInstalled);
     }
 }

@@ -3,7 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
 
-    <!-- ContentDialog Base Style -->
+<!-- ContentDialog Base Style -->
     <Style x:Key="DefaultContentDialogStyle" TargetType="ContentDialog">
         <Setter Property="CornerRadius" Value="8"/>
         <Setter Property="Background" Value="{ThemeResource LayerFillColorDefaultBrush}"/>
@@ -20,26 +20,26 @@
         <Setter Property="DefaultButton" Value="Close"/>
     </Style>
 
-    <!-- Info Dialog Style -->
+<!-- Info Dialog Style -->
     <Style x:Key="InfoDialogStyle" TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
         <Setter Property="Title" Value="Información"/>
         <Setter Property="CloseButtonText" Value="Entendido"/>
     </Style>
 
-    <!-- Warning Dialog Style -->
+<!-- Warning Dialog Style -->
     <Style x:Key="WarningDialogStyle" TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
         <Setter Property="Title" Value="Advertencia"/>
         <Setter Property="PrimaryButtonText" Value="Continuar"/>
         <Setter Property="CloseButtonText" Value="Cancelar"/>
     </Style>
 
-    <!-- Error Dialog Style -->
+<!-- Error Dialog Style -->
     <Style x:Key="ErrorDialogStyle" TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
         <Setter Property="Title" Value="Error"/>
         <Setter Property="CloseButtonText" Value="Aceptar"/>
     </Style>
 
-    <!-- Confirmation Dialog Style -->
+<!-- Confirmation Dialog Style -->
     <Style x:Key="ConfirmationDialogStyle" TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
         <Setter Property="Title" Value="Confirmar"/>
         <Setter Property="PrimaryButtonText" Value="Confirmar"/>
@@ -47,13 +47,13 @@
         <Setter Property="DefaultButton" Value="Primary"/>
     </Style>
 
-    <!-- Success Dialog Style -->
+<!-- Success Dialog Style -->
     <Style x:Key="SuccessDialogStyle" TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
         <Setter Property="Title" Value="Éxito"/>
         <Setter Property="CloseButtonText" Value="Aceptar"/>
     </Style>
 
-    <!-- Dialog with Input -->
+<!-- Dialog with Input -->
     <DataTemplate x:Key="DialogWithInputTemplate">
         <StackPanel Spacing="12" MinWidth="300">
             <TextBlock Text="{Binding Message}" Style="{ThemeResource BodyTextBlockStyle}" TextWrapping="Wrap"/>
@@ -65,7 +65,7 @@
         </StackPanel>
     </DataTemplate>
 
-    <!-- Dialog with Progress -->
+<!-- Dialog with Progress -->
     <DataTemplate x:Key="DialogWithProgressTemplate">
         <StackPanel Spacing="12" MinWidth="300">
             <TextBlock Text="{Binding Message}" Style="{ThemeResource BodyTextBlockStyle}" TextWrapping="Wrap"/>
@@ -78,7 +78,7 @@
         </StackPanel>
     </DataTemplate>
 
-    <!-- Dialog with List -->
+<!-- Dialog with List -->
     <DataTemplate x:Key="DialogWithListTemplate">
         <StackPanel Spacing="12" MinWidth="300" MaxHeight="400">
             <TextBlock Text="{Binding Message}" Style="{ThemeResource BodyTextBlockStyle}" TextWrapping="Wrap"/>
@@ -97,7 +97,7 @@
         </StackPanel>
     </DataTemplate>
 
-    <!-- Loading Dialog -->
+<!-- Loading Dialog -->
     <Style x:Key="LoadingDialogStyle" TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
         <Setter Property="IsPrimaryButtonEnabled" Value="False"/>
         <Setter Property="IsSecondaryButtonEnabled" Value="False"/>
@@ -114,17 +114,17 @@
         </Setter>
     </Style>
 
-    <!-- Flyout Base Style -->
+<!-- Flyout Base Style -->
     <Style x:Key="DefaultFlyoutStyle" TargetType="Flyout">
         <Setter Property="Placement" Value="Auto"/>
     </Style>
 
-    <!-- MenuFlyout Style -->
+<!-- MenuFlyout Style -->
     <Style x:Key="DefaultMenuFlyoutStyle" TargetType="MenuFlyout">
         <Setter Property="Placement" Value="Auto"/>
     </Style>
 
-    <!-- Estilo global para tooltips: consistente, legible y reutilizable en toda la app.
+<!-- Estilo global para tooltips: consistente, legible y reutilizable en toda la app.
          OJO: NO definir ContentTemplate ni Placement aquí — en WinUI 3, un template/binding
          global rompe los tooltips creados en código con ToolTipService.SetToolTip(btn, "texto")
          (el string pierde el contenido al presentarse vía template).
@@ -160,7 +160,7 @@
         </Setter>
     </Style>
 
-    <!-- TeachingTip Style -->
+<!-- TeachingTip Style -->
     <Style x:Key="DefaultTeachingTipStyle" TargetType="muxc:TeachingTip">
         <Setter Property="PreferredPlacement" Value="Auto"/>
         <Setter Property="IsLightDismissEnabled" Value="True"/>

@@ -468,7 +468,11 @@ public sealed partial class EstabilidadPage : Page
 
             _scroll.ViewChanged += (s, e) =>
             {
-                _atRightEdge = _scroll.HorizontalOffset >= _scroll.ScrollableWidth - 4;
+ // La tolerancia debe ser mayor que el avance por muestra: si una
+ // muestra nueva agranda el lienzo entre nuestro ChangeView y este
+ // evento, el offset queda PxPerSample por detrás del nuevo máximo
+ // y con una tolerancia menor el seguimiento se cortaba para siempre.
+                _atRightEdge = _scroll.HorizontalOffset >= _scroll.ScrollableWidth - (PxPerSample + 2);
             };
             _scroll.SizeChanged += (s, e) =>
             {
@@ -798,8 +802,22 @@ public sealed partial class EstabilidadPage : Page
 
         private void ScrollToLatest()
         {
-            try { _scroll.ChangeView(_scroll.ScrollableWidth, null, null, true); }
-            catch { }
+ // Objetivo determinista: el máximo desplazable DESPUÉS de que el layout
+ // aplique el ancho recién asignado al lienzo. Leer _scroll.ScrollableWidth
+ // aquí (o hacer ChangeView inmediato) devuelve el valor viejo porque el
+ // layout aún no procesó el nuevo ancho: el ChangeView quedaba apuntando
+ // a la posición actual y el gráfico crecía fuera de pantalla sin moverse.
+ // Se difiere al próximo pase de layout (one-shot) y recién ahí se empuja
+ // la vista al borde derecho.
+            double target = Math.Max(0, _chartWidth - _scroll.ViewportWidth);
+            EventHandler<object>? onLayout = null;
+            onLayout = (s, e) =>
+            {
+                _scroll.LayoutUpdated -= onLayout;
+                try { _scroll.ChangeView(target, null, null, true); }
+                catch { }
+            };
+            _scroll.LayoutUpdated += onLayout;
         }
     }
 }
