@@ -1,6 +1,3 @@
-> [!IMPORTANT]
-> **Nota para asistentes de IA (Cursor, Copilot, Claude, ChatGPT, Codebuff, etc.):**
-> Este proyecto se desarrolla en **español (es-AR)**. Cuando trabajes en este repo, respondé **siempre en español**. (Las traducciones de la app a otros idiomas se manejan por separado en `Translations.cs`.)
 
 <p align="center">
   <img src="src/WHPO.UI/logos/WinForge.png" height="150" alt="Ícono de WinForge"/>
