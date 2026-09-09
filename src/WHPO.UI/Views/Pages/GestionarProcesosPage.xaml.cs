@@ -1839,6 +1839,9 @@ public sealed partial class GestionarProcesosPage : Page
             // Sin reborde (mismo estilo de cards que el resto de la app).
             Background = ThemeBrushes.Get("CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
+            // "no-reveal": excluye la card del efecto reveal global (RevealEffect);
+            // los juegos ya tienen su propio hover (elevación + overlay de lanzar).
+            Tag = "no-reveal",
             // Sin margin: el Spacing de los StackPanel (horizontal y vertical)
             // maneja todo el espaciado para que sea uniforme (12 px) en ambas
             // direcciones, entre cards de la misma fila y entre filas.
@@ -2256,7 +2259,7 @@ public sealed partial class GestionarProcesosPage : Page
 
     /// <summary>
     /// Actualiza el contador según la categoría activa. El texto cambia:
-    /// «Items instalados: N» (todos), «Juegos instalados: N» (videojuegos),
+    /// «Instalados: N» (todos), «Juegos instalados: N» (videojuegos),
     /// «Emuladores de consolas: N», «Emuladores de celular: N».
     /// </summary>
     private void UpdateInstalledCount()
@@ -2284,7 +2287,7 @@ public sealed partial class GestionarProcesosPage : Page
             "games" => I18n.T("Juegos instalados: {0}", count),
             "console_emu" => I18n.T("Emuladores de consolas: {0}", count),
             "mobile_emu" => I18n.T("Emuladores de celular: {0}", count),
-            _ => I18n.T("Items instalados: {0}", count)
+            _ => I18n.T("Instalados: {0}", count)
         };
     }
 
@@ -2723,6 +2726,9 @@ public sealed partial class GestionarProcesosPage : Page
             // Sin reborde (mismo estilo de cards que el resto de la app).
             Background = ThemeBrushes.Get("CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
+            // "no-reveal": excluye la card del efecto reveal global (RevealEffect);
+            // los juegos ya tienen su propio hover (elevación + overlay de lanzar).
+            Tag = "no-reveal",
             // Sin margin: el Spacing de los StackPanel (horizontal y vertical)
             // maneja todo el espaciado para que sea uniforme (12 px) en ambas
             // direcciones, entre cards de la misma fila y entre filas.

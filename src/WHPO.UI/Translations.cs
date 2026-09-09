@@ -1139,6 +1139,8 @@ public static class Translations
         ["Aplicado en vivo y guardado en el registro."] = ("Applied live and saved to the registry.", "Aplicado ao vivo e salvo no registro.", "Live angewendet und in der Registrierung gespeichert.", "Appliqué en direct et enregistré dans le registre."),
         ["Aplicado en vivo (sin guardar en el registro)."] = ("Applied live (not saved to the registry).", "Aplicado ao vivo (sem salvar no registro).", "Live angewendet (nicht in der Registrierung gespeichert).", "Appliqué en direct (non enregistré dans le registre)."),
         ["Todas las pestañas son visibles"] = ("All tabs are visible", "Todas as guias estão visíveis", "Alle Registerkarten sind sichtbar", "Tous les onglets sont visibles"),
+        ["Ir al Workshop"] = ("Go to Workshop", "Ir ao Workshop", "Zum Workshop gehen", "Aller au Workshop"),
+        ["Instalá el componente desde el Workshop"] = ("Install the component from the Workshop", "Instale o componente pelo Workshop", "Installiere die Komponente über den Workshop", "Installez le composant depuis le Workshop"),
         ["{0} de {1} pestañas visibles"] = ("{0} of {1} tabs visible", "{0} de {1} guias visíveis", "{0} von {1} Registerkarten sichtbar", "{0} sur {1} onglets visibles"),
         // ===== Categorías del monitor de sensores (Core SensorService) =====
         ["Distancia a TjMax"] = ("Distance to TjMax", "Distância até TjMax", "Abstand zu TjMax", "Distance à TjMax"),
@@ -1263,6 +1265,7 @@ public static class Translations
         ["3 columnas"] = ("3 columns", "3 colunas", "3 Spalten", "3 colonnes"),
         ["5 columnas"] = ("5 columns", "5 colunas", "5 Spalten", "5 colonnes"),
         ["Juegos instalados: {0}"] = ("Installed games: {0}", "Jogos instalados: {0}", "Installierte Spiele: {0}", "Jeux installés : {0}"),
+        ["Instalados: {0}"] = ("Installed: {0}", "Instalados: {0}", "Installiert: {0}", "Installés : {0}"),
         ["En ejecución"] = ("Running", "Em execução", "Wird ausgeführt", "En cours d'exécution"),
         ["Independiente"] = ("Standalone", "Independente", "Eigenständig", "Autonome"),
         ["No se pudieron escanear los juegos: {0}"] = ("Could not scan games: {0}", "Não foi possível escanear os jogos: {0}", "Spiele konnten nicht gescannt werden: {0}", "Impossible d'analyser les jeux : {0}"),

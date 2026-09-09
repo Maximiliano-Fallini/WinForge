@@ -99,6 +99,14 @@ public sealed partial class MainWindow : Window
         NavigationViewControl.SelectedItem = NavigationViewControl.MenuItems[0];
         NavigationViewControl.ItemInvoked += NavigationViewControl_ItemInvoked;
 
+        // Efecto "reveal" al pasar el mouse: halo con el acento que sigue al cursor
+        // en los ítems del navbar y en las cards del contenido. Se instala UNA vez
+        // acá: los handlers descubren por captura el ítem/card bajo el puntero y
+        // activan el efecto por demanda (cubre navbar dinámico del Workshop y cards
+        // creadas en código, sin tocar cada página).
+        RevealEffect.AttachNavbar(NavigationViewControl);
+        RevealEffect.AttachCards(ContentFrame);
+
         // Configurar NavigationService con el Frame
         if (_navigationService is NavigationService ns)
         {
@@ -1405,7 +1413,17 @@ public sealed partial class MainWindow : Window
             item.Visibility = Visibility.Visible;
             return;
         }
-        // Integrados no core: desde la 0.3.0 nacen sin instalar (Workshop) → ocultos.
+        // Sin instalar (nunca instalado o desinstalado desde el Workshop) no se
+        // muestra NUNCA: el estado de instalación manda sobre "nav.<tag>". Así un
+        // valor viejo en true (o un tildado manual desde Configuración) no revive
+        // un componente que no está instalado.
+        bool removed = _settingsService.Get("builtin.removed." + tag, _componentRegistry.RequiresInstall(tag));
+        if (removed)
+        {
+            item.Visibility = Visibility.Collapsed;
+            return;
+        }
+        // Integrados no core ya instalados: la visibilidad la decide el usuario.
         item.Visibility = _settingsService.Get("nav." + tag, !_componentRegistry.RequiresInstall(tag)) ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -2389,12 +2407,28 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>Menú del botón ⋮ de una pestaña: "Ocultar" esconde la pestaña.</summary>
+    /// <summary>
+    /// Menú del botón ⋮ de una pestaña. Si el componente no está instalado,
+    /// solo ofrece ir al Workshop ("Ocultar" no tiene sentido: ya está oculto).
+    /// Si está instalado, "Ocultar" esconde la pestaña (misma clave "nav.&lt;tag&gt;"
+    /// que la opción de Configuración).
+    /// </summary>
     private void NavItemMore_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
         e.Handled = true; // que el tap no navegue a la pestaña
         if (sender is not Microsoft.UI.Xaml.Controls.Button btn || btn.Tag is not string tag) return;
         var menu = new MenuFlyout();
+        // No instalado (nunca instalado o desinstalado): el único sentido es
+        // mandarlo al Workshop. Ocultar/Desinstalar no aplican.
+        bool removed = _settingsService.Get("builtin.removed." + tag, _componentRegistry.RequiresInstall(tag));
+        if (removed)
+        {
+            var go = new MenuFlyoutItem { Text = I18n.T("Ir al Workshop") };
+            go.Click += (s, e2) => _navigationService.NavigateTo("workshop");
+            menu.Items.Add(go);
+            menu.ShowAt(btn);
+            return;
+        }
         var hide = new MenuFlyoutItem { Text = I18n.T("Ocultar") };
         hide.Click += (s, e2) =>
         {

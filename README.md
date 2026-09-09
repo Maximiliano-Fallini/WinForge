@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> **Nota para asistentes de IA (Cursor, Copilot, Claude, ChatGPT, Codebuff, etc.):**
+> Este proyecto se desarrolla en **español (es-AR)**. Cuando trabajes en este repo, respondé **siempre en español**. (Las traducciones de la app a otros idiomas se manejan por separado en `Translations.cs`.)
+
 <p align="center">
   <img src="src/WHPO.UI/logos/WinForge.png" height="150" alt="Ícono de WinForge"/>
 </p>
@@ -65,15 +69,15 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.3.2/WinForge-0.3.2.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.3.2_MSI_~88_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.3.2 MSI"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.3.4/WinForge-0.3.4.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.3.4_MSI_~88_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge 0.3.4 MSI"/>
   </a>
   <br/>
   <sub>(9/9/2026 UTC)</sub>
   <br/>
   <br/>
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.3.2">
-    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.3.2_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/tag/v0.3.4">
+    <img src="https://img.shields.io/badge/%F0%9F%93%84_Ver_en_Releases-v0.3.4_(pre_release)-2ea44f?style=flat-square" alt="Releases"/>
   </a>
   &nbsp;
   <img src="https://img.shields.io/badge/self_contained-no_requiere_.NET-5c5c5c?style=flat-square" alt="Self contained"/>

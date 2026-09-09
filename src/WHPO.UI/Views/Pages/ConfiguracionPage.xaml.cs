@@ -756,8 +756,10 @@ public sealed partial class ConfiguracionPage : Page
 
         // Agrupar por categoría lógica con subtítulos (más legible que una lista plana).
         string? currentCat = null;
+        var installed = InstalledNavIds();
         foreach (var (tag, label) in NavTabs)
         {
+            bool tabInstalled = WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(tag) || installed.Contains(tag);
             var cat = NavCategory(tag);
             if (cat != currentCat)
             {
@@ -778,8 +780,14 @@ public sealed partial class ConfiguracionPage : Page
                 Tag = tag,
                 // Integrados no core: desde la 0.3.0 nacen sin instalar (Workshop).
                 IsChecked = _settingsService.Get("nav." + tag, !_navRegistry.RequiresInstall(tag)),
+                // Sin instalar: el checkbox se deshabilita. No tiene sentido tildar
+                // una pestaña cuyo componente no está instalado (el estado de
+                // instalación manda sobre "nav.<tag>", ver ApplyNavItemVisibility).
+                IsEnabled = tabInstalled,
                 MinHeight = 34
             };
+            if (!tabInstalled)
+                ToolTipService.SetToolTip(cb, I18n.T("Instalá el componente desde el Workshop"));
             cb.Checked += OnNavCheckChanged;
             cb.Unchecked += OnNavCheckChanged;
             _navCheckBoxes[tag] = cb;
@@ -809,9 +817,37 @@ public sealed partial class ConfiguracionPage : Page
         }
     }
 
+    /// <summary>Componentes no core del registro que están instalados (built-ins sin "builtin.removed" y descargados).</summary>
+    private HashSet<string> InstalledNavIds()
+    {
+        var installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in _navRegistry.NavbarComponents)
+        {
+            if (c is not WHPO_UI.Components.BuiltinComponent)
+            {
+                installed.Add(c.Id);
+                continue;
+            }
+            if (!_settingsService.Get("builtin.removed." + c.Id, _navRegistry.RequiresInstall(c.Id)))
+                installed.Add(c.Id);
+        }
+        return installed;
+    }
+
+    /// <summary>True si la pestaña corresponde a un componente instalado (el set core siempre lo está).</summary>
+    private bool IsTabInstalled(string tag)
+        => WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(tag) || InstalledNavIds().Contains(tag);
+
     private void OnNavCheckChanged(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
+        // Defensa extra: un componente sin instalar no puede mostrarse (el estado
+        // de instalación manda sobre "nav.<tag>"). Revertir el tildé y no guardar.
+        if (sender is CheckBox cb && cb.Tag is string tag && !IsTabInstalled(tag))
+        {
+            cb.IsChecked = false;
+            return;
+        }
         SaveNavVisibility();
     }
 
@@ -828,8 +864,12 @@ public sealed partial class ConfiguracionPage : Page
 
     private void UpdateNavMenuSummary()
     {
-        int visible = NavTabs.Count(t => _navCheckBoxes.TryGetValue(t.Tag, out var cb) && cb.IsChecked == true);
-        int total = NavTabs.Length;
+        // El total cuenta solo las pestañas de componentes instalados: una pestaña
+        // sin instalar no es mostrable, así que no entra en el contador.
+        var installed = InstalledNavIds();
+        int visible = NavTabs.Count(t => WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(t.Tag)
+            || (installed.Contains(t.Tag) && _navCheckBoxes.TryGetValue(t.Tag, out var cb) && cb.IsChecked == true));
+        int total = NavTabs.Count(t => WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(t.Tag) || installed.Contains(t.Tag));
 
         NavMenuSummaryText.Text = visible == total
             ? I18n.T("Todas las pestañas son visibles")

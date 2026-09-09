@@ -148,7 +148,11 @@
                      ENCIMA del contenido), así que se reserva SIEMPRE el espacio (14 px)
                      para que nunca tape las cards y las cards no cambien de ancho al
                      aparecer/desaparecer el scrollbar. -->
-                <Grid>
+                <Grid Margin="0,8,0,8">
+<!-- Margen vertical interno: la elevación al hover de las cards (-6 px) y
+                         su sombra no deben quedar cortadas por el borde del viewport del
+                         ScrollViewer (las cards de favoritos, que van primeras, se
+                         recortaban arriba al elevarse). -->
 <!-- Receptor de la sombra de las cards (ThemeShadow exige un
                          receptor que NO sea ancestro del caster): hermano detrás. -->
                     <Border x:Name="CardShadowReceiver"/>
