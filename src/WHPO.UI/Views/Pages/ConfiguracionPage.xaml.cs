@@ -560,11 +560,14 @@ public sealed partial class ConfiguracionPage : Page
             bool show = (_updateInfo ?? App.MainWindowInstance?.LatestUpdate) is { Available: true };
             if (show && item.Icon == null)
             {
+                // Badge rojo "(!)": nueva actualización disponible.
                 item.Icon = new FontIcon
                 {
-                    Glyph = "\uE896", // Descargar
-                    FontFamily = UiSymbolFontFamily(),
-                    FontSize = 12
+                    Glyph = "!",
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Foreground = Feedback.ErrorBrush
                 };
             }
             else if (!show)
@@ -641,8 +644,10 @@ public sealed partial class ConfiguracionPage : Page
         switch (info.Status)
         {
             case AppUpdateStatus.UpdateAvailable:
-                glyph = "\uE896"; // Descargar
-                brush = ThemeBrushes.Get("AccentBrush");
+                // Estado en rojo con "(!)": alerta de nueva versión (antes: ícono
+                // de descarga con acento azul, poco visible).
+                glyph = "!";
+                brush = Feedback.ErrorBrush;
                 status = I18n.T("¡Hay una versión nueva disponible!");
                 detail = I18n.T("Se puede instalar la v{0} sobre la actual.", info.LatestVersion);
                 break;
@@ -673,6 +678,11 @@ public sealed partial class ConfiguracionPage : Page
                 break;
         }
 
+        // El "(!)" de nueva versión es texto: usa fuente de UI; el resto son
+        // glifos de Segoe Fluent Icons.
+        UpdateStateIcon.FontFamily = info.Status == AppUpdateStatus.UpdateAvailable
+            ? new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI")
+            : UiSymbolFontFamily();
         UpdateStateIcon.Glyph = glyph;
         UpdateStateIcon.Foreground = brush;
         UpdateStatusText.Foreground = brush;

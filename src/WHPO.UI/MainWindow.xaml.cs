@@ -2068,13 +2068,17 @@ public sealed partial class MainWindow : Window
             switch (info.Status)
             {
                 case AppUpdateStatus.UpdateAvailable:
-                    UpdateButtonIcon.Glyph = "\uE896"; // Descargar
-                    UpdateButtonIcon.Foreground = ThemeBrushes.Get("AccentBrush");
+                    // Badge rojo "(!)": nueva actualización disponible (reemplaza
+                    // al ícono de descarga, que no llamaba la atención).
+                    UpdateBadge.Visibility = Visibility.Visible;
+                    UpdateButtonIcon.Visibility = Visibility.Collapsed;
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Actualizar a {0}", $"v{info.LatestVersion}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;
 
                 case AppUpdateStatus.DevelopmentBuild:
+                    UpdateBadge.Visibility = Visibility.Collapsed;
+                    UpdateButtonIcon.Visibility = Visibility.Visible;
                     UpdateButtonIcon.Glyph = "\uE946"; // Info
                     UpdateButtonIcon.Foreground = ThemeBrushes.Get("MutedBrush");
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"));
@@ -2135,16 +2139,19 @@ public sealed partial class MainWindow : Window
 
         if (show && item.InfoBadge == null)
         {
-            // Misma acción y estética que el botón de actualizar del navbar (glifo de
-            // descarga): indica que se puede actualizar la app desde ese punto.
+            // Badge rojo con "(!)": nueva actualización disponible, consistente con
+            // el badge del botón del navbar (antes: "1" numérico de InfoBadge).
             item.InfoBadge = new InfoBadge
             {
                 IconSource = new FontIconSource
                 {
-                    Glyph = "\uE896", // Descargar
-                    FontFamily = SymbolFontFamily(),
-                    FontSize = 10
-                }
+                    Glyph = "!",
+                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
+                    FontSize = 10,
+                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
+                },
+                Background = Feedback.ErrorBrush
             };
         }
         else if (!show && item.InfoBadge != null)

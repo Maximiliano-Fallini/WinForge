@@ -71,7 +71,7 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
 <!-- Botón de actualización de la app: aparece con un chequear al
                          abrir (MainWindow.BeginUpdateCheck). Con versión más nueva en el
-                         repo muestra el ícono de descarga con tooltip "Actualizar a vX";
+                         repo muestra el badge rojo "(!)" con tooltip "Actualizar a vX";
                          si la build está adelantada al repo (en desarrollo) muestra el
                          ícono de info con "Versión X en desarrollo". -->
                     <Button x:Name="UpdateButton"
@@ -83,7 +83,16 @@
                             Margin="0,0,4,0"
                             Background="Transparent"
                             BorderThickness="0">
-                        <FontIcon x:Name="UpdateButtonIcon" Glyph="&#xE896;" FontSize="16"/>
+                        <Grid>
+                            <FontIcon x:Name="UpdateButtonIcon" Glyph="&#xE896;" FontSize="16"/>
+                            <!-- Badge rojo "(!)": indicador de nueva actualización. -->
+                            <Border x:Name="UpdateBadge" Width="22" Height="22" CornerRadius="11"
+                                    Background="{ThemeResource ErrorBrush}" Visibility="Collapsed">
+                                <TextBlock Text="!" FontWeight="Bold" FontSize="14" Margin="0,-2,0,0"
+                                           Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
                     </Button>
                     <Button x:Name="LanguageButton"
                             Click="LanguageButton_Click"
