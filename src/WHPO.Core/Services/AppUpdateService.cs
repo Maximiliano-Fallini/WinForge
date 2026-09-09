@@ -261,16 +261,22 @@ public sealed class AppUpdateService : IAppUpdateService
             File.WriteAllBytes(path, bytes);
             _logging.LogInfo($"AppUpdateService: MSI descargado ({bytes.Length} bytes) a {path}");
 
+            if (!File.Exists(path))
+            {
+                _logging.LogError($"AppUpdateService: el MSI no quedó guardado en {path}; no se puede instalar.");
+                return false;
+            }
+
             var psi = new ProcessStartInfo("msiexec.exe")
             {
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                // Argumentos como STRING (patrón del resto del proyecto): usar
+                // ArgumentList.Add lanzaba msiexec SIN argumentos (el usuario veía
+                // la ayuda de Windows Installer en vez de instalar, porque las
+                // opciones /i /qn no llegaban a la línea de comandos).
+                Arguments = "/i \"" + path + "\" /qn REBOOT=ReallySuppress PROPERTY_PATH=" + launchArgs
             };
-            psi.ArgumentList.Add("/i");
-            psi.ArgumentList.Add(path);
-            psi.ArgumentList.Add("/qn");
-            psi.ArgumentList.Add("REBOOT=ReallySuppress");
-            psi.ArgumentList.Add("PROPERTY_PATH=" + launchArgs);
             var p = Process.Start(psi);
             if (p == null)
             {
