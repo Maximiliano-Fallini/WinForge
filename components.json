@@ -1,29 +1,6 @@
-﻿{
+{
     "catalogVersion":  1,
     "components":  [
-                       {
-                           "id":  "latencia",
-                           "name":  "Medidor de latencia",
-                           "description":  "Mide la latencia de DPC/ISR del kernel en vivo y encuentra los drivers que la causan.",
-                           "icon":  "",
-                           "category":  "Latencia",
-                           "version":  "1.0.1",
-                           "minAppVersion":  "",
-                           "url":  "https://github.com/Maximiliano-Fallini/WinForge/releases/download/components/LatencyMeter-1.0.1.zip",            "sha256": "2f5666d74630affd117505505dab1951b982b4003d92bff212b76d9c32d8fd0f",
-            "sizeBytes": 65889,
-            "inDevelopment": true
-                       },
-                       {
-                           "id":  "LatencyMeter",
-                           "name":  "LatencyMeter",
-                           "description":  "Componente LatencyMeter de WinForge.",
-                           "icon":  "\\uE7C3",
-                           "category":  "Sistema",
-                           "version":  "1.0.1",
-                           "minAppVersion":  "",
-                           "url":  "https://github.com/Maximiliano-Fallini/WinForge/releases/download/components/LatencyMeter-1.0.1.zip",
-                           "sha256":  "2f5666d74630affd117505505dab1951b982b4003d92bff212b76d9c32d8fd0f",
-                           "sizeBytes":  65889
-                       }
+
                    ]
 }

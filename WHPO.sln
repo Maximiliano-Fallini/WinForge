@@ -13,8 +13,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Components", "Components", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinForge.Component.Demo", "src\Components\WinForge.Component.Demo\WinForge.Component.Demo.csproj", "{23824E39-A0CD-412F-8E57-2FAEDFE33B95}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WinForge.Component.LatencyMeter", "src\Components\WinForge.Component.LatencyMeter\WinForge.Component.LatencyMeter.csproj", "{AD6E79CF-7273-4433-8750-821EF670D4B3}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -61,18 +59,6 @@ Global
 		{23824E39-A0CD-412F-8E57-2FAEDFE33B95}.Release|x64.Build.0 = Release|x64
 		{23824E39-A0CD-412F-8E57-2FAEDFE33B95}.Release|x86.ActiveCfg = Release|x64
 		{23824E39-A0CD-412F-8E57-2FAEDFE33B95}.Release|x86.Build.0 = Release|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Debug|Any CPU.ActiveCfg = Debug|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Debug|Any CPU.Build.0 = Debug|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Debug|x64.ActiveCfg = Debug|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Debug|x64.Build.0 = Debug|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Debug|x86.ActiveCfg = Debug|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Debug|x86.Build.0 = Debug|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Release|Any CPU.ActiveCfg = Release|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Release|Any CPU.Build.0 = Release|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Release|x64.ActiveCfg = Release|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Release|x64.Build.0 = Release|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Release|x86.ActiveCfg = Release|x64
-		{AD6E79CF-7273-4433-8750-821EF670D4B3}.Release|x86.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -82,6 +68,5 @@ Global
 		{E5E89080-0DFE-48A1-8F30-B9B6E372789F} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{44C0FC67-C45C-FAC9-ED1F-EF95C88C3779} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{23824E39-A0CD-412F-8E57-2FAEDFE33B95} = {44C0FC67-C45C-FAC9-ED1F-EF95C88C3779}
-		{AD6E79CF-7273-4433-8750-821EF670D4B3} = {44C0FC67-C45C-FAC9-ED1F-EF95C88C3779}
 	EndGlobalSection
 EndGlobal
