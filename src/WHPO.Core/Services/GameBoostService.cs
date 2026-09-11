@@ -49,24 +49,43 @@ public sealed class GameBoostService : IGameBoostService
     // existía, es decir habilitadas por defecto — se borra al restaurar).
     private int? _toastsSnapshot;
 
+    // Snapshot del Modo Juego de Windows (null = habilitado por defecto, se borra
+    // al restaurar): se activa para la partida y se restaura al cerrarla.
+    private int? _gameModeSnapshot;
+
+    // El Modo Juego de WINDOWS no se pudo activar esta partida (huérfano: faltan
+    // archivos de Game Bar). Se reporta en GameBoostApplyResult para que la UI avise.
+    private bool _gameModeWarning;
+
+    // Salud del Modo Juego de Windows (opcional: si el host no lo registró en DI,
+    // el boost sigue funcionando sin tocar el Modo Juego de Windows).
+    private readonly IWindowsGameModeHealthService? _gameMode;
+
     private sealed record ProcessSnapshot(int Pid, string Name, ProcessPriorityClass OriginalClass);
     private sealed record ServiceSnapshot(string Name, string StartType);
 
-    // Servicios con impacto directo en la actividad del sistema mientras se juega.
+    /// <summary>Se dispara cuando el boost se aplica (juego iniciado), con el resumen.</summary>
+    public event Action<GameBoostApplyResult>? BoostApplied;
+
+    // Servicios con impacto directo en la actividad del sistema mientras se juega:
+    // mantenimiento/indexado + telemetría/diagnóstico + cola de impresión.
     private static readonly string[] DefaultKillServices =
     {
         "wuauserv",         // Windows Update
         "UsoSvc",           // Update Orchestrator
         "BITS",             // Background Intelligent Transfer Service
         "SysMain",          // Superfetch/SysMain (prefetch agresivo)
-        "WSearch"           // Búsqueda de Windows (indexado)
+        "WSearch",          // Búsqueda de Windows (indexado)
+        "DiagTrack",        // Telemetría de diagnóstico
+        "WerSvc",           // Informe de errores de Windows
+        "DPS",              // Directivas de diagnóstico
+        "Spooler"           // Cola de impresión
     };
 
-    // Servicios de telemetría: se muestran en la UI con su estado REAL de Windows
-    // (mismo control de 3 estados que el resto) pero NO entran al conjunto que el
-    // boost detiene al iniciar el juego: su gestión pertenece al apartado de
-    // telemetría/debloat, no a la partida. (La definición ya vive en
-    // ServiceGroups, grupo "telemetry"; el array quedó unificado ahí.)
+    // Los servicios de telemetría/diagnóstico (DiagTrack, WerSvc, DPS) se muestran
+    // en la UI con su estado REAL de Windows (grupo "telemetry") y TAMBIÉN entran
+    // al conjunto que el boost detiene por partida: es una parada TEMPORAL que se
+    // restaura al cerrar el juego, no el cambio persistente del apartado debloat.
 
     // Servicios de Hyper-V / virtualización: dejarlos Desactivado es el tweak
     // clásico de latencia para gaming (elimina la capa de hipervisor del arranque
@@ -106,6 +125,7 @@ public sealed class GameBoostService : IGameBoostService
             ("DiagTrack", "Telemetría de diagnóstico: envía datos de uso y diagnóstico a Microsoft. Es seguro desactivarla."),
             ("WerSvc", "Informe de errores: envía reportes a Microsoft cuando un programa falla."),
             ("dmwappushservice", "WAP Push: gestión de dispositivos móviles y telemetría asociada. No se usa en PCs de escritorio normales."),
+            ("DPS", "Directivas de diagnóstico: decide qué diagnósticos puede ejecutar Windows y resuelve problemas detectados. Sin uso mientras jugás."),
             ("DusmSvc", "Uso de datos: estadísticas de consumo de red por aplicación (panel de Datos de uso)."),
         }),
     // Grupos extra: como telemetría e Hyper-V, son gestión PERSISTENTE (3
@@ -145,7 +165,7 @@ public sealed class GameBoostService : IGameBoostService
     public static string[] ManagedServices =>
         ServiceGroups.SelectMany(g => g.Services.Select(s => s.Service)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
-    /// <summary>Servicios que el boost DETIENE al iniciar el juego (excluye telemetría e Hyper-V).</summary>
+    /// <summary>Servicios que el boost DETIENE al iniciar el juego (excluye Hyper-V).</summary>
     public static string[] BoostStopServices =>
         (string[])DefaultKillServices.Clone();
 
@@ -186,11 +206,12 @@ public sealed class GameBoostService : IGameBoostService
         }
     }
 
-    public GameBoostService(ISettingsService settings, ILoggingService logging, IProcessService processService)
+    public GameBoostService(ISettingsService settings, ILoggingService logging, IProcessService processService, IWindowsGameModeHealthService? gameModeHealth = null)
     {
         _settings = settings;
         _logging = logging;
         _processService = processService;
+        _gameMode = gameModeHealth;
 
         // El cierre de juegos se detecta con los eventos WMI de ProcessService.
         _processService.RunningGamesChanged += OnRunningGamesChanged;
@@ -410,7 +431,7 @@ public sealed class GameBoostService : IGameBoostService
             _active = true; // reservar: evita aplicar dos veces en paralelo
         }
 
-        return Task.Run(ApplyCore);
+        return Task.Run(() => ApplyCore());
     }
 
     public Task RestoreAsync()
@@ -425,18 +446,20 @@ public sealed class GameBoostService : IGameBoostService
 
     // ===== Aplicar =====
 
-    private void ApplyCore()
+    private async Task ApplyCore()
     {
         try
         {
+            _gameModeWarning = false;
             _logging.LogInfo("GameBoost: aplicando optimización de procesos al iniciar el juego...");
 
             // Lista configurable de procesos en segundo plano (tuerca del switch).
             var backgroundProcesses = GetBackgroundProcesses();
- // Servicios que el boost detiene al iniciar el juego (los gestionados
- // NO telemetría). Los deshabilitados por el usuario ya no corren: el
- // snapshot los saltea solos. El switch "Servicios Optimizados Automaticos"
- // apagado = el boost no detiene servicios por partida (solo gestiona procesos).
+ // Servicios que el boost detiene al iniciar el juego (mantenimiento, indexado,
+ // telemetría/diagnóstico e impresión). Los deshabilitados por el usuario ya no
+ // corren: el snapshot los saltea solos. El switch "Servicios Optimizados
+ // Automaticos" apagado = el boost no detiene servicios por partida (solo
+ // gestiona procesos).
             var autoServiceOptimization = IsAutomaticServiceOptimizationEnabled;
             var userKillServices = autoServiceOptimization ? BoostStopServices : Array.Empty<string>();
             if (!autoServiceOptimization)
@@ -448,6 +471,26 @@ public sealed class GameBoostService : IGameBoostService
                 _logging.LogInfo($"GameBoost: servicios a detener por partida: {string.Join(", ", userKillServices)} ({servicesToRestart.Count} corriendo ahora; se restauran al cerrar el juego).");
             var processesToRestore = SnapshotBackgroundPriorities(backgroundProcesses);
             _toastsSnapshot = ReadToastsEnabled();
+
+            // Modo Juego de WINDOWS (no el de WinForge): verificar la infraestructura
+            // ANTES de activar las reglas. Si faltan archivos (huérfano — debloat
+            // extremo tipo Game Bar removida), las reglas de registro no alcanzan:
+            // se omite la activación y se avisa a la UI. Si solo está deshabilitado
+            // por reglas (AtlasOS), se reactiva para la partida con snapshot.
+            if (_gameMode != null)
+            {
+                var health = await _gameMode.CheckAsync();
+                if (health.Status == WindowsGameModeHealth.Orphaned)
+                {
+                    _gameModeWarning = true;
+                    _gameModeSnapshot = null;
+                    _logging.LogWarning("GameBoost: Modo Juego de WINDOWS huérfano (faltan archivos de Game Bar): no se pudo activar para la partida. Reinstalá Game Bar desde la Microsoft Store. El boost de WinForge sigue aplicando procesos/servicios.");
+                }
+                else
+                {
+                    _gameModeSnapshot = await _gameMode.EnsureEnabledForSessionAsync();
+                }
+            }
 
             // 2) Comprometer el snapshot de forma atómica con la reserva de _active:
             // si una restauración (juego cerrado muy rápido, switch apagado o la app
@@ -474,11 +517,21 @@ public sealed class GameBoostService : IGameBoostService
             // 3) Aplicar los cambios.
  // Solo se detienen los servicios seleccionados en la configuración.
             StopServices(userKillServices);
-            KillUserProcesses();
+            int killed = KillUserProcesses();
             DeprioritizeBackgroundProcesses(backgroundProcesses);
             PauseToasts();
 
             _logging.LogInfo($"GameBoost: optimización aplicada ({servicesToRestart.Count} servicios y {processesToRestore.Count} procesos a restaurar al cerrar).");
+
+            // Notificar a la UI con el resumen del boost aplicado (reglas de juego,
+            // servicios detenidos, procesos optimizados y procesos cerrados).
+            var result = new GameBoostApplyResult(
+                CountRulesApplied(),
+                servicesToRestart.Count,
+                processesToRestore.Count,
+                killed,
+                _gameModeWarning);
+            BoostApplied?.Invoke(result);
         }
         catch (Exception ex)
         {
@@ -554,10 +607,10 @@ public sealed class GameBoostService : IGameBoostService
  /// hace snapshot ni se restauran: el usuario los eligió cerrar, así que se
  /// quedan cerrados. Se salte procesos críticos y la propia app.
  /// </summary>
-    private void KillUserProcesses()
+    private int KillUserProcesses()
     {
         var toKill = GetKillProcesses();
-        if (toKill.Count == 0) return;
+        if (toKill.Count == 0) return 0;
 
  // Lista de procesos que NUNCA se cierran, aunque el usuario los agregue.
         var protectedProcs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -601,7 +654,37 @@ public sealed class GameBoostService : IGameBoostService
             }
         }
         _logging.LogInfo($"GameBoost: {killed} procesos cerrados.");
+        return killed;
     }
+
+    /// <summary>
+    /// Cuenta cuántos juegos en ejecución tienen una regla de juego efectiva (sesión
+    /// "Actual" o guardada) con al menos una dimensión configurada. Las reglas las
+    /// aplica ProcessService al detectar el juego; acá solo se reportan para el
+    /// resumen del Modo juego.
+    /// </summary>
+    private int CountRulesApplied()
+    {
+        int count = 0;
+        try
+        {
+            foreach (var exe in _processService.RunningGameExes)
+            {
+                var rule = _processService.GetEffectiveRule(exe);
+                if (rule != null && RuleHasContent(rule))
+                    count++;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogDebug($"GameBoost: no se pudieron contar las reglas aplicadas: {ex.Message}");
+        }
+        return count;
+    }
+
+    private static bool RuleHasContent(ProcessRule r)
+        => r.CpuPriority != null || r.AffinityMask != null || r.GpuPriority != null
+           || !string.IsNullOrEmpty(r.PowerPlanGuid) || r.IoPriority != null;
 
     private void DeprioritizeBackgroundProcesses(List<string> backgroundProcesses)
     {
@@ -731,6 +814,16 @@ public sealed class GameBoostService : IGameBoostService
                 RestoreProcessPriority(snap);
 
             RestoreToasts();
+
+            // Restaurar el Modo Juego de Windows al estado previo de la partida
+            // (0 explícito vuelve a 0; claves ausentes se borran de nuevo).
+            if (_gameMode != null)
+            {
+                var snapshot = _gameModeSnapshot;
+                _gameModeSnapshot = null;
+                _gameMode.RestoreForSessionEnd(snapshot);
+            }
+
             _logging.LogInfo("GameBoost: estado previo restaurado.");
         }
         catch (Exception ex)

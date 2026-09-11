@@ -216,12 +216,15 @@ public sealed partial class EstabilidadPage : Page
 
     private void LoadTestTypes()
     {
+        var current = TestTypeCombo.SelectedItem is ComboBoxItem { Tag: StabilityTestType t } ? t : (StabilityTestType?)null;
         TestTypeCombo.Items.Clear();
         foreach (var (type, label) in _stabilityService.GetAvailableTestTypes())
         {
-            TestTypeCombo.Items.Add(new ComboBoxItem { Content = label, Tag = type });
+            TestTypeCombo.Items.Add(new ComboBoxItem { Content = I18n.T(label), Tag = type });
         }
-        if (TestTypeCombo.Items.Count > 0)
+        if (current is { } keep && _stabilityService.GetAvailableTestTypes().Any(x => x.Type == keep))
+            TestTypeCombo.SelectedItem = TestTypeCombo.Items.OfType<ComboBoxItem>().First(i => (StabilityTestType)i.Tag! == keep);
+        else if (TestTypeCombo.Items.Count > 0)
             TestTypeCombo.SelectedIndex = 0;
     }
 

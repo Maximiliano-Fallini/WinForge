@@ -214,7 +214,9 @@
                     </Button>
                     <TextBlock Text="WinForge Modo juego configuración"
                                FontSize="20"
-                               FontWeight="SemiBold"/>
+                               FontWeight="SemiBold"
+                               TextWrapping="Wrap"
+                               MaxWidth="720"/>
                     <TextBlock Text="Personalizá los procesos y servicios que se optimizan al iniciar un juego. Los cambios se aplican al guardar."
                                FontSize="12"
                                Foreground="{ThemeResource SecondaryTextBrush}"

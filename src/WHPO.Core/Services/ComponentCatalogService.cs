@@ -76,8 +76,7 @@ public sealed class ComponentCatalogService
     public string CatalogUrl =>
         _settings.Get("workshop.catalogUrl", $"https://raw.githubusercontent.com/{Repo}/main/components.json");
 
-    private static string RootDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO");
+    private static string RootDir => AppPaths.RootDir;
     private static string ModulesRoot => Path.Combine(RootDir, "Modules");
     private static string StorePath => Path.Combine(RootDir, "modules.json");
     private static string CachePath => Path.Combine(RootDir, "components.cache.json");

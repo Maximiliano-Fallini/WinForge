@@ -41,6 +41,21 @@
             <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF8AB4F8" Opacity="0.9"/>
             <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF8AB4F8" Opacity="0.8"/>
 
+<!-- Desplegables (ComboBox / MenuFlyout): en vez del acrylic translúcido de
+             WinUI (que ignora la apariencia de la app), el popup usa el MISMO
+             color de las cards, y los items usan los hovers/selecciones de las
+             cards (CardHoverBrush / CardSelectedBrush). -->
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#FF1A1A1C"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerPressed" Color="#FF202022"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#FF3A3A3C"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#FF3A3A3C"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FF242424"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FF262626"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FF2A2A2C"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FF262626"/>
+
 <!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
                  XamlControlsResources (si se define solo en el raíz de App.xaml,
                  WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
@@ -63,6 +78,19 @@
             <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF3D7EDB"/>
             <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF3D7EDB" Opacity="0.9"/>
             <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF3D7EDB" Opacity="0.8"/>
+
+<!-- Desplegables (ComboBox / MenuFlyout): popup blanco como las cards,
+             con el mismo borde y hovers/selecciones de cards del tema claro. -->
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#FFF7F8FA"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerPressed" Color="#FFEDEFF2"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#FFD8DDE3"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#FFD8DDE3"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FFF0F2F5"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FFE2E9F6"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FFD8E3F3"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FFE2E9F6"/>
 
             <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
             <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>

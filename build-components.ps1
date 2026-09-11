@@ -43,7 +43,7 @@ if (-not (Test-Path $projectFile)) {
 if (-not $Version) {
     $csprojXml = [xml](Get-Content $projectFile -Raw)
     $Version = $csprojXml.Project.PropertyGroup.Version | Select-Object -First 1
-    if (-not $Version) { $Version = "1.0.0" }
+    if (-not $Version) { $Version = "0.1.0" }
 }
 
 Write-Output "== Compilando $Component v$Version =="

@@ -237,8 +237,7 @@ public sealed partial class ConfiguracionPage : Page
     // componente descargado de Overclock USB. NO toca settings.json
     // (configuración) ni los logs (botón "Borrar logs").
 
-    private static string WhpoCacheDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO");
+    private static string WhpoCacheDir => WHPO.Core.AppPaths.RootDir;
 
     private void UpdateCacheSize()
     {
@@ -554,7 +553,9 @@ public sealed partial class ConfiguracionPage : Page
         try
         {
             if (ConfigTabs == null) return;
-            var item = ConfigTabs.Items.OfType<SelectorBarItem>().Skip(1).FirstOrDefault(); // "Actualizaciones"
+            var item = ConfigTabs.Items.Count > 1 && ConfigTabs.Items[1] is SelectorBarItem second
+                ? second
+                : null;
             if (item == null) return;
 
             bool show = (_updateInfo ?? App.MainWindowInstance?.LatestUpdate) is { Available: true };

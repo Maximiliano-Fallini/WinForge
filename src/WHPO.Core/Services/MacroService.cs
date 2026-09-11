@@ -130,8 +130,7 @@ public sealed class MacroService : IMacroService
     public MacroService(ILoggingService logging)
     {
         _logging = logging;
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO");
+        var dir = AppPaths.RootDir;
         try { Directory.CreateDirectory(dir); } catch { }
         _filePath = Path.Combine(dir, "macros.json");
     }

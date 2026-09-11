@@ -397,16 +397,6 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
         _hardwareResolved = ok;
     }
 
-    private bool IsAllowedTarget(int pid, string exeName)
-    {
-        if (_targetMode != "manual") return true;
-        if (string.IsNullOrWhiteSpace(_targetExe)) return false;
-        string processName = string.Empty;
-        try { processName = Process.GetProcessById(pid).ProcessName + ".exe"; } catch { }
-        return string.Equals(Path.GetFileName(exeName), Path.GetFileName(_targetExe), StringComparison.OrdinalIgnoreCase)
-            || string.Equals(processName, Path.GetFileName(_targetExe), StringComparison.OrdinalIgnoreCase);
-    }
-
     private int FindLaunchedTargetPid()
     {
         if (string.IsNullOrWhiteSpace(_launchedTargetExe)) return 0;

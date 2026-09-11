@@ -2279,36 +2279,6 @@ public class SystemInfoService : ISystemInfoService, IDisposable
         return null;
     }
 
-    private double GetGpuTemperatureViaWmi()
-    {
-        // Si ya falló WMI antes, no reintentar para evitar spam de logs y lag
-        if (_gpuTempWmiFailed)
-            return 0;
-
-        try
-        {
-            using var searcher = new ManagementObjectSearcher(@"root\WMI", "SELECT CurrentTemperature FROM MSAcpi_ThermalZoneTemperature");
-            foreach (ManagementObject obj in searcher.Get())
-            {
-                var rawTemp = Convert.ToUInt32(obj["CurrentTemperature"] ?? 0);
-                // El valor está en décimas de Kelvin: (rawTemp / 10) - 273.15
-                var temp = (rawTemp / 10.0) - 273.15;
-                if (temp > 0 && temp < 120)
-                    return temp;
-            }
-        }
-        catch (Exception ex)
-        {
-            // Solo loguear una vez para evitar spam
-            if (!_gpuTempWmiFailed)
-            {
-                _loggingService.LogWarning($"Error obteniendo temperatura GPU via WMI: {ex.Message}");
-                _gpuTempWmiFailed = true;
-            }
-        }
-        return 0;
-    }
-
     public MemoryInfo GetMemoryInfo()
     {
         // GlobalMemoryStatusEx devuelve total/available físicos al instante (sin WMI).

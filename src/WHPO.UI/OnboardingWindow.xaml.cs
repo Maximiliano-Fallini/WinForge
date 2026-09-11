@@ -62,6 +62,14 @@ public partial class OnboardingWindow : Window
         _phase = 0;
         UpdatePhaseUi(animateIn: false);
 
+        // Ventana de tamaño fijo: el asistente no se puede achicar, agrandar ni
+        // maximizar (arrastrar bordes o doble clic en la barra de título).
+        if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+        {
+            presenter.IsResizable = false;
+            presenter.IsMaximizable = false;
+        }
+
         Title = WindowTitleText;
     }
 
@@ -94,16 +102,6 @@ public partial class OnboardingWindow : Window
             _progressDots.Add(dot);
             ProgressDots.Children.Add(dot);
         }
-    }
-
-    private static Microsoft.UI.Xaml.Media.FontFamily UiSymbolFontFamily()
-    {
-        if (Microsoft.UI.Xaml.Application.Current.Resources.TryGetValue("SymbolThemeFontFamily", out var r)
-            && r is Microsoft.UI.Xaml.Media.FontFamily ff)
-        {
-            return ff;
-        }
-        return new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons");
     }
 
     // ----- Cambio de fase -----

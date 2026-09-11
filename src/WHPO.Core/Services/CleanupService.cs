@@ -25,16 +25,19 @@ public sealed class CleanupService : ICleanupService
 {
     private readonly ILoggingService _logging;
 
-    public CleanupService(ILoggingService loggingService)
+    private readonly IRegistryCleanerService? _registry;
+
+    public CleanupService(ILoggingService loggingService, IRegistryCleanerService? registryCleaner = null)
     {
         _logging = loggingService;
+        _registry = registryCleaner;
     }
 
     // =====================================================================
     // Catálogo de "Limpieza personalizada"
     // =====================================================================
 
-    private enum TargetKind { Files, RegistryValues, Analysis }
+    private enum TargetKind { Files, RegistryValues, Analysis, RegistryScan }
 
     private sealed class Target
     {
@@ -56,6 +59,9 @@ public sealed class CleanupService : ICleanupService
 
         /// <summary>Para RegistryValues: nombres de valor a borrar ("*" = todos).</summary>
         public string[]? RegistryPatterns { get; init; }
+
+        /// <summary>Para RegistryScan: categoría del limpiador de registro a escanear.</summary>
+        public RegistryCleanCategory RegistryCategory { get; init; }
     }
 
     private static readonly Target[] CustomTargets =
@@ -247,6 +253,32 @@ public sealed class CleanupService : ICleanupService
             Description = "Archivos .log de la carpeta de registros del sistema (WINDIR\\Logs).",
             Pattern = "*.log",
             GetPaths = () => [WinDir("Logs")]
+        },
+
+        // ---------- Registro (limpiador de registro, estilo CCleaner) ----------
+        // Todo es HKCU (sin admin) y con backup .reg OBLIGATORIO antes de borrar:
+        // si el backup falla, no se limpia. El escaneo cuenta problemas; la
+        // limpieza los borra y reporta cuántos quedaron borrados.
+        new()
+        {
+            Id = "reg_ext", Name = "Extensiones de archivo huérfanas", Kind = TargetKind.RegistryScan,
+            DefaultChecked = true, IsAdvanced = true,
+            Description = "Clases de extensión que apuntan a un programa que ya no está instalado. Con backup .reg automático.",
+            RegistryCategory = RegistryCleanCategory.OrphanedFileExtensions
+        },
+        new()
+        {
+            Id = "reg_unins", Name = "Restos de programas desinstalados", Kind = TargetKind.RegistryScan,
+            DefaultChecked = true, IsAdvanced = true,
+            Description = "Entradas de desinstalación de programas que ya no existen. Con backup .reg automático.",
+            RegistryCategory = RegistryCleanCategory.UninstallLeftovers
+        },
+        new()
+        {
+            Id = "reg_mui", Name = "Nombres de apps obsoletos (MuiCache)", Kind = TargetKind.RegistryScan,
+            DefaultChecked = true, IsAdvanced = true,
+            Description = "Nombres cacheados de ejecutables que ya no existen (histórico de apps ejecutadas). Con backup .reg automático.",
+            RegistryCategory = RegistryCleanCategory.StaleMuiCache
         }
     ];
 
@@ -266,7 +298,10 @@ public sealed class CleanupService : ICleanupService
             CustomTargets.Where(t => t.Id.StartsWith("dl_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
         new("avanzado", "Avanzado",
             "Limpieza de bajo nivel, recomendada solo para usuarios que saben lo que borran.",
-            CustomTargets.Where(t => t.Id.StartsWith("adv_", StringComparison.Ordinal)).Select(ToInfo).ToList())
+            CustomTargets.Where(t => t.Id.StartsWith("adv_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
+        new("registro", "Registro",
+            "Problemas del registro de Windows (HKCU): se respaldan en .reg antes de borrar nada.",
+            CustomTargets.Where(t => t.Id.StartsWith("reg_", StringComparison.Ordinal)).Select(ToInfo).ToList())
     ];
 
     private static CleanupTargetInfo ToInfo(Target t) => new(t.Id, t.Name, t.Description, t.DefaultChecked, t.Kind == TargetKind.Analysis, t.IsAdvanced);
@@ -580,6 +615,11 @@ public sealed class CleanupService : ICleanupService
                 int count = CountRegistryValues(t);
                 return new CleanupItemResult(t.Id, t.Name, 0, count, AnalysisOnly: false);
             }
+            case TargetKind.RegistryScan:
+            {
+                int count = _registry?.Scan(t.RegistryCategory).Count ?? 0;
+                return new CleanupItemResult(t.Id, t.Name, 0, count, AnalysisOnly: false);
+            }
             default:
             {
                 long bytes = 0; int files = 0;
@@ -702,6 +742,26 @@ public sealed class CleanupService : ICleanupService
                 {
                     int count = DeleteRegistryValues(target, warnings);
                     results.Add(new CleanupItemResult(target.Id, target.Name, 0, count, false));
+                    break;
+                }
+                case TargetKind.RegistryScan:
+                {
+                    // Re-escanear ANTES de limpiar: solo se borra lo que el
+                    // escáner encuentra AHORA (la UI puede haber mostrado un
+                    // conteo de hace minutos). El Clean exporta el backup .reg
+                    // y aborta sin borrar si el backup falla.
+                    var found = _registry?.Scan(target.RegistryCategory) ?? [];
+                    if (_registry == null || found.Count == 0)
+                    {
+                        results.Add(new CleanupItemResult(target.Id, target.Name, 0, 0, false));
+                        break;
+                    }
+                    var clean = _registry.Clean(found);
+                    warnings.AddRange(clean.Warnings);
+                    if (clean.BackupFile != null)
+                        warnings.Add($"Registro: backup en {clean.BackupFile}");
+                    results.Add(new CleanupItemResult(target.Id, target.Name, 0,
+                        clean.DeletedKeys + clean.DeletedValues, false));
                     break;
                 }
                 default:

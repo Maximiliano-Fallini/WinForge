@@ -494,7 +494,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksActivity", "Historial de actividad - Desactivar",
             "Borra documentos recientes, portapapeles e historial de ejecución.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckAnyRegistryValue(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "EnableActivityFeed", 0),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\System", "PublishUserActivities", 0),
@@ -506,7 +506,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksHiber", "Hibernación - Desactivar",
             "La hibernación está pensada para portátiles. Realmente nunca debería usarse en escritorios.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"System\CurrentControlSet\Control\Session Manager\Power", "HibernateEnabled", 0),
             () => Task.Run(() =>
             {
@@ -528,19 +528,19 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksRevertStartMenu", "Diseño anterior del menú Inicio - Activar",
             "Restaura el diseño antiguo del menú Inicio anterior al despliegue gradual del nuevo en 25H2. En versiones nuevas de Windows no funcionará.",
-            "Compatible con Windows 11 25H2", true, "Essential Tweaks", true,
+            "Compatible con Windows 11 25H2", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3036241548", "EnabledState", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\ControlSet001\Control\FeatureManagement\Overrides\8\3036241548", "EnabledState", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableStoreSearch", "Resultados recomendados de Microsoft Store - Desactivar",
             "No mostrará apps recomendadas de Microsoft Store al buscar en el menú Inicio.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", false,
             () => IsStoreSearchBlocked(),
             () => RunCommandAsync("powershell", "-Command \"icacls \\\"$Env:LocalAppData\\Packages\\Microsoft.WindowsStore_8wekyb3d8bbwe\\LocalState\\store.db\\\" /deny *S-1-1-0:F\""));
 
         AddTweak(dict, "WPFTweaksLocation", "Seguimiento de ubicación - Desactivar",
             "Desactiva el seguimiento de ubicación.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckAnyRegistryValue(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location", "Value", "Deny"),
                 (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Sensor\Overrides\{BFA794E4-F964-4FDB-90F6-51056BFE4B44}", "SensorPermissionState", 0),
@@ -552,7 +552,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksServices", "Servicios - Configurar en Manual",
             "Configura algunos servicios en Manual y ajusta SvcHostSplitThresholdInKB para reducir significativamente la cantidad de procesos svchost.exe.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             // "Aplicado" = el efecto del tweak está presente: DiagTrack deshabilitado
             // (Start=4) o el umbral de división de svchost ajustado según la RAM real
             // (por defecto es 384000 KB; el tweak lo sube a la memoria del equipo).
@@ -625,7 +625,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksDisableWarningForUnsignedRdp", "Advertencias de archivos RDP sin firmar - Desactivar",
             "Desactiva las advertencias al lanzar archivos RDP sin firmar introducidas en las últimas actualizaciones.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", false,
             () => CheckAnyRegistryValue(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\Client", "RedirectionWarningDialogVersion", 1),
                 (RegistryHive.CurrentUser, @"Software\Microsoft\Terminal Server Client", "RdpLaunchConsentAccepted", 1)),
@@ -676,13 +676,13 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksConsumerFeatures", "ConsumerFeatures - Desactivar",
             "Detiene instalaciones promocionadas de apps y reduce sugerencias de Microsoft Store.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\CloudContent", "DisableWindowsConsumerFeatures", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksTelemetry", "Telemetría - Desactivar",
             "Desactiva la telemetría de Microsoft.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckAnyRegistryValue(
                 (RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection", "AllowTelemetry", 0),
                 (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo", "Enabled", 0),
@@ -717,7 +717,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksDeliveryOptimization", "Optimización de entrega - Desactivar",
             "Evita que Windows use tu ancho de banda para subir actualizaciones a otros equipos en internet o red local.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "DODownloadMode", 0),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization", "DODownloadMode", 0, RegistryValueKind.DWord)));
 
@@ -731,7 +731,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksDisableBitLocker", "BitLocker - Desactivar",
             "Desactiva BitLocker.",
-            "Solo si no usas cifrado de disco", true, "Essential Tweaks", true,
+            "Solo si no usas cifrado de disco", true, "Tweaks esenciales", true,
  // Check real via WMI: "aplicado" = la protección BitLocker del volumen del
             // sistema está OFF (o BitLocker no existe en esta edición, p. ej. Home).
             // Antes era => false y el apply con -ErrorAction Stop fallaba con
@@ -744,7 +744,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksUTC", "Fecha y hora - Configurar en UTC",
             "Esencial para equipos con dual-boot. Corrige la sincronización horaria con sistemas Linux.",
-            "Solo dual-boot con Linux", true, "Advanced Tweaks", true,
+            "Solo dual-boot con Linux", true, "Tweaks avanzados", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", 1, RegistryValueKind.QWord)));
 
@@ -761,7 +761,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksRemoveHomeAndGallery", "Inicio y Galería del Explorador - Desactivar",
             "Elimina Inicio y Galería del Explorador y establece Este PC como predeterminado.",
-            "Compatible con Windows 11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 11", true, "Tweaks avanzados", false,
             () => CheckAnyRegistryValue(
                 (RegistryHive.CurrentUser, @"Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}", "System.IsPinnedToNameSpaceTree", 0),
                 (RegistryHive.CurrentUser, @"Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", "System.IsPinnedToNameSpaceTree", 0),
@@ -773,7 +773,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksDisplay", "Efectos visuales - Configurar en Máximo rendimiento",
             "Configura las preferencias del sistema a rendimiento. Puedes hacerlo manualmente con sysdm.cpl.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", false,
             () => CheckAnyRegistryValue(
                 (RegistryHive.CurrentUser, @"Control Panel\Desktop", "DragFullWindows", "0"),
                 (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects", "VisualFXSetting", 3)),
@@ -798,13 +798,13 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksReservedStorage", "Almacenamiento reservado - Desactivar",
             "Desactiva el almacenamiento reservado de Windows (7-10 GB para actualizaciones). Solo recomendado en discos pequeños. Re-activar antes de grandes actualizaciones.",
-            "Solo en discos pequeños", true, "Advanced Tweaks", true,
+            "Solo en discos pequeños", true, "Tweaks avanzados", true,
             () => false,
             () => RunCommandAsync("powershell", "-Command \"DISM /Online /Set-ReservedStorageState /State:Disabled\""));
 
         AddTweak(dict, "WPFTweaksRestorePoint", "Punto de restauración - Crear",
             "Crea un punto de restauración en tiempo de ejecución por si se necesita revertir modificaciones.",
-            "Requiere permisos de administrador", true, "Essential Tweaks", true,
+            "Requiere permisos de administrador", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore", "SystemRestorePointCreationFrequency", 0),
             () => Task.Run(() =>
             {
@@ -817,13 +817,13 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksEndTaskOnTaskbar", "Finalizar tarea con clic derecho - Activar",
             "Habilita la opción de finalizar tarea al hacer clic derecho en un programa de la barra de tareas.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings", "TaskbarEndTask", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\TaskbarDeveloperSettings", "TaskbarEndTask", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksStorage", "Storage Sense - Desactivar",
             "Storage Sense elimina archivos temporales automáticamente.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01", 0),
             () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy", "01", 0, RegistryValueKind.DWord)));
 
@@ -870,13 +870,13 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksWPBT", "Tabla binaria de plataforma Windows (WPBT) - Desactivar",
             "WPBT permite que el fabricante ejecute programas al iniciar, como software antirrobo o instalaciones forzadas sin consentimiento. Riesgo de seguridad.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager", "DisableWpbtExecution", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager", "DisableWpbtExecution", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksPreventDeviceMetadataFromNetwork", "Prevenir apps complementarias de dispositivos",
             "Evita que se instale software adicional al conectar dispositivos (ej. anuncios al conectar un monitor). Riesgo de seguridad.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\Device Metadata", "PreventDeviceMetadataFromNetwork", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\Device Metadata", "PreventDeviceMetadataFromNetwork", 1, RegistryValueKind.DWord)));
 
@@ -898,7 +898,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksDisableNotifications", "Notificaciones del sistema y calendario - Desactivar",
             "Desactiva todas las notificaciones INCLUYENDO el calendario.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", false,
             () => CheckAnyRegistryValue(
                 (RegistryHive.CurrentUser, @"Software\Policies\Microsoft\Windows\Explorer", "DisableNotificationCenter", 1),
                 (RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\PushNotifications", "ToastEnabled", 0)),
@@ -915,55 +915,55 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksRightClickMenu", "Menú contextual anterior - Activar",
             "Restaura el menú contextual clásico del Explorador, reemplazando la versión simplificada de Windows 11.",
-            "Compatible con Windows 11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 11", true, "Tweaks avanzados", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32", "", ""),
             () => RunCommandAsync("powershell", "-Command \"New-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' -Name InprocServer32 -Value '' -Force; Stop-Process -Name explorer\""));
 
         AddTweak(dict, "WPFTweaksDiskCleanup", "Limpieza de disco - Ejecutar",
             "Ejecuta la limpieza del disco C: y elimina actualizaciones de Windows antiguas.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => false,
             () => RunCommandAsync("powershell", "-Command \"cleanmgr.exe /d C: /VERYLOWDISK; Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase\""));
 
         AddTweak(dict, "WPFTweaksDeleteTempFiles", "Archivos temporales - Eliminar",
             "Borra las carpetas TEMP.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", false,
             () => false,
             () => RunCommandAsync("powershell", "-Command \"Remove-Item -Path \\\"$Env:Temp\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -Path \\\"$Env:SystemRoot\\Temp\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue\""));
 
         AddTweak(dict, "WPFTweaksIPv46", "IPv6 - Configurar IPv4 como preferido",
             "Configurar la preferencia IPv4 puede tener beneficios de latencia y seguridad en redes privadas sin IPv6.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 32),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 32, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksTeredo", "Teredo - Desactivar",
             "Teredo es un túnel IPv6 que puede causar latencia adicional, aunque puede causar problemas con algunos juegos.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableIPv6", "IPv6 - Desactivar",
             "Desactiva IPv6.",
-            "Requiere precaución", true, "Advanced Tweaks", true,
+            "Requiere precaución", true, "Tweaks avanzados", true,
             () => CheckRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 255),
             () => Task.FromResult(SetRegistryValue(RegistryHive.LocalMachine, @"SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters", "DisabledComponents", 255, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableBGapps", "Apps en segundo plano - Desactivar",
             "Desactiva todas las apps de Microsoft Store en segundo plano, lo que debe hacerse individualmente desde Windows 11.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", true,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", true,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications", "GlobalUserDisabled", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksDisableFSO", "Optimizaciones de pantalla completa - Desactivar",
             "Desactiva FSO en todas las aplicaciones. NOTA: Desactivará la gestión de color en pantalla completa exclusiva.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible", 1),
             () => Task.FromResult(SetRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible", 1, RegistryValueKind.DWord)));
 
         AddTweak(dict, "WPFTweaksGameBar", "Barra de juegos (Game Bar) - Desactivar",
             "Desactiva la barra de juegos de Xbox (Win+G) y la grabación en segundo plano (Game DVR), que pueden robar rendimiento en juegos.",
-            "Compatible con Windows 10/11", true, "Advanced Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks avanzados", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 0)
                 && CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled", 0)
                 && CheckRegistryValue(RegistryHive.CurrentUser, @"Software\Microsoft\GameBar", "UseNexusForGameBarEnabled", 0),
@@ -978,7 +978,7 @@ public class TweakService : ITweakService
 
         AddTweak(dict, "WPFTweaksDisableExplorerAutoDiscovery", "Detección automática de carpetas en Explorador - Desactivar",
             "El Explorador intenta adivinar el tipo de carpeta según su contenido, ralentizando la navegación. ¡ADVERTENCIA! Desactivará la agrupación del Explorador.",
-            "Compatible con Windows 10/11", true, "Essential Tweaks", false,
+            "Compatible con Windows 10/11", true, "Tweaks esenciales", false,
             () => CheckRegistryValue(RegistryHive.CurrentUser,
                 @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell",
                 "FolderType", "NotSpecified"),
@@ -991,7 +991,7 @@ public class TweakService : ITweakService
         // descarga oficial en vez de fallar.
         AddTweak(dict, "WPFOOSUbutton", "O&O ShutUp10++ - Ejecutar",
             "Ejecuta O&O ShutUp10++ para aplicar su colección de tweaks de privacidad. Si no está instalado, abre la página de descarga.",
-            "Requiere descargar O&O ShutUp10++", true, "Advanced Tweaks", true,
+            "Requiere descargar O&O ShutUp10++", true, "Tweaks avanzados", true,
             () => false,
             async () =>
             {

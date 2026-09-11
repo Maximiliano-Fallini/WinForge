@@ -12,9 +12,10 @@ public class LoggingService : ILoggingService
 {
     private readonly ILogger<LoggingService> _logger;
     private static readonly object _fileLock = new();
+    // Carpeta separada por copia (WHPO-Dev vs WHPO): los logs de la build de
+    // desarrollo no se mezclan con los de la instalada.
     private static readonly string _logPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WHPO", "app.log");
+        AppPaths.RootDir, "app.log");
 
     // "Logs de desarrollo" (ajuste logging.developerLogs): cuando está apagado no se
     // escribe nada a archivo, para no generar app.log en segundo plano. Se lee el
@@ -42,9 +43,7 @@ public class LoggingService : ILoggingService
     {
         try
         {
-            var settingsPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WHPO", "settings.json");
+            var settingsPath = Path.Combine(AppPaths.RootDir, "settings.json");
             if (!File.Exists(settingsPath)) return false;
             using var doc = JsonDocument.Parse(File.ReadAllText(settingsPath));
             return doc.RootElement.TryGetProperty("logging.developerLogs", out var el)
@@ -61,8 +60,7 @@ public class LoggingService : ILoggingService
         _fileLoggingEnabled = enabled;
     }
 
-    public string LogDirectory => Path.GetDirectoryName(_logPath) ??
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO");
+    public string LogDirectory => Path.GetDirectoryName(_logPath) ?? AppPaths.RootDir;
 
     /// <summary>Tamaño total en bytes de los archivos de log existentes.</summary>
     public long GetLogFilesSize()

@@ -57,6 +57,11 @@ public static class ServiceConfiguration
         services.AddSingleton<IDriveWatcherService, DriveWatcherService>();
         services.AddSingleton<IStartupManagerService, StartupManagerService>();
         services.AddSingleton<IUsbOverclockService, UsbOverclockService>();
+        // Limpiador de registro (Limpieza personalizada): escaneo, backup .reg y limpieza HKCU.
+        services.AddSingleton<IRegistryCleanerService, RegistryCleanerService>();
+        // Salud del Modo Juego de Windows: chequeo de que se vaya a activar, reparación
+        // del caso "solo deshabilitado" y activación por partida con snapshot.
+        services.AddSingleton<IWindowsGameModeHealthService, WindowsGameModeHealthService>();
 
         // Overlay de métricas de juegos (FPS por ETW + muestreo de hardware)
         services.AddSingleton<IFpsMonitor, FpsMonitor>();

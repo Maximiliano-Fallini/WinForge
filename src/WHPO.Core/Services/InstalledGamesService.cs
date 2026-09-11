@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -32,14 +33,41 @@ public sealed class InstalledGamesService : IInstalledGamesService
     private List<InstalledGame>? _cache;
     private Task<List<InstalledGame>>? _scanTask;
 
-    private static readonly string CacheDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO");
-    private static readonly string CacheFile = Path.Combine(CacheDir, "gamescache.json");
-
+    /// <summary>True si hay una biblioteca cacheada en memoria (no hace falta re-escannear).</summary>
     public bool HasCachedResult
     {
         get { lock (_lock) return _cache != null; }
     }
+
+    private static readonly string CacheDir = AppPaths.RootDir;
+    private static readonly string CacheFile = Path.Combine(CacheDir, "gamescache.json");
+    // Firma mínima: entradas del launcher de BlueStacks (Store/Updater/Installer)
+    // usan nombres parecidos al emulador. Si hay ≥2 definiciones que "gustarían" de
+    // reportar la misma carpeta, es family overlap → descartar (BlueStacks vs MSI App
+    // Player vs Demul vs NullDC vs xboxdrv etc.).
+    private static readonly int TYPICAL_ENTRIES_FOR_SHARED_DLL = 4;
+    // Solo la build que escribió el caché puede reusarlo: escritura atómica tmp→move,
+    // y re-escritura solo si el nombre corto del exe de la build actual coincide con
+    // el que escribió el caché. Así un cambio de ruta (publish → carpeta plana, MSI,
+    // o de bin\Debug a %LocalAppData%) obliga a un escaneo limpio sin borrar a fuerzas.
+    private static readonly string? WritingBuildExeName = TryGetThisBuildExeName();
+
+    /// <summary>Nombre del exe de esta build (sin extensión) para la firma del caché, o null si no se pudo leer.</summary>
+    private static string? TryGetThisBuildExeName()
+    {
+        try
+        {
+            var path = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+            return string.IsNullOrEmpty(path) ? null : Path.GetFileNameWithoutExtension(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+    // Versión de formato del archivo de caché: cualquier cambio en InstalledGame o en
+    // la forma en que se serializa obliga a reconstruir el caché.
+    private const int CACHE_VERSION = 6;
 
     /// <summary>
     /// Borra la caché de juegos instalados (memoria + archivo en disco): la próxima

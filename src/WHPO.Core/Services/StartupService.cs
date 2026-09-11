@@ -17,9 +17,11 @@ namespace WHPO.Core.Services;
 /// </summary>
 public sealed class StartupService : IStartupService
 {
-    private const string TaskName = "WHPO";
+    // Nombres separados por copia (WHPO / WHPO-Dev): la tarea programada y la
+    // entrada de Run de la build de desarrollo no pisan a las de la instalada.
+    private static string TaskName => AppPaths.StartupTaskName;
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string ValueName = "WHPO";
+    private static string ValueName => AppPaths.StartupRunValueName;
 
     /// <summary>
     /// Flag que se agrega a la accion de la tarea cuando "Iniciar minimizado"

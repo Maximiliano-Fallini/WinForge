@@ -106,7 +106,7 @@ public sealed partial class GestionarProcesosPage : Page
 
     // Internal: la página de Configuración la usa para el botón "Limpiar caché".
     internal static readonly string BannerCacheDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WHPO", "gamebanners");
+        WHPO.Core.AppPaths.RootDir, "gamebanners");
 
     // Sombra compartida de las cards de la biblioteca (ThemeShadow, receptor
     // configurado en el constructor sobre CardShadowReceiver).
@@ -127,11 +127,16 @@ public sealed partial class GestionarProcesosPage : Page
         // por todas las cards (casters), proyectada sobre el Border receptor
         // del XAML (WinUI 3: colección Receivers). La elevación (z de
         // card.Translation) se activa al hover.
-        _cardShadow.Receivers.Add(CardShadowReceiver);
- // Selección inicial del desplegable de categorías («Todos»). El
- // SelectionChanged no reconstruye la grilla porque _currentFilter ya es "all".
+        _cardShadow.Receivers.Add(CardShadowReceiver);        // Selección inicial del desplegable de categorías («Todos»). El
+        // SelectionChanged no reconstruye la grilla porque _currentFilter ya es "all".
         FilterComboBox.SelectedIndex = 0;
         UpdateInstalledCount();
+
+        // Simetría de la fila: el botón "?" debe medir lo mismo de alto que el de
+        // "Configuración" (que gana su altura del padding + contenido). Se sincroniza
+        // con el tamaño real y con cada cambio (escalado de texto, idioma, etc.).
+        GameBoostSettingsButton.SizeChanged += (s, e) =>
+            GameBoostInfoButton.Height = Math.Max(1, e.NewSize.Height);
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -157,6 +162,10 @@ public sealed partial class GestionarProcesosPage : Page
         // WMI en adelante. Cero polling mientras la página esté visible.
         _processService.LauncherStateChanged += OnLauncherStateChanged;
         UpdateAllLauncherButtons();
+        // Feedback del Modo juego de WinForge: al aplicarse (juego iniciado) se
+        // muestra el resumen (reglas, servicios, procesos optimizados y cerrados).
+        // El evento llega desde el hilo del Task.Run del servicio: se re-despacha a la UI.
+        _gameBoostService.BoostApplied += OnBoostApplied;
     }
 
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -165,6 +174,7 @@ public sealed partial class GestionarProcesosPage : Page
         I18n.LanguageChanged -= OnLanguageChanged;
         _processService.RunningGamesChanged -= OnRunningGamesChanged;
         _processService.LauncherStateChanged -= OnLauncherStateChanged;
+        _gameBoostService.BoostApplied -= OnBoostApplied;
         // Si se sale de la página (cacheada) estando en la vista de configuración,
         // volver al estado base para que el próximo ingreso muestre la biblioteca.
         if (BoostConfigView.Visibility == Visibility.Visible)
@@ -253,15 +263,17 @@ public sealed partial class GestionarProcesosPage : Page
             });
             foreach (var key in new[]
             {
-                "Pausa Windows Update (se reanuda solo al salir).",
-                "Detiene servicios de mantenimiento y telemetría que estén corriendo (SysMain, DiagTrack, búsqueda, etc.): los ya detenidos no se tocan.",
-                "Baja prioridad y activa el modo de eficiencia en procesos de segundo plano (búsqueda, widgets, OneDrive…)."
+                "Detiene temporalmente los servicios de mantenimiento, diagnóstico e impresión que estén corriendo (SysMain, WSearch, DiagTrack, Spooler…): los ya detenidos no se tocan.",
+                "Pausa Windows Update mientras dura la partida.",
+                "Baja la prioridad y activa el modo de eficiencia en los procesos de segundo plano (búsqueda, widgets, OneDrive…).",
+                "Silencia las notificaciones durante la partida.",
+                "Libera recursos: más CPU, disco y red para tu juego."
             })
             {
                 content.Children.Add(Line(key, bullet: true));
             }
 
-            content.Children.Add(Line("Al cerrar el juego (o la app) todo vuelve a su estado previo: solo se reactivan los servicios que ya estaban corriendo y las prioridades vuelven a su valor original. El juego nunca se toca."));
+            content.Children.Add(Line("Al cerrar el juego (o la app) todo vuelve a su estado previo: solo se reactivan los servicios que estaban corriendo y las prioridades y notificaciones vuelven a su estado original."));
 
             return new ToolTip
             {
@@ -270,6 +282,34 @@ public sealed partial class GestionarProcesosPage : Page
             };
         }
         ToolTipService.SetToolTip(GameBoostInfoButton, BuildGameBoostToolTip());
+    }
+    /// <summary>
+    /// Feedback del Modo juego de WinForge al aplicarse (juego iniciado): muestra
+    /// en StatusText el resumen con reglas de juego aplicadas, servicios optimizados,
+    /// procesos optimizados y procesos cerrados. El evento llega desde el hilo del
+    /// servicio (Task.Run): se re-despacha a la UI.
+    /// </summary>
+    private void OnBoostApplied(GameBoostApplyResult result)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var msg = I18n.T(
+                "Modo juego activo: {0} reglas aplicadas, {1} servicios optimizados, {2} procesos optimizados y {3} procesos cerrados.",
+                result.RulesApplied, result.ServicesOptimized, result.ProcessesOptimized, result.ProcessesKilled);
+            if (result.GameModeWarning)
+            {
+                // El Modo Juego de WINDOWS no se pudo activar (huérfano: faltan
+                // archivos de Game Bar): aviso claro en vez de éxito falso. El boost
+                // de WinForge (procesos/servicios) igual se aplicó.
+                Feedback.Warning(StatusText,
+                    msg + " — " + I18n.T("El Modo Juego de Windows no se pudo activar (faltan archivos de Game Bar). Reinstalá Game Bar desde la Microsoft Store."),
+                    persistent: true);
+            }
+            else
+            {
+                Feedback.Success(StatusText, msg, persistent: true);
+            }
+        });
     }
 
     // ===================== Tuerca: configuración del optimizador =====================
@@ -281,6 +321,279 @@ public sealed partial class GestionarProcesosPage : Page
     /// con doble clic (sin tipear nombres a mano).
     /// </summary>
     private void GameBoostSettingsButton_Click(object sender, RoutedEventArgs e) => OpenBoostConfigView();
+
+    // ===================== Salud del Modo Juego de Windows =====================
+
+    /// <summary>
+    /// Card de la pestaña "Salud del Modo Juego" (configuración del boost): muestra
+    /// el estado del Modo Juego de WINDOWS (no el de WinForge) en un banner con
+    /// paleta profesional de TRES estados:
+    ///  · Verde "Funcional": todo correcto, se activará al iniciar un juego.
+    ///  · Ámbar "Activable": solo están deshabilitadas las reglas del registro
+    ///    (estilo AtlasOS) — un clic lo deja listo sin reinstalar nada.
+    ///  · Rojo "Crítico": falta infraestructura de Game Bar (Appx
+    ///    XboxGamingOverlay o GameBarPresenceWriter.dll — debloat extremo):
+    ///    ninguna regla de registro puede revivirlo, hay que reinstalar Game Bar.
+    /// </summary>
+    private UIElement BuildGameModeHealthTab()
+    {
+        var muted = Feedback.MutedBrush;
+
+        // Tint de un pincel de estado del tema (no colores hardcodeados): se usa
+        // para el fondo y el borde del banner en el color del estado actual.
+        static SolidColorBrush Tint(SolidColorBrush brush, byte alpha)
+        {
+            var c = brush.Color;
+            return new SolidColorBrush(Windows.UI.Color.FromArgb(alpha, c.R, c.G, c.B));
+        }
+
+        // Banner de estado: ícono grande + título del estado + resumen, sobre un
+        // fondo tintado con el borde del color del estado (verde/ámbar/rojo).
+        var statusIcon = new FontIcon { Glyph = "\uE9CE", FontSize = 26 };
+        var statusTitle = new TextBlock { FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
+        var statusSummary = new TextBlock { FontSize = 12, Foreground = muted, TextWrapping = TextWrapping.Wrap, Opacity = 0.95 };
+        var statusBanner = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(14),
+            BorderThickness = new Thickness(1),
+            Child = new Grid { ColumnSpacing = 14, ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = GridLength.Auto },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }
+            } }
+        };
+        var bannerGrid = (Grid)statusBanner.Child!;
+        bannerGrid.Children.Add(statusIcon);
+        var statusTexts = new StackPanel { Spacing = 3, Children = { statusTitle, statusSummary } };
+        Grid.SetColumn(statusTexts, 1);
+        bannerGrid.Children.Add(statusTexts);
+
+        // Checks individuales (registro / Appx / DLL): check o cruz + nombre — detalle.
+        var checksHost = new StackPanel { Spacing = 8 };
+
+        // Acciones según estado (solo una visible a la vez):
+        //  · "Activable" → reactivar las reglas de registro (el Enable Game Mode.reg de AtlasOS).
+        //  · "Crítico" → abrir Game Bar en la Microsoft Store (reinstalar es la única salida).
+        var actionHost = new StackPanel { Spacing = 8 };
+        var repairButton = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE777", FontSize = 13 },
+                    new TextBlock { Text = I18n.T("Reactivar ahora"), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }
+                }
+            },
+            Padding = new Thickness(16, 8, 16, 8),
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Background = Feedback.WarningBrush,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 30, 24, 10))
+        };
+        // Construido una sola vez; los handlers se suman abajo.
+        var storeButton = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE8B7", FontSize = 13 },
+                    new TextBlock { Text = I18n.T("Reinstalar Game Bar"), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }
+                }
+            },
+            Padding = new Thickness(16, 8, 16, 8),
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Background = Feedback.ErrorBrush,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255))
+        };
+        var repairFeedback = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+
+        var content = new StackPanel { Spacing = 14 };
+        content.Children.Add(statusBanner);
+        content.Children.Add(checksHost);
+        content.Children.Add(actionHost);
+        content.Children.Add(repairFeedback);
+
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(0, 0, 10, 0),
+            Content = content
+        };
+
+        var card = MakeSettingsCard(scroll);
+
+        async Task LoadAsync()
+        {
+            var health = App.Services.GetRequiredService<IWindowsGameModeHealthService>();
+
+            // Cargando: banner neutro mientras se lee registro + Appx + archivos.
+            statusIcon.Glyph = "\uE9CE";
+            statusIcon.Foreground = muted;
+            statusTitle.Text = I18n.T("Chequeando...");
+            statusTitle.Foreground = muted;
+            statusSummary.Text = I18n.T("Leyendo el registro, el paquete Appx y los archivos del Modo Juego...");
+            checksHost.Children.Clear();
+            actionHost.Children.Clear();
+            repairFeedback.Visibility = Visibility.Collapsed;
+            statusBanner.Background = Tint(muted, 12);
+            statusBanner.BorderBrush = muted;
+
+            var info = await health.CheckAsync();
+
+            // Paleta profesional: verde=Funcional · ámbar=Activable · rojo=Crítico.
+            var (glyph, title, color) = info.Status switch
+            {
+                WindowsGameModeHealth.Ok => ("\uE73E", I18n.T("Funcional"), Feedback.SuccessBrush),
+                WindowsGameModeHealth.DisabledByRules => ("\uE7BA", I18n.T("Activable"), Feedback.WarningBrush),
+                WindowsGameModeHealth.Orphaned => ("\uE783", I18n.T("Crítico"), Feedback.ErrorBrush),
+                _ => ("\uE9CE", I18n.T("Estado desconocido"), Feedback.WarningBrush)
+            };
+            statusIcon.Glyph = glyph;
+            statusIcon.Foreground = color;
+            statusTitle.Text = title;
+            statusTitle.Foreground = color;
+            statusSummary.Text = info.Status switch
+            {
+                WindowsGameModeHealth.Ok => I18n.T("Todo correcto: el Modo Juego de Windows se activará al iniciar un juego."),
+                WindowsGameModeHealth.DisabledByRules => I18n.T("Solo está deshabilitado por las reglas del registro (estilo AtlasOS): se puede reactivar al instante sin reinstalar nada."),
+                WindowsGameModeHealth.Orphaned => I18n.T("Faltan archivos de Game Bar (Appx XboxGamingOverlay o GameBarPresenceWriter.dll). Sin Game Bar el Modo Juego no puede funcionar: reinstalalo desde la Microsoft Store."),
+                _ => I18n.T("No se pudo verificar el estado del Modo Juego. Reintentá más tarde.")
+            };
+            // Fondo y borde del banner tintados con el color del estado.
+            statusBanner.Background = Tint(color, 24);
+            statusBanner.BorderBrush = Tint(color, 128);
+
+            checksHost.Children.Clear();
+            foreach (var (component, present, detail) in info.Checks)
+            {
+                // Grid en vez de StackPanel horizontal: "component — detalle" es un
+                // texto largo que con StackPanel se mide con ancho infinito y se corta;
+                // la columna "*" lo limita y TextWrapping.Wrap lo envuelve.
+                var row = new Grid { ColumnSpacing = 8 };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.Children.Add(new FontIcon
+                {
+                    Glyph = present ? "\uE73E" : "\uE783", // CheckMark / Error
+                    FontSize = 13,
+                    Foreground = present ? Feedback.SuccessBrush : Feedback.ErrorBrush,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+                var checkText = new TextBlock
+                {
+                    Text = $"{component} — {detail}",
+                    FontSize = 12,
+                    TextWrapping = TextWrapping.Wrap,
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                Grid.SetColumn(checkText, 1);
+                row.Children.Add(checkText);
+                checksHost.Children.Add(row);
+            }
+
+            // Acción según el estado: reactivación de reglas (ámbar) o reinstalación
+            // de Game Bar en la Microsoft Store (rojo). Verde/desconocido: nada.
+            actionHost.Children.Clear();
+            if (info.Status == WindowsGameModeHealth.DisabledByRules)
+                actionHost.Children.Add(repairButton);
+            else if (info.Status == WindowsGameModeHealth.Orphaned)
+                actionHost.Children.Add(storeButton);
+        }
+
+        repairButton.Click += async (_, _) =>
+        {
+            repairButton.IsEnabled = false;
+            try
+            {
+                var health = App.Services.GetRequiredService<IWindowsGameModeHealthService>();
+                var fixedInfo = await health.EnableGameModeAsync();
+                repairFeedback.Visibility = Visibility.Visible;
+                if (fixedInfo.Status == WindowsGameModeHealth.Ok)
+                {
+                    repairFeedback.Text = I18n.T("Modo Juego de Windows reactivado: se activará al iniciar un juego.");
+                    repairFeedback.Foreground = Feedback.SuccessBrush;
+                }
+                else
+                {
+                    repairFeedback.Text = fixedInfo.Summary;
+                    repairFeedback.Foreground = Feedback.WarningBrush;
+                }
+                await LoadAsync();
+            }
+            finally
+            {
+                repairButton.IsEnabled = true;
+            }
+        };
+
+        // Estado "Crítico": el único camino es reinstalar Game Bar. El botón abre
+        // su ficha en la Microsoft Store (ProductId de Xbox Game Bar = 9NZKPSTSNW4P).
+        // La Store depende de Windows Update para instalar: si está desactivado por
+        // el perfil de WHPO, se avisa primero y se habilita (perfil recomendado).
+        storeButton.Click += async (_, _) =>
+        {
+            try
+            {
+                var wu = App.Services.GetRequiredService<IWindowsUpdateService>();
+                var policy = wu.GetCurrentPolicy();
+                if (policy.Mode == WindowsUpdateMode.Disabled && XamlRoot is not null)
+                {
+                    // Aviso ANTES de tocar nada: sin Windows Update la Store no instala nada.
+                    var dialog = new ContentDialog
+                    {
+                        Title = I18n.T("Habilitar Windows Update"),
+                        Content = I18n.T("La Microsoft Store necesita Windows Update activo para poder instalar Game Bar. WinForge lo va a habilitar antes de abrir la Store (podés volver a desactivarlo después desde la pestaña de Windows Update)."),
+                        PrimaryButtonText = I18n.T("Habilitar y abrir la Store"),
+                        CloseButtonText = I18n.T("Cancelar"),
+                        DefaultButton = ContentDialogButton.Primary,
+                        XamlRoot = XamlRoot
+                    };
+                    if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+                    repairFeedback.Visibility = Visibility.Visible;
+                    repairFeedback.Foreground = muted;
+                    repairFeedback.Text = I18n.T("Habilitando Windows Update...");
+
+                    var result = await wu.ApplyPolicyAsync(WindowsUpdateMode.Recommended);
+                    if (!result.Success)
+                    {
+                        repairFeedback.Foreground = Feedback.ErrorBrush;
+                        repairFeedback.Text = result.Message;
+                        _loggingService.LogWarning($"GameModeHealth: no se pudo habilitar Windows Update: {result.Message}");
+                        return;
+                    }
+                    repairFeedback.Foreground = Feedback.SuccessBrush;
+                    repairFeedback.Text = I18n.T("Windows Update habilitado. Abriendo la Microsoft Store...");
+                }
+
+                _ = Windows.System.Launcher.LaunchUriAsync(
+                    new Uri("ms-windows-store://pdp/?ProductId=9NZKPSTSNW4P"));
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"GameModeHealth: no se pudo abrir la Microsoft Store: {ex.Message}");
+            }
+        };
+
+        // Primera carga: UpdateMode la dispara al entrar en la pestaña
+        // vía LoadGameModeHealthAsync().
+        _loadGameModeHealth = () => _ = LoadAsync();
+        return card;
+    }
+
+    /// <summary>Acción de recarga de la pestaña Salud del Modo Juego (se setea al construirla).</summary>
+    private Action? _loadGameModeHealth;
+
+    /// <summary>Punto de entrada de recarga llamado por UpdateMode al entrar a la pestaña.</summary>
+    private void LoadGameModeHealthAsync() => _loadGameModeHealth?.Invoke();
 
  // Listas en edición mientras la vista de configuración está abierta: solo se
  // persisten en el servicio al presionar "Guardar" (volver descarta los cambios).
@@ -394,8 +707,7 @@ public sealed partial class GestionarProcesosPage : Page
     // una esquina de la tela (ver IconExtractor.TrimTransparentMargins); con la v2 se
     // re-extrae todo con el recorte correcto.
     private static readonly string ProcIconDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WHPO", "gamebanners", "procicons-v2");
+        WHPO.Core.AppPaths.RootDir, "gamebanners", "procicons-v2");
 
     /// <summary>
     /// Descarta las carpetas de caché de íconos de la versión anterior (procicons y
@@ -409,11 +721,10 @@ public sealed partial class GestionarProcesosPage : Page
         if (Interlocked.Exchange(ref _iconCacheCleanupDone, 1) != 0) return;
         try
         {
-            var baseDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             foreach (var legacy in new[]
             {
-                Path.Combine(baseDir, "WHPO", "gamebanners", "procicons"),
-                Path.Combine(baseDir, "WHPO", "gamebanners", "exeicons")
+                Path.Combine(WHPO.Core.AppPaths.RootDir, "gamebanners", "procicons"),
+                Path.Combine(WHPO.Core.AppPaths.RootDir, "gamebanners", "exeicons")
             })
             {
                 try { if (Directory.Exists(legacy)) Directory.Delete(legacy, recursive: true); }
@@ -676,7 +987,7 @@ public sealed partial class GestionarProcesosPage : Page
             Padding = new Thickness(4),
             Child = pickerList
         };
-        var modeTitle = new TextBlock { FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+        var modeTitle = new TextBlock { FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
         var modeDescription = new TextBlock { FontSize = 11, Foreground = muted, TextWrapping = TextWrapping.Wrap, Opacity = 0.9 };
  // Procesos con candado (defaults del modo eficiencia) y procesos agregados
  // por el usuario comparten el MISMO ScrollViewer: los defaults son ~20 y su
@@ -714,6 +1025,10 @@ public sealed partial class GestionarProcesosPage : Page
  // que UpdateMode pueda conmutar su visibilidad; la carga arranca al entrar en
  // la pestaña por primera vez.
         Border servicesTabCard = (Border)BuildServicesTab();
+ // Pestaña "Salud del Modo Juego": estado del Modo Juego de Windows (interruptor
+ // de registro, Appx XboxGamingOverlay y GameBarPresenceWriter.dll) con la
+ // reparación de un clic para el caso "solo deshabilitado".
+        Border healthTabCard = (Border)BuildGameModeHealthTab();
 
         var targetGrid = MakeRowsGrid(3, 2, 8);
         targetGrid.Children.Add(modeTitle);
@@ -945,10 +1260,15 @@ public sealed partial class GestionarProcesosPage : Page
 
  // Selector segmentado: radio de esquina 4 en las mitades para encajar dentro
  // de la píldora (radio 6 con padding 2). Con radio 6 las esquinas quedaban
- // "cortadas" contra el borde de la píldora. Tres modos: eficiencia / cerrar / servicios.
-        var efficiencyButton = new Button { Content = I18n.T("Modo eficiencia"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4, 0, 0, 4), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        var killButton = new Button { Content = I18n.T("Cerrar al iniciar"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        var servicesButton = new Button { Content = I18n.T("Servicios"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0, 4, 4, 0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+ // "cortadas" contra el borde de la píldora. Cuatro modos: eficiencia / cerrar /
+ // servicios / salud del Modo Juego de Windows.
+        var efficiencyButton = new Button { Content = I18n.T("Eficiencia"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4, 0, 0, 4), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var killButton = new Button { Content = I18n.T("Cerrar"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var servicesButton = new Button { Content = I18n.T("Servicios"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        // Etiqueta CORTA en la píldora a propósito: el título completo ("Salud del
+        // Modo Juego") vive en el encabezado de la card (modeTitle). Las etiquetas
+        // largas en botones de 4 columnas se recortan con "…" horizontalmente.
+        var healthButton = new Button { Content = I18n.T("Salud"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0, 4, 4, 0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
 
  // Columna derecha: card destino estirando (ocupa todo el sobrante). Se crea
  // ANTES de declarar UpdateMode y suscribir los clicks: la local function
@@ -963,32 +1283,41 @@ public sealed partial class GestionarProcesosPage : Page
         {
             var efficiency = selectedTarget == "efficiency";
             var services = selectedTarget == "services";
+            var health = selectedTarget == "health";
             efficiencyButton.Background = efficiency ? accent : transparent;
             efficiencyButton.Foreground = efficiency ? accentForeground : muted;
             killButton.Background = selectedTarget == "kill" ? accent : transparent;
             killButton.Foreground = selectedTarget == "kill" ? accentForeground : muted;
             servicesButton.Background = services ? accent : transparent;
             servicesButton.Foreground = services ? accentForeground : muted;
-            modeTitle.Text = I18n.T(efficiency ? "Modo eficiencia" : selectedTarget == "kill" ? "Cerrar al iniciar" : "Servicios");
+            healthButton.Background = health ? accent : transparent;
+            healthButton.Foreground = health ? accentForeground : muted;
+            modeTitle.Text = I18n.T(efficiency ? "Modo eficiencia" : selectedTarget == "kill" ? "Cerrar al iniciar" : selectedTarget == "health" ? "Salud del Modo Juego" : "Servicios");
             modeDescription.Text = efficiency
                 ? I18n.T("Se baja la prioridad y se activa el modo ahorro de energía de estos procesos mientras jugás.")
                 : selectedTarget == "kill"
                 ? I18n.T("Agregá procesos acá. Se cierran automáticamente al lanzar un juego para liberar recursos.")
+                : selectedTarget == "health"
+                ? I18n.T("Verifica que el Modo Juego de Windows se va a activar correctamente al iniciar un juego (interruptor, archivos y componentes).")
                 : I18n.T("Todos los servicios de Windows con su estado real. Cambiá el modo de arranque (Desactivado / Manual / Activado); el cambio se aplica al momento.");
-            var processesVisible = services ? Visibility.Collapsed : Visibility.Visible;
+            var processesVisible = services || health ? Visibility.Collapsed : Visibility.Visible;
             pickerCard.Visibility = processesVisible;
             right.Visibility = processesVisible;
             servicesTabCard.Visibility = services ? Visibility.Visible : Visibility.Collapsed;
+            healthTabCard.Visibility = health ? Visibility.Visible : Visibility.Collapsed;
             if (services) _ = LoadAllServicesAsync(servicesTabCard);
+            if (health) LoadGameModeHealthAsync();
             RefreshTargetRows();
         }
         efficiencyButton.Click += (_, _) => { selectedTarget = "efficiency"; UpdateMode(); };
         killButton.Click += (_, _) => { selectedTarget = "kill"; UpdateMode(); };
         servicesButton.Click += (_, _) => { selectedTarget = "services"; UpdateMode(); };
+        healthButton.Click += (_, _) => { selectedTarget = "health"; UpdateMode(); };
 
-        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(6), Padding = new Thickness(2), Child = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton } } };
+        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(6), Padding = new Thickness(2), Child = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton, healthButton } } };
         Grid.SetColumn(killButton, 1);
         Grid.SetColumn(servicesButton, 2);
+        Grid.SetColumn(healthButton, 3);
 
  // Layout de 2 filas: selector arriba (Auto, centrado sobre la derecha) y las
  // dos cards lado a lado estirando al * restante. Ambas cards reciben el mismo
@@ -1009,6 +1338,11 @@ public sealed partial class GestionarProcesosPage : Page
         Grid.SetRow(servicesTabCard, 1);
         columns.Children.Add(servicesTabCard);
         servicesTabCard.Visibility = Visibility.Collapsed;
+        Grid.SetColumn(healthTabCard, 0);
+        Grid.SetColumnSpan(healthTabCard, 2);
+        Grid.SetRow(healthTabCard, 1);
+        columns.Children.Add(healthTabCard);
+        healthTabCard.Visibility = Visibility.Collapsed;
  // Selector centrado horizontalmente sobre la columna derecha (los tres
  // opciones del modo). Fila 0, columna 1.
         Grid.SetColumn(modeSelector, 1);
@@ -1203,7 +1537,7 @@ public sealed partial class GestionarProcesosPage : Page
         {
             Content = new TextBlock
             {
-                Text = I18n.T("El modo automático detiene temporalmente estos servicios al lanzar un juego y los restaura al cerrarlo: Windows Update (wuauserv), Orquestador de actualizaciones (UsoSvc), Transferencia inteligente en segundo plano (BITS), SysMain (Superfetch) y Búsqueda de Windows (WSearch). La telemetría NO entra: se gestiona aparte. Si lo apagás, el boost solo gestiona procesos y quedan valiendo los estados que configuraste a mano."),
+                Text = I18n.T("El modo automático detiene temporalmente estos servicios al lanzar un juego y los restaura al cerrarlo: Windows Update (wuauserv), Orquestador de actualizaciones (UsoSvc), Transferencia inteligente en segundo plano (BITS), SysMain (Superfetch), Búsqueda de Windows (WSearch), telemetría (DiagTrack, WerSvc), Directivas de diagnóstico (DPS) y Cola de impresión (Spooler). Si lo apagás, el boost solo gestiona procesos y quedan valiendo los estados que configuraste a mano."),
                 FontSize = 11,
                 TextWrapping = TextWrapping.Wrap,
                 MaxWidth = 320

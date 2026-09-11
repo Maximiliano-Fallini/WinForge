@@ -488,9 +488,7 @@ public class UsbOverclockService : IUsbOverclockService
     }
 
  /// <summary>Ruta de la carpeta donde se guarda el componente descargado (para re-descargar al limpiar el caché).</summary>
-    public string ComponentCachePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WHPO", "hidusbf");
+    public string ComponentCachePath => Path.Combine(AppPaths.RootDir, "hidusbf");
 
  /// <summary>
  /// Desinstala el componente de Overclock USB por completo y borra el caché: quita
@@ -1326,23 +1324,7 @@ public class UsbOverclockService : IUsbOverclockService
     private static bool IsKeyboardSvc(string svc)
         => svc.StartsWith("kbd", StringComparison.OrdinalIgnoreCase);
 
- /// <summary>Nombres genéricos de nodo USB/HID que no aportan identidad (EN/ES).</summary>
-    private static bool IsGenericNodeName(UsbTreeNode n)
-    {
-        string name = !string.IsNullOrEmpty(n.FriendlyName) ? n.FriendlyName : n.DeviceDesc;
-        return string.IsNullOrWhiteSpace(name)
-               || name.Equals("USB Input Device", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Dispositivo de entrada USB", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("USB Composite Device", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Dispositivo compuesto USB", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("USB Audio Device", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Dispositivo de audio USB", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("HID-compliant device", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("Dispositivo HID", StringComparison.OrdinalIgnoreCase)
-               || name.Equals("HID Device", StringComparison.OrdinalIgnoreCase);
-    }
-
- /// <summary>
+/// <summary>
  /// Funciones reales del producto, ordenadas por prioridad (mouse > teclado > audio
  /// > otro): cada una con su nombre visible (como el filtro muestra su columna Child)
  /// y su tipo. El desplegable de la grilla elige qué función mostrar de cada fila;

@@ -94,6 +94,10 @@ public sealed partial class WorkshopPage : Page
             _installed[record.Id] = record;
     }
 
+    /// <summary>True si un integrado de fábrica tiene entrada en el catálogo.</summary>
+    private bool BuiltinHasCatalogEntry(string id)
+        => _registry.IsBuiltin(id) && _catalog?.Components.Any(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) == true;
+
     // =====================================================================
     // Catálogo
     // =====================================================================
@@ -255,7 +259,8 @@ public sealed partial class WorkshopPage : Page
     private static readonly HashSet<string> InDevelopmentIds = new(StringComparer.OrdinalIgnoreCase)
     {
         "latencia",
-        "overlay"
+        "overlay",
+        "overclockusb"
     };
 
     // Fábrica de badges de la card: mismo formato para estado y categoría.
@@ -342,6 +347,65 @@ public sealed partial class WorkshopPage : Page
         foreach (var model in models.Values)
             if (_installed.TryGetValue(model.Id, out var record))
                 model.Installed = record;
+
+        // 4) Componentes que el catálogo ofrece pero que NO cargaron (instalados
+        // según modules.json): cards "Reinstalar" (dll roto/eliminado a mano).
+        if (_catalog != null)
+        {
+            foreach (var entry in _catalog.Components)
+            {
+                if (models.ContainsKey(entry.Id)) continue;
+                if (!_installed.TryGetValue(entry.Id, out var rec)) continue;
+                models[entry.Id] = new CardModel
+                {
+                    Id = entry.Id,
+                    Name = entry.Name,
+                    Description = entry.Description,
+                    IconGlyph = Glyph(entry.Icon),
+                    Category = ParseCategory(entry.Category),
+                    Entry = entry,
+                    Installed = rec
+                };
+            }
+
+            // 5) Fallback de integrados: si un integrado de fábrica tiene versión
+            // en el catálogo pero no cargó la copia descargada del repo (por ejemplo
+            // arranque sin internet con la copia corrupta), la card del Workshop
+            // permite volver a instalarla; la pestaña sigue funcionando con la
+            // copia del exe (nunca se borra, solo hace de fallback).
+            foreach (var entry in _catalog.Components)
+            {
+                if (models.ContainsKey(entry.Id)) continue;
+                if (!_registry.IsBuiltin(entry.Id)) continue;
+                models[entry.Id] = new CardModel
+                { 
+                    Id = entry.Id,
+                    Name = entry.Name,
+                    Description = entry.Description,
+                    IconGlyph = Glyph(entry.Icon),
+                    Category = ParseCategory(entry.Category),
+                    Entry = entry
+                }; 
+            }
+
+            // 6) Instalados según modules.json cuyo componente NO cargó ni es
+            // integrado: card "Reinstalar" (dll roto o carpeta borrada a mano).
+            foreach (var kv in _installed)
+            {
+                if (models.ContainsKey(kv.Key)) continue;
+                var brokenEntry = _catalog.Components.FirstOrDefault(e => string.Equals(e.Id, kv.Key, StringComparison.OrdinalIgnoreCase));
+                if (brokenEntry == null) continue; // sin entrada no hay nada que reinstalar
+                models[kv.Key] = new CardModel
+                {
+                    Id = kv.Key,
+                    Name = kv.Key,
+                    Description = "El componente no se pudo cargar en esta sesión.",
+                    IconGlyph = "\uE7BA",
+                    Category = ComponentCategory.Sistema,
+                    Entry = brokenEntry
+                };
+            }
+        }
 
         return models.Values.ToList();
     }
@@ -570,7 +634,9 @@ public sealed partial class WorkshopPage : Page
                 bool neverInstalled = !everTouched;
                 left = new TextBlock
                 {
-                    Text = I18n.T(gated ? "Requiere build de desarrollo" : (neverInstalled ? "Disponible" : "Desinstalado")),
+                    // Componente en desarrollo fuera de build dev: sin texto de
+                    // estado, solo el botón deshabilitado (no se revela el motivo).
+                    Text = gated ? "" : I18n.T(neverInstalled ? "Disponible" : "Desinstalado"),
                     FontSize = FooterFontSize,
                     Foreground = neverInstalled && !gated ? ThemeBrushes.Get("SecondaryTextBrush") : Feedback.WarningBrush,
                     VerticalAlignment = VerticalAlignment.Center
@@ -584,7 +650,7 @@ public sealed partial class WorkshopPage : Page
             {
                 left = new TextBlock
                 {
-                    Text = I18n.T("Instalado"),
+                    Text = I18n.T("Instalado v{0}", card.Instance.Version),
                     FontSize = FooterFontSize,
                     Foreground = Feedback.SuccessBrush, // estado OK: en verde
                     VerticalAlignment = VerticalAlignment.Center
@@ -596,11 +662,30 @@ public sealed partial class WorkshopPage : Page
                 uninstallBtn.Foreground = Feedback.ErrorBrush; // acción destructiva: en rojo
                 uninstallBtn.Click += async (s, e) => await UninstallBuiltinAsync(card);
                 right.Children.Add(uninstallBtn);
+
+                // Canal de actualización INDIVIDUAL (0.1.0 por componente): si el
+                // catálogo tiene una versión más nueva que el integrado, se instala
+                // la copia del repo, que PISA la copia del exe en el registro. La
+                // copia del exe NO se toca: queda como fallback offline.
+                if (card.Entry != null
+                    && ComponentCatalogService.CompareVersions(card.Entry.Version, card.Instance.Version) > 0)
+                {
+                    var updateBtn = CreateActionButton(I18n.T("Actualizar"));
+                    if (IsInDevelopment(card) && !IsDevBuild())
+                        updateBtn.IsEnabled = false;
+                    else
+                        updateBtn.Click += async (s, e) => await InstallAsync(card, updateBtn);
+                    right.Children.Add(updateBtn);
+                }
             }
         }
         // 4) Disponible para instalar (entrada del catálogo, no instalado).
         else if (card.Entry != null)
         {
+            // "Reinstalar": estaba instalado según modules.json pero no cargó
+            // (dll roto, carpeta borrada a mano) o es un integrado cuya copia
+            // del repo no cargó en este arranque.
+            bool isRepair = card.Installed != null || _registry.IsBuiltin(card.Id);
             if (card.Entry.SizeBytes > 0)
             {
                 left = new TextBlock
@@ -612,7 +697,7 @@ public sealed partial class WorkshopPage : Page
                 };
             }
 
-            var installBtn = CreateActionButton(I18n.T("Instalar"));
+            var installBtn = CreateActionButton(I18n.T(isRepair ? "Reinstalar" : "Instalar"));
             if (!ComponentCatalogService.IsVersionCompatible(card.Entry.MinAppVersion))
             {
                 installBtn.IsEnabled = false;
@@ -627,20 +712,11 @@ public sealed partial class WorkshopPage : Page
                 });
             }
             // Componente "en desarrollo": solo instalable desde una build adelantada
-            // a la release (modo desarrollo). En estable la card se ve con el badge
-            // pero sin instalar.
+            // a la release (modo desarrollo). En estable el botón queda deshabilitado,
+            // sin texto explicativo.
             else if (IsInDevelopment(card) && !IsDevBuild())
             {
                 installBtn.IsEnabled = false;
-                right.Children.Add(new TextBlock
-                {
-                    Text = I18n.T("Requiere build de desarrollo"),
-                    FontSize = FooterFontSize,
-                    Foreground = Feedback.WarningBrush,
-                    TextWrapping = TextWrapping.Wrap,
-                    MaxWidth = 170,
-                    VerticalAlignment = VerticalAlignment.Center
-                });
             }
             else
             {

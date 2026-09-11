@@ -198,9 +198,6 @@ public class MemoryService : IMemoryService
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
 
-    [DllImport("kernel32.dll")]
-    private static extern bool CloseHandle(IntPtr hObject);
-
     // ====== Implementación ======
 
     public MemoryStats GetMemoryStats()

@@ -245,7 +245,19 @@ public static class RevealEffect
         host.PointerCaptureLost += OnPointerLost;
     }
 
-    private static void OnPointerLost(object sender, PointerRoutedEventArgs e) => Hide((FrameworkElement)sender);
+    private static void OnPointerLost(object sender, PointerRoutedEventArgs e)
+    {
+        var host = (FrameworkElement)sender;
+        Hide(host);
+        // El ListView interno del NavigationView captura/suelta el puntero al
+        // clickear (PointerCanceled/PointerCaptureLost). Sin limpiar el elemento
+        // activo, el halo quedaba oculto hasta sacar el cursor: _currentNav seguía
+        // apuntando al mismo item, el camino rápido del PointerMoved re-centraba
+        // y hacía return sin volver a llamar Show(). Reseteando las referencias,
+        // el próximo movimiento re-descubre el item y re-dibuja el halo al instante.
+        if (ReferenceEquals(_currentNav, host)) _currentNav = null;
+        if (ReferenceEquals(_currentCard, host)) _currentCard = null;
+    }
     private static void OnSizeChanged(object sender, SizeChangedEventArgs e) => UpdateGeometry((FrameworkElement)sender);
 
     private static void OnUnloaded(object sender, RoutedEventArgs e)

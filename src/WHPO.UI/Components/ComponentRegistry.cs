@@ -22,7 +22,20 @@ public sealed class BuiltinComponent : IWinForgeComponent
     public required Type PageType { get; init; }
     public bool IsCore { get; init; }
 
-    public string Version => AppUpdateService.CurrentVersion();
+    private string? _versionOverride;
+
+    /// <summary>
+    /// Versión INDIVIDUAL del componente (base 0.1.0), independiente de la
+    /// versión de la app: cada pestaña se actualiza por su cuenta desde el
+    /// Workshop, no con cada release de la app. Las core (parte del exe)
+    /// siguen la versión de la app.
+    /// </summary>
+    public string Version
+    {
+        get => _versionOverride ?? (IsCore ? AppUpdateService.CurrentVersion() : "0.1.0");
+        init => _versionOverride = value;
+    }
+
     public string MinAppVersion => "";
 
     public object CreatePage(IServiceProvider services)
@@ -44,6 +57,10 @@ public sealed class ComponentRegistry
 
     private readonly List<IWinForgeComponent> _items = new();
 
+    // Integrados de fábrica por id: permite recuperar la copia del exe como
+    // FALLBACK cuando la copia descargada del repo de un componente no carga.
+    private readonly Dictionary<string, BuiltinComponent> _builtinsById = new(StringComparer.OrdinalIgnoreCase);
+
     // Ids de los integrados NO core: desde la 0.3.0 (introducción del Workshop)
     // nacen "no instalados" y hay que instalarlos desde el Workshop.
     private readonly HashSet<string> _nonCoreBuiltinIds = new(StringComparer.OrdinalIgnoreCase);
@@ -64,6 +81,7 @@ public sealed class ComponentRegistry
         foreach (var c in CreateBuiltins())
         {
             if (!c.IsCore) _nonCoreBuiltinIds.Add(c.Id);
+            _builtinsById[c.Id] = (BuiltinComponent)c;
             _items.Add(c);
         }
     }
@@ -72,6 +90,10 @@ public sealed class ComponentRegistry
 
     public IWinForgeComponent? Find(string id)
         => _items.FirstOrDefault(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>True si el id corresponde a un integrado de fábrica (copia en el exe).</summary>
+    public bool IsBuiltin(string id)
+        => _builtinsById.ContainsKey(id);
 
     public void Register(IWinForgeComponent component)
     {
@@ -84,6 +106,21 @@ public sealed class ComponentRegistry
     {
         int removed = _items.RemoveAll(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase));
         if (removed > 0) Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Vuelve a registrar el integrado de fábrica del id indicado: FALLBACK de
+    /// arranque cuando su copia descargada del repo no se pudo cargar. No hace
+    /// nada si el id no es un integrado o si ya hay algo registrado con ese id.
+    /// Devuelve true si restauró el integrado.
+    /// </summary>
+    public bool RestoreBuiltin(string id)
+    {
+        if (!_builtinsById.TryGetValue(id, out var builtin)) return false;
+        if (Find(id) != null) return false;
+        _items.Add(builtin);
+        Changed?.Invoke();
+        return true;
     }
 
     /// <summary>Componentes que van al navbar como ítems generados (no core).</summary>
@@ -133,13 +170,13 @@ public sealed class ComponentRegistry
         yield return new BuiltinComponent
         {
             Id = "temporizador", Name = "Resolución del Temporizador", IconGlyph = "\uE823", Category = ComponentCategory.Latencia,
-            Description = "Ajuste de la resolución del temporizador de Windows para input más preciso.",
+            Description = "Ajuste de latencia: habilita la regla de Windows GlobalTimerResolutionRequest para reducir la latencia de entrada (input lag).",
             PageType = typeof(TemporizadorPage)
         };
         yield return new BuiltinComponent
         {
             Id = "overclockusb", Name = "Overclock USB", IconGlyph = "\uE88E", Category = ComponentCategory.Latencia,
-            Description = "Aumenta la frecuencia de sondeo (polling rate) de tus dispositivos USB.",
+            Description = "Aumenta la frecuencia de sondeo (polling rate) de los dispositivos USB para reducir la latencia de entrada (input lag).",
             PageType = typeof(OverclockUsbPage)
         };
         yield return new BuiltinComponent
@@ -151,13 +188,13 @@ public sealed class ComponentRegistry
         yield return new BuiltinComponent
         {
             Id = "memoria", Name = "Memoria", IconGlyph = "\uEEA0", Category = ComponentCategory.Rendimiento,
-            Description = "Monitoreo y limpieza de la memoria RAM del sistema.",
+            Description = "Limpieza inteligente y automática de la caché en la memoria RAM.",
             PageType = typeof(MemoriaPage)
         };
         yield return new BuiltinComponent
         {
             Id = "optimizaciones", Name = "Optimizaciones", IconGlyph = "\uE90F", Category = ComponentCategory.Rendimiento,
-            Description = "Tweaks del sistema agrupados para ganar rendimiento en juegos.",
+            Description = "Optimizaciones para ganar rendimiento.",
             PageType = typeof(OptimizacionesPage)
         };
         yield return new BuiltinComponent
@@ -169,7 +206,7 @@ public sealed class ComponentRegistry
         yield return new BuiltinComponent
         {
             Id = "procesosvivos", Name = "Gestión de procesos", IconGlyph = "\uE21D", Category = ComponentCategory.Monitoreo,
-            Description = "Procesos en ejecución con sus recursos, prioridades y estados.",
+            Description = "Gestor de procesos del sistema: también muestra métricas como recursos, prioridades y estados.",
             PageType = typeof(ProcesosPage)
         };
         yield return new BuiltinComponent
@@ -181,7 +218,7 @@ public sealed class ComponentRegistry
         yield return new BuiltinComponent
         {
             Id = "overlay", Name = "Overlay de métricas", IconGlyph = "\uE95A", Category = ComponentCategory.Monitoreo,
-            Description = "Métricas en pantalla mientras jugás: FPS, CPU, GPU y RAM.",
+            Description = "Métricas en superposición: FPS, CPU, GPU, RAM, 1% low, etc.",
             PageType = typeof(OverlayPage)
         };
         yield return new BuiltinComponent
@@ -229,7 +266,7 @@ public sealed class ComponentRegistry
         yield return new BuiltinComponent
         {
             Id = "limpieza", Name = "Limpieza del dispositivo", IconGlyph = "\uE74D", Category = ComponentCategory.Sistema,
-            Description = "Liberá espacio: temporales, cachés y archivos sobrantes.",
+            Description = "Liberá espacio en el disco (caché, archivos temporales, etc.): chequeo del sistema, buscador de archivos duplicados y administración de aplicaciones al iniciar el sistema.",
             PageType = typeof(LimpiezaPage)
         };
     }

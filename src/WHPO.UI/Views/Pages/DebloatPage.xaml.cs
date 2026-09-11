@@ -345,6 +345,11 @@ public sealed partial class DebloatPage : Page
         };
         checkBox.Checked += (s, e) => OnSelectionChanged(tweak.Name, card, true);
         checkBox.Unchecked += (s, e) => OnSelectionChanged(tweak.Name, card, false);
+        if (tweak.Name == "Barra de juegos (Game Bar) - Desinstalar")
+        {
+            // Advertencia: eliminar Game Bar deja huérfano al Modo Juego de Windows.
+            checkBox.Checked += async (s, e) => await WarnGameBarOrphanAsync(checkBox);
+        }
         _tweakChecks[tweak.Name] = checkBox;
         _tweakCards[tweak.Name] = card;
 
@@ -468,6 +473,30 @@ public sealed partial class DebloatPage : Page
             card.BorderBrush = TransparentBrush;
             card.BorderThickness = new Thickness(1);
         }
+    }
+
+    /// <summary>
+    /// Advierte que desinstalar Game Bar deja huérfano al Modo Juego de Windows
+    /// (se eliminan archivos esenciales para su funcionamiento).
+    /// Si el usuario cancela, se desmarca la casilla.
+    /// </summary>
+    private async Task WarnGameBarOrphanAsync(CheckBox checkBox)
+    {
+        if (XamlRoot is null) return;
+
+        var dialog = new ContentDialog
+        {
+            Title = I18n.T("Atención"),
+            Content = I18n.T("Al aplicar esto, dejarás huérfano al Modo Juego de Windows, ya que estarás eliminando archivos esenciales para su funcionamiento."),
+            PrimaryButtonText = I18n.T("Entiendo, continuar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+            checkBox.IsChecked = false;
     }
 
     /// <summary>

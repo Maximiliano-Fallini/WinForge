@@ -24,6 +24,14 @@ public enum ServiceStartState
     Auto = 2
 }
 
+/// <summary>Resumen de lo que aplicó el Modo juego de WinForge al iniciar un juego.</summary>
+public sealed record GameBoostApplyResult(
+    int RulesApplied,          // juegos en ejecución con regla de juego efectiva aplicada
+    int ServicesOptimized,     // servicios detenidos por la partida (se restauran al cerrar)
+    int ProcessesOptimized,    // procesos de segundo plano a los que se bajó prioridad
+    int ProcessesKilled,       // procesos que el usuario eligió cerrar
+    bool GameModeWarning = false); // Modo Juego de WINDOWS no se pudo activar (huérfano/Game Bar)
+
 /// <summary>
 /// "Modo juego de WinForge (BETA)": al lanzar un juego, pausa
 /// Windows Update, detiene servicios de mantenimiento/diagnóstico (SysMain,
@@ -53,6 +61,9 @@ public interface IGameBoostService
 
     /// <summary>Restaura el estado previo (servicios y prioridades). No hace nada si no hay boost activo.</summary>
     Task RestoreAsync();
+
+    /// <summary>Se dispara cuando el boost se aplica (juego iniciado), con el resumen.</summary>
+    event Action<GameBoostApplyResult>? BoostApplied;
 
     /// <summary>Lista de procesos en segundo plano a los que se aplica el boost (configurable; vacía = lista por defecto).</summary>
     List<string> GetBackgroundProcesses();

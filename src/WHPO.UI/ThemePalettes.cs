@@ -305,7 +305,17 @@ public static class ThemePalettes
             ("AccentFillColorSecondaryBrush", "#E6D6338A"),
             ("AccentFillColorTertiaryBrush", "#CCD6338A"),
             ("NavigationViewDefaultPaneBackground", "#FFFFFFFF"),
-            ("NavigationViewContentBackground", "#FFF9E6F0")
+            ("NavigationViewContentBackground", "#FFF9E6F0"),
+            ("ComboBoxDropDownBackground", "#FFFFFFFF"),
+            ("ComboBoxDropDownBackgroundPointerOver", "#FFFDF1F7"),
+            ("ComboBoxDropDownBackgroundPointerPressed", "#FFF9DCEA"),
+            ("ComboBoxDropDownBorderBrush", "#FFF2C9DD"),
+            ("MenuFlyoutPresenterBackground", "#FFFFFFFF"),
+            ("MenuFlyoutPresenterBorderBrush", "#FFF2C9DD"),
+            ("ComboBoxItemBackgroundPointerOver", "#FFFDF1F7"),
+            ("ComboBoxItemBackgroundSelected", "#FFF9DCEA"),
+            ("ComboBoxItemBackgroundSelectedPointerOver", "#FFF5CBE1"),
+            ("ComboBoxItemBackgroundSelectedPressed", "#FFF9DCEA")
         ],
         AccentColors =
         [
@@ -379,7 +389,17 @@ public static class ThemePalettes
             ("AccentFillColorSecondaryBrush", "#E64FC3F7"),
             ("AccentFillColorTertiaryBrush", "#CC4FC3F7"),
             ("NavigationViewDefaultPaneBackground", "#FF0E1524"),
-            ("NavigationViewContentBackground", "#FF060A12")
+            ("NavigationViewContentBackground", "#FF060A12"),
+            ("ComboBoxDropDownBackground", "#FF0E1524"),
+            ("ComboBoxDropDownBackgroundPointerOver", "#FF111A2C"),
+            ("ComboBoxDropDownBackgroundPointerPressed", "#FF141C2E"),
+            ("ComboBoxDropDownBorderBrush", "#FF223047"),
+            ("MenuFlyoutPresenterBackground", "#FF0E1524"),
+            ("MenuFlyoutPresenterBorderBrush", "#FF223047"),
+            ("ComboBoxItemBackgroundPointerOver", "#FF141C2E"),
+            ("ComboBoxItemBackgroundSelected", "#FF13233A"),
+            ("ComboBoxItemBackgroundSelectedPointerOver", "#FF182A44"),
+            ("ComboBoxItemBackgroundSelectedPressed", "#FF13233A")
         ],
         AccentColors =
         [

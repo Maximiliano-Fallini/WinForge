@@ -85,8 +85,7 @@ public sealed partial class LimpiezaPage : Page
 
     // ---- Íconos reales de navegadores: extraídos de sus .exe con IconExtractor ----
     private static readonly string BrowserIconDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WHPO", "browsericons");
+        WHPO.Core.AppPaths.RootDir, "browsericons");
     /// <summary>PNG ya extraído y listo (BitmapImage). La clave es el browserId.</summary>
     private static readonly Dictionary<string, BitmapImage> BrowserIconReady = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>"true" = ya se intentó extraer y falló: no reintentar.</summary>
@@ -99,8 +98,7 @@ public sealed partial class LimpiezaPage : Page
 
     // ---- Íconos reales de entradas de inicio: extraídos de sus .exe con IconExtractor ----
     private static readonly string StartupIconDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WHPO", "startupicons");
+        WHPO.Core.AppPaths.RootDir, "startupicons");
     /// <summary>PNG ya extraído y listo (BitmapImage). La clave es el Id de la entrada.</summary>
     private static readonly Dictionary<string, BitmapImage> StartupIconReady = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>"true" = ya se intentó extraer y falló: no reintentar.</summary>
@@ -597,21 +595,6 @@ public sealed partial class LimpiezaPage : Page
         }
         catch { return null; }
     }
-
-    /// <summary>
-    /// Convierte un System.Drawing.Bitmap a BitmapImage de WinUI 3 (para uso en UI).
-    /// </summary>
-    private static async Task<BitmapImage> ToBitmapImageAsync(System.Drawing.Bitmap bmp)
-    {
-        using var ms = new System.IO.MemoryStream();
-        bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-        ms.Position = 0;
-        var bi = new BitmapImage();
-        using var stream = ms.AsRandomAccessStream();
-        await bi.SetSourceAsync(stream);
-        return bi;
-    }
-
 
     /// <summary>Convierte Bitmap a BitmapImage de forma sÃ­ncrona (UI thread).</summary>
     private static BitmapImage ToBitmapImageSync(System.Drawing.Bitmap bmp)
@@ -2173,6 +2156,7 @@ public sealed partial class LimpiezaPage : Page
         "utilidades" => "\uE81C", // History: recientes/historial
         "descargas" => "\uE896",  // Download: descargas de Windows
         "avanzado" => "\uE72E",   // Lock: bajo nivel, solo usuarios que saben
+        "registro" => "\uE74D",   // Refresh/registry: limpieza del registro (HKCU)
         _ => "\uE7C3"
     };
 
@@ -3399,22 +3383,6 @@ public sealed partial class LimpiezaPage : Page
         if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
         if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024.0):F1} MB";
         return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
-    }
-
-    private static SolidColorBrush FromHex(string hex)
-    {
-        try
-        {
-            return new SolidColorBrush(WinColor.FromArgb(
-                255,
-                byte.Parse(hex.Substring(1, 2), NumberStyles.HexNumber),
-                byte.Parse(hex.Substring(3, 2), NumberStyles.HexNumber),
-                byte.Parse(hex.Substring(5, 2), NumberStyles.HexNumber)));
-        }
-        catch
-        {
-            return Feedback.AccentBrush;
-        }
     }
 }
 

@@ -29,10 +29,9 @@ public partial class App : Application
     {
         InitializeComponent();
 
-        // Configurar Dependency Injection
-        var settingsDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WHPO");
+        // Configurar Dependency Injection. AppPaths separa la build de desarrollo
+        // (WHPO-Dev) de la instalada (WHPO): settings, cachés y logs independientes.
+        var settingsDirectory = WHPO.Core.AppPaths.RootDir;
 
         var services = new ServiceCollection();
         services.AddWHPOServices(settingsDirectory);
@@ -59,7 +58,7 @@ public partial class App : Application
         {
             try
             {
-                using var probe = System.Threading.Mutex.OpenExisting(@"Local\WHPO.UI.SingleInstance");
+                using var probe = System.Threading.Mutex.OpenExisting(WHPO.Core.AppPaths.SingleInstanceMutexName);
                 // La instancia previa sigue cerrándose: esperar hasta 5 s a que
                 // suelte el mutex. Si la adquirimos, SOLTARLA enseguida: si no,
                 // el Mutex(true, ...) de abajo vería createdNew=false y moriría.
@@ -81,7 +80,7 @@ public partial class App : Application
             }
         }
 
-        _instanceMutex = new System.Threading.Mutex(true, @"Local\WHPO.UI.SingleInstance", out _createdNew);
+        _instanceMutex = new System.Threading.Mutex(true, WHPO.Core.AppPaths.SingleInstanceMutexName, out _createdNew);
         if (!_createdNew)
         {
             // Ya hay una instancia corriendo en esta sesión: cerrar esta inmediatamente
@@ -190,6 +189,22 @@ public partial class App : Application
             componentCatalog.CleanupPendingUninstalls();
             foreach (var component in componentCatalog.LoadInstalledComponents())
                 componentRegistry.Register(component);
+
+            // Fallback de integrados: si un componente de fábrica tenía copia
+            // descargada del repo (Workshop) y esa copia NO cargó (arranque sin
+            // internet con dll corrupto, carpeta borrada a mano), se restaura la
+            // copia del exe para que la pestaña no desaparezca. El repo es el único
+            // canal de actualización; la copia del exe SOLO existe como red de
+            // seguridad offline y jamás pisa a la instalada.
+            foreach (var installedRec in componentCatalog.GetInstalled())
+            {
+                bool loaded = false;
+                foreach (var c in componentRegistry.All)
+                {
+                    if (string.Equals(c.Id, installedRec.Id, StringComparison.OrdinalIgnoreCase)) { loaded = true; break; }
+                }
+                if (!loaded) componentRegistry.RestoreBuiltin(installedRec.Id);
+            }
         }
         catch (Exception ex)
         {
@@ -199,34 +214,97 @@ public partial class App : Application
         // Marcador de sesión en el log: ayuda a separar corridas en fase de desarrollo.
         Services.GetRequiredService<ILoggingService>().LogInfo("===== WinForge iniciado =====");
 
-        _window = new MainWindow();
-        _window.Closed += OnWindowClosed;
-        MainWindowInstance = _window as MainWindow;
-
-        // Inicializar el tema DESPUÉS de crear la ventana: ThemeApplier ignora
-        // ApplyTheme cuando no hay ventana, así que aplicarlo antes dejaba la app
-        // en modo oscuro aunque la configuración dijera "claro" al reabrirla.
-        var themeService = Services.GetRequiredService<IThemeService>();
-
-        // Capturar los pinceles ORIGINALES de los diccionarios Light/Dark ANTES de
-        // aplicar el tema guardado: RestoreBase (al salir de Rosa/Blanco o
-        // Negro/Azul) vuelve a estos valores, así Claro/Oscuro/Sistema quedan
-        // exactamente como estaban. Debe correr antes de ts.Initialize.
-        ThemePalettes.Initialize();
-
-        if (themeService is ThemeService ts)
-        {
-            ts.Initialize();
-        }
-
-        _window.Activate();
-
-        // Chequeo de actualizaciones al abrir la app (async, no bloquea el arranque):
-        // muestra el ícono "Actualizar a vX" / "Versión X en desarrollo" en el navbar.
-        MainWindowInstance?.BeginUpdateCheck();
-
         var settingsService = Services.GetRequiredService<ISettingsService>();
         var startupService = Services.GetRequiredService<IStartupService>();
+
+        // "Iniciar minimizado" se aplica SOLO cuando Windows lanza la app al iniciar
+        // sesión: el valor del registro Run de "Iniciar con Windows" lleva el flag
+        // --start-minimized cuando la opción está activa, así que un arranque manual
+        // (doble clic, acceso directo) siempre abre la ventana normalmente.
+        // Compat: instalaciones que activaron la opción antes de que existiera el flag
+        // siguen minimizando en todo arranque hasta que la página de Configuración
+        // normalice el valor del registro.
+        bool startMinimized = StartupMinimizedRequested();
+        if (!startMinimized
+            && settingsService.Get("window.startMinimized", false)
+            && !startupService.HasStartMinimizedFlag())
+        {
+            startMinimized = startupService.IsEnabled();
+        }
+
+        // ===== Onboarding de primera ejecución =====
+        // OnboardingWindow guarda "onboarding.complete" al terminar (Finish), pero
+        // nadie lo leía: la ventana existía sin gancho de arranque. Acá se muestra
+        // ANTES de MainWindow cuando el flag está en false, y la ventana principal
+        // se crea al cerrarlo: así el tema elegido ya está persistido cuando
+        // ThemeService inicializa. Se saltea en relanzamientos de tema
+        // (--theme-restart) y en arranques minimizados a la bandeja (inicio de sesión).
+        bool themeRestart = Environment.GetCommandLineArgs().Contains("--theme-restart");
+        bool showOnboarding = !settingsService.Get("onboarding.complete", false)
+            && !themeRestart
+            && !startMinimized;
+
+        // Crea la ventana principal y arranca lo que depende de ella. El tema se
+        // inicializa DESPUÉS de crear la ventana: ThemeApplier ignora ApplyTheme
+        // cuando no hay ventana, así que aplicarlo antes dejaba la app en modo
+        // oscuro aunque la configuración dijera "claro" al reabrirla.
+        // Capturar los pinceles ORIGINALES de los diccionarios Light/Dark ANTES de
+        // aplicar el tema guardado: RestoreBase (al salir de Rosa/Blanco o
+        // Negro/Azul) vuelve a estos valores. Debe correr antes de ts.Initialize.
+        void CreateMainWindow()
+        {
+            _window = new MainWindow();
+            _window.Closed += OnWindowClosed;
+            MainWindowInstance = _window as MainWindow;
+
+            ThemePalettes.Initialize();
+
+            if (Services.GetRequiredService<IThemeService>() is ThemeService ts)
+            {
+                ts.Initialize();
+            }
+
+            _window.Activate();
+
+            // Chequeo de actualizaciones al abrir la app (async, no bloquea el arranque):
+            // muestra el ícono "Actualizar a vX" / "Versión X en desarrollo" en el navbar.
+            MainWindowInstance?.BeginUpdateCheck();
+
+            if (startMinimized)
+            {
+                MainWindowInstance?.HideToTrayAtStartup();
+            }
+        }
+
+        if (showOnboarding)
+        {
+            try
+            {
+                Services.GetRequiredService<ILoggingService>()
+                    .LogInfo("Onboarding: primera ejecución detectada — se muestra el asistente.");
+                var onboarding = new OnboardingWindow();
+                // Tanto si completa el asistente (Finish → flag en true) como si lo
+                // cierra con la X (flag queda en false: vuelve a mostrarse en el
+                // próximo arranque), la app continúa al cerrarse la ventana.
+                onboarding.Closed += (_, _) => CreateMainWindow();
+                onboarding.Activate();
+            }
+            catch (Exception ex)
+            {
+                // El onboarding es cosmético: si falla al abrir, seguir a la ventana
+                // principal normal (la app nunca debe quedar sin ventana).
+                Services.GetRequiredService<ILoggingService>()
+                    .LogWarning($"Onboarding: no se pudo abrir ({ex.Message}); se continúa a la ventana principal.");
+                CreateMainWindow();
+            }
+        }
+        else
+        {
+            Services.GetRequiredService<ILoggingService>()
+                .LogInfo("Onboarding: salteado (complete=" + settingsService.Get("onboarding.complete", false)
+                    + ", themeRestart=" + themeRestart + ", startMinimized=" + startMinimized + ").");
+            CreateMainWindow();
+        }
 
         // Primer arranque tras la instalación: el instalador deja HKLM\Software\WinForge\
         // FirstRunStartup=1 para que la app cree la tarea de inicio automático con su
@@ -248,26 +326,6 @@ public partial class App : Application
             }
         }
         catch { /* la marca es best-effort: si falla, el toggle sigue funcionando */ }
-
-        // "Iniciar minimizado" se aplica SOLO cuando Windows lanza la app al iniciar
-        // sesión: el valor del registro Run de "Iniciar con Windows" lleva el flag
-        // --start-minimized cuando la opción está activa, así que un arranque manual
-        // (doble clic, acceso directo) siempre abre la ventana normalmente.
-        // Compat: instalaciones que activaron la opción antes de que existiera el flag
-        // siguen minimizando en todo arranque hasta que la página de Configuración
-        // normalice el valor del registro.
-        bool startMinimized = StartupMinimizedRequested();
-        if (!startMinimized
-            && settingsService.Get("window.startMinimized", false)
-            && !startupService.HasStartMinimizedFlag())
-        {
-            startMinimized = startupService.IsEnabled();
-        }
-        if (startMinimized)
-        {
-            MainWindowInstance?.HideToTrayAtStartup();
-        }
-
     }
 
     // ===== Chequeo de administrador al arrancar =====
