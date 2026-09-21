@@ -1,0 +1,98 @@
+{
+  "catalogVersion": 1,
+  "sourceHash": "2b7e5bd285072153f06efe7bdb555c428d46bc14ec4db606d528901d55921aa9",
+  "generatedAt": "2026-09-21",
+  "languages": [
+    {
+      "code": "es-AR",
+      "endonym": "Español (Argentina)",
+      "englishName": "Spanish (Argentina)",
+      "builtin": true,
+      "version": "",
+      "url": "",
+      "sha256": "",
+      "sizeBytes": 0,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "en-US",
+      "endonym": "English (US)",
+      "englishName": "English (US)",
+      "builtin": true,
+      "version": "",
+      "url": "",
+      "sha256": "",
+      "sizeBytes": 0,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "pt-BR",
+      "endonym": "Português (Brasil)",
+      "englishName": "Portuguese (Brazil)",
+      "builtin": false,
+      "version": "1.0.8",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/pt-BR-1.0.8.json",
+      "sha256": "e7f1823290e54a951032c07bac81a731942a3aa147740289c5caeb678d2b253d",
+      "sizeBytes": 187711,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "de-DE",
+      "endonym": "Deutsch",
+      "englishName": "German",
+      "builtin": false,
+      "version": "1.0.8",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/de-DE-1.0.8.json",
+      "sha256": "483e3c0d82e5a3b38ab17c280b72ff10deb4a96b7a7eef8e05aaf218481029ec",
+      "sizeBytes": 190841,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "fr-FR",
+      "endonym": "Français",
+      "englishName": "French",
+      "builtin": false,
+      "version": "1.0.8",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/fr-FR-1.0.8.json",
+      "sha256": "dd293e37ea68f5eddc85e572795973720ea9f27cd1a96fbdefd06674c68700b8",
+      "sizeBytes": 194903,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "zh-CN",
+      "endonym": "简体中文",
+      "englishName": "Chinese (Simplified)",
+      "builtin": false,
+      "version": "1.0.8",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/zh-CN-1.0.8.json",
+      "sha256": "d46aa8e32bb0d3a10b885ead4a9f8708f3386168f12b2ee118ee94d3d554899e",
+      "sizeBytes": 170681,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "ru-RU",
+      "endonym": "Русский",
+      "englishName": "Russian",
+      "builtin": false,
+      "version": "1.0.8",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/ru-RU-1.0.8.json",
+      "sha256": "906f5296834353121854e63ccde7ad8a3c641d15e0a75dc980b25b83c2541d9e",
+      "sizeBytes": 241806,
+      "keyCount": 1841,
+      "completion": 100,
+      "minAppVersion": ""
+    }
+  ]
+}

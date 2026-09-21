@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="WHPO_UI.Views.Pages.OptimizacionesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
+<!-- Margen reducido para que el contenido quede pegado al navbar (NavigationView). -->
+<!-- Mismo layout que Panel de Windows / Reparación: margen 24 y 16 de separación entre secciones. -->
+        <StackPanel Spacing="16" Margin="24">
+
+            <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
+
+<!-- ====== PRECONFIGURACIONES ====== -->
+            <StackPanel Spacing="12">
+<!-- Misma geometría que "Panel de Windows" y las secciones de Reparación:
+                     emoji 20px + título 22px SemiBold, ambos centrados verticalmente, Spacing 10. -->
+                <StackPanel Spacing="2" Margin="0,12,0,4">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+<!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
+                        <FontIcon Glyph="&#xE713;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Preconfiguraciones" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBlock Text="Elegí un perfil para marcar automáticamente los tweaks recomendados. Después podés ajustar la selección a mano y aplicarla en lote."
+                               FontSize="13.5"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+                <StackPanel x:Name="PresetsPanel" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center"/>
+            </StackPanel>
+
+<!-- ====== PANEL DE NOTIFICACIONES ====== -->
+            <StackPanel x:Name="NotificationPanel" Spacing="8"/>
+
+<!-- ====== CONSOLA DE EJECUCIÓN (estado en vivo estilo consola) ====== -->
+            <Border x:Name="ConsolePanel" CornerRadius="10" Padding="12,10"
+                    Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
+                    Visibility="Collapsed">
+                <StackPanel Spacing="8">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <ProgressRing x:Name="BatchProgressRing" Width="16" Height="16" IsActive="False" Visibility="Collapsed"/>
+                            <StackPanel Spacing="0" VerticalAlignment="Center">
+                                <TextBlock Text="Consola de ejecución" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="BatchStatusText" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" Visibility="Collapsed"/>
+                            </StackPanel>
+                            <TextBlock x:Name="BatchElapsedText" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <Button x:Name="CopyConsoleButton"
+                                    Content="Copiar"
+                                    Background="Transparent" Foreground="{ThemeResource SecondaryTextBrush}"
+                                    CornerRadius="4" Padding="10,4"
+                                    Click="CopyConsoleButton_Click"/>
+                            <Button x:Name="ClearConsoleButton"
+                                    Content="Limpiar"
+                                    Background="Transparent" Foreground="{ThemeResource SecondaryTextBrush}"
+                                    CornerRadius="4" Padding="10,4"
+                                    Click="ClearConsoleButton_Click"/>
+                        </StackPanel>
+                    </Grid>
+                    <ProgressBar x:Name="BatchProgressBar" Minimum="0" Maximum="100" Value="0" Height="4" CornerRadius="2" Visibility="Collapsed" ShowPaused="False" ShowError="False"/>
+                    <TextBlock x:Name="BatchHeartbeatText" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}" Visibility="Collapsed" TextWrapping="Wrap"/>
+                    <ScrollViewer x:Name="ConsoleScroll" MaxHeight="280" VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+                        <TextBlock x:Name="ConsoleText"
+                                   FontFamily="Consolas" FontSize="12"
+                                   TextWrapping="Wrap" IsTextSelectionEnabled="True" LineHeight="18"/>
+                    </ScrollViewer>
+                </StackPanel>
+            </Border>
+
+<!-- ====== LISTA DE TWEAKS (2 columnas) ====== -->
+            <StackPanel x:Name="TweaksPanel" Spacing="12"/>
+
+<!-- ====== BOTONES DE LOTE (centrados) ====== -->
+            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" Margin="0,4,0,0">
+                <Button x:Name="ApplySelectedButton"
+                        Content="Aplicar seleccionados"
+                        Background="{ThemeResource AccentBrush}" Foreground="{ThemeResource AccentForegroundBrush}"
+                        FontWeight="SemiBold" CornerRadius="6" Padding="16,8" MinWidth="170"
+                        Click="ApplySelectedButton_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

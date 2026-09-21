@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="WHPO_UI.Views.Pages.ComponentHostPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- El contenido real lo pinta OnNavigatedTo con la UI creada por el componente
+         dinámico (CreatePage). Este XAML existe para que el tipo tenga metadatos
+         XAML compilados: sin ellos, Frame.Navigate hace fail-fast nativo (no
+         catcheable) al navegar a una Page 100% en código. -->
+</Page>

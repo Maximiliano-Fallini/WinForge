@@ -1,0 +1,33 @@
+<Page
+    x:Class="WHPO_UI.Views.Pages.TcpPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
+        <StackPanel Spacing="16" Margin="24">
+            <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
+
+<!-- ====== TCP AVANZADO (movido desde Red) ====== -->
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
+                <SymbolIcon Symbol="Globe" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
+                <TextBlock Text="TCP / Red avanzado" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel x:Name="TcpAdvancedPanel" Spacing="12"/>
+
+<!-- ====== REGLAS DE WINDOWS (nivel SO: reserva multimedia, throttling,
+                  puertos efimeros, TIME_WAIT, cache, LSO) ====== -->
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+                <FontIcon Glyph="&#xE9F5;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                <TextBlock Text="Reglas de Windows (red)" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel x:Name="WindowsRulesPanel" Spacing="12"/>
+
+<!-- ====== PROPIEDADES AVANZADAS DEL ADAPTADOR (estilo TCP Optimizer) ====== -->
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+                <SymbolIcon Symbol="World" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
+                <TextBlock Text="Adaptador de red" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel x:Name="AdapterPanel" Spacing="12"/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

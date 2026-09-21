@@ -1,0 +1,69 @@
+<Page
+    x:Class="WHPO_UI.Views.Pages.FanControlPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:WHPO_UI.Controls">
+
+    <ScrollViewer x:Name="FanScroll" Background="{ThemeResource AppBackgroundBrush}"
+                  HorizontalScrollBarVisibility="Disabled" SizeChanged="FanScroll_SizeChanged">
+        <StackPanel Spacing="0" Margin="24,16,24,24" HorizontalAlignment="Stretch">
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
+                <ContentControl x:Name="PageFanIcon" Width="20" Height="20" VerticalAlignment="Center"/>
+                <TextBlock Text="Control de ventiladores" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <!-- Banner de PawnIO: visible solo cuando el driver no está instalado -->
+            <Border x:Name="PawnBanner" Visibility="Collapsed" CornerRadius="8"
+                    Background="{ThemeResource CardBackgroundBrush}"
+                    BorderBrush="{ThemeResource CardBorderBrush}"
+                    BorderThickness="1" Padding="16,12" Margin="0,4,0,10">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE72E;" FontSize="22" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock x:Name="PawnBannerTitle" Text="Driver PawnIO no instalado" FontWeight="SemiBold" FontSize="13"/>
+                        <TextBlock x:Name="PawnBannerDesc" Text="El control de ventiladores necesita el driver de kernel PawnIO (código abierto bajo GPL-2.0, firmado digitalmente, el mismo que usa LibreHardwareMonitor). Se descarga el instalador oficial, se verifica su hash SHA-256 y se instala en silencio — un clic."
+                                   FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <ProgressRing x:Name="PawnInstallRing" IsActive="False" Width="24" Height="24" Visibility="Collapsed"/>
+                        <Button x:Name="InstallPawnButton" Content="Instalar PawnIO" Click="InstallPawnButton_Click"
+                                CornerRadius="6" Padding="14,6" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Estado del subsistema + selector de columnas + acción global -->
+            <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,2,0,10">
+                <TextBlock x:Name="StatusText" Text="" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"
+                           Foreground="{ThemeResource SecondaryTextBrush}"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <Button x:Name="Columns3Button" Click="Columns3Button_Click" CornerRadius="4" Padding="10,4" FontSize="12"
+                            ToolTipService.ToolTip="3 columnas">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE8FD;" FontSize="13"/>
+                            <TextBlock Text="3"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="Columns4Button" Click="Columns4Button_Click" CornerRadius="4" Padding="10,4" FontSize="12"
+                            ToolTipService.ToolTip="4 columnas">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE8FD;" FontSize="13"/>
+                            <TextBlock Text="4"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+                <Button x:Name="RestoreAllButton" Grid.Column="2" Click="RestoreAllButton_Click" CornerRadius="6" Padding="14,6" FontSize="12"
+                        Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE777;" FontSize="14"/>
+                        <TextBlock Text="Todos al automático (BIOS)"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+
+            <!-- Cards de ventiladores (construidas en código); grid N columnas -->
+            <controls:WrapPanel x:Name="FansList" Spacing="18" HorizontalAlignment="Stretch"/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Versión de la app: la lee AppUpdateService para el chequeo de actualizaciones
+         (el MSI trae esta misma versión). Al publicar, llevar 0.1.0 junto con
+         installer/Product.wxs y installer/build-installer.ps1 -->
+    <Version>0.1.0</Version>
+    <InformationalVersion>0.1.0-beta</InformationalVersion>
+    <!-- Habilitar COM para System.Management (WMI) -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="9.0.0" />
+    <!-- LibreHardwareMonitor 0.9.6 está compilado contra las 10.x de estos
+         ensamblados. Al publicar self-contained, los del framework se reemplazan
+         por los del runtime pack (9.0.0.0) y LHM no carga (MissingMethodException
+         en System.Threading.AccessControl 10.0.0.0). Referencia directa para que
+         el paquete 10.0.3 gane sobre el runtime pack, igual que System.Management. -->
+    <PackageReference Include="System.Threading.AccessControl" Version="10.0.3" />
+    <PackageReference Include="System.Management" Version="10.0.2" />
+  </ItemGroup>
+
+</Project>

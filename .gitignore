@@ -1,0 +1,175 @@
+# ============================================================================
+# .gitignore — WinForge
+#
+# El criterio: el repo lleva el código de la app y los archivos que la app
+# descarga de este repo en runtime. Lo que produce binarios (MSI, packs de
+# idioma) se publica como assets de las releases de GitHub, no en la rama; el
+# tooling de build queda en el disco del desarrollador.
+#
+# SE VERSIONA
+#   src/                    código de la app y de sus componentes
+#   languages-src/          fuentes de traducción (materia prima de los packs)
+#   languages.json          catálogo de packs de idioma que la app descarga
+#   components.json         catálogo de componentes del Workshop
+#   assets/                 imágenes que usa el README
+#   scripts del pipeline    build-language-packs.ps1 · validate-language-packs.ps1 ·
+#                           dedupe-translations.ps1
+#   README.md · LICENSE
+#
+# NO SE VERSIONA
+#   Salidas de compilación y distribución (bin, obj, publish, MSI, packs JSON),
+#   el generador del instalador y los scripts de build de la app (viven en el
+#   disco; sus productos van a las releases), la web de difusión, los scripts
+#   de un solo uso (tmp-*, fix-*, diag-*), el scratch de trabajo (tools/) y todo
+#   lo binario o descargable (drivers del filtro, paquetes comprimidos).
+# ============================================================================
+
+# ===== .NET: salidas de compilación =====
+bin/
+obj/
+build/
+out/
+dist/
+publish/
+release/
+stage/
+artifacts/
+AppPackages/
+BundleArtifacts/
+TestResults/
+*.pri
+*.xbf
+*.binlog
+*.trx
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+project.lock.json
+
+# ===== Artefactos binarios sueltos =====
+*.exe
+*.exe.config
+*.dll
+*.pdb
+*.ilk
+*.lib
+*.pch
+*.ncb
+*.opb
+*.opensdf
+*.sdf
+*.cache
+*.log
+*.dmp
+
+# ===== IDE / editor =====
+.vs/
+.idea/
+_ReSharper*/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+*.dotCover
+*_wpftmp.csproj
+
+# ===== Paquetes e instalador (SALIDAS, no fuentes) =====
+# Las fuentes del instalador (installer/) SÍ van al repo. Lo que no va es lo que
+# produce: el MSI, el publish y el fragmento harvest (se regenera con el script).
+*.appx
+*.appxbundle
+*.appxupload
+*.msix
+*.msixbundle
+*.msixupload
+*.msi
+*.wixobj
+*.wixpdb
+.wix/
+.tools/
+installer/publish/
+installer/Files.wxs
+installer/PostUpdateCA/bin/
+installer/PostUpdateCA/obj/
+
+# ===== Driver del filtro y paquetes descargados =====
+# El componente de Overclock USB (hidusbf) y los paquetes del autor: binarios de
+# kernel, catálogos y certificados. Nunca se versionan: la app los descarga y los
+# verifica contra el SHA-256 del paquete oficial en tiempo de ejecución. Un .sys
+# suelto en el repo sería, además, un binario que nadie auditó.
+*.sys
+*.inf
+*.cat
+*.cer
+*.coff
+
+# ===== Tooling de build (disco del desarrollador) =====
+# Sus productos sí se publican, pero como assets de las releases de GitHub:
+#   build.ps1 / build-components.ps1 → publican la app;
+#   installer/ → produce el MSI que se sube a la release de cada versión.
+/build.ps1
+/build-components.ps1
+/installer/
+
+# ===== Paquetes comprimidos =====
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.iso
+
+# ===== Scripts de un solo uso =====
+# Los scripts DEL PROYECTO se versionan (build, catálogos, pipeline de idiomas,
+# instalador — ver la lista de arriba). Estos son los de trabajo, que se tiran al
+# terminar: diagnósticos, parches y borradores sueltos en la raíz.
+/tmp-*
+/fix-*
+/prep-*
+/diag-*
+/scratch*
+/casecheck.ps1
+/fanicon-preview.ps1
+/*.cmd
+/*.sh
+
+# ===== Carpetas de trabajo =====
+# tools/ entera es del desarrollador: probadores, harnesses y scratch de recuperación.
+# Nada de esa carpeta va al repo.
+tools/
+tests/
+builds/
+.verify*
+webpage/
+components-dist/
+languages-dist/
+
+# ===== Dependencias y herramientas de agentes =====
+node_modules/
+/package.json
+/package-lock.json
+.freebuff/
+
+# ===== Documentación interna del desarrollador =====
+# Las reglas de desarrollo y las notas de recuperación son de trabajo: viven en el
+# disco, no en el repo público.
+/reglas_de_desarollo_.md
+
+# ===== Basura del sistema y archivos temporales =====
+.DS_Store
+Thumbs.db
+desktop.ini
+*.bak
+*.orig
+*.rej
+*.db
+*.db-wal
+*.tmp
+*.temp
+build_out.txt
+build_out2.txt
+build_err.txt

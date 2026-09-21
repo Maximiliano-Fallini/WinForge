@@ -1,0 +1,276 @@
+<Window
+    x:Class="WHPO_UI.OnboardingWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Bienvenido a WinForge">
+
+    <Grid x:Name="RootGrid" Background="{ThemeResource OnboardingBackdropBrush}">
+        <Grid.Resources>
+            <Style x:Key="OnboardingCardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource OnboardingSurfaceBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="20"/>
+                <Setter Property="HorizontalAlignment" Value="Center"/>
+                <Setter Property="VerticalAlignment" Value="Center"/>
+            </Style>
+            <Style x:Key="OnboardingOptionStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="12"/>
+            </Style>
+        </Grid.Resources>
+
+        <Image Source="/logos/backgroundinstaller/banner.png"
+               Stretch="UniformToFill"
+               IsHitTestVisible="False"/>
+        <Border Background="{ThemeResource OnboardingScrimBrush}" IsHitTestVisible="False"/>
+
+        <StackPanel MaxWidth="640" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+<!-- Cabecera: logo + marca SOLOS. El subtítulo va fuera de la fila porque es lo único que
+             cambia con el idioma y su largo define el ancho de la fila: centrada como unidad,
+             el logo y el título se corrían horizontalmente al cambiar de idioma (en alemán
+             quedaban pegados al borde, en chino bien adentro). "WinForge" es igual en todos
+             los idiomas, así que la fila ahora mide lo mismo siempre y no se mueve nunca. -->
+            <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center">
+                <Image Source="/logos/WinForge.png" Width="64" Height="64" VerticalAlignment="Center"/>
+                <TextBlock Text="WinForge" FontSize="30" FontWeight="Bold" VerticalAlignment="Center"/>
+            </StackPanel>
+<!-- Subtítulo: línea propia, centrada y con wrap (sin él, los idiomas largos se
+             recortaban al tope de 640 px). -->
+            <TextBlock x:Name="SubtitleText" FontSize="14" Foreground="{ThemeResource SecondaryTextBrush}"
+                       TextWrapping="Wrap" TextAlignment="Center"/>
+
+<!-- Altura FIJA de la card: las fases tienen distinto contenido y, si la
+                 card creciera/encogiera, los botones de abajo saltarían de posición
+                 (rompe el feedback visual al pasar de fase). El contenido de cada
+                 fase se centra en la fila sobrante. -->
+<!-- El tema del onboarding se aplica SOLO a esta card (la "ventana"):
+                 el fondo (RootGrid: banner + scrim) queda fijo y no cambia al tocar
+                 los temas, y los botones de tema usan colores literales fijos.
+                 La barra de título de la ventana SÍ reacciona al tema (se colorea
+                 desde UpdateOnboardingTheme). En la app, en cambio, el tema sí
+                 afecta al fondo porque ThemeApplier aplica RequestedTheme al
+                 contenido raíz de MainWindow. -->
+<!-- La altura fija sube a 360: la fase de idioma era la única que podía medir MÁS que la
+                 card (subtítulo en 2 líneas en idiomas largos + lista + estado) y, al estar el
+                 contenido centrado en una fila de alto fijo, se recortaba por arriba y por abajo:
+                 el título "Elegí tu idioma" quedaba cortado. Con 360 entra el peor caso
+                 (subtítulo a 2 líneas + estado visible) con margen, y los botones siguen sin
+                 saltar entre fases porque la altura sigue siendo fija para las tres. -->
+            <Border x:Name="ContentCard" Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="360">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+<!-- Riel de fases (pasos + tramos): su propia fila, arriba y centrado. Sin rótulo de texto: el
+                     paso actual se marca con la pastilla ancha, para que la card —de alto fijo— no
+                     cambie de tamaño al pasar de fase. -->
+                    <StackPanel x:Name="ProgressDots" Grid.Row="0" Orientation="Horizontal"
+                                HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,0,0,20"/>
+
+<!-- ===== FASE 1: TEMA ===== -->
+                    <StackPanel x:Name="PhaseTheme" Grid.Row="1" Spacing="14" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform Y="0"/>
+                        </StackPanel.RenderTransform>
+                        <TextBlock Text="Elegí el tema" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Tu apariencia, tu estilo. Podés cambiarlo en Configuración."
+                                   FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Center"/>
+                        <Grid Width="476" ColumnSpacing="12" Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+<!-- ===== Oscuro =====
+                                 Colores LITERALES fijos (no reactivos al tema): el preview es
+                                 SIEMPRE una mini-ventana oscura con barra de título y líneas de
+                                 contenido, toque el tema que se toque. -->
+                            <Border x:Name="ThemeDarkCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
+                                    Grid.Column="0" Tapped="ThemeOption_Tapped"
+                                    Background="#1E1E1E" BorderBrush="#3F3F3F">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Grid Width="84" Height="56" HorizontalAlignment="Center">
+                                        <Border CornerRadius="8" Background="#141414" BorderBrush="#454545" BorderThickness="1">
+                                            <StackPanel>
+<!-- Barra de título de la mini-ventana -->
+                                                <Border Height="11" Background="#262626" CornerRadius="7,7,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="9,8,9,0" Spacing="5">
+                                                    <Border Height="5" Width="44" CornerRadius="2.5" Background="#4A4A4A" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="32" CornerRadius="2" Background="#333333" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="24" CornerRadius="2" Background="#2A2A2A" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ThemeDarkCheck" Width="20" Height="20" CornerRadius="10"
+                                                Background="{ThemeResource AccentBrush}" BorderThickness="2" BorderBrush="#1E1E1E"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Margin="0,-7,-7,0" Visibility="Collapsed">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Oscuro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="White"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+<!-- ===== Claro =====
+                                 Colores LITERALES fijos: el preview es SIEMPRE una mini-ventana
+                                 blanca, independientemente del tema elegido. -->
+                            <Border x:Name="ThemeLightCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
+                                    Grid.Column="1" Tapped="ThemeOption_Tapped"
+                                    Background="#FFFFFF" BorderBrush="#C9C9C9">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Grid Width="84" Height="56" HorizontalAlignment="Center">
+                                        <Border CornerRadius="8" Background="#FFFFFF" BorderBrush="#C9C9C9" BorderThickness="1">
+                                            <StackPanel>
+                                                <Border Height="11" Background="#F1F1F1" CornerRadius="7,7,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="6,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="9,8,9,0" Spacing="5">
+                                                    <Border Height="5" Width="44" CornerRadius="2.5" Background="#C4C4C4" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="32" CornerRadius="2" Background="#DDDDDD" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="24" CornerRadius="2" Background="#E8E8E8" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ThemeLightCheck" Width="20" Height="20" CornerRadius="10"
+                                                Background="{ThemeResource AccentBrush}" BorderThickness="2" BorderBrush="#FFFFFF"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Margin="0,-7,-7,0" Visibility="Collapsed">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Claro" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="#111111"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+<!-- ===== Usar sistema =====
+                                 Colores LITERALES fijos: el preview es SIEMPRE una mini-ventana
+                                 partida (mitad oscura / mitad clara). -->
+                            <Border x:Name="ThemeSystemCard" Style="{StaticResource OnboardingOptionStyle}" Padding="10,14,10,12"
+                                    Grid.Column="2" Tapped="ThemeOption_Tapped"
+                                    Background="#FFFFFF" BorderBrush="#C9C9C9">
+                                <StackPanel Spacing="10" HorizontalAlignment="Center">
+                                    <Grid Width="84" Height="56" HorizontalAlignment="Center">
+<!-- Mitad oscura (izquierda) -->
+                                        <Border Width="42" HorizontalAlignment="Left" CornerRadius="8,0,0,8"
+                                                Background="#141414" BorderBrush="#454545" BorderThickness="1,1,0,1">
+                                            <StackPanel>
+                                                <Border Height="11" Background="#262626" CornerRadius="7,0,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#4A4A4A"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="6,8,0,0" Spacing="5">
+                                                    <Border Height="5" Width="20" CornerRadius="2.5" Background="#4A4A4A" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="14" CornerRadius="2" Background="#333333" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+<!-- Mitad clara (derecha) -->
+                                        <Border Width="42" HorizontalAlignment="Right" CornerRadius="0,8,8,0"
+                                                Background="#FFFFFF" BorderBrush="#C9C9C9" BorderThickness="0,1,1,1">
+                                            <StackPanel>
+                                                <Border Height="11" Background="#F1F1F1" CornerRadius="0,7,0,0">
+                                                    <StackPanel Orientation="Horizontal" Margin="5,0,0,0" VerticalAlignment="Center" Spacing="3">
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                        <Ellipse Width="3" Height="3" Fill="#C4C4C4"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel Margin="6,8,0,0" Spacing="5">
+                                                    <Border Height="5" Width="20" CornerRadius="2.5" Background="#C4C4C4" HorizontalAlignment="Left"/>
+                                                    <Border Height="4" Width="14" CornerRadius="2" Background="#DDDDDD" HorizontalAlignment="Left"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border x:Name="ThemeSystemCheck" Width="20" Height="20" CornerRadius="10"
+                                                Background="{ThemeResource AccentBrush}" BorderThickness="2" BorderBrush="#FFFFFF"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                Margin="0,-7,-7,0" Visibility="Collapsed">
+                                            <FontIcon Glyph="&#xE73E;" FontSize="10" Foreground="White"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="Usar sistema" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="#111111"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+
+<!-- ===== FASE 2: IDIOMA =====
+                         Los idiomas que la app ya trae se activan al tocarlos; los que
+                         no están instalados aparecen atenuados con el botón de descarga
+                         al lado y se bajan del repositorio en el momento. -->
+                    <StackPanel x:Name="PhaseLanguage" Grid.Row="1" Spacing="10" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform Y="0"/>
+                        </StackPanel.RenderTransform>
+                        <TextBlock Text="Elegí tu idioma" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="WinForge ya está en el idioma de tu PC. Podés descargar otros idiomas acá o desde el menú de idioma."
+                                   FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Center"/>
+                        <Border Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
+                                BorderThickness="1" CornerRadius="12" Padding="8" Margin="0,4,0,0" HorizontalAlignment="Center">
+<!-- El margen derecho del contenido reserva el carril de la barra de scroll: en WinUI la
+                 scrollbar es OVERLAY (se dibuja ENCIMA del contenido), así que sin este margen
+                 tapaba el borde derecho de las filas (borde de acento del idioma activo y ✕). -->
+                            <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="LanguageListPanel" Spacing="2" MinWidth="420" Margin="0,0,14,0"/>
+                            </ScrollViewer>
+                        </Border>
+                        <TextBlock x:Name="LanguageStatusText" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed"/>
+                    </StackPanel>
+
+<!-- ===== FASE 3: GRATIS + ESTRELLA ===== -->
+                    <StackPanel x:Name="PhaseThanks" Grid.Row="1" Spacing="14" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform Y="0"/>
+                        </StackPanel.RenderTransform>
+                        <FontIcon Glyph="&#xE734;" FontSize="34" Foreground="{ThemeResource AccentBrush}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="100% Gratuito" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="WinForge es totalmente gratuito y lo seguirá siendo: todas las funciones están desbloqueadas. Si te resulta útil, apoyalo con una estrella."
+                                   FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center"/>
+                        <Button x:Name="StarButton" Content="Dejar una estrella en GitHub" Style="{StaticResource AccentButtonStyle}"
+                                Padding="16,10" HorizontalAlignment="Center" Click="StarButton_Click"/>
+                    </StackPanel>
+
+                </Grid>
+            </Border>
+
+            <Grid ColumnSpacing="10" HorizontalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton" Content="Atrás" Visibility="Collapsed" Click="BackButton_Click" Padding="18,10"/>
+                <Button x:Name="NextButton" Content="Continuar" Grid.Column="1" Style="{StaticResource AccentButtonStyle}"
+                        Padding="22,10" Click="NextButton_Click"/>
+            </Grid>
+        </StackPanel>
+    </Grid>
+</Window>

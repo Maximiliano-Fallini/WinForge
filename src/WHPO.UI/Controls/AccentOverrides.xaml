@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Override del acento para TODA la UI. WinUI inyecta el acento del SISTEMA
+    (que puede ser morado/verde/lo que sea) en dos lugares:
+
+    1. Los pinceles AccentFillColor* / SystemAccentColorBrush -> los usan los
+       controles internos (ToggleSwitch, CheckBox, RadioButton, ProgressBar)
+       y los controles propios de la app (Buttons.xaml, Toggles.xaml,
+       CustomControls.xaml -> barras de uso).
+    2. Los colores SystemAccentColor* (Light1-3, Dark1-3) -> de ellos derivan
+       los pinceles internos del theme dictionary via {ThemeResource}, que es
+       DINÁMICO y sí re-resuelve en runtime.
+
+    Sobrescribir solo los pinceles NO alcanza: las cadenas {StaticResource}
+    internas del theme dictionary se congelan en parse time apuntando al pincel
+    del acento del sistema. Sobrescribiendo los COLORES el pincel interno
+    re-evalúa su Color en runtime y toda la cadena queda azul.
+
+    Este diccionario se mergea DESPUÉS de XamlControlsResources en App.xaml
+    para que sus claves ganen el lookup.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+<!-- Azul de la app (mismo #8AB4F8 que AccentBrush) -->
+            <Color x:Key="SystemAccentColor">#FF8AB4F8</Color>
+            <Color x:Key="SystemAccentColorLight1">#FFA2C2FA</Color>
+            <Color x:Key="SystemAccentColorLight2">#FF8AB4F8</Color>
+            <Color x:Key="SystemAccentColorLight3">#FF78A9F7</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF6D9EF6</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF5A90F4</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF4782F3</Color>
+
+            <SolidColorBrush x:Key="SystemAccentColorBrush" Color="#FF8AB4F8"/>
+            <SolidColorBrush x:Key="SystemAccentColorForegroundBrush" Color="#FF101418"/>
+
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF8AB4F8"/>
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF8AB4F8" Opacity="0.9"/>
+            <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF8AB4F8" Opacity="0.8"/>
+
+<!-- Desplegables (ComboBox / MenuFlyout): en vez del acrylic translúcido de
+             WinUI (que ignora la apariencia de la app), el popup usa el MISMO
+             color de las cards, y los items usan los hovers/selecciones de las
+             cards (CardHoverBrush / CardSelectedBrush). -->
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#FF1A1A1C"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerPressed" Color="#FF202022"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#FF3A3A3C"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#FF3A3A3C"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FF242424"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FF262626"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FF2A2A2C"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FF262626"/>
+
+<!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
+                 XamlControlsResources (si se define solo en el raíz de App.xaml,
+                 WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
+                 cards (#151517) para que toda la UI sea un solo bloque. -->
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF0C0C0E"/>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="SystemAccentColor">#FF3D7EDB</Color>
+            <Color x:Key="SystemAccentColorLight1">#FF5590E0</Color>
+            <Color x:Key="SystemAccentColorLight2">#FF3D7EDB</Color>
+            <Color x:Key="SystemAccentColorLight3">#FF2A6FCE</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF2C63B8</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF2554A1</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF1F4589</Color>
+
+            <SolidColorBrush x:Key="SystemAccentColorBrush" Color="#FF3D7EDB"/>
+            <SolidColorBrush x:Key="SystemAccentColorForegroundBrush" Color="#FF101418"/>
+
+            <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF3D7EDB"/>
+            <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#FF3D7EDB" Opacity="0.9"/>
+            <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#FF3D7EDB" Opacity="0.8"/>
+
+<!-- Desplegables (ComboBox / MenuFlyout): popup blanco como las cards,
+             con el mismo borde y hovers/selecciones de cards del tema claro. -->
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#FFF7F8FA"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerPressed" Color="#FFEDEFF2"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#FFD8DDE3"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#FFD8DDE3"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FFF0F2F5"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FFE2E9F6"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FFD8E3F3"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FFE2E9F6"/>
+
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+<!-- Separador del navbar (entre el menú principal y el footer de
+         Configuración): el default de WinUI es 0,3,0,4 (asimétrico).
+         Lo hacemos simétrico 0,4,0,4. Theme-independent: va al nivel raíz
+         del diccionario y gana por orden de merge en App.xaml. -->
+    <Thickness x:Key="NavigationViewItemSeparatorMargin">0,4,0,4</Thickness>
+
+</ResourceDictionary>
