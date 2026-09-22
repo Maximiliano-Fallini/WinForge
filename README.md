@@ -48,7 +48,7 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 
 | Componente | Qué hace |
 |---|---|
-| 🌐 **TCP / Red avanzado** | Stack TCP estilo TCP Optimizer (Nagle, congestión, ECN, timestamps, RSS, Fast Open, autotuning, MTU) + **propiedades del adaptador** (velocidad/duplex, control de flujo, moderación de interrupciones, EEE, Ethernet verde y ahorro de energía — por adaptador, con selector de interfaz) |
+| 🎛️ **Propiedades del adaptador de red** | Velocidad/duplex, control de flujo, moderación de interrupciones, EEE, Ethernet verde y ahorro de energía — por adaptador, con selector de interfaz |
 | 🕒 **Resolución del temporizador** | Timer resolution + keep-alive al minimizar a bandeja |
 | ⚡ **Overclock USB** | Polling rate de mouses/teclados/mandos vía filtro kernel (SweetLow), con medidor de latencia de entrada nativo |
 | ⌨️ **Filtro de teclas** | Repetición del teclado en milisegundos y filtro de pulsaciones (FilterKeys) |
