@@ -14,12 +14,14 @@
 
 <p align="center">
   La app se adapta al idioma de tu Windows (o lo elegís vos desde el selector de banderas del navbar) — se traduce al instante, sin reiniciar.<br/>
-  <code>es-AR</code>&ensp;<code>en-US</code>&ensp;<code>pt-BR</code>&ensp;<code>de-DE</code>&ensp;<code>fr-FR</code><br/><br/>
+  <code>es-AR</code> y <code>en-US</code> vienen integrados; <code>pt-BR</code>, <code>de-DE</code>, <code>fr-FR</code>, <code>zh-CN</code> y <code>ru-RU</code> se descargan como packs desde GitHub en un clic.<br/><br/>
   <img src="assets/flags/ar.png" height="26" alt="es-AR" title="Español (es-AR)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/us.png" height="26" alt="en-US" title="English (en-US)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/br.png" height="26" alt="pt-BR" title="Português (pt-BR)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/de.png" height="26" alt="de-DE" title="Deutsch (de-DE)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/fr.png" height="26" alt="fr-FR" title="Français (fr-FR)" hspace="8"/>
+  <img src="assets/flags/fr.png" height="26" alt="fr-FR" title="Français (fr-FR)" hspace="8"/>&nbsp;&nbsp;
+  <img src="assets/flags/cn.png" height="26" alt="zh-CN" title="简体中文 (zh-CN)" hspace="8"/>&nbsp;&nbsp;
+  <img src="assets/flags/ru.png" height="26" alt="ru-RU" title="Русский (ru-RU)" hspace="8"/>
 </p>
 
 ## ✨ ¿Qué hace?
@@ -33,31 +35,39 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 - **Notificaciones silenciadas** durante la partida (modo "solo alarmas"), restauradas al salir.
 
 ### 🕹️ Biblioteca de juegos con reglas por juego
-- Detecta juegos instalados desde **Steam, Epic, Battle.net, GOG, Xbox, Riot** y más.
-- **Detección de emuladores**: RetroArch, Dolphin, PCSX2, RPCS3, Cemu, MAME, PPSSPP, Ryujinx, Lime3DS, Mesen, bsnes y FBNeo — cada uno aparece como una card lanzable en la biblioteca.
+- Detecta juegos instalados desde **Steam, Epic, Battle.net, GOG, Xbox, EA, Ubisoft, Riot, itch.io, Amazon Games** y juegos independientes.
+- **Detección de emuladores**: RetroArch, Dolphin, PCSX2, RPCS3, Cemu, MAME, PPSSPP, Ryujinx, Yuzu (y forks Sudachi/Suyu), Lime3DS/Citra, Azahar, DuckStation, Xenia, Xemu, mGBA, Project64, melonDS, DeSmuME, ScummVM, Mesen, bsnes, FBNeo y emuladores Android (BlueStacks 5, LDPlayer, Nox, MEmu, GameLoop…) — cada uno aparece como una card lanzable en la biblioteca.
 - **Reglas por juego**: prioridad de CPU, afinidad de núcleos, prioridad de GPU, prioridad de E/S y plan de energía — con alcance *"Actual"* (solo la apertura actual) o *"Siempre"* (persistente).
 - **Detección inteligente**: eventos WMI (cero polling) + detector de ventana fullscreen en primer plano para juegos fuera de la biblioteca (itch.io, DRM-free…).
 - **Lanzamiento desde la bandeja**: click derecho en el ícono → elegí un favorito y el juego arranca con la lógica correcta para cada launcher.
 
 ### 🧩 Workshop — instalá solo lo que usás
 - La app arranca con las 5 pestañas esenciales: **Sistema, Red, Núcleos y Plan de energía, Biblioteca de juegos y Workshop** (más Configuración).
-- El resto de las funciones viven ahora en el **Workshop** como componentes: instalás con un click y la pestaña aparece en el navbar al instante; podés desinstalarlas cuando quieras y reinstalarlas sin perder tu configuración. Reordená las pestañas arrastrándolas.
-- Catálogo de componentes **descargables** desde GitHub con verificación de integridad (SHA-256), actualización y desinstalación real desde la app.
+- El resto de las funciones viven ahora en el **Workshop** como componentes: se instalan desde la app (los integrados de fábrica) o se descargan desde GitHub con verificación de integridad (SHA-256); la pestaña aparece en el navbar al instante. Podés ocultarlas o desinstalarlas cuando quieras y reinstalarlas sin perder tu configuración. Reordená las pestañas arrastrándolas.
 
-**Componentes disponibles en el Workshop:**
+**Componentes disponibles en el Workshop (integrados en la app):**
 
 | Componente | Qué hace |
 |---|---|
-| 🔧 **Control de ventiladores** | Curvas PWM por sensor (CPU/GPU/placa) vía driver PawnIO, con autostart al iniciar sesión |
-| 🌐 **TCP / Red avanzado** | Stack TCP estilo TCP Optimizer (Nagle, congestión, ECN, RSS, Fast Open) + **Reglas de Windows** (limitación multimedia, SystemResponsiveness, puertos efímeros, TIME_WAIT, caché, LSO) con presets *Rendimiento* / *Ecológico* y restauración a defaults |
-| 🎛️ **Propiedades del adaptador** | Velocidad/duplex, control de flujo, moderación de interrupciones, EEE, Ethernet verde y ahorro de energía — por adaptador, con selector de interfaz |
-| 🖥️ **Overlay de métricas** | FPS, 1% low, CPU, GPU, RAM y temperaturas en el juego, customizable y con atajos |
-| ⚡ **Overclock USB** | Polling rate de mouses/teclados/mandos vía filtro kernel (SweetLow) |
+| 🌐 **TCP / Red avanzado** | Stack TCP estilo TCP Optimizer (Nagle, congestión, ECN, timestamps, RSS, Fast Open, autotuning, MTU) + **propiedades del adaptador** (velocidad/duplex, control de flujo, moderación de interrupciones, EEE, Ethernet verde y ahorro de energía — por adaptador, con selector de interfaz) |
 | 🕒 **Resolución del temporizador** | Timer resolution + keep-alive al minimizar a bandeja |
-| ⌨️ **Filtro de teclas / Macros / Autoclicker** | Repetición, macros con hotkey global y clicks automáticos |
+| ⚡ **Overclock USB** | Polling rate de mouses/teclados/mandos vía filtro kernel (SweetLow), con medidor de latencia de entrada nativo |
+| ⌨️ **Filtro de teclas** | Repetición del teclado en milisegundos y filtro de pulsaciones (FilterKeys) |
 | 🧠 **Memoria** | Limpieza inteligente y automática de la caché RAM |
-| 📈 **Sensores / Estabilidad / Procesos** | Monitoreo en vivo, test de estrés y gestor de procesos |
-| 🧹 **Debloat / Limpieza / Reparación / Windows Update** | Mantenimiento completo del sistema |
+| 🚀 **Optimizaciones** | Tweaks de rendimiento de Windows |
+| 📈 **Monitor de sensores** | Temperaturas, voltajes y frecuencias en vivo (CPU/GPU/placa) |
+| 🔧 **Control de ventiladores** | Curvas PWM por sensor (CPU/GPU/placa) vía driver PawnIO, con autostart al iniciar sesión |
+| 📊 **Gestión de procesos** | Gestor de procesos con recursos, prioridades y estados |
+| 🧪 **Test de estabilidad** | Pruebas de estrés para validar la estabilidad del equipo |
+| 🖥️ **Overlay de métricas** | FPS, 1% low, CPU, GPU, RAM y temperaturas en el juego, customizable y con atajos |
+| 🎮 **Macros** | Secuencias de teclas y clics con atajo global |
+| 🖱️ **Autoclicker** | Clics automáticos configurables con hotkey global |
+| 🧹 **Debloat** | Quitá apps y servicios preinstalados de Windows que no usás |
+| 🧰 **Herramientas y funciones** | Funciones opcionales de Windows y utilidades de reparación de un solo uso |
+| 🪟 **Panel de Windows** | Accesos directos a paneles y configuraciones ocultas de Windows |
+| 🛠️ **Reparación** | SFC, DISM y reparaciones del sistema en un solo lugar |
+| 🔄 **Windows Update** | Gestión de las actualizaciones de Windows y de la app |
+| 🧽 **Limpieza del dispositivo** | Caché, temporales, duplicados, inicio del sistema y limpiador de registro con backup |
 
 ### 📊 Monitoreo
 - CPU, memoria, red, sensores de temperatura (CPU/GPU), núcleos y uso en vivo.
