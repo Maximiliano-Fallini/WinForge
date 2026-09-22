@@ -13,8 +13,7 @@
 <h2 align="center">🌐 Multilenguaje</h2>
 
 <p align="center">
-  La app se adapta al idioma de tu Windows (o lo elegís vos desde el selector de banderas del navbar) — se traduce al instante, sin reiniciar.<br/>
-  <code>es-AR</code> y <code>en-US</code> vienen integrados; <code>pt-BR</code>, <code>de-DE</code>, <code>fr-FR</code>, <code>zh-CN</code> y <code>ru-RU</code> se descargan como packs desde GitHub en un clic.<br/><br/>
+<br/><br/>
   <img src="assets/flags/ar.png" height="26" alt="es-AR" title="Español (es-AR)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/us.png" height="26" alt="en-US" title="English (en-US)" hspace="8"/>&nbsp;&nbsp;
   <img src="assets/flags/br.png" height="26" alt="pt-BR" title="Português (pt-BR)" hspace="8"/>&nbsp;&nbsp;
