@@ -104,17 +104,6 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
 </p>
 
-## 🩺 Si la instalación parece quedarse quieta
-
-Cada instalación deja un registro propio en `%TEMP%` (`MSI*.LOG`): ahí queda escrito, paso por paso, qué estaba haciendo el instalador y qué error apareció. Si algo se traba, eso es lo primero que hay que mirar.
-
-Antes de eso, lo que resuelve el 95% de los casos:
-
-1. **Corré el instalador desde una carpeta local** (Descargas, Escritorio). Nunca desde adentro de un ZIP abierto, ni desde una carpeta de red o un USB que se esté desconectando.
-2. **Cerrá WinForge y otras instalaciones** que puedan estar corriendo (Windows no puede reemplazar un archivo en uso).
-3. **Reiniciá el equipo y reintentá**: deja el instalador de Windows limpio (una instalación anterior interrumpida puede dejarlo ocupado).
-4. Si sigue igual, mandanos el último `%TEMP%\MSI*.LOG` en un [issue](https://github.com/Maximiliano-Fallini/WinForge/issues): con eso sabemos exactamente dónde se frenó.
-
 ## ⭐ Apoyá el proyecto
 
 <div align="center">
