@@ -46,6 +46,9 @@ function Escape-Xml([string] $Value) {
 
 $files = Get-ChildItem -Path $publish -Recurse -File |
     Where-Object { $_.FullName -notmatch '\\publish\\publish\\' } |
+    # Los .pdb (símbolos de depuración) NO viajan al MSI: no hacen falta en runtime y
+    # publicarlos en la instalación de cada usuario no aporta nada.
+    Where-Object { $_.Extension -ne '.pdb' } |
     Sort-Object FullName
 
 if ($files.Count -eq 0) { throw "El publish esta vacio ($publish)." }

@@ -86,8 +86,8 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.0/WinForge-0.1.0.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.0_|_88.8_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge v0.1.0 (88.8 MB)"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.1/WinForge-0.1.1.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.1_|_88.4_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge v0.1.1 (88.4 MB)"/>
   </a>
   <br/>
   <sub>22/09/2026 - UTC-3.</sub>
@@ -103,6 +103,17 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
   <br/>
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
 </p>
+
+## 🩺 Si la instalación parece quedarse quieta
+
+Cada instalación deja un registro propio en `%TEMP%` (`MSI*.LOG`): ahí queda escrito, paso por paso, qué estaba haciendo el instalador y qué error apareció. Si algo se traba, eso es lo primero que hay que mirar.
+
+Antes de eso, lo que resuelve el 95% de los casos:
+
+1. **Corré el instalador desde una carpeta local** (Descargas, Escritorio). Nunca desde adentro de un ZIP abierto, ni desde una carpeta de red o un USB que se esté desconectando.
+2. **Cerrá WinForge y otras instalaciones** que puedan estar corriendo (Windows no puede reemplazar un archivo en uso).
+3. **Reiniciá el equipo y reintentá**: deja el instalador de Windows limpio (una instalación anterior interrumpida puede dejarlo ocupado).
+4. Si sigue igual, mandanos el último `%TEMP%\MSI*.LOG` en un [issue](https://github.com/Maximiliano-Fallini/WinForge/issues): con eso sabemos exactamente dónde se frenó.
 
 ## ⭐ Apoyá el proyecto
 

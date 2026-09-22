@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- net462: target que usa este proyecto (build-installer.ps1 toma la dll de
+         bin\Debug\net462). DTF trae su API para net20, así que corre sin problema
+         en .NET Framework 4.6.2, que es lo que el motor del MSI puede cargar. -->
+    <TargetFramework>net462</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>PostUpdateCA</AssemblyName>
+    <RootNamespace>PostUpdateCA</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- API de Windows Installer (Session, ActionResult, [CustomAction]) para DTF 7:
+         el namespace cambió a WixToolset.Dtf.WindowsInstaller. -->
+    <PackageReference Include="WixToolset.Dtf.WindowsInstaller" Version="7.0.0" />
+    <!-- Trae WixToolset.Dtf.MakeSfxCA y los targets que arman X.CA.dll (el stub que
+         entiende el motor de Windows Installer). -->
+    <PackageReference Include="WixToolset.Dtf.CustomAction" Version="7.0.0" />
+    <!-- Ensamblados de referencia de .NET Framework: permiten compilar net462 sin
+         tener Visual Studio instalado (con el SDK alcanza). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- System.Management (WMI): la CA temprana de exclusiones de Defender llama al método
+         Add de MSFT_MpPreference, que es lo que hace Add-MpPreference por dentro. Es parte
+         de .NET Framework, pero se referencia explícito para no depender del set por defecto
+         del SDK. -->
+    <Reference Include="System.Management" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CustomAction.config: sin este archivo la CA no carga. El stub SfxCA del motor de
+         Windows Installer intenta enlazar con CLR 2.0 (v2.0.50727) y un ensamblado
+         compilado para .NET 4.6.2 falla con BadImageFormatException ("se creó con un
+         tiempo de ejecución más reciente que el tiempo de ejecución cargado"). SfxCA lee
+         este archivo para saber qué runtime pedir, así que tiene que llamarse exactamente
+         así y viajar dentro de PostUpdateCA.CA.dll. CopyToOutputDirectory lo deja en la
+         carpeta de salida para que MakeSfxCA (que empaqueta los items Content) lo incluya. -->
+    <None Remove="CustomAction.config" />
+    <Content Include="CustomAction.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

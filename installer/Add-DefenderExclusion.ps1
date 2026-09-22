@@ -19,6 +19,12 @@
         powershell -ExecutionPolicy Bypass -File Add-DefenderExclusion.ps1 `
             -Paths "C:\Program Files\WinForge" -IncludeDataFolder -Remove
 
+    NOTA: el instalador aplica las mismas exclusiones ANTES de copiar los archivos, con las
+    CustomActions administradas de DefenderExclusionCA.cs (llamada WMI con tope de tiempo).
+    Ese es el paso que evita el forcejeo con el antivirus durante la copia; este script es la
+    pasada de verificacion posterior (y la que deja el log en %TEMP%), asi que lo normal es
+    que lo encuentre todo ya aplicado.
+
     Reglas del script, para que no pueda mentir:
       * Verifica contra el REGISTRO de Defender (HKLM\...\Windows Defender\Exclusions),
         que es donde Defender guarda el estado real. No usa Get-MpPreference para
