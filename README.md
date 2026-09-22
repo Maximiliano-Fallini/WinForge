@@ -87,11 +87,11 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.1.0/WinForge-0.1.0.msi">
     <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge"/>
   </a>
   <br/>
-  <sub>El instalador (MSI) está en la última release.</sub>
+  <sub>Instalador MSI v0.1.0 (88.8 MB) — o mirá <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">todas las releases</a>.</sub>
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">

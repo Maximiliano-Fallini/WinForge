@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <!-- ProductCode: nuevo por versión porque cambió el contenido (major upgrade)
+       (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
+  <Package Name="WinForge"
+           Manufacturer="WinForge"
+           Version="0.1.0"
+           ProductCode="{C4D8E2A1-7B3F-4E69-9A5C-8D1F0B6E4A72}"
+           UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
+           Language="3082"
+           Scope="perMachine"
+           InstallerVersion="500">
+
+    <!-- Actualizaciones: reemplaza la versión anterior sin dejar restos -->
+    <MajorUpgrade DowngradeErrorMessage="Ya existe una versión más reciente de WinForge instalada." />
+
+    <!-- Todo comprimido dentro del .msi (un solo archivo) -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+
+    <!-- Icono para accesos directos y el panel de Programas -->
+    <Icon Id="WinForgeIco" SourceFile="publish\Assets\WinForge.ico" />
+    <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
+    <Property Id="ARPPUBLISHER" Value="WinForge" />
+    <Property Id="ARPCONTACT" Value="WinForge" />
+    <Property Id="ARPCOMMENTS" Value="WinForge 0.1.0 Beta - optimizador y monitor del sistema" />
+
+    <!-- ===== Exclusiones de Windows Defender =====
+         Por que: WinForge es un ejecutable sin firmar que modifica ajustes del sistema,
+         escribe en el registro, instala servicios y trae un filtro de driver de kernel
+         para el overclock de USB. Ese es el perfil exacto que el análisis heurístico de
+         Defender marca como sospechoso: sin la exclusión, el .exe queda bloqueado o en
+         cuarentena y la app directamente no abre.
+
+         DEFENDEREXCLUSION vale 1 por defecto y el check del asistente (UI.wxs) lo
+         muestra marcado y deshabilitado: la app necesita esto para funcionar, así que
+         también se aplica en las instalaciones silenciosas del actualizador. La única
+         manera de saltearlo es pedirlo a propósito por línea de comandos
+         (DEFENDEREXCLUSION=0).
+
+         La CA corre el script Add-DefenderExclusion.ps1 que viaja dentro de la carpeta
+         de instalación: agrega las exclusiones, las LEE de nuevo para comprobar que
+         quedaron y devuelve un código de salida cuando no (por ejemplo si el antivirus
+         activo es de terceros, o si una política de la máquina las bloquea). No inventa
+         éxito: si no quedaron aplicadas, lo dice en el log del instalador. -->
+    <Property Id="DEFENDEREXCLUSION" Value="1" Secure="yes" />
+
+    <!-- La ruta del script va ESCRITA en el comando, con [INSTALLFOLDER]: se comprobó
+         (MSI de sonda) que en una CA diferida ese formateo sí se resuelve, mientras que
+         [CustomActionData] llegaba vacío y PowerShell terminaba con 0xFFFD0000 ("no
+         encuentro el script"). Y powershell.exe no está en System32, sino en
+         WindowsPowerShell\v1.0\: apuntar a System32\powershell.exe hacía que la CA no
+         ejecutara nada.
+
+         -IncludeDataFolder: además de la carpeta de instalación se excluye la carpeta
+         de datos de la app (%LOCALAPPDATA%\WHPO), que es de donde salen los componentes
+         y el instalador que la app baja después. La CA es impersonated justamente para
+         que ese %LOCALAPPDATA% sea el del usuario que instala y no el del sistema
+         (medido: el token impersonado es el del usuario con permisos de administrador,
+         y desde ahí Defender acepta las exclusiones incluso con la protección contra
+         alteraciones activada). -->
+    <CustomAction Id="AddDefenderExclusion"
+                  Directory="System64Folder"
+                  ExeCommand="WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Add-DefenderExclusion.ps1&quot; -IncludeDataFolder"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+
+    <!-- Al desinstalar se quitan las mismas exclusiones: dejar una carpeta excluida
+         para siempre después de borrar la app sería ensuciar la seguridad del equipo.
+         Mismo comando con la ruta escrita y -Remove. -->
+    <CustomAction Id="RemoveDefenderExclusion"
+                  Directory="System64Folder"
+                  ExeCommand="WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Add-DefenderExclusion.ps1&quot; -IncludeDataFolder -Remove"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+
+    <!-- Cierra WinForge antes de desinstalar/actualizar para que los archivos no queden en uso -->
+    <CustomAction Id="KillWinForge"
+                  Directory="System64Folder"
+                  ExeCommand="taskkill.exe /IM WinForge.exe /F"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+    <!-- Borra la tarea programada de inicio automático (la crea la app con
+         schtasks al activar "Iniciar con Windows"). Sin comillas anidadas: el
+         comando es simple y no hay riesgo de quoting en el motor del MSI. -->
+    <CustomAction Id="DeleteStartupTask"
+                  Directory="System64Folder"
+                  ExeCommand="schtasks.exe /Delete /F /TN WHPO"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- PROPERTY_PATH: línea de comandos con la que el auto-updater quiere que
+         la app se reabra al terminar la instalación. Secure="yes" es obligatorio:
+         las propiedades que pasa msiexec por línea de comandos solo llegan a la
+         porción elevada del instalador si están en SecureCustomProperties. -->
+    <Property Id="PROPERTY_PATH" Secure="yes" />
+
+    <!-- CustomAction administrado (C#) que reabre WinForge después de la
+         actualización: el auto-updater de la app descarga el MSI y lo instala
+         silencioso pasándole PROPERTY_PATH con la línea de comandos actual
+         ("C:\...\WinForge.exe" más sus argumentos); el instalador vuelve a abrir
+         la app con esa línea al terminar. Son dos CA sobre la misma dll: una
+         inmediata (SetLaunchCommandData) copia la propiedad a CustomActionData,
+         único canal legible por una CA diferida, y la diferida
+         (RunWinForgeAfterUpgrade) crea el proceso. -->
+    <Binary Id="PostUpdateCA" SourceFile="PostUpdateCA.CA.dll" />
+    <CustomAction Id="SetLaunchCommandData"
+                  BinaryRef="PostUpdateCA"
+                  DllEntry="SetLaunchCommandData"
+                  Return="ignore" />
+    <CustomAction Id="RunWinForgeAfterUpgrade"
+                  BinaryRef="PostUpdateCA"
+                  DllEntry="LaunchAfterUpgrade"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="KillWinForge" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+      <Custom Action="DeleteStartupTask" After="KillWinForge" Condition="REMOVE=&quot;ALL&quot;" />
+      <!-- Después de instalar (commit) solo en instalaciones nuevas o upgrades:
+           primero la CA inmediata copia PROPERTY_PATH a CustomActionData y luego
+           la diferida reabre la app con esa línea. La creación del proceso se
+           atrasa ~1 s porque el MSI cierra WinForge con taskkill y puede seguir vivo
+           unos milisegundos al terminar la instalación. -->
+      <Custom Action="SetLaunchCommandData" Before="RunWinForgeAfterUpgrade" Condition="NOT REMOVE=&quot;ALL&quot;" />
+      <Custom Action="RunWinForgeAfterUpgrade" Before="InstallFinalize" Condition="NOT REMOVE=&quot;ALL&quot;" />
+      <!-- Exclusiones de Defender: después de copiar los archivos (el script tiene
+           que estar en disco) y antes de borrarlos al desinstalar. -->
+      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT REMOVE=&quot;ALL&quot; AND DEFENDEREXCLUSION=&quot;1&quot;" />
+      <Custom Action="RemoveDefenderExclusion" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <!-- Secuencia de la interfaz (los diálogos están en UI.wxs). Dos reglas del motor
+         de Windows Installer que importan acá:
+           * el diálogo que tiene la barra de progreso se muestra durante la copia de
+             archivos solo si es el inmediatamente anterior a ExecuteAction;
+           * el diálogo siguiente se muestra cuando ExecuteAction termina, por eso el
+             de fin va después y con condición (instaló o desinstaló).
+         El paquete se puede instalar en silencio (el actualizador lo hace así): en ese
+         caso nada de esto se ejecuta. -->
+    <InstallUISequence>
+      <Show Dialog="WFDirDlg" Before="WFProgressDlg" Condition="NOT Installed" />
+      <Show Dialog="WFMaintDlg" Before="WFProgressDlg" Condition="Installed" />
+      <Show Dialog="WFProgressDlg" Before="ExecuteAction" />
+      <!-- El motor de Windows Installer busca en esta secuencia las filas 'Exit'
+           (terminó bien), 'FatalError' (falló) y 'UserExit' (el usuario canceló):
+           esos nombres son fijos. El prefijo 'virtual' es lo que los da sin renombrar
+           los diálogos, que siguen siendo los propios y en español (ver UI.wxs).
+
+           El de fin es uno solo para los dos casos (instaló o desinstaló): los textos
+           cambian por condición dentro del diálogo, así no aparecen dos ventanas. -->
+      <Show Dialog="virtual WFFinishDlg" OnExit="success" />
+      <Show Dialog="virtual WFFatalErrorDlg" OnExit="error" />
+      <Show Dialog="virtual WFUserExitDlg" OnExit="cancel" />
+    </InstallUISequence>
+
+    <!-- La instalación administrativa (msiexec /a) también valida la interfaz:
+         los mismos tres diálogos, sin el flujo del asistente. -->
+    <AdminUISequence>
+      <Show Dialog="virtual WFFinishDlg" OnExit="success" />
+      <Show Dialog="virtual WFFatalErrorDlg" OnExit="error" />
+      <Show Dialog="virtual WFUserExitDlg" OnExit="cancel" />
+    </AdminUISequence>
+
+    <!-- UI con los diálogos propios de WinForge (ver UI.wxs) -->
+    <UIRef Id="WixUI_WinForge" />
+    <!-- Los que muestra el motor por su cuenta: error fatal, cancelación, fin, archivos
+         en uso y el de error no fatal (ver UI.wxs). -->
+    <UIRef Id="WixUI_WinForgeErrores" />
+
+    <!-- WixUI_Common de la extensión de WiX aporta la tabla de textos internos del motor
+         (bytes, MB, nombres de menú, etc.) y una UI vacía que existe solo para poder
+         referenciarla. Ojo: NO trae los diálogos estándar — esos se escribieron a mano
+         en UI.wxs, en español. -->
+    <ui:WixUI Id="WixUI_Common" />
+    <!-- Además del anterior (que resuelve a la UI vacía de la plataforma), esto trae el
+         fragmento con los textos internos y los binarios de la extensión: sin él, el
+         ícono del diálogo de error del motor queda apuntando a un binario que no existe
+         (ICE17). -->
+    <UIRef Id="WixUI_Common" />
+
+
+
+    <!-- Selección de pestañas elegida en el instalador: HKLM\Software\WinForge\InstallTabs\<tag>
+         = "1" visible / vacío oculto. La app la aplica en su primer arranque.
+         Nota: desde que el Workshop instala los componentes, la app lee SOLO el set core
+         (ComponentRegistry.CoreTags: sistema, red, nucleos, procesos, workshop,
+         configuracion) e ignora el resto; los valores de los tags no core quedan acá por
+         compatibilidad con instalaciones viejas. -->
+    <Component Id="Cmp_InstallTabs" Guid="{8E3D1A52-4B4E-4A1E-9C22-6F0D7E2B3A11}">
+      <RegistryValue Root="HKLM" Key="Software\WinForge\InstallTabs" Name="sistema" Value="1" Type="string" KeyPath="yes" />
+      <RegistryValue Root="HKLM" Key="Software\WinForge\InstallTabs" Name="red" Value="1" Type="string" />
+      <RegistryValue Root="HKLM" Key="Software\WinForge\InstallTabs" Name="memoria" Value="1" Type="string" />
+      <RegistryValue Root="HKLM" Key="Software\WinForge\InstallTabs" Name="nucleos" Value="1" Type="string" />
+      <RegistryValue Root="HKLM" Key="Software\WinForge\InstallTabs" Name="teclado" Value="1" Type="string" />
+      <RegistryValue Root="HKLM" Key="Software\WinForge\InstallTabs" Name="configuracion" Value="1" Type="string" />
+      <!-- Marca de primer arranque: la app crea la tarea de inicio automático
+           con su propio mecanismo schtasks al abrirse por primera vez tras la
+           instalación, así "Iniciar con Windows" funciona de entrada en
+           cualquier máquina. La app borra el valor al consumirlo. -->
+      <RegistryValue Root="HKLM" Key="Software\WinForge" Name="FirstRunStartup" Value="1" Type="string" />
+    </Component>
+
+    <!-- Acceso directo en el escritorio -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="Cmp_DesktopShortcut" Guid="{249C137C-68B4-456B-AC14-3B87FE545357}">
+        <Shortcut Id="DesktopShortcut"
+                  Name="WinForge"
+                  Target="[INSTALLFOLDER]WinForge.exe"
+                  Icon="WinForgeIco"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <!-- KeyPath HKCU: ICE43 lo exige para accesos directos no anunciados (estandar MSI) -->
+        <RegistryValue Root="HKCU" Key="Software\WinForge" Name="desktopShortcut" Value="1" Type="integer" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- Menú Inicio: lanzar + desinstalar -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="StartMenuWinForge" Name="WinForge">
+        <Component Id="Cmp_StartMenuShortcuts" Guid="{D603F0F3-3959-4235-8F15-9C4C5DE87874}">
+          <Shortcut Id="StartMenuShortcut"
+                    Name="WinForge"
+                    Target="[INSTALLFOLDER]WinForge.exe"
+                    Icon="WinForgeIco"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <Shortcut Id="UninstallShortcut"
+                    Name="Desinstalar WinForge"
+                    Target="[System64Folder]msiexec.exe"
+                    Arguments="/x [ProductCode]" />
+          <RemoveFolder Id="RemoveStartMenuWinForge" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\WinForge" Name="startMenuShortcuts" Value="1" Type="integer" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="WinForge" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="Cmp_DesktopShortcut" />
+      <ComponentRef Id="Cmp_StartMenuShortcuts" />
+      <ComponentRef Id="Cmp_InstallTabs" />
+    </Feature>
+  </Package>
+</Wix>

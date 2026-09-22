@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- Los diálogos de error fatal, salida, archivos en uso y fuentes NO se definen acá:
+       vienen de WixUI_Common (ver Product.wxs), que es el conjunto de la extensión de
+       WiX hecho justamente para eso. Acá está solo el asistente de WinForge. -->
+  <!-- =========================================================================
+       Interfaz del instalador (Id="WixUI_WinForge", referenciada por Product.wxs).
+
+       Es una UI propia, escrita a mano, y no el set genérico de la extensión de
+       WiX: así no dependemos de sus diálogos ni arrastramos páginas que ya no
+       aplican. Las páginas son:
+
+         WFDirDlg     instalación nueva: carpeta + check de Windows Defender
+         WFMaintDlg   ya instalado: reparar o quitar
+         WFVerifyDlg  última confirmación antes de copiar archivos
+         WFProgressDlg barra de progreso (la muestra el motor durante la copia)
+         WFFinishDlg  terminó bien
+         WFRemovedDlg terminó la desinstalación
+         WFCancelDlg  confirmación de cancelar
+
+       Sobre la selección de pestañas: el instalador viejo tenía una página con las
+       pestañas a mostrar (propiedades WF_TAB_*). Desde que el Workshop instala los
+       componentes, la app LEE SOLO el set core (ComponentRegistry.CoreTags) e
+       ignora el resto, así que una página con esos checks sería una mentira: se
+       sacó a propósito y los valores de respaldo quedan en Product.wxs.
+
+       El check de Defender es obligatorio de verdad: aparece marcado y deshabilitado
+       (Property=DEFENDEREXCLUSION, que vale 1 por defecto), así que la CustomAction
+       siempre corre. La única manera de saltearlo es pedirlo por línea de comandos
+       (DEFENDEREXCLUSION=0 en una instalación silenciosa).
+       ========================================================================= -->
+  <Fragment>
+    <UI Id="WixUI_WinForge">
+
+      <!-- ===== Instalación nueva ===== -->
+      <Dialog Id="WFDirDlg" Width="370" Height="270" Title="Instalar WinForge" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="Instalar WinForge" />
+        <Control Id="Intro" Type="Text" X="15" Y="40" Width="340" Height="34" NoPrefix="yes" Transparent="yes"
+                 Text="Se va a instalar WinForge (optimizador, monitor y herramientas del sistema) en este equipo. La instalación pide permisos de administrador porque modifica ajustes del sistema." />
+        <Control Id="FolderCaption" Type="Text" X="15" Y="80" Width="340" Height="14" NoPrefix="yes" Transparent="yes"
+                 Text="Carpeta de instalación:" />
+        <Control Id="FolderValue" Type="Text" X="15" Y="95" Width="340" Height="14" NoPrefix="yes" Transparent="yes"
+                 Text="[INSTALLFOLDER]" />
+
+        <Control Id="DefenderCheck" Type="CheckBox" X="15" Y="124" Width="340" Height="18"
+                 Property="DEFENDEREXCLUSION" CheckBoxValue="1" Disabled="yes"
+                 Text="Agregar WinForge a las exclusiones de Windows Defender"
+                 ToolTip="WinForge no está firmado digitalmente y modifica ajustes del sistema, servicios y el registro: es el perfil que el análisis de Windows Defender marca como sospechoso. Sin esta exclusión, Defender puede bloquear o poner en cuarentena el ejecutable y la app no abre." />
+        <Control Id="DefenderHelp" Type="Text" X="30" Y="144" Width="325" Height="52" NoPrefix="yes" Transparent="yes"
+                 Text="Se agrega únicamente la carpeta del programa, la carpeta de datos de la app y el nombre del ejecutable: no se excluye nada más del escaneo. Es un paso obligatorio porque sin él la instalación puede terminar con la app bloqueada; si el equipo usa otro antivirus, este paso no cambia nada y el instalador lo avisa en su log." />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="Atrás" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Siguiente">
+          <Publish Event="NewDialog" Value="WFVerifyDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancelar">
+          <Publish Event="SpawnDialog" Value="WFCancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ===== Ya está instalado: reparar o quitar ===== -->
+      <Dialog Id="WFMaintDlg" Width="370" Height="270" Title="WinForge ya está instalado" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="WinForge ya está instalado" />
+        <Control Id="Intro" Type="Text" X="15" Y="46" Width="340" Height="56" NoPrefix="yes" Transparent="yes"
+                 Text="Podés reparar la instalación (vuelve a copiar los archivos, los accesos directos y las exclusiones de Windows Defender) o quitar WinForge de este equipo." />
+        <Control Id="FolderCaption" Type="Text" X="15" Y="108" Width="340" Height="14" NoPrefix="yes" Transparent="yes"
+                 Text="Instalado en:" />
+        <Control Id="FolderValue" Type="Text" X="15" Y="123" Width="340" Height="14" NoPrefix="yes" Transparent="yes"
+                 Text="[INSTALLFOLDER]" />
+
+        <Control Id="Repair" Type="PushButton" X="15" Y="160" Width="90" Height="20" Default="yes" Text="Reparar">
+          <Publish Property="REMOVE" Value="{}" />
+          <Publish Property="REINSTALL" Value="ALL" />
+          <Publish Property="REINSTALLMODE" Value="vomus" />
+          <Publish Event="NewDialog" Value="WFProgressDlg" />
+        </Control>
+        <Control Id="Remove" Type="PushButton" X="112" Y="160" Width="90" Height="20" Text="Quitar">
+          <Publish Property="REINSTALL" Value="{}" />
+          <Publish Property="REMOVE" Value="ALL" />
+          <Publish Event="NewDialog" Value="WFProgressDlg" />
+        </Control>
+
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancelar">
+          <Publish Event="SpawnDialog" Value="WFCancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ===== Última confirmación ===== -->
+      <Dialog Id="WFVerifyDlg" Width="370" Height="270" Title="Listo para instalar" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="Listo para instalar" />
+        <Control Id="Intro" Type="Text" X="15" Y="46" Width="340" Height="60" NoPrefix="yes" Transparent="yes"
+                 Text="WinForge se va a instalar en esta carpeta, se van a agregar las exclusiones de Windows Defender y se van a crear los accesos directos. Al terminar, la app se abre sola." />
+        <Control Id="FolderCaption" Type="Text" X="15" Y="112" Width="340" Height="14" NoPrefix="yes" Transparent="yes"
+                 Text="Carpeta de instalación:" />
+        <Control Id="FolderValue" Type="Text" X="15" Y="127" Width="340" Height="14" NoPrefix="yes" Transparent="yes"
+                 Text="[INSTALLFOLDER]" />
+        <Control Id="Note" Type="Text" X="15" Y="152" Width="340" Height="40" NoPrefix="yes" Transparent="yes"
+                 Text="La instalación puede tardar un minuto: se copian todos los archivos de la app." />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="Atrás">
+          <Publish Event="NewDialog" Value="WFDirDlg" Condition="NOT Installed" />
+          <Publish Event="NewDialog" Value="WFMaintDlg" Condition="Installed" />
+        </Control>
+        <Control Id="Install" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes"
+                 ElevationShield="yes" Text="Instalar">
+          <!-- EndDialog Return devuelve el control a la secuencia de UI: el motor
+               muestra la barra de progreso y ejecuta la instalación de verdad. -->
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancelar">
+          <Publish Event="SpawnDialog" Value="WFCancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- ===== Progreso (lo muestra el motor durante la copia de archivos) ===== -->
+      <Dialog Id="WFProgressDlg" Width="370" Height="270" Title="Trabajando" NoMinimize="yes">
+        <!-- TabSkip="no": la página de progreso no tiene botones, y el motor exige un
+             control al que se pueda ir con el teclado (si no, la ventana queda sin foco). -->
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes" TabSkip="no"
+                 Text="Instalando WinForge" />
+        <Control Id="Intro" Type="Text" X="15" Y="46" Width="340" Height="28" NoPrefix="yes" Transparent="yes"
+                 Text="No cierres esta ventana. Al terminar se agregan las exclusiones de Windows Defender y se abre la app." />
+        <!-- Los Id ActionText / ActionData / ProgressBar son los que usa el motor
+             para contar el avance: no se renombran. -->
+        <Control Id="ActionText" Type="Text" X="15" Y="90" Width="340" Height="16" NoPrefix="yes" Transparent="yes"
+                 Text="[ActionText]" />
+        <Control Id="ActionData" Type="Text" X="15" Y="108" Width="340" Height="16" NoPrefix="yes" Transparent="yes"
+                 Text="[ActionData]" />
+        <Control Id="ProgressBar" Type="ProgressBar" X="15" Y="130" Width="340" Height="12" ProgressBlocks="yes"
+                 Text="Esto puede tardar un minuto." />
+        <Control Id="ProgressText" Type="Text" X="15" Y="150" Width="340" Height="16" NoPrefix="yes" Transparent="yes"
+                 Text="[Progress]" />
+      </Dialog>
+
+      <!-- ===== Terminó bien (instalación o desinstalación) =====
+           Un solo diálogo para los dos casos, con los textos alternados por condición,
+           así no aparecen dos ventanas seguidas. En la secuencia se despliega como
+           "virtual ... OnExit=success": eso le da el nombre estándar Exit que el motor
+           busca (ver Product.wxs) sin tener que llamar al diálogo Exit. -->
+      <Dialog Id="WFFinishDlg" Width="370" Height="270" Title="WinForge" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="WinForge está listo" ShowCondition="NOT REMOVE=&quot;ALL&quot;" />
+        <Control Id="TitleRemoved" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="WinForge se quitó del equipo" ShowCondition="REMOVE=&quot;ALL&quot;" />
+
+        <Control Id="IntroInstall" Type="Text" X="15" Y="46" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
+                 Text="Se copiaron los archivos, se agregaron las exclusiones de Windows Defender y se crearon los accesos directos."
+                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" />
+        <Control Id="HintInstall" Type="Text" X="15" Y="98" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
+                 Text="Si alguna vez Windows Defender bloquea la app, revisá que la carpeta siga en la lista de exclusiones: está en Seguridad de Windows, Protección contra virus y amenazas."
+                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" />
+
+        <Control Id="IntroRemoved" Type="Text" X="15" Y="46" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
+                 Text="Se borraron los archivos y los accesos directos, y también las exclusiones de Windows Defender que había agregado el instalador."
+                 ShowCondition="REMOVE=&quot;ALL&quot;" />
+        <Control Id="HintRemoved" Type="Text" X="15" Y="98" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
+                 Text="Tus datos (configuración, componentes descargados) quedan en tu perfil por si volvés a instalar."
+                 ShowCondition="REMOVE=&quot;ALL&quot;" />
+
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="Finalizar">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <!-- ===== Confirmar cancelación ===== -->
+      <Dialog Id="WFCancelDlg" Width="260" Height="85" Title="Cancelar" NoMinimize="yes">
+        <Control Id="Question" Type="Text" X="48" Y="15" Width="194" Height="30" NoPrefix="yes"
+                 Text="¿Seguro que querés cancelar? No se va a cambiar nada en el equipo." />
+        <Control Id="Yes" Type="PushButton" X="72" Y="57" Width="56" Height="17" Default="yes" Text="Sí">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="No" Type="PushButton" X="132" Y="57" Width="56" Height="17" Cancel="yes" Text="No">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+    </UI>
+  </Fragment>
+
+  <!-- =========================================================================
+       Diálogos que el MOTOR de Windows Installer muestra por su cuenta, no el flujo
+       del asistente: cuando la instalación falla, cuando el usuario cancela, cuando
+       un archivo está en uso y cuando el motor necesita preguntar algo.
+
+       Se escriben acá a mano y en español (en vez de usar los de la extensión de WiX)
+       por tres razones concretas:
+         * los nombres y los identificadores son los que el motor busca, y son fijos:
+           los diálogos se llaman FatalError, UserExit, Exit y FilesInUse, y los botones
+           del diálogo de error se llaman Y, A, C, I, N, O, R (el motor muestra u oculta
+           cada uno según el error);
+         * los de la extensión están en inglés salvo que se arrastre su localización
+           completa, y esta app es en español;
+         * la extensión trae bitmaps y textos que no usamos (WixUI_Common solo aporta
+           una tabla de textos interna, no estos diálogos: sin ellos, un fallo o una
+           cancelación terminaban sin ningún mensaje en pantalla).
+       ========================================================================= -->
+  <Fragment>
+    <UI Id="WixUI_WinForgeErrores">
+      <!-- Fuente de la interfaz: el motor la exige (ICE31) y sin ella sus propios
+           diálogos salen con la fuente del sistema. El estilo y las propiedades van
+           adentro del UI porque ahí es donde WiX los declara. -->
+      <TextStyle Id="WFFont" FaceName="Segoe UI" Size="9" Red="0" Green="0" Blue="0" />
+      <Property Id="DefaultUIFont" Value="WFFont" />
+
+      <!-- Diálogo de error del motor (el que pregunta "Reintentar/Cancelar"): nunca lo
+           mostramos nosotros, lo abre el motor cuando necesita preguntar algo (por
+           ejemplo si un archivo quedó bloqueado). Se declara acá la propiedad que lo
+           habilita y el diálogo lo aporta la extensión de WiX: es el único de estos
+           diálogos que no se reescribe, porque sus botones (Sí/No/Cancelar/Ignorar/
+           Anular/Reintentar) los muestra u oculta el propio motor según el error, y
+           duplicarlo a mano choca con el que trae la extensión. Su texto sale en el
+           idioma del paquete (ver -culture en build-installer.ps1). -->
+      <PropertyRef Id="ErrorDialog" />
+
+
+      <Dialog Id="WFFatalErrorDlg" Width="370" Height="270" Title="WinForge" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="La instalación no se pudo completar" />
+        <Control Id="Description" Type="Text" X="15" Y="46" Width="340" Height="120" NoPrefix="yes" Transparent="yes"
+                 Text="Windows Installer no pudo terminar la operación. Si estaba instalando, no se aplicó ningún cambio; si estaba desinstalando, WinForge sigue instalado y podés volver a intentarlo. El detalle exacto del error queda en el registro del instalador (msiexec /l*v)." />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="Atrás" />
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="Finalizar">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Disabled="yes" Text="Cancelar" />
+      </Dialog>
+
+      <Dialog Id="WFUserExitDlg" Width="370" Height="270" Title="WinForge" NoMinimize="yes">
+        <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
+                 Text="Se canceló la instalación" />
+        <Control Id="Description" Type="Text" X="15" Y="46" Width="340" Height="120" NoPrefix="yes" Transparent="yes"
+                 Text="No se cambió nada en el equipo: los archivos copiados se revierten y las exclusiones de Windows Defender que hubiera agregado el instalador se quitan." />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="Atrás" />
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="Finalizar">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Disabled="yes" Text="Cancelar" />
+      </Dialog>
+
+      <!-- Archivos en uso: lo abre el motor durante InstallValidate cuando algo quedó
+           abierto (por ejemplo WinForge corriendo). Los identificadores de los botones y
+           la lista NO se cambian: el motor escribe en FileInUseProcess y espera
+           exactamente Retry / Ignore / Exit. -->
+      <Dialog Id="FilesInUse" Width="370" Height="270" Title="Archivos en uso" NoMinimize="yes" KeepModeless="yes">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="Algunos archivos están en uso" />
+        <Control Id="Description" Type="Text" X="20" Y="23" Width="330" Height="20" Transparent="yes" NoPrefix="yes"
+                 Text="Cerrá los programas de la lista y elegí Reintentar." />
+        <Control Id="Text" Type="Text" X="20" Y="55" Width="330" Height="30" NoPrefix="yes"
+                 Text="Windows no puede reemplazar los archivos que están abiertos. Si no los cerrás, vas a tener que reiniciar el equipo para que la instalación termine." />
+        <Control Id="List" Type="ListBox" X="20" Y="87" Width="330" Height="130" Property="FileInUseProcess" Sunken="yes" TabSkip="yes" />
+        <Control Id="Retry" Type="PushButton" X="304" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="Reintentar">
+          <Publish Event="EndDialog" Value="Retry" />
+        </Control>
+        <Control Id="Ignore" Type="PushButton" X="235" Y="243" Width="56" Height="17" Text="Ignorar">
+          <Publish Event="EndDialog" Value="Ignore" />
+        </Control>
+        <Control Id="Exit" Type="PushButton" X="166" Y="243" Width="56" Height="17" Text="Salir">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+    </UI>
+  </Fragment>
+</Wix>
