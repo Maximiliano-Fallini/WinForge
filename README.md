@@ -91,7 +91,7 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
     <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.0_|_88.8_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge v0.1.0 (88.8 MB)"/>
   </a>
   <br/>
-  <sub>Instalador MSI v0.1.0 · actualizado el 22/09/2026 (ART, UTC-3) — o mirá <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">todas las releases</a>.</sub>
+  <sub>22/09/2026 - (ART, UTC-3).</sub>
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
