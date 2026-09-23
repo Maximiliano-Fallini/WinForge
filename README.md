@@ -23,82 +23,17 @@
   <img src="assets/flags/ru.png" height="26" alt="ru-RU" title="Русский (ru-RU)" hspace="8"/>
 </p>
 
-## 🙌 Basado e inspirado en
+## ✨ Qué hace
 
-WinForge no reinventa la rueda: cada función nació de estudiar (y a veces de intentar mejorar) herramientas que ya existían. Estos son los proyectos en los que se basa y en los que se inspiró, del más conocido al menos conocido:
+WinForge reúne en una sola app lo que normalmente está repartido entre media docena de herramientas: monitoreo en vivo, optimización al jugar, gestión de juegos y ajustes de Windows.
 
-| Proyecto | Aporte que inspiró |
+| Área | Qué incluye |
 |---|---|
-| **[CCleaner](https://www.ccleaner.com/ccleaner)** | Limpieza de caché, temporales y registro, con backup antes de tocar nada |
-| **[MSI Afterburner](https://www.msi.com/Landing/afterburner/graphics-cards)** | Overlay de métricas en el juego y monitoreo en vivo |
-| **[Process Lasso](https://bitsum.com/processlasso/)** | Prioridad, afinidad de núcleos y modo eficiencia por proceso |
-| **[FanControl](https://getfancontrol.com/)** | Curvas de ventilador por sensor |
-| **[DNS Jumper](https://www.sordum.org/7952/dns-jumper-v2-3/)** | Cambio de DNS en un clic |
-| **[Quick CPU](https://coderbag.com/product/quickcpu)** | Plan de energía y control de núcleos |
-| **[WinUtil](https://github.com/ChrisTitusTech/winutil)** | Debloat y tweaks de Windows en un solo lugar |
-| **[TCP Optimizer](https://www.speedguide.net/downloads.php)** | Tweaks de red y de propiedades del adaptador |
-| **[ISLC](https://www.wagnardsoft.com/intelligent-standby-list-cleaner-islc)** | Limpieza de la lista standby de la RAM |
-| **[MacroGamer](https://www.macrogamer.com/)** | Macros de teclado y mouse con atajo global |
-| **[FilterKeys Setter](https://github.com/HQJaTu/Filterkeys-setter)** | Repetición del teclado en milisegundos, más allá del panel de control |
-| **[hidusbf](https://github.com/LordOfMice/hidusbf)** | Polling rate de mouses, teclados y mandos por filtro kernel |
-
-WinForge no está afiliado a ninguno de ellos: son referencias que marcaron el camino y cada marca pertenece a sus autores.
-
-## ✨ ¿Qué hace?
-
-### 🎮 Optimización automática al iniciar un juego
-Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada queda tocado al cerrar):
-
-- **Procesos en segundo plano** a prioridad baja + modo eficiencia (EcoQoS) — lista configurable de procesos del sistema y apps. Menos ruido en el sistema, más rendimiento para tu juego.
-- **Pausa de Windows Update** y servicios de mantenimiento/telemetría mientras jugás (wuauserv, UsoSvc, BITS, WSearch, SysMain…), reiniciándolos al cerrar.
-- **Plan de energía global** (o por juego) que se activa al iniciar y se revierte al cerrar.
-- **Notificaciones silenciadas** durante la partida (modo "solo alarmas"), restauradas al salir.
-
-### 🕹️ Biblioteca de juegos con reglas por juego
-- Detecta juegos instalados desde **Steam, Epic, Battle.net, GOG, Xbox, EA, Ubisoft, Riot, itch.io, Amazon Games** y juegos independientes.
-- **Detección de emuladores**: RetroArch, Dolphin, PCSX2, RPCS3, Cemu, MAME, PPSSPP, Ryujinx, Yuzu (y forks Sudachi/Suyu), Lime3DS/Citra, Azahar, DuckStation, Xenia, Xemu, mGBA, Project64, melonDS, DeSmuME, ScummVM, Mesen, bsnes, FBNeo y emuladores Android (BlueStacks 5, LDPlayer, Nox, MEmu, GameLoop…) — cada uno aparece como una card lanzable en la biblioteca.
-- **Reglas por juego**: prioridad de CPU, afinidad de núcleos, prioridad de GPU, prioridad de E/S y plan de energía — con alcance *"Actual"* (solo la apertura actual) o *"Siempre"* (persistente).
-- **Detección inteligente**: eventos WMI (cero polling) + detector de ventana fullscreen en primer plano para juegos fuera de la biblioteca (itch.io, DRM-free…).
-- **Lanzamiento desde la bandeja**: click derecho en el ícono → elegí un favorito y el juego arranca con la lógica correcta para cada launcher.
-
-### 🧩 Workshop — instalá solo lo que usás
-- La app arranca con las 5 pestañas esenciales: **Sistema, Red, Núcleos y Plan de energía, Biblioteca de juegos y Workshop** (más Configuración).
-- El resto de las funciones viven ahora en el **Workshop** como componentes: se instalan desde la app (los integrados de fábrica) o se descargan desde GitHub con verificación de integridad (SHA-256); la pestaña aparece en el navbar al instante. Podés ocultarlas o desinstalarlas cuando quieras y reinstalarlas sin perder tu configuración. Reordená las pestañas arrastrándolas.
-
-**Componentes disponibles en el Workshop (integrados en la app):**
-
-| Componente | Qué hace |
-|---|---|
-| 🎛️ **Propiedades del adaptador de red** | Velocidad/duplex, control de flujo, moderación de interrupciones, EEE, Ethernet verde y ahorro de energía — por adaptador, con selector de interfaz |
-| 🕒 **Resolución del temporizador** | Timer resolution + keep-alive al minimizar a bandeja |
-| ⚡ **Overclock USB** | Polling rate de mouses/teclados/mandos vía filtro kernel (SweetLow), con medidor de latencia de entrada nativo |
-| ⌨️ **Filtro de teclas** | Repetición del teclado en milisegundos y filtro de pulsaciones (FilterKeys) |
-| 🧠 **Memoria** | Limpieza inteligente y automática de la caché RAM |
-| 🚀 **Optimizaciones** | Tweaks de rendimiento de Windows |
-| 📈 **Monitor de sensores** | Temperaturas, voltajes y frecuencias en vivo (CPU/GPU/placa) |
-| 🔧 **Control de ventiladores** | Curvas PWM por sensor (CPU/GPU/placa) vía driver PawnIO, con autostart al iniciar sesión |
-| 📊 **Gestión de procesos** | Gestor de procesos con recursos, prioridades y estados |
-| 🧪 **Test de estabilidad** | Pruebas de estrés para validar la estabilidad del equipo |
-| 🖥️ **Overlay de métricas** | FPS, 1% low, CPU, GPU, RAM y temperaturas en el juego, personalizable y con atajos |
-| 🎮 **Macros** | Secuencias de teclas y clics con atajo global |
-| 🖱️ **Autoclicker** | Clics automáticos configurables con hotkey global |
-| 🧹 **Debloat** | Quitá apps y servicios preinstalados de Windows que no usás |
-| 🧰 **Herramientas y funciones** | Funciones opcionales de Windows y utilidades de reparación de un solo uso |
-| 🪟 **Panel de Windows** | Accesos directos a paneles y configuraciones ocultas de Windows |
-| 🛠️ **Reparación** | SFC, DISM y reparaciones del sistema en un solo lugar |
-| 🔄 **Windows Update** | Gestión de las actualizaciones de Windows y de la app |
-| 🧽 **Limpieza del dispositivo** | Caché, temporales, duplicados, inicio del sistema y limpiador de registro con backup |
-
-### 📊 Monitoreo
-- CPU, memoria, red, sensores de temperatura (CPU/GPU), núcleos y uso en vivo.
-- **Overlay de métricas en el juego** (FPS, CPU, GPU, RAM, temperaturas) con atajos de teclado.
-
-### 🧰 Herramientas
-- **Limpiar memoria caché en RAM** (lista standby) desde la app o la bandeja.
-- **Limpiador de caché** de navegadores con soporte para layout Chromium moderno (Opera GX, Edge, Chrome…).
-- **Planes de energía**, tweaks y debloat de Windows, reparación del sistema.
-- **Teclado**: macros, reasignación y **autoclicker**.
-- **Temporizador de apagado**, panel de ventanas, estabilidad y más.
+| 🎮 **Modo juego** | Optimiza automáticamente al iniciar un juego (procesos, servicios, plan de energía) y lo revierte al cerrar. |
+| 🕹️ **Biblioteca de juegos** | Detecta juegos de Steam, Epic, GOG, Xbox y demás launchers —y emuladores—, con reglas por juego (prioridad, afinidad, plan de energía). |
+| 📊 **Monitoreo** | CPU, memoria, red, temperaturas y overlay de métricas en el juego con atajos de teclado. |
+| 🧰 **Herramientas** | Macros, autoclicker, limpieza de caché y registro, planes de energía, DNS, reparación del sistema y más. |
+| 🧩 **Workshop** | Las funciones extendidas viven como componentes: se instalan, actualizan o desinstalan desde la propia app. |
 
 ## ⚙️ Requisitos
 
@@ -142,6 +77,27 @@ Si te gusta WinForge, dejá una ⭐ para mostrar apoyo — es gratis y ayuda muc
 > Esta aplicación **no cuenta con firma digital** y, por diseño, **modifica el sistema operativo ejecutándose como administrador** (limpieza de archivos, gestión de procesos, tweaks del sistema, etc.). Por estos motivos, algunos antivirus pueden detectarla como un **falso positivo**.
 >
 > Si confiás en el proyecto, agregá una excepción en tu antivirus. Podés verificar la integridad del instalador comparando el SHA-256 publicado en cada release.
+
+## 🙌 Basado e inspirado en
+
+WinForge no reinventa la rueda: cada función nació de estudiar (y a veces de intentar mejorar) herramientas que ya existían. Estos son los proyectos en los que se basa y en los que se inspiró, del más conocido al menos conocido:
+
+| Proyecto | Aporte que inspiró |
+|---|---|
+| **[CCleaner](https://www.ccleaner.com/ccleaner)** | Limpieza de caché, temporales y registro, con backup antes de tocar nada |
+| **[MSI Afterburner](https://www.msi.com/Landing/afterburner/graphics-cards)** | Overlay de métricas en el juego y monitoreo en vivo |
+| **[Process Lasso](https://bitsum.com/processlasso/)** | Prioridad, afinidad de núcleos y modo eficiencia por proceso |
+| **[FanControl](https://getfancontrol.com/)** | Curvas de ventilador por sensor |
+| **[DNS Jumper](https://www.sordum.org/7952/dns-jumper-v2-3/)** | Cambio de DNS en un clic |
+| **[Quick CPU](https://coderbag.com/product/quickcpu)** | Plan de energía y control de núcleos |
+| **[WinUtil](https://github.com/ChrisTitusTech/winutil)** | Debloat y tweaks de Windows en un solo lugar |
+| **[TCP Optimizer](https://www.speedguide.net/downloads.php)** | Tweaks de red y de propiedades del adaptador |
+| **[ISLC](https://www.wagnardsoft.com/intelligent-standby-list-cleaner-islc)** | Limpieza de la lista standby de la RAM |
+| **[MacroGamer](https://www.macrogamer.com/)** | Macros de teclado y mouse con atajo global |
+| **[FilterKeys Setter](https://github.com/HQJaTu/Filterkeys-setter)** | Repetición del teclado en milisegundos, más allá del panel de control |
+| **[hidusbf](https://github.com/LordOfMice/hidusbf)** | Polling rate de mouses, teclados y mandos por filtro kernel |
+
+WinForge no está afiliado a ninguno de ellos: son referencias que marcaron el camino y cada marca pertenece a sus autores.
 
 ---
 
