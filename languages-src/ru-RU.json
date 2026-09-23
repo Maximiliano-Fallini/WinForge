@@ -2028,6 +2028,23 @@
     "El piso del escalado de frecuencia: el porcentaje por debajo del cual Windows no baja el procesador. Subirlo mantiene los núcleos despiertos y a más frecuencia (responde antes, gasta y calienta más); bajarlo ahorra energía en reposo.": "Пол шкалы частоты: процент, ниже которого Windows не опускает процессор. Повышение держит ядра активными и на более высокой частоте (быстрее отклик, больше расход и нагрев); снижение экономит энергию в простое.",
     "Ajustes avanzados aplicados.": "Дополнительные настройки применены.",
     "Este equipo no expone ese ajuste del procesador.": "Этот компьютер не предоставляет эту настройку процессора.",
-    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "Компьютер не применил настройку: возможно, она заблокирована firmware или BIOS."
+    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "Компьютер не применил настройку: возможно, она заблокирована firmware или BIOS.",
+    "Mové el mouse en círculos durante la prueba.": "Водите мышью по кругу во время теста.",
+    "El teclado no emite informes continuos: se mide el bus (cada cuánto manda un informe), no su polling.": "Клавиатура не отправляет непрерывные отчеты: измеряется шина (как часто отправляется отчет), а не её опрос.",
+    "Medir en el bus": "Измерить на шине",
+    "GameBar (registro)": "GameBar (реестр)",
+    "Appx Microsoft.XboxGamingOverlay": "Appx Microsoft.XboxGamingOverlay",
+    "GameBarPresenceWriter (System32)": "GameBarPresenceWriter (System32)",
+    "Claves ausentes = habilitado por defecto": "Ключи отсутствуют = включено по умолчанию",
+    "Paquete presente (infra de Game Bar / Modo Juego)": "Пакет присутствует (инфраструктура Game Bar / игрового режима)",
+    "Paquete ausente: Modo Juego huérfano (reinstalar Game Bar desde la Store)": "Пакет отсутствует: игровой режим осиротел (переустановите Game Bar из Store)",
+    "Presente (dll/exe del Presence Writer)": "Присутствует (dll/exe Presence Writer)",
+    "Ausente: Modo Juego huérfano": "Отсутствует: игровой режим осиротел",
+    "Listo: el Modo Juego de Windows se activará correctamente al iniciar un juego.": "Готово: игровой режим Windows правильно включится при запуске игры.",
+    "Deshabilitado por reglas de registro (estilo AtlasOS): se puede reactivar al instante sin reinstalar nada.": "Отключено правилами реестра (в стиле AtlasOS): можно мгновенно включить обратно без переустановки чего-либо.",
+    "Huérfano: faltan archivos del Modo Juego de Windows. Reinstalá Game Bar desde la Microsoft Store (modificar el registro no alcanza).": "Осиротел: отсутствуют файлы игрового режима Windows. Переустановите Game Bar из Microsoft Store (правки реестра недостаточно).",
+    "FPS ↑máx ↓mín": "FPS ↑макс ↓мин",
+    "CPU GHz": "CPU ГГц",
+    "RAM usada/total": "ОЗУ занято/всего"
   }
 }

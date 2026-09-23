@@ -2028,6 +2028,23 @@
     "El piso del escalado de frecuencia: el porcentaje por debajo del cual Windows no baja el procesador. Subirlo mantiene los núcleos despiertos y a más frecuencia (responde antes, gasta y calienta más); bajarlo ahorra energía en reposo.": "频率调节的下限：Windows 不会把处理器降到该百分比以下。调高可让核心保持唤醒并运行在更高频率（响应更快，耗电和发热更多）；调低则在空闲时省电。",
     "Ajustes avanzados aplicados.": "高级设置已应用。",
     "Este equipo no expone ese ajuste del procesador.": "本机未公开该处理器设置。",
-    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "本机未应用该设置：可能被固件或 BIOS 锁定。"
+    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "本机未应用该设置：可能被固件或 BIOS 锁定。",
+    "Mové el mouse en círculos durante la prueba.": "在测试期间将鼠标绕圈移动。",
+    "El teclado no emite informes continuos: se mide el bus (cada cuánto manda un informe), no su polling.": "键盘不会持续发送报告：测量的是总线（多久发送一次报告），而不是它的轮询率。",
+    "Medir en el bus": "在总线上测量",
+    "GameBar (registro)": "GameBar（注册表）",
+    "Appx Microsoft.XboxGamingOverlay": "Appx Microsoft.XboxGamingOverlay",
+    "GameBarPresenceWriter (System32)": "GameBarPresenceWriter（System32）",
+    "Claves ausentes = habilitado por defecto": "注册表项缺失 = 默认启用",
+    "Paquete presente (infra de Game Bar / Modo Juego)": "程序包存在（Game Bar / 游戏模式基础设施）",
+    "Paquete ausente: Modo Juego huérfano (reinstalar Game Bar desde la Store)": "程序包缺失：游戏模式已失效（请从应用商店重新安装 Game Bar）",
+    "Presente (dll/exe del Presence Writer)": "存在（Presence Writer 的 dll/exe）",
+    "Ausente: Modo Juego huérfano": "缺失：游戏模式已失效",
+    "Listo: el Modo Juego de Windows se activará correctamente al iniciar un juego.": "就绪：启动游戏时将正确启用 Windows 游戏模式。",
+    "Deshabilitado por reglas de registro (estilo AtlasOS): se puede reactivar al instante sin reinstalar nada.": "被注册表规则禁用（AtlasOS 风格）：可以立即重新启用，无需重新安装任何内容。",
+    "Huérfano: faltan archivos del Modo Juego de Windows. Reinstalá Game Bar desde la Microsoft Store (modificar el registro no alcanza).": "失效：缺少 Windows 游戏模式文件。请从 Microsoft Store 重新安装 Game Bar（仅修改注册表不够）。",
+    "FPS ↑máx ↓mín": "FPS ↑最高 ↓最低",
+    "CPU GHz": "CPU GHz",
+    "RAM usada/total": "RAM 已用/总量"
   }
 }

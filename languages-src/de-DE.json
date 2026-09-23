@@ -2028,6 +2028,23 @@
     "El piso del escalado de frecuencia: el porcentaje por debajo del cual Windows no baja el procesador. Subirlo mantiene los núcleos despiertos y a más frecuencia (responde antes, gasta y calienta más); bajarlo ahorra energía en reposo.": "Die Untergrenze der Frequenzskalierung: der Prozentsatz, unter den Windows den Prozessor nicht absenkt. Höher hält die Kerne wach und höher getaktet (reagiert schneller, mehr Verbrauch und Wärme); niedriger spart im Leerlauf Energie.",
     "Ajustes avanzados aplicados.": "Erweiterte Einstellungen angewendet.",
     "Este equipo no expone ese ajuste del procesador.": "Dieses Gerät stellt diese Prozessor-Einstellung nicht bereit.",
-    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "Das Gerät hat die Einstellung nicht übernommen: möglicherweise ist sie durch Firmware oder BIOS gesperrt."
+    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "Das Gerät hat die Einstellung nicht übernommen: möglicherweise ist sie durch Firmware oder BIOS gesperrt.",
+    "Mové el mouse en círculos durante la prueba.": "Bewegen Sie die Maus während des Tests in Kreisen.",
+    "El teclado no emite informes continuos: se mide el bus (cada cuánto manda un informe), no su polling.": "Eine Tastatur sendet keine kontinuierlichen Berichte: gemessen wird der Bus (wie oft er einen Bericht sendet), nicht ihr Polling.",
+    "Medir en el bus": "Auf dem Bus messen",
+    "GameBar (registro)": "GameBar (Registrierung)",
+    "Appx Microsoft.XboxGamingOverlay": "Appx Microsoft.XboxGamingOverlay",
+    "GameBarPresenceWriter (System32)": "GameBarPresenceWriter (System32)",
+    "Claves ausentes = habilitado por defecto": "Schlüssel fehlen = standardmäßig aktiviert",
+    "Paquete presente (infra de Game Bar / Modo Juego)": "Paket vorhanden (Game Bar-/Spielmodus-Infrastruktur)",
+    "Paquete ausente: Modo Juego huérfano (reinstalar Game Bar desde la Store)": "Paket fehlt: Spielmodus verwaist (Game Bar aus dem Store neu installieren)",
+    "Presente (dll/exe del Presence Writer)": "Vorhanden (Presence-Writer-dll/exe)",
+    "Ausente: Modo Juego huérfano": "Fehlt: Spielmodus verwaist",
+    "Listo: el Modo Juego de Windows se activará correctamente al iniciar un juego.": "Bereit: der Windows-Spielmodus wird beim Start eines Spiels korrekt aktiviert.",
+    "Deshabilitado por reglas de registro (estilo AtlasOS): se puede reactivar al instante sin reinstalar nada.": "Durch Registrierungsregeln deaktiviert (AtlasOS-Stil): lässt sich sofort ohne Neuinstallation wieder aktivieren.",
+    "Huérfano: faltan archivos del Modo Juego de Windows. Reinstalá Game Bar desde la Microsoft Store (modificar el registro no alcanza).": "Verwaist: Dateien des Windows-Spielmodus fehlen. Game Bar aus dem Microsoft Store neu installieren (nur die Registrierung zu ändern reicht nicht).",
+    "FPS ↑máx ↓mín": "FPS ↑max ↓min",
+    "CPU GHz": "CPU GHz",
+    "RAM usada/total": "RAM belegt/gesamt"
   }
 }

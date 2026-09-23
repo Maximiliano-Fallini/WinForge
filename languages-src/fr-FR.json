@@ -2028,6 +2028,23 @@
     "El piso del escalado de frecuencia: el porcentaje por debajo del cual Windows no baja el procesador. Subirlo mantiene los núcleos despiertos y a más frecuencia (responde antes, gasta y calienta más); bajarlo ahorra energía en reposo.": "Le plancher de la mise à l'échelle de fréquence : le pourcentage sous lequel Windows ne ralentit pas le processeur. L'augmenter garde les cœurs éveillés et à fréquence plus haute (réponse plus rapide, plus de consommation et de chaleur) ; le baisser économise l'énergie au repos.",
     "Ajustes avanzados aplicados.": "Réglages avancés appliqués.",
     "Este equipo no expone ese ajuste del procesador.": "Cette machine n'expose pas ce réglage du processeur.",
-    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "La machine n'a pas appliqué le réglage : il peut être bloqué par le firmware ou le BIOS."
+    "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.": "La machine n'a pas appliqué le réglage : il peut être bloqué par le firmware ou le BIOS.",
+    "Mové el mouse en círculos durante la prueba.": "Déplacez la souris en cercles pendant le test.",
+    "El teclado no emite informes continuos: se mide el bus (cada cuánto manda un informe), no su polling.": "Un clavier n'émet pas de rapports continus : on mesure le bus (à quelle fréquence il envoie un rapport), pas son polling.",
+    "Medir en el bus": "Mesurer sur le bus",
+    "GameBar (registro)": "GameBar (registre)",
+    "Appx Microsoft.XboxGamingOverlay": "Appx Microsoft.XboxGamingOverlay",
+    "GameBarPresenceWriter (System32)": "GameBarPresenceWriter (System32)",
+    "Claves ausentes = habilitado por defecto": "Clés absentes = activé par défaut",
+    "Paquete presente (infra de Game Bar / Modo Juego)": "Paquet présent (infrastructure Game Bar / Mode Jeu)",
+    "Paquete ausente: Modo Juego huérfano (reinstalar Game Bar desde la Store)": "Paquet absent : Mode Jeu orphelin (réinstaller Game Bar depuis le Store)",
+    "Presente (dll/exe del Presence Writer)": "Présent (dll/exe du Presence Writer)",
+    "Ausente: Modo Juego huérfano": "Absent : Mode Jeu orphelin",
+    "Listo: el Modo Juego de Windows se activará correctamente al iniciar un juego.": "Prêt : le Mode Jeu de Windows s'activera correctement au lancement d'un jeu.",
+    "Deshabilitado por reglas de registro (estilo AtlasOS): se puede reactivar al instante sin reinstalar nada.": "Désactivé par des règles de registre (style AtlasOS) : réactivable instantanément sans rien réinstaller.",
+    "Huérfano: faltan archivos del Modo Juego de Windows. Reinstalá Game Bar desde la Microsoft Store (modificar el registro no alcanza).": "Orphelin : des fichiers du Mode Jeu de Windows manquent. Réinstallez Game Bar depuis le Microsoft Store (modifier le registre ne suffit pas).",
+    "FPS ↑máx ↓mín": "FPS ↑max ↓min",
+    "CPU GHz": "CPU GHz",
+    "RAM usada/total": "RAM utilisée/totale"
   }
 }
