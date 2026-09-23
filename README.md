@@ -33,7 +33,7 @@ WinForge reúne en una sola app lo que normalmente está repartido entre media d
 | 🕹️ **Biblioteca de juegos** | Detecta juegos de Steam, Epic, GOG, Xbox y demás launchers —y emuladores—, con reglas por juego (prioridad, afinidad, plan de energía). |
 | 📊 **Monitoreo** | CPU, memoria, red, temperaturas y overlay de métricas en el juego con atajos de teclado. |
 | 🧰 **Herramientas** | Macros, autoclicker, limpieza de caché y registro, planes de energía, DNS, reparación del sistema y más. |
-| 🧩 **Workshop** | Las funciones extendidas viven como componentes: se instalan, actualizan o desinstalan desde la propia app. |
+| 🧩 **Workshop** | Todos los componentes de la app. **Set fijo**: Sistema · Red · Núcleos y Plan de energía · Biblioteca de juegos · Workshop · Configuración. **Instalables** (se instalan, actualizan o desinstalan desde la propia app): Propiedades del adaptador de red · Resolución del Temporizador · Overclock USB · Filtro de teclas · Memoria · Optimizaciones · Monitor de sensores · Ventiladores · Gestión de procesos · Test de estabilidad · Overlay de métricas · Macros · Autoclicker · Debloat · Herramientas y funciones · Panel de Windows · Reparación · Windows Update · Limpieza del dispositivo. |
 
 ## ⚙️ Requisitos
 
