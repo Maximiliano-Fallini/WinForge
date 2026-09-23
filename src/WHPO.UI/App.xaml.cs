@@ -97,6 +97,16 @@ public partial class App : Application
         // dejar que la excepción cierre la app.
         I18n.SubscriberError = message => logService.LogError(message);
 
+        // Un nodo que no se pudo traducir se aísla (el resto de la página se sigue
+        // traduciendo) y se anota acá: al log de desarrollo, si está activado, y a
+        // i18n.log, que se escribe SIEMPRE. Es el dato que faltaba en cada reporte
+        // de "algunos textos quedan en español" llegado de una copia instalada.
+        I18n.WalkError = message =>
+        {
+            logService.LogWarning(message);
+            I18nDiagnostics.RecordFailure(message);
+        };
+
         // Eager-init del GameBoost: suscribe su restauración a los eventos WMI
         // desde el arranque, para que la optimización siga funcionando aunque no
         // se abra la biblioteca o se navegue a otra pestaña.

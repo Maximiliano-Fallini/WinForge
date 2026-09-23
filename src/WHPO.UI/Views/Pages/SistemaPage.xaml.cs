@@ -570,7 +570,10 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
             // RAM: uso + usados (al lado del %) — el canal y MHz son estáticos, ya cargados
             RamUsageText.Text = $"{metrics.MemoryUsagePercent:F1}%";
             RamUsageBar.Value = Math.Max(0, Math.Min(100, metrics.MemoryUsagePercent));
-            RamUsedText.Text = $"· {FormatBytes(metrics.MemoryUsedBytes)} usados";
+            // Clave "· {0} usados" (la misma que usan los otros dos tramos de la página):
+            // acá estaba el literal armado a mano, así que el "usados" volvía en español
+            // cada segundo, en cualquier idioma.
+            RamUsedText.Text = I18n.T("· {0} usados", FormatBytes(metrics.MemoryUsedBytes));
 
             // GPU: uso + temperatura (como el Administrador de tareas)
             if (metrics.Gpu != null)
@@ -710,7 +713,11 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         // sistema como VRAM — mostrarla porque es la cifra que importa.
         // El separador es el mismo puntito "·" de las demás cards (CPU, RAM).
         if (gpu.DedicatedMemoryBytes > 0 && gpu.SharedMemoryBytes > 0 && gpu.DedicatedMemoryBytes < 2L * 1024 * 1024 * 1024)
-            GpuVramText.Text = $"VRAM: {FormatVram(gpu.DedicatedMemoryBytes)} · {FormatVram(gpu.SharedMemoryBytes)} compartida";
+            // "compartida" no existe como clave de traducción y era un adjetivo en
+            // español pegado al lado de un número en cualquier idioma: (RAM) dice lo
+            // mismo (para una iGPU la memoria compartida ES la RAM) y se lee igual en
+            // todos los idiomas, sin inventar una clave nueva.
+            GpuVramText.Text = $"VRAM: {FormatVram(gpu.DedicatedMemoryBytes)} · {FormatVram(gpu.SharedMemoryBytes)} (RAM)";
         else
             GpuVramText.Text = gpu.DedicatedMemoryBytes > 0
                 ? $"VRAM: {FormatVram(gpu.DedicatedMemoryBytes)}"

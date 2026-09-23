@@ -2844,7 +2844,10 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         SelectedDeviceActiveRate.Text = device.ActiveHz.HasValue
             ? $"{device.ActiveHz.Value} Hz"
             : "Sin override";
-        SelectedDeviceFilterState.Text = device.FilterOn ? "Filtro activo" : "Filtro inactivo";
+        // El par "Filtro activo"/"Filtro inactivo" no existe como clave y quedaba en
+        // español en todos los idiomas: se arma con claves que sí están ("Filtro" +
+        // "Activo"/"Inactivo").
+        SelectedDeviceFilterState.Text = $"{I18n.T("Filtro")}: {I18n.T(device.FilterOn ? "Activo" : "Inactivo")}";
         SelectedDeviceBus.Text = device.IsHighSpeed ? "High-Speed" : "Full/Low-Speed";
         SelectedDeviceInterval.Text = device.DescriptorBInterval > 0
             ? $"bInterval {device.DescriptorBInterval}"

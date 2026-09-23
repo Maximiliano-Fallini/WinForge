@@ -48,6 +48,19 @@ public sealed partial class MainWindow : Window
 
     private NotifyIcon? _notifyIcon;
     private DispatcherQueueTimer? _trayTooltipTimer;
+
+    // ===== Re-traducción diferida de la página actual =====
+    // Una página sigue armando contenido después de navegar (sondeos del sistema,
+    // listas, cards de ventiladores) y ese contenido nace DESPUÉS del recorrido del
+    // momento. Antes quedaba en español hasta que el usuario cambiaba de idioma en
+    // la misma vista. Acá se vuelve a pasar el recorrido mientras la página siga
+    // produciendo texto nuevo, y se corta solo cuando se queda quieta.
+    private DispatcherQueueTimer? _translateTimer;
+    private int _translatePassesLeft;
+    private int _translateQuietPasses;
+    private const int TranslatePassIntervalMs = 500;
+    private const int TranslateMaxPasses = 60;    // 30 s de contenido asincrónico
+    private const int TranslateQuietPasses = 16;  // se corta tras 8 s sin novedades
     private PerformanceCounter? _cpuCounter;
     private PerformanceCounter? _gpuCounter;
     private bool _centeredOnFirstActivation;
@@ -94,6 +107,18 @@ public sealed partial class MainWindow : Window
         // Traducciones: cargar el idioma guardado ANTES de navegar a la primera
         // página (el recorrido del árbol se hace al navegar).
         I18n.Initialize(_settingsService);
+
+        // Bitácora de traducciones: deja asentada la copia, el idioma, las claves y
+        // los packs de esta corrida (%LocalAppData%\WHPO\i18n.log). Sin esto, un
+        // reporte de "quedó en español" no decía ni qué exe se había abierto.
+        I18nDiagnostics.RecordStartup(
+            Environment.ProcessPath ?? "(desconocido)",
+            I18n.Current,
+            Translations.KeyCount,
+            Translations.SourceHash,
+            I18n.Languages,
+            code => LanguagePacks.Record(code)?.Version);
+
         ContentFrame.Navigated += OnFrameNavigated;
         I18n.LanguageChanged += OnLanguageChanged;
         // El botón de idiomas vive en el PaneHeader (misma fila que el botón de
@@ -2156,6 +2181,10 @@ public sealed partial class MainWindow : Window
                 page.Loaded -= Page_Loaded_Translate;
                 page.Loaded += Page_Loaded_Translate;
             }
+
+            // Y seguir re-pasando mientras la página arme contenido solo (sondeos,
+            // listas del sistema): ese texto nace después de estos recorridos.
+            ScheduleTranslationSweeps();
         }
     }
 
@@ -2173,6 +2202,77 @@ public sealed partial class MainWindow : Window
         ApplyUpdateIndicator();
         if (ContentFrame.Content is FrameworkElement fe)
             I18n.ApplyToVisualTree(fe);
+
+        // Las páginas se re-arman al cambiar de idioma (algunas en forma asincrónica):
+        // las pasadas diferidas cubren ese contenido que todavía no existe.
+        ScheduleTranslationSweeps();
+    }
+
+    /// <summary>
+    /// Arranca las pasadas de traducción diferidas sobre la página actual. Se llama
+    /// al navegar y al cambiar de idioma.
+    /// </summary>
+    private void ScheduleTranslationSweeps()
+    {
+        _translatePassesLeft = TranslateMaxPasses;
+        _translateQuietPasses = 0;
+
+        _translateTimer ??= DispatcherQueue.CreateTimer();
+        _translateTimer.Interval = TimeSpan.FromMilliseconds(TranslatePassIntervalMs);
+        _translateTimer.IsRepeating = true;
+        _translateTimer.Tick -= TranslateSweep_Tick;
+        _translateTimer.Tick += TranslateSweep_Tick;
+        _translateTimer.Start();
+    }
+
+    private void TranslateSweep_Tick(DispatcherQueueTimer sender, object args)
+    {
+        if (ContentFrame.Content is not FrameworkElement page || _translatePassesLeft <= 0)
+        {
+            sender.Stop();
+            return;
+        }
+
+        bool firstPass = _translatePassesLeft == TranslateMaxPasses;
+        _translatePassesLeft--;
+        var pass = I18n.ApplyToVisualTree(page);
+        _translateQuietPasses = pass.Changed ? 0 : _translateQuietPasses + 1;
+
+        // Volcado de lo que hay en pantalla (ventana completa: navbar + página): sin
+        // poder mirar la UI, es la única evidencia de qué texto quedó sin traducir y
+        // por qué. Se hace en la primera pasada y al cerrar, no en todas.
+        if (firstPass) DumpVisibleTexts("primera");
+
+        // Corte: la página dejó de producir texto nuevo, o se agotó la ventana de
+        // tiempo (contenido que puede tardar: sondeos de hardware, listas grandes).
+        if (_translateQuietPasses < TranslateQuietPasses && _translatePassesLeft > 0) return;
+
+        sender.Stop();
+        I18nDiagnostics.RecordPass(page.GetType().Name, pass);
+        DumpVisibleTexts($"final {page.GetType().Name}");
+    }
+
+    /// <summary>
+    /// Deja en %LocalAppData%\WHPO\i18n-pagina.log qué textos tiene la ventana ahora
+    /// mismo y qué se aplicó a cada uno (clave traducida, clave sin traducción para el
+    /// idioma activo, o texto que no es clave). Es diagnóstico: cualquier error acá no
+    /// puede tocar la UI.
+    /// </summary>
+    private void DumpVisibleTexts(string phase)
+    {
+        try
+        {
+            if (Content is not DependencyObject root) return;
+            I18n.TraceEnabled = true;
+            I18n.TraceLines.Clear();
+            try { I18n.ApplyToVisualTree(root); }
+            finally { I18n.TraceEnabled = false; }
+            I18nDiagnostics.RecordPageDump($"{phase} | idioma={I18n.Current}", I18n.TraceLines);
+        }
+        catch
+        {
+            I18n.TraceEnabled = false;
+        }
     }
 
     // ===== Actualizaciones de la app (navbar) =====

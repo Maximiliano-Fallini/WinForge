@@ -554,7 +554,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 });
                 var checkText = new TextBlock
                 {
-                    Text = $"{component} — {detail}",
+                    // Los textos vienen del servicio en Core (español crudo): traducir
+                    // cada parte por separado — el compuesto no es clave conocida del
+                    // diccionario y quedaría sin traducir en cualquier idioma no-es.
+                    Text = $"{I18n.T(component)} — {I18n.T(detail)}",
                     FontSize = 12,
                     TextWrapping = TextWrapping.Wrap,
                     VerticalAlignment = VerticalAlignment.Center
@@ -588,7 +591,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 }
                 else
                 {
-                    repairFeedback.Text = fixedInfo.Summary;
+                    repairFeedback.Text = I18n.T(fixedInfo.Summary);
                     repairFeedback.Foreground = Feedback.WarningBrush;
                 }
                 await LoadAsync();
