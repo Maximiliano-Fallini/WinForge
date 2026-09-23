@@ -53,12 +53,12 @@
                  desde UpdateOnboardingTheme). En la app, en cambio, el tema sí
                  afecta al fondo porque ThemeApplier aplica RequestedTheme al
                  contenido raíz de MainWindow. -->
-<!-- La altura fija sube a 360: la fase de idioma era la única que podía medir MÁS que la
-                 card (subtítulo en 2 líneas en idiomas largos + lista + estado) y, al estar el
-                 contenido centrado en una fila de alto fijo, se recortaba por arriba y por abajo:
-                 el título "Elegí tu idioma" quedaba cortado. Con 360 entra el peor caso
-                 (subtítulo a 2 líneas + estado visible) con margen, y los botones siguen sin
-                 saltar entre fases porque la altura sigue siendo fija para las tres. -->
+<!-- La altura fija sube a 360: el escalón más alto es el del tema (sube a ~190 con las
+                 tres mini-ventanas) y, al estar el contenido centrado en una fila de alto fijo,
+                 un contenido más alto se recortaba por arriba y por abajo. Con 360 entra el peor
+                 caso —tema, o idioma con el subtítulo en 2 líneas y el estado de descarga
+                 visible— con margen, y los botones no saltan entre fases porque la altura sigue
+                 siendo la misma para las tres. -->
             <Border x:Name="ContentCard" Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="360">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -66,13 +66,45 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-<!-- Riel de fases (pasos + tramos): su propia fila, arriba y centrado. Sin rótulo de texto: el
-                     paso actual se marca con la pastilla ancha, para que la card —de alto fijo— no
-                     cambie de tamaño al pasar de fase. -->
+<!-- Riel de fases: su propia fila, arriba y centrado. Cada paso es su punto (o pastilla
+                     ancha si es el actual) con el rótulo debajo; los tres escalones miden igual,
+                     así la card —de alto fijo— no cambia de tamaño al avanzar. -->
                     <StackPanel x:Name="ProgressDots" Grid.Row="0" Orientation="Horizontal"
                                 HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,0,0,20"/>
 
-<!-- ===== FASE 1: TEMA ===== -->
+<!-- ===== FASE 1: IDIOMA =====
+                         El asistente arranca acá: el idioma decide en qué idioma se ve todo
+                         lo demás. Un desplegable con bandera + nombre; los idiomas que la app
+                         no trae llevan la marca de descarga y, al elegirlos, se bajan del
+                         repositorio en el momento y quedan activos. -->
+                    <StackPanel x:Name="PhaseLanguage" Grid.Row="1" Spacing="10" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                        <StackPanel.RenderTransform>
+                            <TranslateTransform Y="0"/>
+                        </StackPanel.RenderTransform>
+                        <TextBlock Text="Elegí tu idioma" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="WinForge ya está en el idioma de tu PC. Elegí otro de la lista: si no está instalado, se descarga solo."
+                                   FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap" TextAlignment="Center"/>
+<!-- El anillo de descarga vive en una columna de ancho FIJO: al aparecer no corre
+                             al desplegable de lugar. -->
+                        <Grid HorizontalAlignment="Center" ColumnSpacing="10" Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="18"/>
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="LanguageComboBox" MinWidth="280" MaxWidth="320"
+                                      HorizontalAlignment="Center"
+                                      SelectionChanged="LanguageComboBox_SelectionChanged"/>
+                            <ProgressRing x:Name="LanguageDownloadRing" Grid.Column="1"
+                                          Width="18" Height="18" Opacity="0" IsActive="False"
+                                          IsIndeterminate="True" VerticalAlignment="Center"
+                                          Foreground="{ThemeResource AccentBrush}"/>
+                        </Grid>
+                        <TextBlock x:Name="LanguageStatusText" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed"/>
+                    </StackPanel>
+
+<!-- ===== FASE 2: TEMA ===== -->
                     <StackPanel x:Name="PhaseTheme" Grid.Row="1" Spacing="14" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
                         <StackPanel.RenderTransform>
                             <TranslateTransform Y="0"/>
@@ -221,32 +253,47 @@
                         </Grid>
                     </StackPanel>
 
-<!-- ===== FASE 2: IDIOMA =====
-                         Los idiomas que la app ya trae se activan al tocarlos; los que
-                         no están instalados aparecen atenuados con el botón de descarga
-                         al lado y se bajan del repositorio en el momento. -->
-                    <StackPanel x:Name="PhaseLanguage" Grid.Row="1" Spacing="10" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
+<!-- ===== FASE 3: ANTIVIRUS (salud de la exclusión de Defender) =====
+                         WinForge toca el sistema, así que Defender puede marcarlo como
+                         sospechoso; el instalador agrega las exclusiones para que no lo
+                         bloquee. Acá se VERIFICAN en vivo (cada medio segundo mientras la
+                         fase está en pantalla): el estado se lee del registro de Defender,
+                         que es el mismo dato que usa el instalador. -->
+                    <StackPanel x:Name="PhaseHealth" Grid.Row="1" Spacing="8" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
                         <StackPanel.RenderTransform>
                             <TranslateTransform Y="0"/>
                         </StackPanel.RenderTransform>
-                        <TextBlock Text="Elegí tu idioma" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="WinForge ya está en el idioma de tu PC. Podés descargar otros idiomas acá o desde el menú de idioma."
+                        <TextBlock Text="WinForge y tu antivirus" FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Windows Defender puede marcar a WinForge como sospechoso porque optimiza el sistema. Estas son las exclusiones que lo evitan, y se verifican en vivo."
                                    FontSize="13" Foreground="{ThemeResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" TextAlignment="Center"/>
-                        <Border Background="{ThemeResource CardBackgroundBrush}" BorderBrush="{ThemeResource CardBorderBrush}"
-                                BorderThickness="1" CornerRadius="12" Padding="8" Margin="0,4,0,0" HorizontalAlignment="Center">
-<!-- El margen derecho del contenido reserva el carril de la barra de scroll: en WinUI la
-                 scrollbar es OVERLAY (se dibuja ENCIMA del contenido), así que sin este margen
-                 tapaba el borde derecho de las filas (borde de acento del idioma activo y ✕). -->
-                            <ScrollViewer MaxHeight="140" VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="LanguageListPanel" Spacing="2" MinWidth="420" Margin="0,0,14,0"/>
-                            </ScrollViewer>
+                                   TextWrapping="Wrap" TextAlignment="Center" MaxWidth="520"/>
+
+<!-- Veredicto general: ícono + color + frase. Lo llena el código en cada
+                             verificación (ver RenderHealth). -->
+                        <Border x:Name="HealthBanner" CornerRadius="10" Padding="12,10" BorderThickness="1"
+                                Margin="0,4,0,0" HorizontalAlignment="Center" MinWidth="420"
+                                Background="{ThemeResource CardBackgroundBrush}"
+                                BorderBrush="{ThemeResource CardBorderBrush}">
+                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                                <FontIcon x:Name="HealthBannerIcon" Glyph="&#xE946;" FontSize="16" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="HealthBannerText" FontSize="13" FontWeight="SemiBold"
+                                           TextWrapping="Wrap" MaxWidth="400" VerticalAlignment="Center"/>
+                            </StackPanel>
                         </Border>
-                        <TextBlock x:Name="LanguageStatusText" FontSize="11" Foreground="{ThemeResource SecondaryTextBrush}"
-                                   TextAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+<!-- Una fila por exclusión esperada: las arma el código (BuildHealthRows) y
+                             solo se ACTUALIZAN en cada verificación, no se recrean. -->
+                        <StackPanel x:Name="HealthRowsHost" Spacing="4" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+<!-- Solo aparece si una acción falla (agregar la exclusión, abrir la ubicación):
+                             el estado de cada fila se verifica en vivo, así que no hay nada que
+                             anunciar cuando todo sale bien. -->
+                        <TextBlock x:Name="HealthActionText" FontSize="11"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="460"
+                                   Visibility="Collapsed"/>
                     </StackPanel>
 
-<!-- ===== FASE 3: GRATIS + ESTRELLA ===== -->
+<!-- ===== FASE 4: GRATIS + ESTRELLA ===== -->
                     <StackPanel x:Name="PhaseThanks" Grid.Row="1" Spacing="14" VerticalAlignment="Center" Visibility="Collapsed" RenderTransformOrigin="0.5,0.5">
                         <StackPanel.RenderTransform>
                             <TranslateTransform Y="0"/>

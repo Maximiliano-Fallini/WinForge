@@ -141,7 +141,7 @@ public sealed class KeyboardService : IKeyboardService
             ApplyLive(ignoreSpi, delaySpi, rateSpi, 0, FlagsApply);
             // Re-escribir el registro con los valores EXACTOS del usuario: la llamada
             // SPI exige un mínimo de 1 ms y Windows podía persistir el valor clampado
-            // (un 0 quedaba como 1 en "Aplicados actualmente"). El registro lo escribe
+            // (un 0 quedaba como 1 en el preset "Personalizado"). El registro lo escribe
             // la app, no Windows.
             if (saveToRegistry)
                 WriteValues(ignoreUnderMs, repeatDelayMs, repeatRateMs, 0 /* bounce siempre apagado */, FlagsApply);

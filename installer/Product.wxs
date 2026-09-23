@@ -5,8 +5,8 @@
        (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
   <Package Name="WinForge"
            Manufacturer="WinForge"
-           Version="0.1.1"
-           ProductCode="{9B4E7C13-6D2A-4F58-A3E1-2C8D5B7F9046}"
+           Version="0.1.2"
+           ProductCode="{4C61E5A7-F2E1-40FB-9934-6E32B89D82C6}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"
@@ -33,7 +33,7 @@
     <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
     <Property Id="ARPPUBLISHER" Value="WinForge" />
     <Property Id="ARPCONTACT" Value="WinForge" />
-    <Property Id="ARPCOMMENTS" Value="WinForge 0.1.1 Beta - optimizador y monitor del sistema" />
+    <Property Id="ARPCOMMENTS" Value="WinForge 0.1.2 Beta - optimizador y monitor del sistema" />
 
     <!-- ===== Exclusiones de Windows Defender =====
          Por que: WinForge es un ejecutable sin firmar que modifica ajustes del sistema,
@@ -104,12 +104,21 @@
                   Impersonate="yes"
                   Return="ignore" />
 
-    <!-- Cierra WinForge antes de desinstalar/actualizar para que los archivos no queden en uso -->
+    <!-- Cierra WinForge antes de tocar archivos (instala, repara, actualiza o desinstala).
+         Por qué ANTES de InstallValidate y SIEMPRE: con la app abierta, el motor del MSI
+         detecta los archivos en uso justo ahí y muestra el diálogo "estas aplicaciones están
+         usando archivos que hay que actualizar" — que en el asistente completo puede quedar
+         DETRÁS de la ventana de progreso y el usuario ve una barra congelada sin saber que
+         hay un diálogo esperando atrás. Cerrarla antes evita el diálogo.
+
+         Por qué INMEDIATA (no diferida): ICE77 prohíbe CAs diferidas fuera del tramo
+         InstallInitialize..InstallFinalize, e InstallValidate es anterior a ese tramo. Una
+         CA inmediata corre con los privilegios del proceso del instalador (elevado: puede
+         matar también a la app elevada) y Return="ignore" hace que un taskkill sin nada
+         que matar no importe (app ya cerrada: caso normal en primera instalación). -->
     <CustomAction Id="KillWinForge"
                   Directory="System64Folder"
                   ExeCommand="taskkill.exe /IM WinForge.exe /F"
-                  Execute="deferred"
-                  Impersonate="no"
                   Return="ignore" />
     <!-- Borra la tarea programada de inicio automático (la crea la app con
          schtasks al activar "Iniciar con Windows"). Sin comillas anidadas: el
@@ -147,8 +156,13 @@
                   Impersonate="yes"
                   Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="KillWinForge" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
-      <Custom Action="DeleteStartupTask" After="KillWinForge" Condition="REMOVE=&quot;ALL&quot;" />
+      <!-- Siempre antes de InstallValidate (que es donde el motor detecta archivos en uso
+           y puede mostrar el diálogo que se esconde detrás del progreso). Inmediata: permitido
+           antes de InstallInitialize. Sin condición: instalar, reparar, actualizar y desinstalar. -->
+      <Custom Action="KillWinForge" Before="InstallValidate" />
+      <!-- La tarea de inicio se borra adentro del script (ICE77: diferida = entre
+           InstallInitialize e InstallFinalize), antes de quitar archivos. -->
+      <Custom Action="DeleteStartupTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
       <!-- Después de instalar (commit) solo en instalaciones nuevas o upgrades:
            primero la CA inmediata copia PROPERTY_PATH a CustomActionData y luego
            la diferida reabre la app con esa línea. La creación del proceso se

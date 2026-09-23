@@ -87,7 +87,9 @@ public sealed class GameBoostService : IGameBoostService
     public event Action? BoostCancelled;
 
     // Servicios con impacto directo en la actividad del sistema mientras se juega:
-    // mantenimiento/indexado + telemetría/diagnóstico + cola de impresión.
+    // mantenimiento/indexado + telemetría/diagnóstico + cola de impresión + tienda y
+    // puente USB legado. Todos se detienen SOLO durante la partida y se restauran al
+    // cerrar el juego (parada temporal, no el cambio persistente de la card de servicios).
     private static readonly string[] DefaultKillServices =
     {
         "wuauserv",         // Windows Update
@@ -98,7 +100,9 @@ public sealed class GameBoostService : IGameBoostService
         "DiagTrack",        // Telemetría de diagnóstico
         "WerSvc",           // Informe de errores de Windows
         "DPS",              // Directivas de diagnóstico
-        "Spooler"           // Cola de impresión
+        "Spooler",          // Cola de impresión
+        "InstallService",   // Microsoft Store: instala y actualiza apps de la tienda
+        "IpOverUsbSvc"      // Windows Phone IP over USB Transport (puente USB de desarrollo)
     };
 
     // Los servicios de telemetría/diagnóstico (DiagTrack, WerSvc, DPS) se muestran
@@ -124,6 +128,8 @@ public sealed class GameBoostService : IGameBoostService
             ("BITS", "Transferencia inteligente en segundo plano: descarga archivos de Windows Update y la Store sin interrumpir al usuario."),
             ("SysMain", "Precarga en memoria de apps usadas frecuentemente (ex Superfetch). Puede generar lectura de disco constante mientras jugás."),
             ("WSearch", "Indexado de archivos para la búsqueda de Windows. Consume disco y CPU mientras indexa contenido nuevo."),
+            ("InstallService", "Tienda de Microsoft: instala y actualiza las aplicaciones de la Store. Se detiene solo durante la partida, así una actualización de la tienda no arranca mientras jugás; vuelve al cerrar el juego."),
+            ("IpOverUsbSvc", "Windows Phone IP over USB Transport: puente USB para dispositivos Windows Phone y herramientas de desarrollo. No se usa en una PC de escritorio y no afecta a los puertos USB ni a los periféricos."),
         }),
         ("hyperv", "Hyper-V y virtualización", new (string, string)[]
         {
@@ -291,7 +297,7 @@ public sealed class GameBoostService : IGameBoostService
     }
 
     /// <summary>
-    /// Switch "Pausar tareas programadas" (pestaña Servicios de la configuración
+    /// Switch "Pausar tareas programadas" (pestaña Tareas de la configuración
     /// del boost): activo por defecto. Cuando está activo, el boost deshabilita
     /// temporalmente las tareas programadas de mantenimiento/pausables (defrag,
     /// escaneos de Windows Update y Defender, diagnóstico, telemetría) al lanzar un

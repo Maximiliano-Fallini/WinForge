@@ -5,11 +5,12 @@ using Microsoft.UI.Xaml.Media;
 namespace WHPO_UI;
 
 /// <summary>
-/// Piezas compartidas de las filas de idioma: el botón de descarga y su anillo de
-/// avance, que se ven igual en el menú de idioma del navbar y en el paso de idioma del
-/// onboarding. Viven acá y no duplicadas en cada ventana porque las dos filas tienen
-/// que medir igual: cuando cada lugar armaba la suya, terminaban con geometrías
-/// distintas y la diferencia se notaba al abrir el menú.
+/// Piezas compartidas de las filas de idioma del menú del navbar: el botón de descarga
+/// y su anillo de avance. Viven acá y no en la ventana porque la fila tiene que medir
+/// siempre igual: cuando cada lugar armaba la suya, terminaban con geometrías distintas
+/// y la diferencia se notaba al abrir el menú. El onboarding (desplegable de idioma)
+/// reusa de acá el glifo de descarga y la fuente de símbolos, así la marca de "se
+/// descarga" se ve idéntica en los dos lugares.
 ///
 /// Por qué el botón es chico a propósito: la fila no tiene MinHeight, la da el
 /// contenido —el texto (14 px en el menú, 13 en el onboarding) más el padding del

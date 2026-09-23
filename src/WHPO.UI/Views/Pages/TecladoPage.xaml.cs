@@ -38,7 +38,16 @@ public sealed partial class TecladoPage : Page
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _keyboardService = App.Services.GetRequiredService<IKeyboardService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
+
+        // El preset marcado sigue a los campos: apenas se edita un valor se vuelve a deducir
+        // cuál corresponde, y si no es ninguno queda marcado "Personalizado".
+        IgnoreUnderBox.ValueChanged += ValueBox_ValueChanged;
+        RepeatDelayBox.ValueChanged += ValueBox_ValueChanged;
+        RepeatRateBox.ValueChanged += ValueBox_ValueChanged;
     }
+
+    private void ValueBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+        => HighlightPresetInEffect();
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
@@ -63,12 +72,48 @@ public sealed partial class TecladoPage : Page
         {
             _loggingService.LogWarning($"TecladoPage: no se pudo leer la configuración: {ex.Message}");
         }
+
+        HighlightPresetInEffect();
     }
 
     /// <summary>
+    /// Resalta el preset que describen los TRES CAMPOS de abajo, no el último botón que se
+    /// tocó.
+    ///
+    /// Por qué: el resaltado era solo memoria de la página, así que al reiniciar la app la
+    /// selección desaparecía aunque los valores siguieran aplicados. Ahora se deduce de los
+    /// campos —que al abrir la página son los aplicados, los que Windows vuelve a aplicar al
+    /// iniciar sesión— y se vuelve a deducir cada vez que uno cambia. Comparar en vez de
+    /// guardar "cuál se eligió" tiene una ventaja concreta: el botón marcado no puede quedar
+    /// desactualizado (si el valor se cambió por fuera de la app, la marca lo refleja).
+    ///
+    /// Si los tres valores no son ningún preset, queda marcado "Personalizado", que es
+    /// exactamente lo que son: una configuración propia.
+    /// </summary>
+    private void HighlightPresetInEffect()
+    {
+        int? ignore = GetValue(IgnoreUnderBox);
+        int? delay = GetValue(RepeatDelayBox);
+        int? rate = GetValue(RepeatRateBox);
+
+        Button target =
+            Matches(ignore, delay, rate, OptimizedIgnoreMs, OptimizedDelayMs, OptimizedRateMs) ? OptimizedPresetButton :
+            Matches(ignore, delay, rate, DefaultIgnoreMs, DefaultDelayMs, DefaultRateMs) ? DefaultPresetButton :
+            CurrentPresetButton;
+        SelectPreset(target);
+    }
+
+    /// <summary>¿Los tres campos son exactamente los valores de este preset?</summary>
+    private static bool Matches(int? ignoreUnderMs, int? repeatDelayMs, int? repeatRateMs,
+                                int presetIgnoreMs, int presetDelayMs, int presetRateMs)
+        => ignoreUnderMs == presetIgnoreMs
+           && repeatDelayMs == presetDelayMs
+           && repeatRateMs == presetRateMs;
+
+    /// <summary>
     /// Presets como botones: completan los 3 campos con su configuración. Nunca
-    /// aplican por sí solos; el usuario ajusta y da a Aplicar. El seleccionado
-    /// queda resaltado hasta que se elija otro.
+    /// aplican por sí solos; el usuario ajusta y da a Aplicar. La marca queda en el
+    /// que describen los campos (no en el último que se tocó).
     /// </summary>
     private void DefaultPresetButton_Click(object sender, RoutedEventArgs e)
     {
@@ -86,21 +131,17 @@ public sealed partial class TecladoPage : Page
         RepeatRateBox.Value = OptimizedRateMs;
     }
 
+    /// <summary>
+    /// "Personalizado" es un ESTADO, no un preset: queda marcado cuando los tres valores no
+    /// son ni los de Windows ni los recomendados, y se marca solo apenas se edita un campo.
+    ///
+    /// Al tocarlo no se pisan los campos (antes el botón traía los valores del registro y se
+    /// llamaba "Aplicados actualmente"): se deja lo que hay escrito para terminarlo de
+    /// ajustar. La marca se vuelve a deducir sola en la próxima edición, así nunca queda
+    /// diciendo algo que los valores no dicen.
+    /// </summary>
     private void CurrentPresetButton_Click(object sender, RoutedEventArgs e)
-    {
-        SelectPreset(CurrentPresetButton);
-        try
-        {
-            var s = _keyboardService.GetSettings();
-            IgnoreUnderBox.Value = s.IgnoreUnderMs;
-            RepeatDelayBox.Value = s.RepeatDelayMs;
-            RepeatRateBox.Value = s.RepeatRateMs;
-        }
-        catch (Exception ex)
-        {
-            Feedback.Info(FeedbackText, I18n.T("No se pudieron leer los valores actuales: {0}", ex.Message));
-        }
-    }
+        => SelectPreset(CurrentPresetButton);
 
     /// <summary>Resalta el preset seleccionado y deselecciona el anterior.</summary>
     private void SelectPreset(Button button)
@@ -131,6 +172,9 @@ public sealed partial class TecladoPage : Page
                     SaveToRegistrySwitch.IsOn
                         ? "Aplicado en vivo y guardado en el registro."
                         : "Aplicado en vivo (sin guardar en el registro).");
+
+                // No hace falta recalcular la marca: sale de los campos, que no cambiaron al
+                // aplicar, y con "Guardar en el registro" apagado el registro no manda.
             }
             else
             {

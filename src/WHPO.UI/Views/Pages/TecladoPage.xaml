@@ -60,7 +60,7 @@
                                         Click="OptimizedPresetButton_Click"
                                         Style="{StaticResource PresetButtonStyle}"/>
                                 <Button x:Name="CurrentPresetButton"
-                                        Content="Aplicados actualmente"
+                                        Content="Personalizado"
                                         Click="CurrentPresetButton_Click"
                                         Style="{StaticResource PresetButtonStyle}"/>
                             </StackPanel>

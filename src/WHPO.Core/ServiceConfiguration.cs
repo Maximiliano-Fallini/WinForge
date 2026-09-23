@@ -40,6 +40,7 @@ public static class ServiceConfiguration
         services.AddSingleton<ISystemInfoService, SystemInfoService>();
         services.AddSingleton<ISensorService, SensorService>();
         services.AddSingleton<ICpuPowerService, CpuPowerService>();
+        services.AddSingleton<ITurboCeilingService, TurboCeilingService>();
         services.AddSingleton<INetworkService, NetworkService>();
         services.AddSingleton<IMemoryService, MemoryService>();
         services.AddSingleton<ITweakService, TweakService>();

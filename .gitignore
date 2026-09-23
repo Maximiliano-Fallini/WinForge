@@ -106,12 +106,12 @@ installer/PostUpdateCA/obj/
 *.coff
 
 # ===== Tooling de build (disco del desarrollador) =====
-# Sus productos sí se publican, pero como assets de las releases de GitHub:
+# Los productos no se versionan (van como assets de las releases de GitHub), pero
+# las FUENTES del instalador sí: sin ellas el MSI no se puede reconstruir y se
+# pierde la forma de publicar una versión. Por eso lo que se ignora son sus
+# productos (installer/publish, installer/Files.wxs, el .msi), no la carpeta entera.
 #   build.ps1 / build-components.ps1 → publican la app;
 #   installer/ → produce el MSI que se sube a la release de cada versión.
-/build.ps1
-/build-components.ps1
-/installer/
 
 # ===== Paquetes comprimidos =====
 *.zip

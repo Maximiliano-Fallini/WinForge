@@ -23,6 +23,17 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
     private long _totalStorage;
     private string _cpuCoresText = "--";
 
+    // Valores crudos para poder re-traducir los textos compuestos al cambiar de idioma
+    // (núcleos/hilos, canal de RAM, "usados", "Libre:"). El canal llega de Core en
+    // inglés crudo ("Dual Channel"); se traduce al vuelo, no se traduce en Core.
+    private int _cpuPhysicalCores;
+    private int _cpuLogicalProcessors;
+    private double _cpuFrequencyMhz;
+    private string _ramChannelModeRaw = "";
+    private int _ramSpeedMHz;
+    private long _ramUsedBytes;
+    private long _storageFreeBytes;
+
     // GPUs de la card de Sistema (para el desplegable multi-GPU) y flag para no
     // reaccionar a SelectionChanged mientras se llena el ComboBox.
     private List<GpuInfo>? _gpus;
@@ -130,7 +141,10 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         _cpuVendor = cpuNameUpper.Contains("AMD") ? "AMD-Vi"
             : cpuNameUpper.Contains("INTEL") ? "Intel VT-d" : "";
 
-        _cpuCoresText = $"{cpuInfo.PhysicalCores} núcleos / {cpuInfo.LogicalProcessors} hilos";
+        _cpuPhysicalCores = cpuInfo.PhysicalCores;
+        _cpuLogicalProcessors = cpuInfo.LogicalProcessors;
+        _cpuFrequencyMhz = cpuInfo.CurrentFrequencyMHz;
+        _cpuCoresText = I18n.T("{0} núcleos / {1} hilos", cpuInfo.PhysicalCores, cpuInfo.LogicalProcessors);
         CpuDetailsText.Text = $"{FormatFrequency(cpuInfo.CurrentFrequencyMHz)} · {_cpuCoresText}";
 
         // CPU lista: revelar su card
@@ -143,11 +157,12 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         RamTotalText.Text = FormatBytes(memInfo.TotalBytes);
         RamUsageText.Text = $"{memInfo.UsagePercent:F1}%";
         RamUsageBar.Value = Math.Max(0, Math.Min(100, memInfo.UsagePercent));
-        RamUsedText.Text = $"· {FormatBytes(memInfo.UsedBytes)} usados";
+        _ramUsedBytes = memInfo.UsedBytes;
+        RamUsedText.Text = I18n.T("· {0} usados", FormatBytes(memInfo.UsedBytes));
         var moduleInfo = await Task.Run(() => _systemInfoService.GetMemoryModuleInfo());
-        RamDetailsText.Text = moduleInfo.SpeedMHz > 0
-            ? $"{moduleInfo.ChannelMode} · {moduleInfo.SpeedMHz} MHz"
-            : moduleInfo.ChannelMode;
+        _ramChannelModeRaw = moduleInfo.ChannelMode; // crudo de Core ("Dual Channel"…): se traduce al vuelo
+        _ramSpeedMHz = moduleInfo.SpeedMHz;
+        RamDetailsText.Text = FormatRamDetails();
         await RevealCardAsync(RamSkeleton, RamContent);
 
         // GPU (preferir dedicada; con más de una, desplegable para elegir)
@@ -201,7 +216,8 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         double storageUsage = totalStorage > 0 ? (double)(totalStorage - totalFreeStorage) / totalStorage * 100 : 0;
         StorageUsageText.Text = $"{storageUsage:F1}%";
         StorageUsageBar.Value = Math.Max(0, Math.Min(100, storageUsage));
-        StorageFreeText.Text = $"Libre: {FormatBytes(totalFreeStorage)}";
+        _storageFreeBytes = totalFreeStorage;
+        StorageFreeText.Text = I18n.T("Libre: {0}", FormatBytes(totalFreeStorage));
         await RevealCardAsync(StorageSkeleton, StorageContent);
 
         // Placa base
@@ -352,8 +368,58 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
     private void OnLanguageChanged()
     {
         if (_dataLoaded)
+        {
             ApplySecurityFeatures();
+            // Re-traducir los detalles compuestos que se armaron con el idioma anterior.
+            RefreshLocalizedDetails();
+        }
     }
+
+    /// <summary>
+    /// Re-arma los textos compuestos que dependen del idioma (núcleos/hilos, canal de
+    /// RAM, "usados" y "Libre:"). El canal se guarda crudo y se traduce al vuelo, así
+    /// que esto solo vuelve a formatear lo que ya se cargó.
+    /// </summary>
+    private void RefreshLocalizedDetails()
+    {
+        if (_cpuPhysicalCores > 0)
+        {
+            _cpuCoresText = I18n.T("{0} núcleos / {1} hilos", _cpuPhysicalCores, _cpuLogicalProcessors);
+            CpuDetailsText.Text = _cpuFrequencyMhz > 0
+                ? $"{FormatFrequency(_cpuFrequencyMhz)} · {_cpuCoresText}"
+                : _cpuCoresText;
+        }
+
+        if (_ramChannelModeRaw.Length > 0)
+            RamDetailsText.Text = FormatRamDetails();
+
+        if (_ramUsedBytes > 0)
+            RamUsedText.Text = I18n.T("· {0} usados", FormatBytes(_ramUsedBytes));
+
+        if (_storageFreeBytes > 0)
+            StorageFreeText.Text = I18n.T("Libre: {0}", FormatBytes(_storageFreeBytes));
+    }
+
+    /// <summary>
+    /// Texto de detalles de la card de RAM: modo de canal traducido al vuelo (Core
+    /// entrega "Dual Channel" crudo, la traducción vive en la UI) + velocidad si la hay.
+    /// </summary>
+    private string FormatRamDetails()
+    {
+        var mode = TranslateChannelMode(_ramChannelModeRaw);
+        return _ramSpeedMHz > 0 ? $"{mode} · {_ramSpeedMHz} MHz" : mode;
+    }
+
+    /// <summary>Traduce el modo de canal crudo ("Dual Channel", "Single Channel"…)
+    /// al idioma activo; si es un valor desconocido, lo devuelve tal cual.</summary>
+    private static string TranslateChannelMode(string raw) => raw switch
+    {
+        "Single Channel" => I18n.T("Canal simple"),
+        "Dual Channel" => I18n.T("Canal doble"),
+        "Triple Channel" => I18n.T("Canal triple"),
+        "Quad Channel" => I18n.T("Canal cuádruple"),
+        _ => raw
+    };
 
     private static SolidColorBrush StatusBrush(string key) => ThemeBrushes.Get(key);
 
@@ -523,7 +589,8 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
                 StorageUsageText.Text = $"{storageUsage:F1}%";
                 StorageUsageBar.Value = Math.Max(0, Math.Min(100, storageUsage));
                 if (_totalStorage > 0)
-                    StorageFreeText.Text = $"Libre: {FormatBytes((long)(_totalStorage * (1 - storageUsage / 100.0)))}";
+                    _storageFreeBytes = (long)(_totalStorage * (1 - storageUsage / 100.0));
+        StorageFreeText.Text = I18n.T("Libre: {0}", FormatBytes(_storageFreeBytes));
             }
         });
     }

@@ -92,6 +92,11 @@ public partial class App : Application
         var logPath = Path.Combine(settingsDirectory, "errors.log");
         var logService = Services.GetRequiredService<ILoggingService>();
 
+        // Re-traducir la UI al cambiar de idioma toca toda la ventana viva: si un suscriptor
+        // falla, se anota quién fue (con la excepción completa) y se lo omitió, en vez de
+        // dejar que la excepción cierre la app.
+        I18n.SubscriberError = message => logService.LogError(message);
+
         // Eager-init del GameBoost: suscribe su restauración a los eventos WMI
         // desde el arranque, para que la optimización siga funcionando aunque no
         // se abra la biblioteca o se navegue a otra pestaña.

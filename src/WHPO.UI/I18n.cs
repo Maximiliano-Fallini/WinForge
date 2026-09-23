@@ -28,10 +28,24 @@ namespace WHPO_UI;
 public static class I18n
 {
     public const string DefaultLanguage = "en-US";
-    public static string Current { get; private set; } = DefaultLanguage;
+    /// <summary>Idioma activo. El set es internal para la vista previa (simulador de
+    /// onboarding), que cambia el idioma SIN persistir; el camino normal es SetLanguage.</summary>
+    public static string Current { get; internal set; } = DefaultLanguage;
+
+    /// <summary>
+    /// Dispara LanguageChanged sin tocar el settings: para la vista previa del
+    /// simulador de onboarding, que re-traduce sin persistir nada.
+    /// </summary>
+    internal static void DispatchLanguageChanged() => RaiseLanguageChanged();
 
     /// <summary>Se dispara al cambiar de idioma (los suscriptores re-aplican la UI).</summary>
     public static event Action? LanguageChanged;
+
+    /// <summary>
+    /// Aviso de un suscriptor de <see cref="LanguageChanged"/> que falló al re-aplicar la UI.
+    /// Lo engancha el arranque de la app para volcarlo al log.
+    /// </summary>
+    public static Action<string>? SubscriberError;
 
     /// <summary>
     /// Idiomas que trae la app sin descargar nada: el español (es-AR, que además es
@@ -181,7 +195,7 @@ public static class I18n
         Current = resolved;
         settings.Set("app.language", resolved);
         settings.Save();
-        LanguageChanged?.Invoke();
+        RaiseLanguageChanged();
     }
 
     /// <summary>
@@ -191,7 +205,37 @@ public static class I18n
     /// al arrancar, cuando el catálogo todavía no existía) tiene que volver a
     /// traducirse para que la pestaña del componente salga en el idioma activo.
     /// </summary>
-    public static void Reapply() => LanguageChanged?.Invoke();
+    public static void Reapply() => RaiseLanguageChanged();
+
+    /// <summary>
+    /// Dispara LanguageChanged avisando a CADA suscriptor por separado.
+    ///
+    /// Un cambio de idioma es una pasada de re-traducción sobre toda la UI viva: la
+    /// ventana, la página actual y todas las páginas ya visitadas. Si uno de esos
+    /// suscriptores fallaba, la excepción subía hasta el manejador global y la app se
+    /// cerraba por re-traducir una vista (pasó: armar de nuevo una lista reusando un
+    /// elemento que ya tenía padre tira "Element is already the child of another
+    /// element"). Acá se aísla: el que falla queda anotado con su nombre y el resto
+    /// sigue re-traduciendo, así el cambio de idioma nunca es una bomba.
+    /// </summary>
+    private static void RaiseLanguageChanged()
+    {
+        var handlers = LanguageChanged;
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action)handler)();
+            }
+            catch (Exception ex)
+            {
+                var target = handler.Target?.GetType().Name ?? "(estático)";
+                SubscriberError?.Invoke($"Idioma: '{target}' falló al re-aplicar la UI: {ex}");
+            }
+        }
+    }
 
     // ===================== Aplicar a un árbol visual =====================
 

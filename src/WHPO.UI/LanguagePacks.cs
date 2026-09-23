@@ -175,6 +175,63 @@ public static class LanguagePacks
     }
 
     /// <summary>
+    /// Re-descarga los packs instalados cuyo sourceHash quedó viejo respecto de la
+    /// app en ejecución. Es el cierre del circuito que el arranque siempre prometió
+    /// ("los packs se refrescan solos"): con una app nueva, el pack viejo degradaba
+    /// a la tabla embebida para siempre porque el chequeo de desactualización solo
+    /// escribía en el log. Solo actúa si el catálogo publica una versión MÁS NUEVA
+    /// que la instalada (si el pack de turno no cambió, re-bajarlo sería en vano y
+    /// repetiría en cada arranque). Se corre junto al chequeo de actualizaciones de
+    /// la app: un solo flujo de actualización al abrir, todo silencioso. Si no hay
+    /// red, no hace nada y queda para el próximo arranque.
+    ///
+    /// No se pisa con la recuperación del idioma guardado: esa cubre idiomas SIN
+    /// pack instalado; acá solo se miran packs ya instalados (conjuntos disjuntos).
+    /// </summary>
+    public static async Task RefreshOutdatedAsync(ILoggingService? logging = null, CancellationToken ct = default)
+    {
+        if (_service == null) return;
+
+        var catalog = await GetCatalogAsync(logging, force: false, ct);
+        if (catalog == null)
+        {
+            logging?.LogInfo("Idiomas: refresco de packs omitido (sin catálogo; se reintenta en el próximo arranque).");
+            return;
+        }
+
+        List<(InstalledLanguageRecord Record, LanguageCatalogEntry Entry)> stale = new();
+        lock (Sync)
+        {
+            foreach (var record in Installed)
+            {
+                if (!LanguagePackService.IsOutdated(record.SourceHash, Translations.SourceHash)) continue;
+                var entry = catalog.Languages.FirstOrDefault(l => !l.Builtin
+                    && string.Equals(l.Code, record.Code, StringComparison.OrdinalIgnoreCase));
+                if (entry == null) continue;
+                // Solo si hay una versión más nueva publicada que la instalada.
+                if (ComponentCatalogService.CompareVersions(entry.Version, record.Version) <= 0) continue;
+                stale.Add((record, entry));
+            }
+        }
+
+        foreach (var (record, entry) in stale)
+        {
+            try
+            {
+                var outcome = await DownloadAsync(entry, null, ct);
+                if (outcome.Success)
+                    logging?.LogInfo($"Idiomas: pack {record.Code} refrescado a v{entry.Version} (sourceHash {Translations.SourceHash[..12]}…).");
+                else
+                    logging?.LogWarning($"Idiomas: refresco de {record.Code} falló: {outcome.Error}");
+            }
+            catch (Exception ex)
+            {
+                logging?.LogWarning($"Idiomas: refresco de {record.Code}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
     /// Recupera el idioma guardado cuando su pack no está instalado (por ejemplo
     /// pt-BR/de-DE/fr-FR elegidos en una versión anterior, cuando esos idiomas venían
     /// embebidos en la app y ahora son descargables).

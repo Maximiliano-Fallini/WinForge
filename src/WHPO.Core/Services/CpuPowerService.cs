@@ -65,6 +65,9 @@ public class CpuPowerService : ICpuPowerService
         public string Name { get; set; } = "";
         public List<(uint Value, string Name)>? PossibleValues;
         public bool HasRange;
+        public uint Min;
+        public uint Max;
+        public uint Step = 1;
         public string Units { get; set; } = "";
         // Valores predeterminados por tipo de plan (DefaultPowerSchemeValues\<GUID>):
         // lo que Windows usa cuando el plan no define el setting.
@@ -178,9 +181,16 @@ public class CpuPowerService : ICpuPowerService
         if (string.IsNullOrWhiteSpace(cs.Name))
             cs.Name = $"Configuración {cs.Guid[..8]}";
 
-        // Rango numérico (ValueMin/ValueMax/ValueIncrement) y unidades.
-        if (setKey.GetValue("ValueMin") is int && setKey.GetValue("ValueMax") is int)
+        // Rango numérico (ValueMin/ValueMax/ValueIncrement) y unidades. Se guardan los
+        // valores, no solo el hecho de que exista un rango: hay ajustes que powercfg no
+        // lista (los ocultos) y el único lugar donde se declara su rango es acá.
+        if (setKey.GetValue("ValueMin") is int valueMin && setKey.GetValue("ValueMax") is int valueMax)
+        {
             cs.HasRange = true;
+            cs.Min = valueMin < 0 ? 0 : (uint)valueMin;
+            cs.Max = valueMax < 0 ? 0 : (uint)valueMax;
+            if (setKey.GetValue("ValueIncrement") is int increment && increment > 0) cs.Step = (uint)increment;
+        }
         if (setKey.GetValue("ValueUnits") is string units && !string.IsNullOrWhiteSpace(units))
             cs.Units = ResolveIndirectStringLocalized(units);
 
@@ -590,6 +600,206 @@ public class CpuPowerService : ICpuPowerService
     }
 
     // ===================== Descripción (registro) =====================
+
+    // ===================== Configuración puntual del plan =====================
+
+    /// <summary>
+    /// Rango y valores de una configuración puntual, tal como los devuelve
+    /// `powercfg /q plan sub config`: mínimo, máximo, incremento, unidad y valores
+    /// AC/DC que el plan define. Los rótulos están localizados, así que se clasifican
+    /// por palabra clave (mismo criterio que el detalle del plan) y, cuando el idioma
+    /// no coincide con ninguno, se resuelve por el orden fijo de powercfg
+    /// (mínimo, máximo, incremento, corriente alterna, corriente continua).
+    /// </summary>
+    private sealed record SettingScan(uint? Min, uint? Max, uint? Step, string Units, uint? Ac, uint? Dc);
+
+    private SettingScan ScanSetting(string planGuid, string subgroupGuid, string settingGuid)
+    {
+        var output = RunPowerCfg($"/q {planGuid} {subgroupGuid} {settingGuid}");
+        uint? min = null, max = null, step = null, ac = null, dc = null;
+        var units = "";
+        var hexes = new List<uint>();
+
+        foreach (var raw in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+
+            if (ContainsAny(line, "unidades de configuración", "setting units"))
+            {
+                var colon = line.LastIndexOf(':');
+                if (colon >= 0) units = line[(colon + 1)..].Trim();
+                continue;
+            }
+
+            var hex = Regex.Match(line, @"0x([0-9a-fA-F]+)");
+            if (!hex.Success) continue;
+
+            var value = Convert.ToUInt32(hex.Groups[1].Value, 16);
+            hexes.Add(value);
+
+            if (ContainsAny(line, "mínim", "minim")) min = value;
+            else if (ContainsAny(line, "máxim", "maxim")) max = value;
+            else if (ContainsAny(line, "incremento", "increment")) step = value;
+            else if (ContainsAny(line, "alterna", "AC Power")) ac = value;
+            else if (ContainsAny(line, "continua", "DC Power")) dc = value;
+        }
+
+        // Red de seguridad por orden: powercfg lista el rango primero y los valores
+        // actuales después, siempre con la misma secuencia.
+        if (ac == null && dc == null)
+        {
+            if (hexes.Count >= 5)
+            {
+                min ??= hexes[0];
+                max ??= hexes[1];
+                step ??= hexes[2];
+                ac = hexes[3];
+                dc = hexes[4];
+            }
+            else if (hexes.Count == 2)
+            {
+                ac = hexes[0];
+                dc = hexes[1];
+            }
+        }
+
+        return new SettingScan(min, max, step, units, ac, dc);
+    }
+
+    private static bool ContainsAny(string text, params string[] needles)
+    {
+        foreach (var needle in needles)
+            if (text.Contains(needle, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Valores AC/DC que el plan tiene guardados para una configuración. Se leen de los dos
+    /// almacenes que usa Windows: el override del usuario (donde escribe `powercfg`,
+    /// `Power\User\PowerSchemes\plan\subgrupo\configuración`) y el maestro del sistema
+    /// (`Power\PowerSchemes\...`). Devuelve null en cada lado que no exista.
+    /// </summary>
+    private static (uint? Ac, uint? Dc) ReadSchemeStoredValues(string planGuid, string subgroupGuid, string settingGuid)
+    {
+        try
+        {
+            var stores = new[]
+            {
+                $@"SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes\{planGuid}\{subgroupGuid}\{settingGuid}",
+                $@"SYSTEM\CurrentControlSet\Control\Power\PowerSchemes\{planGuid}\{subgroupGuid}\{settingGuid}"
+            };
+
+            foreach (var path in stores)
+            {
+                using var key = Registry.LocalMachine.OpenSubKey(path);
+                if (key == null) continue;
+                var ac = key.GetValue("ACSettingIndex") as int?;
+                var dc = key.GetValue("DCSettingIndex") as int?;
+                if (ac == null && dc == null) continue;
+                return (ac.HasValue ? (uint)ac.Value : null, dc.HasValue ? (uint)dc.Value : null);
+            }
+            return (null, null);
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    public PowerSettingState? GetPowerSettingState(string planGuid, string subgroupGuid, string settingGuid)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(planGuid) || string.IsNullOrWhiteSpace(settingGuid)) return null;
+
+            // Solo se responde por configuraciones que el catálogo del sistema conoce:
+            // si no está, el equipo no la expone y devolver números sería inventarlos.
+            CatalogSetting? setting = null;
+            foreach (var csg in PowerCatalog.Value)
+            {
+                if (!csg.Guid.Equals(subgroupGuid, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var s in csg.Settings)
+                {
+                    if (s.Guid.Equals(settingGuid, StringComparison.OrdinalIgnoreCase)) { setting = s; break; }
+                }
+                break;
+            }
+            if (setting == null) return null;
+
+            // Rango: el que declara powercfg cuando la configuración está en el plan y, si no
+            // (los ajustes ocultos no se listan), el que declara el catálogo del sistema, que
+            // trae el mismo mínimo/máximo/incremento. Nunca una tabla propia de la app.
+            var scan = ScanSetting(planGuid, subgroupGuid, settingGuid);
+            var fromScan = scan.Min != null && scan.Max != null && scan.Max > scan.Min;
+            var state = new PowerSettingState(setting.Name)
+            {
+                Min = fromScan ? scan.Min!.Value : setting.Min,
+                Max = fromScan ? scan.Max!.Value : setting.Max,
+                Step = fromScan && scan.Step is > 0 ? scan.Step.Value : (setting.Step > 0 ? setting.Step : 1),
+                Units = !string.IsNullOrWhiteSpace(scan.Units) ? scan.Units : setting.Units,
+                PossibleValues = setting.PossibleValues
+            };
+            state.HasRange = state.Max > state.Min;
+
+            // Valores que el plan guarda en el registro. Hace falta además de powercfg
+            // porque `powercfg /q` NO LISTA los ajustes ocultos (por ejemplo el modo boost
+            // del procesador): el valor existe, Windows lo usa, pero la consulta no lo
+            // muestra. Sin esto, la app leería el predeterminado y creería que su propia
+            // escritura no se aplicó.
+            var plan = ReadSchemeStoredValues(planGuid, subgroupGuid, settingGuid);
+
+            var def = ResolveDefaultValue(setting.Defaults, planGuid);
+            state.DefaultAc = def?.Ac;
+            state.DefaultDc = def?.Dc;
+            // Valor efectivo: el que define el plan (powercfg) o el que está guardado en el
+            // registro y, si no hay ninguno, el predeterminado del esquema para ese tipo de
+            // plan. Nunca un valor inventado.
+            state.AcValue = scan.Ac ?? plan.Ac ?? def?.Ac;
+            state.DcValue = scan.Dc ?? plan.Dc ?? def?.Dc;
+            return state;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError($"Error leyendo la configuración {settingGuid} del plan {planGuid}", ex);
+            return null;
+        }
+    }
+
+    public async Task<CommandResult> SetPowerSettingAsync(string planGuid, string subgroupGuid, string settingGuid, uint acValue, uint dcValue)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(planGuid) || string.IsNullOrWhiteSpace(settingGuid))
+                return new CommandResult(false, "No se proporcionó una configuración de energía válida.",
+                    "No se proporcionó una configuración de energía válida.");
+
+            var output = await Task.Run(() =>
+            {
+                var ac = RunPowerCfg($"/setacvalueindex {planGuid} {subgroupGuid} {settingGuid} {acValue}");
+                var dc = RunPowerCfg($"/setdcvalueindex {planGuid} {subgroupGuid} {settingGuid} {dcValue}");
+                // En el plan activo, re-aplicar el esquema fuerza el refresco inmediato:
+                // powercfg guarda el valor, pero Windows puede tardar en usarlo.
+                if (planGuid.Equals(GetActivePowerPlanGuid(), StringComparison.OrdinalIgnoreCase))
+                    return ac + dc + RunPowerCfg($"/setactive {planGuid}");
+                return ac + dc;
+            });
+
+            if (ContainsPowerCfgError(output))
+            {
+                _loggingService.LogWarning($"powercfg rechazó el cambio de {settingGuid} en {planGuid}: {output.Trim()}");
+                return new CommandResult(false, output.Trim());
+            }
+
+            _loggingService.LogInfo($"Configuración de energía {settingGuid} del plan {planGuid} = AC {acValue} / DC {dcValue}");
+            return new CommandResult(true, "Valor de energía aplicado.", "Valor de energía aplicado.");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError($"Error escribiendo la configuración {settingGuid} del plan {planGuid}", ex);
+            return new CommandResult(false, ex.Message);
+        }
+    }
 
     public string GetPowerPlanDescription(string planGuid)
     {

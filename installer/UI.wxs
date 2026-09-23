@@ -116,7 +116,13 @@
       </Dialog>
 
       <!-- ===== Progreso (lo muestra el motor durante la copia de archivos) ===== -->
-      <Dialog Id="WFProgressDlg" Width="370" Height="270" Title="Trabajando" NoMinimize="yes">
+      <!-- Modeless="yes" es OBLIGATORIO acá: esta es la ventana que queda visible durante
+           ExecuteAction. Modal y sin botones (como estaba) hace que el motor quede esperando
+           el EndDialog de una ventana que nunca lo publica — el asistente se cuelga "cargando"
+           para siempre justo al entrar a la barra de progreso (medido: el log muere en
+           'La acción se inició: WFProgressDlg' y nunca arranca la secuencia de ejecución).
+           Es exactamente como lo definen los instaladores estándar de Windows. -->
+      <Dialog Id="WFProgressDlg" Width="370" Height="270" Title="Trabajando" Modeless="yes" NoMinimize="yes">
         <!-- TabSkip="no": la página de progreso no tiene botones, y el motor exige un
              control al que se pueda ir con el teclado (si no, la ventana queda sin foco). -->
         <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes" TabSkip="no"
@@ -141,24 +147,28 @@
            "virtual ... OnExit=success": eso le da el nombre estándar Exit que el motor
            busca (ver Product.wxs) sin tener que llamar al diálogo Exit. -->
       <Dialog Id="WFFinishDlg" Width="370" Height="270" Title="WinForge" NoMinimize="yes">
+        <!-- Cada variante necesita Show + Hide: el estado por defecto de un control es
+             visible, y una condición Show falsa NO lo oculta (solo un evento Hide lo hace).
+             Sin el Hide, al desinstalar quedaban los dos textos superpuestos en la misma
+             posición (volcado de la tabla ControlCondition: solo había filas Show). -->
         <Control Id="Title" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
-                 Text="WinForge está listo" ShowCondition="NOT REMOVE=&quot;ALL&quot;" />
+                 Text="WinForge está listo" ShowCondition="NOT REMOVE=&quot;ALL&quot;" HideCondition="REMOVE=&quot;ALL&quot;" />
         <Control Id="TitleRemoved" Type="Text" X="15" Y="12" Width="340" Height="24" NoPrefix="yes"
-                 Text="WinForge se quitó del equipo" ShowCondition="REMOVE=&quot;ALL&quot;" />
+                 Text="WinForge se quitó del equipo" ShowCondition="REMOVE=&quot;ALL&quot;" HideCondition="NOT REMOVE=&quot;ALL&quot;" />
 
         <Control Id="IntroInstall" Type="Text" X="15" Y="46" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
                  Text="Se copiaron los archivos, se agregaron las exclusiones de Windows Defender y se crearon los accesos directos."
-                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" />
+                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" HideCondition="REMOVE=&quot;ALL&quot;" />
         <Control Id="HintInstall" Type="Text" X="15" Y="98" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
                  Text="Si alguna vez Windows Defender bloquea la app, revisá que la carpeta siga en la lista de exclusiones: está en Seguridad de Windows, Protección contra virus y amenazas."
-                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" />
+                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" HideCondition="REMOVE=&quot;ALL&quot;" />
 
         <Control Id="IntroRemoved" Type="Text" X="15" Y="46" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
                  Text="Se borraron los archivos y los accesos directos, y también las exclusiones de Windows Defender que había agregado el instalador."
-                 ShowCondition="REMOVE=&quot;ALL&quot;" />
+                 ShowCondition="REMOVE=&quot;ALL&quot;" HideCondition="NOT REMOVE=&quot;ALL&quot;" />
         <Control Id="HintRemoved" Type="Text" X="15" Y="98" Width="340" Height="44" NoPrefix="yes" Transparent="yes"
                  Text="Tus datos (configuración, componentes descargados) quedan en tu perfil por si volvés a instalar."
-                 ShowCondition="REMOVE=&quot;ALL&quot;" />
+                 ShowCondition="REMOVE=&quot;ALL&quot;" HideCondition="NOT REMOVE=&quot;ALL&quot;" />
 
         <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="Finalizar">
           <Publish Event="EndDialog" Value="Return" />

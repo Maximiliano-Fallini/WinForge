@@ -18,7 +18,7 @@ namespace WHPO_UI.Views.Pages;
 /// <summary>
 /// Workshop: catálogo de componentes de WinForge en grilla de cards. Cada card:
 /// ícono + badge de categoría, título, descripción, y footer con estado y acción
-/// (core fijo / integrado con switch / instalado con actualizar+desinstalar /
+/// (core fijo / integrado con switch / instalado con desinstalar (los componentes viajan con la app: sin canal propio) /
 /// disponible con instalar). La descarga es real desde GitHub (SHA-256 + ALC).
 /// </summary>
 public sealed partial class WorkshopPage : Page
@@ -648,17 +648,10 @@ public sealed partial class WorkshopPage : Page
                 VerticalAlignment = VerticalAlignment.Center
             });
 
-            if (card.Entry != null && ComponentCatalogService.CompareVersions(card.Entry.Version, card.Installed.Version) > 0)
-            {
-                var updateBtn = CreateActionButton(I18n.T("Actualizar"));
-                // Componente en desarrollo: actualizar solo en builds de desarrollo.
-                if (IsInDevelopment(card) && !IsDevBuild())
-                    updateBtn.IsEnabled = false;
-                else
-                    updateBtn.Click += async (s, e) => await InstallAsync(card, updateBtn);
-                right.Children.Add(updateBtn);
-            }
-
+            // Sin botón "Actualizar" propio: los componentes se actualizan con la app
+            // (viajan en su instalador). El catálogo ya no define un canal de
+            // actualización por componente: solo instala/desinstala, con el piso de
+            // compatibilidad (minAppVersion) como resguardo al instalar.
             var uninstallBtn = CreateActionButton(I18n.T("Desinstalar"));
             uninstallBtn.Foreground = Feedback.ErrorBrush; // acción destructiva: en rojo
             uninstallBtn.Click += async (s, e) => await UninstallAsync(card, uninstallBtn);
@@ -710,20 +703,9 @@ public sealed partial class WorkshopPage : Page
                 uninstallBtn.Click += async (s, e) => await UninstallBuiltinAsync(card);
                 right.Children.Add(uninstallBtn);
 
-                // Canal de actualización INDIVIDUAL (0.1.0 por componente): si el
-                // catálogo tiene una versión más nueva que el integrado, se instala
-                // la copia del repo, que PISA la copia del exe en el registro. La
-                // copia del exe NO se toca: queda como fallback offline.
-                if (card.Entry != null
-                    && ComponentCatalogService.CompareVersions(card.Entry.Version, card.Instance.Version) > 0)
-                {
-                    var updateBtn = CreateActionButton(I18n.T("Actualizar"));
-                    if (IsInDevelopment(card) && !IsDevBuild())
-                        updateBtn.IsEnabled = false;
-                    else
-                        updateBtn.Click += async (s, e) => await InstallAsync(card, updateBtn);
-                    right.Children.Add(updateBtn);
-                }
+                // Sin canal de actualización individual: el integrado viaja con la app
+                // y se actualiza cuando ella (la copia del exe es la fuente; el
+                // catálogo remoto solo ofrece el componente a quien no lo tiene).
             }
         }
         // 4) Disponible para instalar (entrada del catálogo, no instalado).

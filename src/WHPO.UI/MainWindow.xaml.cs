@@ -182,6 +182,11 @@ public sealed partial class MainWindow : Window
         // se captura y se traduce al idioma guardado.
         TranslateNavbar();
 
+        // Barra de título PROPIA, más alta que la nativa. Se engancha acá, temprano en el
+        // constructor: si se hace más tarde, Windows muestra primero la barra nativa y
+        // después la esconde (parpadeo al abrir).
+        SetupCustomTitleBar();
+
         // Configurar minimize to tray
         this.Closed += MainWindow_Closed;
 
@@ -193,6 +198,10 @@ public sealed partial class MainWindow : Window
         // evento queda seguro. (Misma posición que la del constructor: no salta.)
         this.Activated += (_, args) =>
         {
+            // El alto real lo termina de aplicar el sistema al activarse la ventana: acá se
+            // reconcilia con el de la barra propia (ver AlignTitleBarHeight).
+            if (args.WindowActivationState != WindowActivationState.Deactivated) AlignTitleBarHeight();
+
             if (!_centeredOnFirstActivation && args.WindowActivationState != WindowActivationState.Deactivated)
             {
                 _centeredOnFirstActivation = true;
@@ -2182,10 +2191,12 @@ public sealed partial class MainWindow : Window
     public bool IsDevelopmentBuild => _latestUpdate?.Status == AppUpdateStatus.DevelopmentBuild;
 
     /// <summary>
-    /// Chequeo de actualizaciones al abrir la app. Asíncrono y silencioso: si hay
-    /// versión más nueva en el repo muestra el ícono "Actualizar a vX" en el
-    /// navbar; si la build está adelantada al repo (en desarrollo) muestra
-    /// "Versión X en desarrollo".
+    /// Chequeo de actualizaciones al abrir la app. Es el ÚNICO flujo de actualización
+    /// del arranque y cubre todo: la app (si hay versión más nueva en el repo muestra
+    /// el ícono "Actualizar a vX" en el navbar; si la build está adelantada al repo,
+    /// "Versión X en desarrollo") y los packs de idioma instalados cuya fuente quedó
+    /// vieja, que se refrescan en silencio si hay una versión más nueva publicada.
+    /// Asíncrono y silencioso: nada de esto bloquea ni molesta al arranque.
     /// </summary>
     public void BeginUpdateCheck()
     {
@@ -2206,6 +2217,18 @@ public sealed partial class MainWindow : Window
         {
             // El fallo del chequeo no debe molestar al arranque: solo se loguea.
             _loggingService.LogWarning($"MainWindow: chequeo de actualizaciones falló: {ex.Message}");
+        }
+
+        // Segunda pata del flujo único: packs de idioma desactualizados se re-bajan
+        // solos (solo si el catálogo publicó una versión más nueva del pack). Los
+        // componentes NO tienen canal propio: viajan y se actualizan con la app.
+        try
+        {
+            await LanguagePacks.RefreshOutdatedAsync(_loggingService);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: refresco de packs de idioma falló: {ex.Message}");
         }
     }
 
@@ -2711,9 +2734,10 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Fila del menú de idiomas: bandera + nombre (el nombre es el botón que lo activa) y, a la
-    /// derecha, la acción del estado: ✓ si es el idioma activo, X si es un pack instalado que se
-    /// puede quitar, y el botón de descarga —que se convierte en spinner mientras baja— si el
-    /// idioma todavía no está. Los embebidos no se pueden quitar.
+    /// derecha, la acción del estado: ✓ si es el idioma activo (+ X si es un pack descargado:
+    /// al terminar la descarga la app activa el idioma, y sin esto la X nunca se vería),
+    /// X si es un pack instalado inactivo, y el botón de descarga —que se convierte en
+    /// spinner mientras baja— si el idioma todavía no está. Los embebidos no se pueden quitar.
     /// </summary>
     private FrameworkElement BuildLanguageRow(string code, LanguageCatalogEntry? entry)
     {
@@ -2766,15 +2790,21 @@ public sealed partial class MainWindow : Window
 
         if (active)
         {
-            var check = new FontIcon
+            var actions = new StackPanel { Orientation = WinOrientation.Horizontal, Spacing = 2 };
+            actions.Children.Add(new FontIcon
             {
                 Glyph = "\uE73E",
                 FontSize = 13,
                 Foreground = ThemeBrushes.Get("AccentBrush"),
                 VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(check, 2);
-            grid.Children.Add(check);
+            });
+            // Un pack descargado se puede quitar incluso siendo el idioma activo:
+            // Remove() vuelve al predeterminado antes de borrarlo. Los embebidos no
+            // tienen pack detrás, así que no hay nada que desinstalar.
+            if (!builtin)
+                actions.Children.Add(CreateLanguageRemoveButton(code));
+            Grid.SetColumn(actions, 2);
+            grid.Children.Add(actions);
             return grid;
         }
 
@@ -2811,22 +2841,7 @@ public sealed partial class MainWindow : Window
 
         if (installed)
         {
-            var remove = new WinButton
-            {
-                Background = new WinBrush(Microsoft.UI.Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(6),
-                VerticalAlignment = VerticalAlignment.Center,
-                Content = new FontIcon { Glyph = "\uE711", FontSize = 12, Foreground = ThemeBrushes.Get("MutedBrush") }
-            };
-            ToolTipService.SetToolTip(remove, I18n.T("Quitar"));
-            remove.Click += (_, _) =>
-            {
-                if (!LanguagePacks.Remove(code, _settingsService)) return;
-                ApplyLanguageButton();
-                _loggingService.LogInfo($"Idiomas: pack {code} desinstalado.");
-                _ = ShowLanguageMenuAsync();
-            };
+            var remove = CreateLanguageRemoveButton(code);
             Grid.SetColumn(remove, 2);
             grid.Children.Add(remove);
             return grid;
@@ -2835,6 +2850,32 @@ public sealed partial class MainWindow : Window
         // Embebido y no activo: no hay acción a la derecha, pero el nombre sigue eligiéndolo.
         Grid.SetColumnSpan(nameButton, 2);
         return grid;
+    }
+
+    /// <summary>
+    /// Botón X de una fila de idioma: desinstala el pack (si el idioma estaba activo,
+    /// Remove() cambia antes al predeterminado), rearma el menú y actualiza el botón del
+    /// navbar. Compartido por la fila activa y la fila instalada inactiva.
+    /// </summary>
+    private WinButton CreateLanguageRemoveButton(string code)
+    {
+        var remove = new WinButton
+        {
+            Background = new WinBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6),
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new FontIcon { Glyph = "\uE711", FontSize = 12, Foreground = ThemeBrushes.Get("MutedBrush") }
+        };
+        ToolTipService.SetToolTip(remove, I18n.T("Quitar"));
+        remove.Click += (_, _) =>
+        {
+            if (!LanguagePacks.Remove(code, _settingsService)) return;
+            ApplyLanguageButton();
+            _loggingService.LogInfo($"Idiomas: pack {code} desinstalado.");
+            _ = ShowLanguageMenuAsync();
+        };
+        return remove;
     }
 
     /// <summary>Estilo del presentador del menú de idiomas: mismo fondo/borde que las cards
@@ -3012,8 +3053,73 @@ public sealed partial class MainWindow : Window
                 (false, _) => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF) // Claro / Sistema claro
             };
             NavigationViewControl.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
+            // La barra de título propia lleva el MISMO color que el navbar: sin esto, en los
+            // temas Negro/Azul y Rosa/Blanco quedaban dos tonos distintos (el navbar es
+            // #0E1524 / blanco y el color calculado por ApplyTitleBarColors es #151517 / blanco).
+            AppTitleBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
         }
         catch { /* arranque temprano */ }
+    }
+
+    /// <summary>
+    /// Pasa la ventana a barra de título propia. La nativa mide 32 px fijos (Windows la
+    /// dimensiona con el DPI) y no se puede agrandar sin dejar de usarla; con una barra
+    /// propia el alto lo elige la app vía PreferredHeightOption, y 48 px (Tall) es un 50%
+    /// más que los 32 estándar. Windows sigue dibujando los botones de minimizar,
+    /// maximizar y cerrar —más altos y con el glifo centrado— y la app aporta el color, el
+    /// logo y la zona de arrastre (AppTitleBar).
+    ///
+    /// PreferredHeightOption SOLO se puede setear DESPUÉS de ExtendsContentIntoTitleBar
+    /// (documentado: con la barra nativa, la API tira excepción), y en un sistema sin
+    /// soporte de personalización la ventana tiene que quedar usable con la barra de
+    /// Windows: por eso todo va en try y se loguea si falla.
+    /// </summary>
+    private void SetupCustomTitleBar()
+    {
+        try
+        {
+            ExtendsContentIntoTitleBar = true;
+            SetTitleBar(AppTitleBar);
+
+            if (AppWindowTitleBar.IsCustomizationSupported())
+                AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Barra de título propia: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Alinea el alto de la barra propia con el que informa el sistema. En Windows 11
+    /// "Tall" son 48 px y coinciden; en un sistema que ignore el modo alto, los botones
+    /// del sistema quedarían de 32 sobre una barra de 48 (desalineados), así que acá la
+    /// barra se adapta a lo que el sistema realmente dibujó.
+    /// Este dato viene en PÍXELES FÍSICOS (AppWindow usa píxeles físicos): hay que pasarlo
+    /// a DIP con la escala de la pantalla, o en un monitor al 150% la barra sale al doble.
+    /// </summary>
+    private void AlignTitleBarHeight()
+    {
+        try
+        {
+            if (ExtendsContentIntoTitleBar != true) return;
+
+            double scale = AppTitleBar.XamlRoot?.RasterizationScale ?? 1.0;
+            if (scale <= 0) scale = 1.0;
+            double systemHeight = AppWindow.TitleBar.Height / scale;
+            if (systemHeight < 24) return;   // dato sin resolver todavía
+
+            if (Math.Abs(systemHeight - AppTitleBar.Height) > 1)
+            {
+                _loggingService.LogInfo(
+                    $"Barra de título: el sistema informa {systemHeight:0} px de alto; la barra se ajusta a ese valor.");
+                AppTitleBar.Height = systemHeight;
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogDebug($"Barra de título: alto: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -3032,13 +3138,18 @@ public sealed partial class MainWindow : Window
         tb.ForegroundColor = fg;
         tb.InactiveBackgroundColor = bg;
         tb.InactiveForegroundColor = inactiveFg;
-        tb.ButtonBackgroundColor = bg;
+        // Los botones van TRANSPARENTES: el color lo pone AppTitleBar (que ahora es el mismo
+        // del navbar en los cuatro temas). Con un fondo opaco propio, en Negro/Azul y
+        // Rosa/Blanco se veía un parche distinto al de la barra. El canal alfa de estos
+        // cuatro colores solo se respeta con barra propia, que es el caso ahora.
+        var transparent = Windows.UI.Color.FromArgb(0, 0, 0, 0);
+        tb.ButtonBackgroundColor = transparent;
         tb.ButtonForegroundColor = fg;
         tb.ButtonHoverBackgroundColor = hover;
         tb.ButtonHoverForegroundColor = fg;
         tb.ButtonPressedBackgroundColor = pressed;
         tb.ButtonPressedForegroundColor = fg;
-        tb.ButtonInactiveBackgroundColor = bg;
+        tb.ButtonInactiveBackgroundColor = transparent;
         tb.ButtonInactiveForegroundColor = inactiveFg;
     }
 }

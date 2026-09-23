@@ -338,9 +338,26 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     {
         DispatcherQueue.TryEnqueue(() =>
         {
-            var msg = I18n.T(
-                "Modo juego activo: {0} reglas aplicadas, {1} servicios detenidos, {2} procesos optimizados y {3} procesos cerrados.",
-                result.RulesApplied, result.ServicesOptimized, result.ProcessesOptimized, result.ProcessesKilled);
+            // "No había nada que optimizar" en vez de una fila de ceros: si el equipo no
+            // tenía ninguno de los servicios de la lista corriendo ni procesos en segundo
+            // plano, el resumen con ceros se lee como si el boost hubiera fallado, cuando
+            // en realidad no había nada que hacer (una PC sin SysMain/DiagTrack, por
+            // ejemplo). El cero SÍ se sigue mostrando cuando algo resistió: los resistidos
+            // entran en la clasificación y aparecen en el aviso de abajo. La decisión está
+            // en Core (GameBoostSummary) para poder verificarla sin levantar la UI.
+            var msg = GameBoostSummary.Classify(result) switch
+            {
+                GameBoostSummaryKind.NothingToOptimize =>
+                    I18n.T("Modo juego activo: no había nada que optimizar."),
+
+                GameBoostSummaryKind.RulesOnly =>
+                    I18n.T("Modo juego activo: {0} reglas aplicadas. No había servicios ni procesos para optimizar.",
+                        result.RulesApplied),
+
+                _ => I18n.T(
+                    "Modo juego activo: {0} reglas aplicadas, {1} servicios detenidos, {2} procesos optimizados y {3} procesos cerrados.",
+                    result.RulesApplied, result.ServicesOptimized, result.ProcessesOptimized, result.ProcessesKilled),
+            };
 
             var caveats = new List<string>();
             if (result.ServicesResisted is { Count: > 0 } resisted)
@@ -1109,7 +1126,31 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         Grid.SetRow(targetHost, 2);
         var targetCard = MakeSettingsCard(targetGrid);
 
-        var pickerGrid = MakeRowsGrid(2, 1, 10);
+        var pickerGrid = MakeRowsGrid(3, 2, 10);
+
+ // Alta MANUAL: un proceso que no está corriendo (WinRAR cerrado, la Store, un
+ // juego aún sin abrir) no existe en la lista en vivo y antes no había forma de
+ // configurarlo. Se escribe el nombre (con o sin .exe) y Enter lo agrega igual:
+ // la regla queda guardada y se aplica cuando el proceso arranque.
+ // Declarado ANTES de RefreshRunningAsync/RefreshPicker: los local functions
+ // capturan esta variable y C# exige asignación definida antes de la llamada.
+        var manualBox = new TextBox
+        {
+            PlaceholderText = I18n.T("Agregar un proceso que no está en la lista (nombre, sin .exe)"),
+            FontSize = 12,
+            Height = 32,
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        manualBox.KeyDown += (_, e) =>
+        {
+            if (e.Key is Windows.System.VirtualKey.Enter)
+            {
+                e.Handled = true;
+                AddProcess(manualBox.Text ?? "");
+                manualBox.Text = "";
+            }
+        };
 
  // ===== Auto-actualización + botón de pausa =====
  // La lista de procesos en ejecución se refresca sola (timer de 5 s) para que
@@ -1211,13 +1252,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var pickerHeader = new Grid { ColumnSpacing = 8 };
         pickerHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         pickerHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        pickerHeader.Children.Add(MakePanelHeader(I18n.T("Procesos en ejecución"), I18n.T("Elegí un proceso y hacé doble clic para agregarlo al modo seleccionado.")));
+        pickerHeader.Children.Add(MakePanelHeader(I18n.T("Procesos en ejecución"), I18n.T("Doble clic para agregar a la lista del modo activo. Los ya configurados se marcan; también podés escribir un nombre y Enter.")));
         pickerHeader.Children.Add(pauseButton);
         Grid.SetColumn(pauseButton, 1);
 
+ // Layout: encabezado (fila 0), alta manual (fila 1), lista estirada (fila 2).
         pickerGrid.Children.Add(pickerHeader);
+        pickerGrid.Children.Add(manualBox);
         pickerGrid.Children.Add(pickerFrame);
-        Grid.SetRow(pickerFrame, 1);
+        Grid.SetRow(manualBox, 1);
+        Grid.SetRow(pickerFrame, 2);
         var pickerCard = MakeSettingsCard(pickerGrid);
 
         Grid MakePanelHeader(string title, string description)
@@ -1241,43 +1285,106 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             return panel;
         }
 
-        UIElement MakeProcessRow(string name, bool removable, Action? remove)
+        UIElement MakeProcessRow(string name, bool removable, Action? remove, string? stateBadge = null)
         {
             var row = new Grid { Height = 30, ColumnSpacing = 8, Padding = new Thickness(5, 0, 3, 0), Tag = name };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var icon = new Microsoft.UI.Xaml.Controls.Image { Width = 18, Height = 18, VerticalAlignment = VerticalAlignment.Center };
             EnsureProcessIcon(name, icon);
             row.Children.Add(icon);
-            var label = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            var label = new TextBlock { Text = name, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
             Grid.SetColumn(label, 1);
             row.Children.Add(label);
+ // Badge de estado (columna 2): para qué está configurado este proceso.
+            if (stateBadge is not null)
+            {
+                var badge = MakeStateBadge(stateBadge);
+                Grid.SetColumn(badge, 2);
+                row.Children.Add(badge);
+            }
             if (removable)
             {
                 var delete = new Button { Content = new FontIcon { Glyph = "\uE74D", FontSize = 10 }, Width = 26, Height = 26, Padding = new Thickness(0), BorderThickness = new Thickness(0), Background = transparent, Foreground = Feedback.ErrorBrush };
                 delete.Click += (_, _) => remove();
-                Grid.SetColumn(delete, 2);
+                Grid.SetColumn(delete, 3);
                 row.Children.Add(delete);
             }
             else if (remove == null)
             {
                 var lockIcon = new FontIcon { Glyph = "\uE72E", FontSize = 10, Foreground = muted, VerticalAlignment = VerticalAlignment.Center };
-                Grid.SetColumn(lockIcon, 2);
+                Grid.SetColumn(lockIcon, 3);
                 row.Children.Add(lockIcon);
             }
             return row;
         }
 
+ // Pastilla de estado de las filas del desplegable (misma familia que las badges
+ // del desplegable de latencia): fondo de tinte del tema + texto en el color
+ // fuerte, así acompaña el tema claro y el oscuro sin valores hardcodeados.
+        Border MakeStateBadge(string text)
+        {
+            return new Border
+            {
+                Padding = new Thickness(8, 2, 8, 2),
+                CornerRadius = new CornerRadius(8),
+                Background = ThemeBrushes.Get("AccentTintBrush"),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock { Text = text, FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = ThemeBrushes.Get("AccentBrush") }
+            };
+        }
+
         void RefreshPicker()
         {
-            var excluded = new HashSet<string>(defaults, StringComparer.OrdinalIgnoreCase);
-            foreach (var name in efficiencyCustom) excluded.Add(name);
-            foreach (var name in killCustom) excluded.Add(name);
-            foreach (var name in blocked) excluded.Add(name);
+ // La lista muestra TODOS los procesos en ejecución, con una badge que dice
+ // dónde está cada uno ("En eficiencia" / "En cierre" / "Sistema"): antes se
+ // ocultaban los ya configurados y parecía que faltaban procesos. Doble clic
+ // sobre un proceso sin badge lo agrega al modo activo; los marcados no se
+ // pueden duplicar (AddProcess además re-verifica).
+            var desired = running
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Select(name =>
+                {
+                    string? badge = null;
+                    if (blocked.Contains(name)) badge = I18n.T("Sistema");
+                    else if (defaults.Contains(name, StringComparer.OrdinalIgnoreCase) || efficiencyCustom.Contains(name, StringComparer.OrdinalIgnoreCase)) badge = I18n.T("En eficiencia");
+                    else if (killCustom.Contains(name, StringComparer.OrdinalIgnoreCase)) badge = I18n.T("En cierre");
+                    return (name, badge);
+                })
+                .ToList();
+
+ // Si el resultado es idéntico al que ya está en pantalla, NO tocar la lista:
+ // reconstruir Items en cada ciclo del timer (5 s) reseteaba el scroll del
+ // usuario al tope, aunque nada hubiera cambiado.
+            var same = pickerList.Items.Count == desired.Count;
+            if (same)
+            {
+                for (int i = 0; i < desired.Count; i++)
+                {
+                    if (pickerList.Items[i] is not Grid row || row.Tag is not string tag || !string.Equals(tag, desired[i].name, StringComparison.Ordinal))
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+            }
+            if (same) return;
+
+ // Cambió algo (entró/salió un proceso o cambió una badge): reconstruir y
+ // devolver el scroll a donde estaba el usuario.
+            var scroll = FindDescendant<ScrollViewer>(pickerList);
+            var offset = scroll?.VerticalOffset ?? 0;
             pickerList.Items.Clear();
-            foreach (var name in running.Where(name => !excluded.Contains(name)).OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
-                pickerList.Items.Add(MakeProcessRow(name, removable: false, remove: () => { }));
+            foreach (var (name, badge) in desired)
+                pickerList.Items.Add(MakeProcessRow(name, removable: false, remove: null, stateBadge: badge));
+            if (scroll is not null)
+                pickerList.DispatcherQueue.TryEnqueue(() =>
+                {
+                    scroll.UpdateLayout(); // realiza los nuevos ítems antes de reposicionar
+                    scroll.ChangeView(null, offset, null, disableAnimation: true);
+                });
         }
 
         void RefreshTargetRows()
@@ -1303,7 +1410,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (selectedTarget == "efficiency")
             {
                 foreach (var name in defaults)
-                    efficiencyLockedRows.Children.Add(MakeProcessRow(name, removable: false, remove: null));
+                    efficiencyLockedRows.Children.Add(MakeProcessRow(name, removable: false, remove: null, stateBadge: I18n.T("En eficiencia")));
             }
 
             if (list.Count == 0 && selectedTarget == "efficiency" && defaults.Count > 0)
@@ -1313,7 +1420,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             foreach (var name in list.ToList())
             {
                 var copy = name;
-                rows.Children.Add(MakeProcessRow(copy, removable: true, remove: () => { list.Remove(copy); RefreshTargetRows(); RefreshPicker(); }));
+                rows.Children.Add(MakeProcessRow(copy, removable: true, remove: () => { list.Remove(copy); RefreshTargetRows(); RefreshPicker(); }, stateBadge: null));
             }
         }
 
@@ -1321,13 +1428,26 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             name = name.Trim().TrimEnd('.');
             if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) name = name[..^4];
-            if (name.Length == 0 || blocked.Contains(name) || defaults.Contains(name, StringComparer.OrdinalIgnoreCase) || efficiencyCustom.Contains(name, StringComparer.OrdinalIgnoreCase) || killCustom.Contains(name, StringComparer.OrdinalIgnoreCase)) return;
+            if (name.Length == 0) return;
+ // Alta manual: el nombre puede no existir como proceso hoy; se acepta igual
+ // (la regla se aplicará cuando arranque). Duplicados y del sistema se ignoran.
+            if (blocked.Contains(name) || defaults.Contains(name, StringComparer.OrdinalIgnoreCase) || efficiencyCustom.Contains(name, StringComparer.OrdinalIgnoreCase) || killCustom.Contains(name, StringComparer.OrdinalIgnoreCase)) return;
             if (selectedTarget == "efficiency") efficiencyCustom.Add(name); else killCustom.Add(name);
             RefreshTargetRows();
             RefreshPicker();
         }
 
         pickerList.DoubleTapped += (_, _) => { if (pickerList.SelectedItem is FrameworkElement row && row.Tag is string name) AddProcess(name); };
+ // Enter también agrega: la fila queda seleccionada con un clic y Enter confirma
+ // sin necesidad de doble clic.
+        pickerList.KeyDown += (_, e) =>
+        {
+            if (e.Key is Windows.System.VirtualKey.Enter && pickerList.SelectedItem is FrameworkElement krow && krow.Tag is string kname)
+            {
+                e.Handled = true;
+                AddProcess(kname);
+            }
+        };
 
  // Selector segmentado: radio de esquina 4 en las mitades para encajar dentro
  // de la píldora (radio 6 con padding 2). Con radio 6 las esquinas quedaban
@@ -1385,6 +1505,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (services) _ = LoadAllServicesAsync(servicesTabCard);
             if (health) LoadGameModeHealthAsync();
             RefreshTargetRows();
+            RefreshPicker(); // las badges dependen del modo: re-listar al cambiar de pestaña
         }
         efficiencyButton.Click += (_, _) => { selectedTarget = "efficiency"; UpdateMode(); };
         killButton.Click += (_, _) => { selectedTarget = "kill"; UpdateMode(); };
@@ -1431,7 +1552,28 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // opciones del modo). Fila 0, columna 1.
         Grid.SetColumn(modeSelector, 1);
         Grid.SetRow(modeSelector, 0);
+ // Centrado vertical: la fila es más alta que la píldora (a su izquierda van dos
+ // switches), y sin esto la píldora se estiraría y los botones quedarían flotando.
+        modeSelector.VerticalAlignment = VerticalAlignment.Center;
         columns.Children.Add(modeSelector);
+
+ // Los DOS switches del boost van a la IZQUIERDA de las pestañas (fila 0, columna 0):
+ // son ajustes del boost completo, no de una pestaña, y así se ven los dos a la vez
+ // sin tener que ir y volver entre "Servicios" y "Tareas". Cada pestaña construye su
+ // switch (con sus handlers) y acá solo se lo coloca junto al otro.
+ // Apilados en vertical y no en horizontal: los dos textos juntos (~530 px) no entran
+ // en media card en una ventana chica y el segundo switch se recortaba.
+        var headerSwitches = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            Spacing = 2,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { _servicesAutoOptRow!, _tasksAutoPauseRow! }
+        };
+        Grid.SetColumn(headerSwitches, 0);
+        Grid.SetRow(headerSwitches, 0);
+        columns.Children.Add(headerSwitches);
         RefreshPicker();
         UpdateMode();
 
@@ -1482,6 +1624,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // está activo, los selectores de las filas se bloquean (la optimización
  // hardcodeada del boost manda); apagado, el usuario edita libremente.
     private Microsoft.UI.Xaml.Controls.ToggleSwitch? _servicesAutoOptSwitch;
+
+ // Fila del switch "Optimización automática activa" (pestaña Servicios): la construye
+ // la pestaña, pero la COLOCA el armador de la card en la cabecera, a la izquierda de
+ // las pestañas, para que los dos switches del boost se vean juntos sin cambiar de
+ // pestaña. El switch y su handler siguen siendo de la pestaña (operan sobre su lista).
+    private UIElement? _servicesAutoOptRow;
+
+ // Fila del switch "Pausa de tareas activa" (pestaña Tareas): mismo trato que el anterior.
+    private UIElement? _tasksAutoPauseRow;
 
  // El switch de optimización automática está activo (default true).
     private bool ServicesAutoOptimizationOn => _servicesAutoOptSwitch?.IsOn ?? true;
@@ -1617,67 +1768,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             VerticalAlignment = VerticalAlignment.Center,
             Children = { autoOptSwitch, autoOptInfoButton }
         };
-        ToolTipService.SetToolTip(autoOptInfoButton, new ToolTip
+ // El contenido se arma al ABRIR el tooltip y sale de la lista real que detiene el boost
+ // (GameBoostService.BoostStopServices), con el nombre para mostrar que informa Windows
+ // (que ya viene localizado): así el tooltip no queda desactualizado cuando se agrega o se
+ // quita un servicio del optimizador.
+        var autoOptTip = new ToolTip { Placement = PlacementMode.Bottom };
+        autoOptTip.Opened += (s, _) =>
         {
-            Content = new TextBlock
-            {
-                Text = I18n.T("El modo automático detiene temporalmente estos servicios al lanzar un juego y los restaura al cerrarlo: Windows Update (wuauserv), Orquestador de actualizaciones (UsoSvc), Transferencia inteligente en segundo plano (BITS), SysMain (Superfetch), Búsqueda de Windows (WSearch), telemetría (DiagTrack, WerSvc), Directivas de diagnóstico (DPS) y Cola de impresión (Spooler). Si lo apagás, el boost solo gestiona procesos y quedan valiendo los estados que configuraste a mano."),
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 320
-            },
-            Placement = PlacementMode.Bottom
-        });
+            if (s is ToolTip tip) tip.Content = BuildAutoOptTooltip();
+        };
+        ToolTipService.SetToolTip(autoOptInfoButton, autoOptTip);
         autoOptSwitch.Toggled += (_, _) =>
         {
             _gameBoostService.IsAutomaticServiceOptimizationEnabled = autoOptSwitch.IsOn;
             RefillServicesList(servicesList);
-        };
-
- // ===== Switch "Pausar tareas programadas" =====
- // Activo por defecto: el boost deshabilita temporalmente las tareas de
- // mantenimiento (defrag, escaneos de update y de Defender, diagnóstico,
- // telemetría) durante la partida y las re-habilita al cerrar. Apagado: no se
- // toca ninguna tarea ni el Mantenimiento automático de Windows.
-        var taskPauseSwitch = new ToggleSwitch
-        {
-            IsOn = _gameBoostService.IsAutomaticTaskPauseEnabled,
-            OnContent = I18n.T("Pausa de tareas activa"),
-            OffContent = I18n.T("Sin pausa de tareas"),
-            Margin = new Thickness(0, 2, 0, 0)
-        };
-        var taskPauseInfoButton = new Button
-        {
-            Content = new FontIcon { Glyph = "\uE946", FontSize = 11 },
-            Width = 20,
-            Height = 20,
-            Padding = new Thickness(0),
-            BorderThickness = new Thickness(0),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
-            Foreground = muted,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var taskPauseRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children = { taskPauseSwitch, taskPauseInfoButton }
-        };
-        ToolTipService.SetToolTip(taskPauseInfoButton, new ToolTip
-        {
-            Content = new TextBlock
-            {
-                Text = I18n.T("El boost deshabilita temporalmente estas tareas mientras jugás y las re-habilita al cerrar el juego: escaneos de Windows Update, escaneos programados de Defender (el antivirus sigue activo), defrag/TRIM, diagnóstico y telemetría. Nada afecta a la captura de pantalla ni al audio: no interfiere si compartís la pantalla."),
-                FontSize = 11,
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = 320
-            },
-            Placement = PlacementMode.Bottom
-        });
-        taskPauseSwitch.Toggled += (_, _) =>
-        {
-            _gameBoostService.IsAutomaticTaskPauseEnabled = taskPauseSwitch.IsOn;
         };
 
  // Filtrado local (en memoria, instantáneo): por nombre técnico o nombre para
@@ -1699,22 +1803,18 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         };
  // servicesTabCard es null mientras BuildServicesTab construye la card (el
  // botón se crea antes); en runtime el Click siempre la recibe completa.
- // 4 filas: buscador (Auto) + switch auto-optimización (Auto) + switch tareas
- // (Auto) + lista (estira y scrollea con virtualización).
+ // 2 filas: buscador (Auto) + lista de servicios (estira y scrollea con
+ // virtualización). El switch de optimización automática ya no vive acá: se arma
+ // arriba y lo coloca el armador de la card, a la izquierda de las pestañas.
         var grid = new Grid { RowSpacing = 8 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.Children.Add(searchRow);
-        grid.Children.Add(autoOptRow);
-        grid.Children.Add(taskPauseRow);
         grid.Children.Add(servicesList);
-        Grid.SetRow(autoOptRow, 1);
-        Grid.SetRow(taskPauseRow, 2);
-        Grid.SetRow(servicesList, 3);
+        Grid.SetRow(servicesList, 1);
  // Referencia para bloquear/desbloquear los selectores de las filas según el
  // estado del switch de optimización automática.
+        _servicesAutoOptRow = autoOptRow;
         _servicesAutoOptSwitch = autoOptSwitch;
         var card = MakeSettingsCard(grid);
         ToolTipService.SetToolTip(searchBox, new ToolTip
@@ -1765,6 +1865,49 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
     }
 
+ /// <summary>
+ /// Contenido del tooltip del switch de optimización automática: los servicios que el boost
+ /// detiene por partida, uno por línea y en el orden de la lista real, más qué implica
+ /// apagarlo. Se arma en cada apertura y reutiliza el nombre para mostrar que ya trajo el
+ /// snapshot de servicios de Windows (si todavía no llegó, cae al nombre técnico).
+ /// </summary>
+    private UIElement BuildAutoOptTooltip()
+    {
+        var list = new StackPanel { Spacing = 3 };
+        foreach (var service in GameBoostService.BoostStopServices)
+        {
+            var display = _allServicesCache?
+                .FirstOrDefault(s => string.Equals(s.Name, service, StringComparison.OrdinalIgnoreCase))?.DisplayName;
+            list.Children.Add(new TextBlock
+            {
+                Text = "· " + (string.IsNullOrWhiteSpace(display) ? service : $"{display} ({service})"),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap
+            });
+        }
+
+        var header = new TextBlock
+        {
+            Text = I18n.T("Al lanzar un juego se detienen temporalmente estos servicios y se restauran al cerrarlo:"),
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap
+        };
+        var note = new TextBlock
+        {
+            Text = I18n.T("Con esto apagado, el boost solo gestiona procesos y valen los estados que configuraste a mano."),
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.85
+        };
+
+        return new StackPanel
+        {
+            Spacing = 8,
+            MaxWidth = 320,
+            Children = { header, list, note }
+        };
+    }
+
  /// <summary>Item ligero para la lista virtualizada de servicios.</summary>
     private sealed class ServiceRow
     {
@@ -1788,8 +1931,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  /// Pestaña "Tareas" de la configuración del boost: lista de TODAS las tareas
  /// programadas (schtasks /Query) para agregar a la pausa por partida + la
  /// whitelist de mantenimiento (con candado) y las agregadas por el usuario.
- /// El switch "Pausar tareas programadas" vive en la pestaña Servicios, junto
- /// al de la optimización automática de servicios.
+ /// El switch "Pausar tareas programadas" vive ACÁ: es la pausa de las TAREAS, no la
+ /// de los servicios — tenerlo en la pestaña Servicios hacía que esa card prometiera
+ /// una configuración que estaba en otra pestaña.
  /// </summary>
     private UIElement BuildScheduledTasksTab()
     {
@@ -1970,6 +2114,56 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Opacity = 0.9,
             Text = I18n.T("Estas tareas se deshabilitan mientras jugás y vuelven solas al cerrar el juego. Las de la whitelist son las de mantenimiento de Windows (escaneos de update y de Defender, defrag, diagnóstico); podés agregar las que quieras con el buscador o a mano.")
         };
+
+ // ===== Switch "Pausar tareas programadas" =====
+ // Activo por defecto: el boost deshabilita temporalmente las tareas de mantenimiento
+ // (defrag, escaneos de update y de Defender, diagnóstico, telemetría) durante la partida
+ // y las re-habilita al cerrar. Apagado: no se toca ninguna tarea ni el Mantenimiento
+ // automático de Windows.
+        var taskPauseSwitch = new ToggleSwitch
+        {
+            IsOn = _gameBoostService.IsAutomaticTaskPauseEnabled,
+            OnContent = I18n.T("Pausa de tareas activa"),
+            OffContent = I18n.T("Sin pausa de tareas"),
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+        var taskPauseInfoButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE946", FontSize = 11 },
+            Width = 20,
+            Height = 20,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)),
+            Foreground = muted,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var taskPauseRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { taskPauseSwitch, taskPauseInfoButton }
+        };
+        ToolTipService.SetToolTip(taskPauseInfoButton, new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = I18n.T("El boost deshabilita temporalmente estas tareas mientras jugás y las re-habilita al cerrar el juego: escaneos de Windows Update, escaneos programados de Defender (el antivirus sigue activo), defrag/TRIM, diagnóstico y telemetría. Nada afecta a la captura de pantalla ni al audio: no interfiere si compartís la pantalla."),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320
+            },
+            Placement = PlacementMode.Bottom
+        });
+        taskPauseSwitch.Toggled += (_, _) =>
+        {
+            _gameBoostService.IsAutomaticTaskPauseEnabled = taskPauseSwitch.IsOn;
+        };
+
+ // La fila viaja a la cabecera de la card (ver el armador), junto al switch de
+ // servicios: los dos ajustes del boost se ven juntos, sin cambiar de pestaña.
+        _tasksAutoPauseRow = taskPauseRow;
 
         var taskGrid = new Grid { RowSpacing = 8 };
         taskGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -2745,7 +2939,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             _skeletonPanel.Children.Add(row1);
             _skeletonPanel.Children.Add(row2);
             for (int i = 0; i < _skeletonCards.Count; i++)
-                (i < per ? row1 : row2).Children.Add(_skeletonCards[i].Card);
+            {
+                // Las cards se guardan entre corridas (no se vuelven a construir), así que
+                // hay que desengancharlas de la fila a la que pertenecían antes de
+                // re-colgarlas: sin esto el árbol tira "Element is already the child of
+                // another element" y el re-escaneo se lleva puesta la app.
+                var card = _skeletonCards[i].Card;
+                if (card.Parent is Panel previous)
+                    previous.Children.Remove(card);
+                (i < per ? row1 : row2).Children.Add(card);
+            }
         }
         UpdateCardWidth();
         StartSkeletonPulse();
@@ -2759,7 +2962,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // RebuildCards ya limpia el panel; esto cubre el caso de error antes de
         // reconstruir (que queden skeletons huérfanos).
         if (_skeletonPanel != null)
+        {
             LibraryPanel.Children.Remove(_skeletonPanel);
+            // Las filas se van con el panel, pero las cards son de la página (se reusan en el
+            // próximo skeleton): se las suelta ahora para que no queden con padre colgado.
+            foreach (var (card, _, _) in _skeletonCards)
+            {
+                if (card.Parent is Panel parent)
+                    parent.Children.Remove(card);
+            }
+        }
         _skeletonPanel = null;
     }
 

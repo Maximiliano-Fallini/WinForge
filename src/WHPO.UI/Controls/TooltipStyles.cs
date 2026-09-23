@@ -31,9 +31,17 @@ internal static class TooltipStyles
             VerticalAlignment = VerticalAlignment.Center
         };
 
+        // Un string suelto no envuelve dentro del ToolTip: el ContentPresenter lo dibuja sin
+        // TextWrapping y el texto se corta al llegar al ancho máximo. Se envuelve acá para que
+        // ningún tooltip de la app vuelva a quedar con texto sin ver (los que pasan TextBlock
+        // o StackPanel ya traen su propio wrap y no se tocan).
+        var content = tooltipContent is string text
+            ? new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }
+            : tooltipContent;
+
         ToolTipService.SetToolTip(button, new ToolTip
         {
-            Content = tooltipContent,
+            Content = content,
             Placement = Microsoft.UI.Xaml.Controls.Primitives.PlacementMode.Bottom,
             MaxWidth = 420,
             Padding = new Thickness(10, 7, 10, 7),

@@ -68,6 +68,42 @@ public sealed class PowerPlanDetail
 public record PowerPlanTuning(string SubgroupGuid, string SettingGuid, uint AcValue, uint DcValue);
 
 /// <summary>
+/// Estado REAL de una configuración puntual del plan, leído del sistema: el rango
+/// que el equipo acepta (mínimo, máximo, incremento y unidad), el valor efectivo
+/// (el que define el plan o, si no lo define, el predeterminado de Windows para ese
+/// tipo de plan) y los valores posibles que expone el sistema.
+/// Nada de esto se inventa: si el sistema no lo expone, el servicio devuelve null.
+/// </summary>
+public sealed class PowerSettingState
+{
+    /// <summary>Nombre localizado del sistema (el mismo que muestra Windows).</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>El equipo expone un rango válido para esta configuración.</summary>
+    public bool HasRange { get; set; }
+
+    public uint Min { get; set; }
+    public uint Max { get; set; }
+    public uint Step { get; set; } = 1;
+
+    /// <summary>Unidad del rango ("%", "ms", ...). Vacío si el sistema no la declara.</summary>
+    public string Units { get; set; } = "";
+
+    /// <summary>Valor efectivo actual (AC/DC): el del plan o el predeterminado del esquema.</summary>
+    public uint? AcValue { get; set; }
+    public uint? DcValue { get; set; }
+
+    /// <summary>Predeterminado del esquema (el valor al que vuelve "Restaurar").</summary>
+    public uint? DefaultAc { get; set; }
+    public uint? DefaultDc { get; set; }
+
+    /// <summary>Valores discretos que acepta la configuración (null si es un rango continuo).</summary>
+    public List<(uint Value, string Name)>? PossibleValues { get; set; }
+
+    public PowerSettingState(string name) => Name = name;
+}
+
+/// <summary>
 /// Servicio para la gestión de planes de energía de Windows (powercfg).
 /// </summary>
 public interface ICpuPowerService
@@ -118,4 +154,19 @@ public interface ICpuPowerService
     /// ajustes AC/DC indicados, dejándolo activo al final.
     /// </summary>
     Task<CommandResult> CreateCustomPowerPlanAsync(string name, string baseSchemeGuid, IReadOnlyList<PowerPlanTuning> tunings);
+
+    /// <summary>
+    /// Lee una configuración puntual del plan (rango que acepta el equipo + valor
+    /// efectivo + valores posibles). Devuelve null si el catálogo del sistema no
+    /// conoce esa configuración, que es la forma honesta de decir "este equipo no
+    /// expone este ajuste": quien la use debe tratarlo como no disponible.
+    /// </summary>
+    PowerSettingState? GetPowerSettingState(string planGuid, string subgroupGuid, string settingGuid);
+
+    /// <summary>
+    /// Escribe el valor AC/DC de una configuración del plan. Si el plan es el activo,
+    /// lo vuelve a activar para que Windows aplique el cambio en el acto (powercfg
+    /// guarda el valor, pero el refresco inmediato lo fuerza re-aplicando el esquema).
+    /// </summary>
+    Task<CommandResult> SetPowerSettingAsync(string planGuid, string subgroupGuid, string settingGuid, uint acValue, uint dcValue);
 }
