@@ -276,18 +276,36 @@ public partial class OnboardingWindow : Window
         SetSelectedTheme(_selectedTheme);
     }
 
-    private void StarButton_Click(object sender, RoutedEventArgs e)
+    private async void StarButton_Click(object sender, RoutedEventArgs e)
     {
+        // El enlace sale de ProjectEndpoints: es la única fuente de las URLs del repositorio.
+        string url = ProjectEndpoints.Stargazers;
+        if (UrlOpener.Open(url, _loggingService)) return;
+
+        // Sin navegador el clic no puede quedar sin respuesta: se muestra el enlace para
+        // copiarlo a mano (seleccionable) en vez de no hacer nada.
+        _loggingService.LogWarning($"Onboarding: no se pudo abrir el navegador para la estrella ({url}).");
         try
         {
-            Process.Start(new ProcessStartInfo("https://github.com/Maximiliano-Fallini/WinForge/stargazers")
+            var dialog = new ContentDialog
             {
-                UseShellExecute = true
-            });
+                XamlRoot = RootGrid.XamlRoot,
+                Title = I18n.T("Dejar una estrella en GitHub"),
+                Content = new TextBlock
+                {
+                    Text = url,
+                    FontSize = 13,
+                    IsTextSelectionEnabled = true,
+                    TextWrapping = TextWrapping.Wrap
+                },
+                CloseButtonText = I18n.T("Cerrar"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            await dialog.ShowAsync();
         }
         catch (Exception ex)
         {
-            _loggingService.LogWarning($"Onboarding: abrir GitHub: {ex.Message}");
+            _loggingService.LogWarning($"Onboarding: no se pudo mostrar el enlace de la estrella: {ex.Message}");
         }
     }
 

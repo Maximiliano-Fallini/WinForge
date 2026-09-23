@@ -136,6 +136,19 @@ public sealed class AppUpdateService : IAppUpdateService
         return parts;
     }
 
+    /// <summary>Tag de una release ("" si no lo trae).</summary>
+    private static string TagOf(JsonElement release)
+        => release.TryGetProperty("tag_name", out var tag) ? tag.GetString() ?? "" : "";
+
+    /// <summary>
+    /// True si el tag es una versión de la app: "v" + dígito (v0.1.2, v1.0.0). Deja afuera
+    /// las releases de contenido, cuyos tags son nombres ("components", "languages").
+    /// </summary>
+    private static bool IsVersionTag(string tag)
+        => tag.Length >= 2
+           && (tag[0] == 'v' || tag[0] == 'V')
+           && char.IsDigit(tag[1]);
+
     /// <summary>Chequea actualizaciones en el repositorio (GitHub Releases API).</summary>
     /// <remarks>
     /// Consulta la LISTA de releases (/releases) en vez de /releases/latest: ese
@@ -167,10 +180,24 @@ public sealed class AppUpdateService : IAppUpdateService
             }
 
             // GitHub las ordena por fecha de publicación (más nueva primero).
-            // Preferir la última estable; si todas son prerelease, usar la más reciente.
+            //
+            // OJO: en la lista conviven las releases de CONTENIDO (los buckets "components"
+            // y "languages", que solo llevan assets para la app) con las de la app. Sin
+            // filtrarlas, un bucket publicado después de la última versión se tomaba como
+            // "la última publicada", su tag ("languages") no parseaba como versión y TODAS
+            // las máquinas veían "Versión X en desarrollo". Se acepta solo el formato de tag
+            // de versión del proyecto (vX.Y.Z).
             var rootList = root.EnumerateArray().ToList();
-            var release = rootList[0];
-            foreach (var r in rootList)
+            var releases = rootList.Where(r => IsVersionTag(TagOf(r))).ToList();
+            if (releases.Count == 0)
+            {
+                _logging.LogWarning("AppUpdateService: el repositorio no tiene releases de versión (solo de contenido).");
+                return new AppUpdateInfo { Status = AppUpdateStatus.UpToDate, CurrentVersion = current };
+            }
+
+            // Preferir la última estable; si todas son prerelease, usar la más reciente.
+            var release = releases[0];
+            foreach (var r in releases)
             {
                 bool prerelease = r.TryGetProperty("prerelease", out var pr)
                     && pr.ValueKind == JsonValueKind.True && pr.GetBoolean();

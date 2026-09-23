@@ -2193,7 +2193,8 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// Chequeo de actualizaciones al abrir la app. Es el ÚNICO flujo de actualización
     /// del arranque y cubre todo: la app (si hay versión más nueva en el repo muestra
-    /// el ícono "Actualizar a vX" en el navbar; si la build está adelantada al repo,
+    /// el botón "Actualizar" sobre el borde de la ventana (barra de título); si la
+    /// build está adelantada al repo,
     /// "Versión X en desarrollo") y los packs de idioma instalados cuya fuente quedó
     /// vieja, que se refrescan en silencio si hay una versión más nueva publicada.
     /// Asíncrono y silencioso: nada de esto bloquea ni molesta al arranque.
@@ -2233,15 +2234,15 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Aplica el estado del último chequeo al botón del navbar (ícono + tooltip
-    /// + visibilidad). Se re-aplica al cambiar de idioma para retraducir el tooltip.
+    /// Aplica el estado del último chequeo al botón "Actualizar" de la barra de
+    /// título (pastilla de acento + tooltip + visibilidad). Se re-aplica al cambiar
+    /// de idioma para retraducir el texto.
     /// </summary>
     private void ApplyUpdateIndicator()
     {
         try
         {
             var info = _latestUpdate;
-            ApplyUpdateBadges();
             AppUpdateStateChanged?.Invoke();
             if (info == null)
             {
@@ -2252,19 +2253,35 @@ public sealed partial class MainWindow : Window
             switch (info.Status)
             {
                 case AppUpdateStatus.UpdateAvailable:
-                    // Badge rojo "(!)": nueva actualización disponible (reemplaza
-                    // al ícono de descarga, que no llamaba la atención).
-                    UpdateBadge.Visibility = Visibility.Visible;
-                    UpdateButtonIcon.Visibility = Visibility.Collapsed;
+                    // Pastilla de acento "Actualizar" con tooltip "Actualizar a vX".
+                    // Se restauran los colores del XAML (acento) por si una invocación
+                    // previa pintó la pastilla como "Desarrollo".
+                    UpdateTextPanel.Visibility = Visibility.Visible;
+                    UpdateButtonText.Text = I18n.T("Actualizar");
+                    UpdateButtonText.ClearValue(TextBlock.ForegroundProperty);
+                    UpdateButtonIconGlyph.Glyph = "\uE896"; // descarga
+                    UpdateButtonIconGlyph.ClearValue(FontIcon.ForegroundProperty);
+                    UpdateButtonIconGlyph.Visibility = Visibility.Visible;
+                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BackgroundProperty);
+                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderBrushProperty);
+                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderThicknessProperty);
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Actualizar a {0}", $"v{info.LatestVersion}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;
 
                 case AppUpdateStatus.DevelopmentBuild:
-                    UpdateBadge.Visibility = Visibility.Collapsed;
-                    UpdateButtonIcon.Visibility = Visibility.Visible;
-                    UpdateButtonIcon.Glyph = "\uE946"; // Info
-                    UpdateButtonIcon.Foreground = ThemeBrushes.Get("MutedBrush");
+                    // Build adelantada al repo: pastilla de BOTÓN secundario (gris medio
+                    // con borde, visible sobre la barra en ambos temas — CardBackground
+                    // era idéntico al fondo y no se veía) con el texto "Desarrollo".
+                    UpdateTextPanel.Visibility = Visibility.Visible;
+                    UpdateButtonText.Text = I18n.T("Desarrollo");
+                    UpdateButtonText.Foreground = ThemeBrushes.Get("TextFillColorPrimaryBrush");
+                    UpdateButtonIconGlyph.Glyph = "\uE946"; // info
+                    UpdateButtonIconGlyph.Foreground = ThemeBrushes.Get("TextFillColorSecondaryBrush");
+                    UpdateButtonIconGlyph.Visibility = Visibility.Visible;
+                    UpdateButton.Background = ThemeBrushes.Get("CardBorderBrush");
+                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderBrushProperty);
+                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderThicknessProperty);
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;
@@ -2292,56 +2309,6 @@ public sealed partial class MainWindow : Window
             return ff;
         }
         return new Microsoft.UI.Xaml.Media.FontFamily("Segoe Fluent Icons");
-    }
-
-    /// <summary>
-    /// Muestra u oculta el badge de "actualización disponible". El ícono de
-    /// notificación aparece sobre "Configuración", la sección que lleva a la pestaña
-    /// de actualización de la app (Configuración > Actualizaciones).
-    /// </summary>
-    private void ApplyUpdateBadges()
-    {
-        try
-        {
-            var meta = _latestUpdate;
-            bool show = meta is { Available: true };
-            // Solo sobre "Configuración" (la pestaña lateral que lleva a la sección
-            // de actualización de la app). El ítem "actualizaciones" del navbar es
-            // "Windows Update" (políticas del sistema), no la actualización de la app.
-            ApplyNavBadge("configuracion", show);
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"MainWindow: badges de actualización: {ex.Message}");
-        }
-    }
-
-    private void ApplyNavBadge(string tag, bool show)
-    {
-        var item = FindNavItem(tag);
-        if (item == null) return;
-
-        if (show && item.InfoBadge == null)
-        {
-            // Badge rojo con "(!)": nueva actualización disponible, consistente con
-            // el badge del botón del navbar (antes: "1" numérico de InfoBadge).
-            item.InfoBadge = new InfoBadge
-            {
-                IconSource = new FontIconSource
-                {
-                    Glyph = "!",
-                    FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Segoe UI"),
-                    FontSize = 10,
-                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)
-                },
-                Background = Feedback.ErrorBrush
-            };
-        }
-        else if (!show && item.InfoBadge != null)
-        {
-            item.InfoBadge = null;
-        }
     }
 
     private NavigationViewItem? FindNavItem(string tag)
@@ -2728,9 +2695,21 @@ public sealed partial class MainWindow : Window
             Content = rows,
             FlyoutPresenterStyle = BuildLanguageFlyoutStyle()
         };
+        // El menú se rearma EN CALIENTE (al elegir un idioma, al quitar un pack, al terminar
+        // una descarga): el flyout anterior se cierra antes de mostrar el nuevo para que no
+        // queden dos menús abiertos superpuestos.
+        var previous = _languageFlyout;
+        _languageFlyout = flyout;
         LanguageButton.Flyout = flyout;
+        if (previous != null)
+        {
+            try { previous.Hide(); } catch { }
+        }
         flyout.ShowAt(LanguageButton);
     }
+
+    /// <summary>Menú de idiomas abierto: es el que se cierra cuando el menú se rearma en caliente.</summary>
+    private Flyout? _languageFlyout;
 
     /// <summary>
     /// Fila del menú de idiomas: bandera + nombre (el nombre es el botón que lo activa) y, a la
@@ -2784,6 +2763,12 @@ public sealed partial class MainWindow : Window
             {
                 I18n.SetLanguage(code, _settingsService);
                 ApplyLanguageButton();
+                // Re-armar el menú para que la ✓ pase al idioma recién elegido: antes la marca
+                // se quedaba en el idioma anterior hasta cerrar y volver a abrir el menú. Va en
+                // el próximo turno del dispatcher porque acá se está procesando el clic de una
+                // fila del propio desplegable que se reemplaza.
+                if (!DispatcherQueue.TryEnqueue(() => _ = ShowLanguageMenuAsync()))
+                    _ = ShowLanguageMenuAsync();
             };
         Grid.SetColumn(nameButton, 1);
         grid.Children.Add(nameButton);
