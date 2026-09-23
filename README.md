@@ -90,7 +90,7 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
     <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.1.2_|_88.4_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge v0.1.2 (88.4 MB)"/>
   </a>
   <br/>
-  <sub>22/09/2026 - UTC-3.</sub>
+  <sub>22/09/2026 - UTC-3</sub>
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
