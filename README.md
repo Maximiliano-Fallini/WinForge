@@ -103,8 +103,6 @@ Cuando arrancás un juego, WinForge aplica y restaura automáticamente (nada que
 ## ⚙️ Requisitos
 
 - **Windows 10/11 x64** (testeado en Windows 11 25H2)
-- **Permisos de administrador**: la app los pide al arrancar y avisa si no los tiene
-- **Sin dependencias**: es self-contained, no hace falta instalar .NET ni el Windows App SDK aparte
 
 ## 📦 Instalación
 
