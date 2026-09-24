@@ -108,18 +108,35 @@ public sealed class ComponentCatalogEntry
                 yield return (kv.Key, Name, text.Name);
             if (!string.IsNullOrWhiteSpace(Description) && !string.IsNullOrWhiteSpace(text.Description))
                 yield return (kv.Key, Description, text.Description);
+
+            // Textos de la UI del propio componente (bloque "strings" del mismo idioma):
+            // sus pantallas se construyen en código y no pueden ser claves de la tabla de la
+            // app, pero sí traducirse igual que el nombre y la descripción.
+            if (text.Strings == null) continue;
+            foreach (var pair in text.Strings)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value)) continue;
+                yield return (kv.Key, pair.Key, pair.Value);
+            }
         }
     }
 }
 
 /// <summary>
 /// Textos de una entrada del catálogo en un idioma (bloque "i18n" de components.json,
-/// con la forma <c>"de-DE": { "name": "…", "description": "…" }</c>).
+/// con la forma <c>"de-DE": { "name": "…", "description": "…", "strings": { "…": "…" } }</c>).
 /// </summary>
 public sealed class ComponentLocalizedText
 {
     public string Name { get; set; } = "";
     public string Description { get; set; } = "";
+
+    /// <summary>
+    /// Textos de la UI del componente: texto fuente en español → traducción. Es lo que permite
+    /// que una pantalla construida en código (selectores, informes, avisos) se traduzca sin
+    /// agregar claves a la tabla de la app ni publicar packs de idioma nuevos.
+    /// </summary>
+    public Dictionary<string, string> Strings { get; set; } = new();
 }
 
 /// <summary>Catálogo completo (raíz de components.json).</summary>

@@ -97,7 +97,10 @@ Write-Output "Tamaño:  $size bytes"
 
 # Actualizar components.json (merge de la entrada por id).
 $catalogPath = Join-Path $root "components.json"
-$catalog = if (Test-Path $catalogPath) { Get-Content $catalogPath -Raw | ConvertFrom-Json } else { [pscustomobject]@{ catalogVersion = 1; components = @() } }
+# El catálogo se lee y se escribe con UTF-8 EXPLÍCITO: Get-Content/Set-Content sin eso usan la
+# página ANSI del sistema y el BOM (PowerShell 5.1), y ahí los acentos y los caracteres chinos
+# del bloque "i18n" de un componente se corrompen ("métricas" → "mÃ©tricas").
+$catalog = if (Test-Path $catalogPath) { [System.IO.File]::ReadAllText($catalogPath) | ConvertFrom-Json } else { [pscustomobject]@{ catalogVersion = 1; components = @() } }
 $entry = [pscustomobject]@{
     id             = $Component
     name           = $Component
@@ -124,7 +127,7 @@ if ($previous) {
 
 $components = @($catalog.components | Where-Object { $_.id -ne $Component }) + @($entry)
 $catalog | Add-Member -NotePropertyName components -NotePropertyValue $components -Force
-$catalog | ConvertTo-Json -Depth 10 | Set-Content $catalogPath -Encoding UTF8
+[System.IO.File]::WriteAllText($catalogPath, ($catalog | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
 Write-Output "== components.json actualizado (entrada '$Component' v$Version) =="
 
 if ($Upload) {

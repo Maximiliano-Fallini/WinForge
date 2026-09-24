@@ -225,6 +225,15 @@ public partial class App : Application
                 }
                 if (!loaded) componentRegistry.RestoreBuiltin(installedRec.Id);
             }
+
+            // Textos que traen los componentes en el catálogo (bloque "i18n", incluidos los de
+            // su propia UI): se registran desde la copia en disco, sin red y ANTES de crear la
+            // ventana. Así una pestaña de componente se traduce igual que las de fábrica aunque
+            // el usuario no haya abierto el Workshop en esta sesión (ahí se refrescan con el
+            // catálogo recién bajado).
+            var cachedCatalog = componentCatalog.ReadCachedCatalog();
+            if (cachedCatalog != null)
+                Translations.SetComponentStrings(cachedCatalog.Components.SelectMany(c => c.Translations()));
         }
         catch (Exception ex)
         {

@@ -104,6 +104,29 @@ public sealed class ComponentCatalogService
         "latencia"
     };
 
+    /// <summary>
+    /// Lee el catálogo de la copia en disco, SIN red. Se usa al arrancar para registrar los
+    /// textos que traen los componentes (nombre, descripción y su propia UI) antes de que se
+    /// construya la ventana: si eso dependiera de abrir el Workshop, una pestaña de componente
+    /// abierta sin haber pasado por el Workshop quedaría sin traducir.
+    /// Devuelve null si todavía no hay copia (primer arranque).
+    /// </summary>
+    public ComponentCatalog? ReadCachedCatalog()
+    {
+        try
+        {
+            if (!File.Exists(CachePath)) return null;
+            var catalog = JsonSerializer.Deserialize<ComponentCatalog>(File.ReadAllText(CachePath), _json);
+            if (catalog != null) DropRetiredComponents(catalog);
+            return catalog;
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"Workshop: no se pudo leer el catálogo cacheado: {ex.Message}");
+            return null;
+        }
+    }
+
     /// <summary>Trae el catálogo desde el repo; si falla, devuelve la copia cacheada.</summary>
     public async Task<CatalogFetchResult> FetchCatalogAsync(CancellationToken ct = default)
     {
