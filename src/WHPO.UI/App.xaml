@@ -157,6 +157,18 @@
             </ResourceDictionary.MergedDictionaries>
 <!-- Paleta de estado (coincide con Feedback.cs) -->
             <SolidColorBrush x:Key="SuccessBrush" Color="#FF4CAF50"/>
+<!-- Botón "Actualizar" de la barra de título: verde llamativo FIJO en todos los
+                 temas (claro/oscuro/sistema/Rosa/Negro-Azul). Vive FUERA de los diccionarios
+                 de tema —igual que SuccessBrush/ErrorBrush— para que ninguna paleta lo pise;
+                 el texto va en verde casi negro para contraste alto sobre el verde brillante. -->
+            <SolidColorBrush x:Key="UpdateButtonBrush" Color="#FF22C55E"/>
+            <SolidColorBrush x:Key="UpdateButtonForegroundBrush" Color="#FF06210F"/>
+<!-- Hover/pressed del botón "Actualizar": verdes fijos de la misma familia, para que
+                 el estilo default del Button no pinte el acento del tema al pasar el mouse.
+                 ApplyUpdateIndicator los aplica/quita en Button.Resources según el modo
+                 (ver MainWindow.xaml.cs): en "Desarrollo" se quitan para usar el hover del tema. -->
+            <SolidColorBrush x:Key="UpdateButtonPointerOverBrush" Color="#FF16A34A"/>
+            <SolidColorBrush x:Key="UpdateButtonPressedBrush" Color="#FF15803D"/>
 <!-- Fondo de una pastilla de estado (mismo verde, con alfa): vive con SuccessBrush, FUERA de
                  los diccionarios de tema, porque el verde de "disponible" no cambia entre claro y
                  oscuro — igual que el del propio SuccessBrush. -->

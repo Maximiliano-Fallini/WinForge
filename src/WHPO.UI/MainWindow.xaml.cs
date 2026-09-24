@@ -2353,18 +2353,23 @@ public sealed partial class MainWindow : Window
             switch (info.Status)
             {
                 case AppUpdateStatus.UpdateAvailable:
-                    // Pastilla de acento "Actualizar" con tooltip "Actualizar a vX".
-                    // Se restauran los colores del XAML (acento) por si una invocación
-                    // previa pintó la pastilla como "Desarrollo".
+                    // Botón "Actualizar" en VERDE LLAMATIVO FIJO (UpdateButtonBrush +
+                    // UpdateButtonForegroundBrush de App.xaml): el mismo verde en TODOS los
+                    // temas. Con SetValue (no ClearValue): ClearValue BORRARÍA el valor local
+                    // del XAML y el botón caería al estilo default del tema (azul/gris).
+                    // También se re-afirman los overrides de hover/pressed verdes en
+                    // Button.Resources — en "Desarrollo" se quitaron para usar el hover del tema.
                     UpdateTextPanel.Visibility = Visibility.Visible;
                     UpdateButtonText.Text = I18n.T("Actualizar");
-                    UpdateButtonText.ClearValue(TextBlock.ForegroundProperty);
+                    UpdateButtonText.Foreground = (WinBrush)WinUIApp.Current.Resources["UpdateButtonForegroundBrush"];
                     UpdateButtonIconGlyph.Glyph = "\uE896"; // descarga
-                    UpdateButtonIconGlyph.ClearValue(FontIcon.ForegroundProperty);
+                    UpdateButtonIconGlyph.Foreground = (WinBrush)WinUIApp.Current.Resources["UpdateButtonForegroundBrush"];
                     UpdateButtonIconGlyph.Visibility = Visibility.Visible;
-                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BackgroundProperty);
-                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderBrushProperty);
-                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderThicknessProperty);
+                    UpdateButton.Background = (WinBrush)WinUIApp.Current.Resources["UpdateButtonBrush"];
+                    UpdateButton.BorderBrush = (WinBrush)WinUIApp.Current.Resources["UpdateButtonBrush"];
+                    UpdateButton.BorderThickness = new Thickness(0);
+                    UpdateButton.Resources["ButtonBackgroundPointerOver"] = WinUIApp.Current.Resources["UpdateButtonPointerOverBrush"];
+                    UpdateButton.Resources["ButtonBackgroundPressed"] = WinUIApp.Current.Resources["UpdateButtonPressedBrush"];
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Actualizar a {0}", $"v{info.LatestVersion}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;
@@ -2373,6 +2378,7 @@ public sealed partial class MainWindow : Window
                     // Build adelantada al repo: pastilla de BOTÓN secundario (gris medio
                     // con borde, visible sobre la barra en ambos temas — CardBackground
                     // era idéntico al fondo y no se veía) con el texto "Desarrollo".
+                    // Se quitan los overrides de hover verdes para que use los del tema.
                     UpdateTextPanel.Visibility = Visibility.Visible;
                     UpdateButtonText.Text = I18n.T("Desarrollo");
                     UpdateButtonText.Foreground = ThemeBrushes.Get("TextFillColorPrimaryBrush");
@@ -2382,6 +2388,8 @@ public sealed partial class MainWindow : Window
                     UpdateButton.Background = ThemeBrushes.Get("CardBorderBrush");
                     UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderBrushProperty);
                     UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderThicknessProperty);
+                    UpdateButton.Resources.Remove("ButtonBackgroundPointerOver");
+                    UpdateButton.Resources.Remove("ButtonBackgroundPressed");
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;

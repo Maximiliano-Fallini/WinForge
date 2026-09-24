@@ -141,17 +141,30 @@
                 CornerRadius="12"
                 Padding="12,5"
                 Margin="0,0,150,0"
-                Background="{ThemeResource AccentFillColorDefaultBrush}"
-                BorderThickness="0">
-            <!-- Modo "Actualizar": glifo de descarga + texto, en color on-accent.
+                Background="{StaticResource UpdateButtonBrush}"
+                BorderThickness="0"
+                BorderBrush="{StaticResource UpdateButtonBrush}">
+            <!-- Modo "Actualizar": verde llamativo FIJO (UpdateButtonBrush) con texto en
+                 verde casi negro, en TODOS los temas (claro/oscuro/sistema/Rosa/Negro-Azul).
+                 Los pinceles viven FUERA de los diccionarios de tema (StaticResource en App.xaml)
+                 para que ninguna paleta los pise. ¡OJO con el hover!: el estilo default del Button
+                 repinta el fondo con el acento del tema al pasar el mouse — por eso se pisan acá
+                 ButtonBackgroundPointerOver/Pressed con verdes fijos (mismos valores que
+                 UpdateButtonPointerOverBrush/PressedBrush en App.xaml; ApplyUpdateIndicator
+                 los re-afirma en código al volver de "Desarrollo").
                  Modo "Desarrollo": ApplyUpdateIndicator alterna el glifo al de info,
-                 pinta texto en color primario y el fondo del botón pasa a tarjeta. -->
+                 quita estos overrides (hover default del tema) y el fondo pasa a tarjeta
+                 (ese modo SÍ sigue al tema). -->
+            <Button.Resources>
+                <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#FF16A34A"/>
+                <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#FF15803D"/>
+            </Button.Resources>
             <StackPanel x:Name="UpdateTextPanel" Orientation="Horizontal" Spacing="7">
                 <FontIcon x:Name="UpdateButtonIconGlyph" FontFamily="{StaticResource SymbolThemeFontFamily}"
                           Glyph="&#xE896;" FontSize="13"
-                          Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"/>
+                          Foreground="{StaticResource UpdateButtonForegroundBrush}"/>
                 <TextBlock x:Name="UpdateButtonText" Text="Actualizar" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                           Foreground="{StaticResource UpdateButtonForegroundBrush}"
                            VerticalAlignment="Center"/>
             </StackPanel>
         </Button>
