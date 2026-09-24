@@ -64,12 +64,20 @@ if (-not $binDir) { $binDir = $binCandidates[0] }
 $mainDll = Join-Path $binDir "WinForge.Component.$Component.dll"
 if (-not (Test-Path $mainDll)) { throw "No se encontró la DLL compilada: $mainDll" }
 
-# DLLs que viajan en el zip: solo las propias del componente. Todo lo demás
-# (WHPO.Core, WinAppSDK, BCL) lo resuelve el ALC desde la app instalada.
-$runtimePrefixes = @("WHPO.", "Microsoft.", "System.", "WindowsBase", "WinRT.Runtime", "D2DMAP", "MrAdvice", "Newtonsoft.")
+# DLLs que viajan en el zip: LISTA BLANCA de los bindings que el componente necesita y la
+# app NO trae (los de su API gráfica). Todo lo demás — WHPO.Core, sensores, SQLite, BCL,
+# WinAppSDK — lo resuelve el ALC desde la app instalada; meterlo en el zip es peso muerto
+# y puede cargar COPIAS duplicadas de assemblies que la app ya tiene (conflicto de tipos).
+$keepPatterns = @(
+    "^WinForge\.Component\.",   # el propio componente
+    "^Vortice\.",                # bindings D3D11/D3D12/DXGI/compiler/math
+    "^SharpGen\.Runtime",       # base de los bindings (COM interop)
+    "^Dia2Lib\.",                # interop de símbolos que usa Vortice.D3DCompiler
+    "^TraceReloggerLib\."
+)
 $files = Get-ChildItem $binDir -Filter *.dll | Where-Object {
     $n = $_.Name
-    -not ($runtimePrefixes | Where-Object { $n.StartsWith($_) })
+    ($keepPatterns | Where-Object { $n -match $_ }).Count -gt 0
 }
 if (-not ($files | Where-Object { $_.Name -eq "WinForge.Component.$Component.dll" })) {
     Write-Warning "La DLL principal no pasó el filtro de runtime: se fuerza su inclusión."

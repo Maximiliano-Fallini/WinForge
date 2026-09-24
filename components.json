@@ -8,8 +8,8 @@
                            "version":  "0.1.0",
                            "minAppVersion":  "",
                            "url":  "https://github.com/Maximiliano-Fallini/WinForge/releases/download/components/benchmark-0.1.0.zip",
-                           "sha256":  "9ab748c69f608c6533d8cc9cd959aec971ae76dfa07741c22bd2291ac42f47f3",
-                           "sizeBytes":  113521,
+                           "sha256":  "8c8c6657307734fcddcd7e45f71f49fe8d8ac9cb216e804db6d27d9b5e981dd3",
+                           "sizeBytes":  748945,
                            "name":  "Benchmark de escenas 3D",
                            "description":  "Escenas 3D propias para medir la placa y el equipo, con las métricas en vivo y un informe comparable (sin puntaje).",
                            "i18n":  {

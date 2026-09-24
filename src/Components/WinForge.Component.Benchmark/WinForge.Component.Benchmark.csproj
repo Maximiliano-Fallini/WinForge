@@ -16,6 +16,11 @@
     <Nullable>enable</Nullable>
     <!-- Las llamadas a D3D/DXGI van por punteros, igual que los callbacks de ventana. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Una librería de clases NO copia sus dependencias NuGet al bin (las resuelve el exe
+         que la consume): el zip del componente salía sin las DLL de Vortice/SharpGen y el
+         AssemblyLoadContext del Workshop no las encontraba. Con esto el bin del componente
+         lleva SUS dependencias y el script de empaquetado las mete en el zip. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Versión del componente: viaja al manifest (components.json) al publicar. -->
     <Version>0.1.0</Version>
   </PropertyGroup>
