@@ -29,8 +29,8 @@ public partial class App : Application
     {
         InitializeComponent();
 
-        // Configurar Dependency Injection. AppPaths separa la build de desarrollo
-        // (WHPO-Dev) de la instalada (WHPO): settings, cachés y logs independientes.
+        // Configurar Dependency Injection. Todos los datos viven en una sola
+        // carpeta (ver AppPaths): "desarrollo" es un concepto de versión, no de ruta.
         var settingsDirectory = WHPO.Core.AppPaths.RootDir;
 
         var services = new ServiceCollection();

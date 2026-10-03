@@ -2,7 +2,8 @@
 <Page
     x:Class="WHPO_UI.Views.Pages.WorkshopPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:WHPO_UI.Controls">
 
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
@@ -43,6 +44,15 @@
                               Margin="12,0,0,0"
                               IsHitTestVisible="False"/>
                 </Grid>
+                <!-- Filtro por categoría: badges clicables (Todos + una por categoría).
+                     Se arma en código (BuildFilterBadges) para que los textos pasen
+                     por I18n.T y reaccionen al cambio de idioma como el resto de la
+                     página. null = Todos (sin filtro).
+                     WrapPanel (no StackPanel horizontal): con 6 badges en una
+                     ventana angosta la fila envuelve en vez de recortar. -->
+                <controls:WrapPanel x:Name="FilterBar"
+                                    HorizontalAlignment="Center"
+                                    Spacing="8"/>
                 <TextBlock x:Name="StatusText" FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" Visibility="Collapsed" TextWrapping="Wrap"/>
                 <StackPanel x:Name="SectionsHost" Spacing="18"/>
             </StackPanel>

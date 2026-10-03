@@ -35,6 +35,13 @@
         de eso no quedo, devuelve error. Ese es el caso tipico de la proteccion contra
         alteraciones (Tamper Protection) activada: Windows acepta el comando y lo
         descarta en silencio, sin error.
+      * Cuenta como "ya aplicado" lo que Defender ya cubre: una exclusion de carpeta
+        cubre todo lo que esta adentro (una carpeta superior sirve) y el ejecutable
+        esta cubierto por su nombre de proceso o por una exclusion del propio archivo.
+        Es el MISMO criterio que usa la app para su chequeo de salud
+        (DefenderExclusionHealthService), para que instalador y app no digan cosas
+        distintas sobre el mismo equipo. Sin esto, un equipo con las exclusiones ya
+        puestas a mano recibia un "hay que agregarlas a mano" que ya no era cierto.
       * Si el antivirus activo no es Defender (AMRunningMode distinto de "Normal"),
         lo dice y sale con 2: en ese equipo estas exclusiones no cambian nada, y
         callarse seria vender una solucion que no aplica.
@@ -49,11 +56,11 @@
         carpeta excluida para siempre despues de desinstalar.
 
     Codigos de salida:
-      0 = aplicado y verificado (o no habia nada que hacer)
+      0 = aplicado y verificado, o YA estaba cubierto (no habia nada que hacer)
       1 = error inesperado
       2 = Defender no es el antivirus activo, o no esta disponible
-      3 = no se pudo aplicar (tipicamente Tamper Protection)
-      4 = no se pudo quitar
+      3 = quedo algo sin aplicar (tipicamente Tamper Protection)
+      4 = quedo algo sin quitar
 #>
 [CmdletBinding()]
 param(
@@ -140,25 +147,73 @@ function Read-RegistryExclusions {
     return [pscustomobject]@{ Paths = @($paths); Processes = @($procs) }
 }
 
-# Compara lo pedido contra el registro. Devuelve las que faltan (o las que sobran, al quitar).
+# La exclusion que cubre una ruta (su ruta exacta o una carpeta superior), o null.
+# Una exclusion de carpeta cubre todo lo que esta adentro; es el mismo criterio que
+# DefenderExclusionHealthService (app), para que instalador y app no discrepen.
+function Find-PathCoverage {
+    param([string[]] $Excluded, [string] $Path)
+
+    $current = Normalize $Path
+    while ($current) {
+        foreach ($e in $Excluded) {
+            if ((Normalize $e) -eq $current) { return $e }
+        }
+        $parent = [System.IO.Path]::GetDirectoryName($current)
+        if (-not $parent) { break }
+        $current = Normalize $parent
+    }
+    return $null
+}
+
+# El ejecutable esta cubierto por su nombre de proceso o por una exclusion del propio
+# archivo (una ruta excluida que termina en el nombre del ejecutable). Devuelve la
+# exclusion que lo cubre, o null.
+function Find-ProcessCoverage {
+    param([string[]] $ExcludedPaths, [string[]] $ExcludedProcesses, [string] $Name)
+
+    foreach ($p in $ExcludedProcesses) {
+        if (('' + $p).Trim() -ieq $Name) { return $p }
+    }
+    foreach ($e in $ExcludedPaths) {
+        $leaf = [System.IO.Path]::GetFileName((Normalize $e))
+        if ($leaf -and $leaf -ieq $Name) { return $e }
+    }
+    return $null
+}
+
+# Compara lo pedido contra el registro.
+#   Al AGREGAR (-ExpectPresent): Faltan = lo que NO esta cubierto (cobertura por carpeta
+#     superior, por archivo o por proceso: ver arriba); Cubiertos = lo que ya lo esta.
+#   Al QUITAR: Faltan = lo que sigue puesto y hay que quitar, con comparacion EXACTA:
+#     al desinstalar se quita solo lo que puso el instalador, nunca una carpeta del
+#     usuario que resulta cubrir esta.
 function Compare-Exclusions {
     param([string[]] $Paths, [string[]] $Processes, [switch] $ExpectPresent)
 
     $state = Read-RegistryExclusions
     $faltan = New-Object System.Collections.Generic.List[string]
+    $cubiertos = New-Object System.Collections.Generic.List[string]
 
     foreach ($t in $Paths) {
-        $present = $state.Paths -contains $t
-        if ($ExpectPresent -and -not $present) { $faltan.Add($t) }
-        if (-not $ExpectPresent -and $present) { $faltan.Add($t) }
+        if ($ExpectPresent) {
+            $by = Find-PathCoverage -Excluded $state.Paths -Path $t
+            if ($by) { $cubiertos.Add("$t (cubierta por $by)") } else { $faltan.Add($t) }
+        }
+        elseif ($state.Paths -contains $t) {
+            $faltan.Add($t)
+        }
     }
     foreach ($p in $Processes) {
-        $present = $state.Processes -contains $p
-        if ($ExpectPresent -and -not $present) { $faltan.Add($p) }
-        if (-not $ExpectPresent -and $present) { $faltan.Add($p) }
+        if ($ExpectPresent) {
+            $by = Find-ProcessCoverage -ExcludedPaths $state.Paths -ExcludedProcesses $state.Processes -Name $p
+            if ($by) { $cubiertos.Add("$p (cubierto por $by)") } else { $faltan.Add($p) }
+        }
+        elseif ($state.Processes -contains $p) {
+            $faltan.Add($p)
+        }
     }
 
-    return [pscustomobject]@{ Faltan = @($faltan); State = $state }
+    return [pscustomobject]@{ Faltan = @($faltan); Cubiertos = @($cubiertos); State = $state }
 }
 
 Say ''
@@ -191,6 +246,13 @@ if ($status) {
     Say ("Proteccion contra alteraciones: " + $(if ($tamper) { 'activada' } else { 'desactivada' }))
 }
 
+# Con la proteccion contra alteraciones activada, Windows descarta EN SILENCIO los
+# cambios a la configuracion de Defender hechos por programa: el comando "anda" pero
+# la exclusion no queda (este era el "no funciona" del instalador). Igual NO se decide
+# aca: primero se lee que hay puesto (ver "estado actual" mas abajo) y recien despues
+# se informa. Un equipo con las exclusiones ya puestas a mano recibia un "agregalas a
+# mano" y un 3 que mandaban a hacer algo ya hecho.
+
 # ---- 2) Armar la lista de objetivos -----------------------------------------
 if ($Paths.Count -eq 0) { $Paths = @($PSScriptRoot) }
 
@@ -215,16 +277,59 @@ foreach ($p in $Processes) {
 Say ('Carpetas: ' + ($(if ($targetPaths.Count) { $targetPaths -join ' | ' } else { '(ninguna)' })))
 Say ('Ejecutables: ' + ($(if ($targetProcesses.Count) { $targetProcesses -join ' | ' } else { '(ninguno)' })))
 
-# ---- 3) Escribir ------------------------------------------------------------
+# ---- 3) Estado actual: que ya esta cubierto y que falta ----------------------
+# Se lee el REGISTRO antes de escribir (o de decidir que no se puede escribir). Es la
+# diferencia entre informar la realidad y recitar instrucciones: con la proteccion
+# contra alteraciones activada y las exclusiones ya puestas a mano, el script mandaba
+# a agregarlas igual. Aca "ya cubierto" cuenta como hecho y no se toca nada.
+$inicial = Compare-Exclusions -Paths $targetPaths.ToArray() -Processes $targetProcesses -ExpectPresent:(-not $Remove)
+
+if (@($inicial.Faltan).Count -eq 0) {
+    if ($Remove) {
+        Say 'No habia nada que quitar: esas exclusiones no estaban puestas.'
+    } else {
+        Say 'Listo: las exclusiones ya estaban cubiertas y verificadas (no habia nada que hacer).'
+        foreach ($c in @($inicial.Cubiertos)) { Say ('  - ' + $c) }
+    }
+    exit 0
+}
+
+# ---- 4) Proteccion contra alteraciones: no se puede escribir ------------------
+# Windows descarta el cambio en silencio, asi que ni se intenta: se informa lo que
+# falta DE VERDAD (solo eso) y los pasos para hacerlo a mano.
+if ($tamper) {
+    if ($Remove) {
+        Say 'La proteccion contra alteraciones esta activada: Windows descarta en silencio'
+        Say 'los cambios hechos por programa, asi que estas exclusiones no se pueden quitar desde aca.'
+        Say 'Hay que quitarlas a mano:'
+    } else {
+        Say 'La proteccion contra alteraciones esta activada: Windows descarta en silencio'
+        Say 'los cambios hechos por programa, asi que no se intenta agregar por este medio.'
+        Say 'Falta agregar a mano:'
+    }
+    foreach ($q in @($inicial.Faltan)) { Say ('  - ' + $q) }
+    if (-not $Remove -and @($inicial.Cubiertos).Count -gt 0) {
+        Say 'Ya cubiertas (no hace falta tocar nada):'
+        foreach ($c in @($inicial.Cubiertos)) { Say ('  - ' + $c) }
+    }
+    Say 'Seguridad de Windows > Proteccion contra virus y amenazas > Administrar la configuracion >'
+    Say '  Exclusiones > Agregar o quitar exclusiones > Agregar una carpeta (o un archivo)'
+    if ($Remove) { exit 4 } else { exit 3 }
+}
+
+# ---- 5) Escribir (solo lo que falta / lo que hay que quitar) ------------------
 $action = if ($Remove) { 'quitando' } else { 'agregando' }
 Say "Defender: $action las exclusiones..."
 
+$pendPaths = @($targetPaths | Where-Object { $inicial.Faltan -contains $_ })
+$pendProcs = @($targetProcesses | Where-Object { $inicial.Faltan -contains $_ })
+
 try {
-    foreach ($t in $targetPaths) {
+    foreach ($t in $pendPaths) {
         if ($Remove) { Remove-MpPreference -ExclusionPath $t -ErrorAction Stop }
         else         { Add-MpPreference    -ExclusionPath $t -ErrorAction Stop }
     }
-    foreach ($p in $targetProcesses) {
+    foreach ($p in $pendProcs) {
         if ($Remove) { Remove-MpPreference -ExclusionProcess $p -ErrorAction Stop }
         else         { Add-MpPreference    -ExclusionProcess $p -ErrorAction Stop }
     }
@@ -236,14 +341,17 @@ catch {
     Say "Aviso durante la escritura: $($_.Exception.Message)"
 }
 
-# ---- 4) Verificar leyendo el registro, esperando a que el cambio se asiente ----
+# ---- 6) Verificar leyendo el registro, esperando a que el cambio se asiente ----
 # Defender aplica el cambio con un pequeño retraso, asi que una lectura inmediata puede
 # no verlo. Se reintenta hasta WaitSeconds antes de declarar un fallo.
+# Se verifica SOLO lo que se escribio: un objetivo que ya estaba cubierto por una
+# carpeta superior (y por eso no se toco) no tiene por que aparecer con su nombre
+# exacto en el registro, y pedirlo de nuevo daria un fallo falso.
 $pendientes = @()
 $state = $null
 $elapsed = 0
 while ($elapsed -le $WaitSeconds) {
-    $check = Compare-Exclusions -Paths $targetPaths.ToArray() -Processes $targetProcesses -ExpectPresent:(-not $Remove)
+    $check = Compare-Exclusions -Paths $pendPaths -Processes $pendProcs -ExpectPresent:(-not $Remove)
     $pendientes = @($check.Faltan)
     $state = $check.State
     if ($pendientes.Count -eq 0) { break }
@@ -268,11 +376,7 @@ if ($Remove) {
 
 Say 'Defender no aplico estas exclusiones:'
 foreach ($f in $pendientes) { Say "  - $f" }
-if ($tamper) {
-    Say 'La proteccion contra alteraciones esta activada y es la causa mas probable:'
-    Say 'Windows descarta en silencio los cambios de configuracion de Defender hechos por una app.'
-}
 Say 'Se pueden agregar a mano, y queda aplicado igual:'
 Say '  Seguridad de Windows > Proteccion contra virus y amenazas > Administrar la configuracion >'
-Say '  Exclusiones > Agregar o quitar exclusiones > Agregar una carpeta'
+Say '  Exclusiones > Agregar o quitar exclusiones > Agregar una carpeta (o un archivo)'
 exit 3

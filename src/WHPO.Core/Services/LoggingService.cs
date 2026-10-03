@@ -12,8 +12,7 @@ public class LoggingService : ILoggingService
 {
     private readonly ILogger<LoggingService> _logger;
     private static readonly object _fileLock = new();
-    // Carpeta separada por copia (WHPO-Dev vs WHPO): los logs de la build de
-    // desarrollo no se mezclan con los de la instalada.
+    // Una sola carpeta de datos para todas las copias (ver AppPaths).
     private static readonly string _logPath = Path.Combine(
         AppPaths.RootDir, "app.log");
 

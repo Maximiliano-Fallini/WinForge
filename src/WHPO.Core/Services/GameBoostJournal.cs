@@ -140,9 +140,8 @@ public sealed class BoostJournalSnapshot
 }
 
 /// <summary>
-/// Persistencia del journal del Modo juego en %LocalAppData% (WHPO / WHPO-Dev
-/// según <see cref="WHPO.Core.AppPaths"/>, igual que el resto de las cachés: la
-/// build de desarrollo y la instalada no se pisan).
+/// Persistencia del journal del Modo juego en %LocalAppData%WHPO
+/// (<see cref="WHPO.Core.AppPaths"/>, igual que el resto de las cachés).
 ///
 /// Se guarda con escritura atómica (tmp + move), el mismo patrón que la caché de
 /// la biblioteca: un corte a mitad de escritura nunca deja un JSON a medias.

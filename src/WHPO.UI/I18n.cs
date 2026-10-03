@@ -630,10 +630,14 @@ public static class I18n
         {
             // Se re-traduce si el texto actual es la fuente (español) o una traducción
             // conocida de esa fuente en cualquier idioma (la haya puesto el recorrido o
-            // el código). Si el texto se modificó dinámicamente con algo que no
-            // corresponde a la fuente (mensaje de estado, contador, valor), se respeta.
+            // el código). Se pregunta por ESTA fuente (IsTranslationOf) y no por "qué
+            // clave le corresponde al texto": un mismo texto puede ser la traducción de
+            // varias claves ("Start" = alemán de "Inicio" e inglés de "Iniciar"), y
+            // preguntar por la fuente registrada evita re-atribuirlo a otra. Si el texto
+            // se modificó dinámicamente con algo que no corresponde a la fuente (mensaje
+            // de estado, contador, valor), se respeta.
             if (string.Equals(current, original.Es, StringComparison.Ordinal)
-                || Translations.SourceOf(current) == original.Es)
+                || Translations.IsTranslationOf(current, original.Es))
             {
                 var t = T(original.Es);
                 if (!string.Equals(t, current, StringComparison.Ordinal))
@@ -660,10 +664,11 @@ public static class I18n
             return;
         }
 
-        // Texto no registrado: si es una clave (español) o una traducción conocida de
-        // alguna clave (elemento creado en código mientras la app estaba en otro
-        // idioma), registrarlo y traducirlo. Cualquier otro texto dinámico queda igual.
-        if (Translations.TryGetSource(current, out var source))
+        // Texto no registrado: si es una clave (español) o una traducción NO ambigua
+        // de alguna clave (elemento creado en código mientras la app estaba en otro
+        // idioma), registrarlo y traducirlo. Un texto ambiguo (dos o más claves pueden
+        // haberlo producido) o dinámico se deja igual: no se adivina la clave.
+        if (Translations.TryGetSource(current, Current, out var source))
         {
             var entry = new OriginalText { Es = source, LastApplied = current };
             byProperty[dp] = entry;

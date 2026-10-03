@@ -515,8 +515,19 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
     }
 
     /// <summary>
-    /// Acorta el nombre de la CPU/GPU para que entre en la columna del overlay:
-    /// quita marcas/descriptores comunes y lo limita a 16 caracteres.
+    /// Acorta el nombre de la CPU/GPU para que entre en la columna del overlay: quita
+    /// marcas y descriptores genéricos —la generación ("13th Gen "), el "Core" delante
+    /// del modelo y el reloj base ("@ 3.60GHz")— y, si todavía no entra, corta en el
+    /// último espacio antes del límite para no dejar mitades de palabra (lo descartado
+    /// se marca con "…").
+    ///
+    /// El límite de 16 caracteres sale del ancho real de la columna: el panel reserva
+    /// ~127px por unidad de escala de letra para el nombre (medido con Consolas bold
+    /// 12.5px) y 16 caracteres ocupan ~124px en el peor caso ("Ryzen 7 7800X3D" son
+    /// 110px). Antes el corte era a los 16 caracteres crudos, así que nombres como
+    /// "13th Gen Intel(R) Core(TM) i7-13700K" quedaban en "13th Gen i7-1370…"; hoy
+    /// ese mismo nombre queda en "i7-13700K" y "AMD Ryzen 7 7800X3D 8-Core Processor"
+    /// en "Ryzen 7 7800X3D".
     /// </summary>
     private static string ShortenName(string name)
     {
@@ -524,7 +535,7 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
         var s = name;
         foreach (var token in new[]
         {
-            "(R)", "(TM)", "(C)", "AMD ", "Intel(R) ", "Intel ", "Core(TM) ", "NVIDIA ", "GeForce ",
+            "®", "™", "(R)", "(TM)", "(C)", "AMD ", "Intel(R) ", "Intel ", "Core(TM) ", "NVIDIA ", "GeForce ",
             "Radeon(TM) ", "Radeon (TM) ", "Radeon ", "ATI ", "Series", "Graphics", "Video Card",
             "Display Adapter", "Family", "Processor", "CPU", "APU", "Dual-Core ", "Quad-Core ",
             "Hexa-Core ", "Octa-Core ", "Dodeca-Core ", "6-Core ", "8-Core ", "10-Core ",
@@ -533,8 +544,27 @@ public sealed class OverlayMetricsService : IOverlayMetricsService, IDisposable
         {
             s = s.Replace(token, "", StringComparison.OrdinalIgnoreCase);
         }
+        // Generación: "13th Gen ", "12th Gen ", "1st Gen "... no aporta nada sobre el
+        // modelo (i7-13700K) y se comía la mitad del presupuesto de la columna.
+        s = System.Text.RegularExpressions.Regex.Replace(s,
+            "\\b\\d{1,2}(st|nd|rd|th)\\s+gen\\s+", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        // "Core i7/i5/i9": el modelo solo ya identifica la familia ("Core 2 Duo"
+        // queda intacto porque no lleva i+número detrás).
+        s = System.Text.RegularExpressions.Regex.Replace(s,
+            "\\bCore\\s+(?=i\\d)", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        // Reloj base declarado por el fabricante ("@ 3.60GHz"): la frecuencia real la
+        // muestra el overlay como métrica, así que acá sólo gasta ancho.
+        s = System.Text.RegularExpressions.Regex.Replace(s,
+            "\\s*@\\s*[\\d.,]+\\s*ghz", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         s = System.Text.RegularExpressions.Regex.Replace(s, "\\s+", " ").Trim();
-        return s.Length <= 16 ? s : s.Substring(0, 16).TrimEnd() + "…";
+
+        const int limit = 16;
+        if (s.Length <= limit) return s;
+        // Cortar en el último espacio antes del límite, salvo que eso deje menos de
+        // dos tercios del ancho disponible (ahí conviene el corte seco).
+        int cut = s.LastIndexOf(' ', limit - 1);
+        if (cut < limit * 2 / 3) cut = limit;
+        return s.Substring(0, cut).TrimEnd() + "…";
     }
 
     // ===== Ventana en primer plano =====

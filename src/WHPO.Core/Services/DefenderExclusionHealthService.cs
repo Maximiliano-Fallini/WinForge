@@ -12,7 +12,7 @@ public enum DefenderExclusionTarget
     /// <summary>El ejecutable de la app: lo que Defender bloquearía o borraría.</summary>
     AppExecutable,
 
-    /// <summary>Carpeta de datos de la app (%LocalAppData%\WHPO o \WHPO-Dev).</summary>
+    /// <summary>Carpeta de datos de la app (%LocalAppData%\WHPO).</summary>
     DataFolder,
 }
 

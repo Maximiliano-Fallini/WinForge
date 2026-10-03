@@ -120,6 +120,14 @@ public class TweakService : ITweakService
             return new TweakResult(false, $"Tweak no encontrado: {tweakId}");
         }
 
+        // Guardarraíl de versión: un tweak de Windows 11 no se aplica en Windows 10
+        // (antes se ejecutaba igual y quedaba un "listo" que no cambiaba nada).
+        if (!WindowsCapabilities.Supports(tweak.Support))
+        {
+            _loggingService.LogWarning($"Tweak omitido por versión de Windows: {tweak.Name} ({tweak.Compatibility})");
+            return new TweakResult(false, $"No aplicable: {tweak.Name} requiere {tweak.Compatibility}.");
+        }
+
         _progress = progress;
         try
         {
@@ -497,6 +505,29 @@ public class TweakService : ITweakService
     }
 
     // ====== Diccionario de Tweaks (Solo ) ======
+
+    // Tweaks que solo tienen efecto en Windows 11 (o en una build concreta de 11).
+    // Acá vive el requisito; la etiqueta de compatibilidad y el bloqueo al aplicar
+    // salen de este mapa, así que no hay que repetirlo en cada definición. En
+    // Windows 10 la UI los muestra deshabilitados con "Solo Windows 11" y
+    // ApplyTweakAsync los rechaza.
+    private static readonly Dictionary<string, WindowsSupport> SupportById = new()
+    {
+        // Widgets, "Finalizar tarea" en la barra, recomendados de la Store en el
+        // Inicio: funciones que Windows 11 agregó; en Windows 10 no existen.
+        ["WPFTweaksWidget"] = WindowsSupport.Windows11,
+        ["WPFTweaksEndTaskOnTaskbar"] = WindowsSupport.Windows11,
+        ["WPFTweaksDisableStoreSearch"] = WindowsSupport.Windows11,
+        ["WPFTweaksRemoveHomeAndGallery"] = WindowsSupport.Windows11,
+        ["WPFTweaksRightClickMenu"] = WindowsSupport.Windows11,
+        // Eliminar Edge: el truco del archivo dummy apunta a SystemApps\Microsoft.
+        // MicrosoftEdge_8wekyb3d8bbwe, que en Windows 10 es la carpeta del Edge legado.
+        ["WPFTweaksRemoveEdge"] = WindowsSupport.Windows11,
+        // IA de Windows (Copilot/Recall/CoreAI): Windows 11 (Copilot desde 22H2).
+        ["WPFTweaksWindowsAI"] = WindowsSupport.Windows11,
+        // Diseño de Inicio previo al nuevo de 25H2: solo existe en 25H2.
+        ["WPFTweaksRevertStartMenu"] = WindowsSupport.Windows11_25H2,
+    };
 
     private Dictionary<string, TweakDefinition> BuildTweaksDictionary()
     {
@@ -1301,6 +1332,10 @@ public class TweakService : ITweakService
         Func<bool>? appInstalled = null,
         string? nameWhenNotInstalled = null)
     {
-        dict[id] = new TweakDefinition(id, name, description, compatibility, isReversible, category, requiresAdmin, checkApplied, applyAction, appInstalled, nameWhenNotInstalled);
+        var support = SupportById.TryGetValue(id, out var s) ? s : WindowsSupport.Any;
+        // La etiqueta sale del requisito cuando lo hay: una sola fuente de verdad
+        // ("Solo Windows 11") para el servicio y las páginas.
+        if (support != WindowsSupport.Any) compatibility = WindowsCapabilities.Label(support);
+        dict[id] = new TweakDefinition(id, name, description, compatibility, isReversible, category, requiresAdmin, checkApplied, applyAction, appInstalled, nameWhenNotInstalled, support);
     }
 }

@@ -65,7 +65,11 @@ public record TweakDefinition(
     Func<bool>? AppInstalled = null,
     // Nombre alternativo cuando la app asociada NO está instalada (p. ej.
     // "O&O ShutUp10++ - Instalar" vs "- Ejecutar"). Si es null, se usa Name.
-    string? NameWhenNotInstalled = null
+    string? NameWhenNotInstalled = null,
+    // Versión mínima de Windows que necesita el tweak para tener efecto (ver
+    // WindowsSupport). Los tweaks de Windows 11 se bloquean en Windows 10 en vez
+    // de aplicarse en silencio sin hacer nada.
+    WindowsSupport Support = WindowsSupport.Any
 );
 
 /// <summary>

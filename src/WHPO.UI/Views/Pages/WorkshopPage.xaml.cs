@@ -54,6 +54,14 @@ public sealed partial class WorkshopPage : Page
     // Instalados actuales (id → record), refrescado en cada render.
     private Dictionary<string, InstalledComponentRecord> _installed = new(StringComparer.OrdinalIgnoreCase);
 
+    // Filtro por categoría (badges clicables del FilterBar): null = Todos
+    // (sin filtro, se muestran todas las secciones). Cualquier otro valor
+    // muestra SOLO la sección de esa categoría —es lo que pide el usuario:
+    // "si selecciono Sistema solo debería mostrar los componentes con badge Sistema".
+    // Se combina con el texto del buscador (BuildCard filtra por búsqueda y
+    // RebuildSections por categoría).
+    private ComponentCategory? _categoryFilter;
+
     public WorkshopPage()
     {
         InitializeComponent();
@@ -166,11 +174,18 @@ public sealed partial class WorkshopPage : Page
     {
         SectionsHost.Children.Clear();
         _cardRoots.Clear();
+        BuildFilterBadges();
 
         var search = (SearchBox.Text ?? "").Trim();
         var cards = BuildCardModels();
 
-        foreach (var category in CategoryOrder)
+        // Si hay filtro de categoría, solo se recorre esa: las demás secciones
+        // ni siquiera se crean (no esconder con Visibility: no existen).
+        var order = _categoryFilter is ComponentCategory only
+            ? new[] { only }
+            : CategoryOrder;
+
+        foreach (var category in order)
         {
             var inCategory = cards.Where(c => c.Category == category).ToList();
             if (inCategory.Count == 0) continue;
@@ -219,6 +234,74 @@ public sealed partial class WorkshopPage : Page
 
         // Ajusta el ancho de las cards al contenedor (3 columnas como la Biblioteca).
         UpdateCardWidth();
+    }
+
+    // =====================================================================
+    // Filtro por categoría (badges clicables sobre el buscador)
+    // =====================================================================
+
+    /// <summary>
+    /// Arma la fila de badges del filtro: "Todos" + una badge por categoría
+    /// (Juego, Rendimiento, Latencia, Monitoreo, Sistema). La badge activa va
+    /// con fondo de acento y texto sobre acento; las inactivas con el estilo de
+    /// badge de las cards (tinte tenue). Clic en una badge = filtrar solo esa
+    /// sección; clic en la activa (o en "Todos") = volver a mostrar todo.
+    /// Se reconstruye en cada RebuildSections para que los textos sigan a
+    /// I18n.LanguageChanged igual que las cards (sin XAML estático que el
+    /// recorrido tenga que recordar).
+    /// </summary>
+    private void BuildFilterBadges()
+    {
+        FilterBar.Children.Clear();
+
+        BuildFilterBadges_Add(null, I18n.T("Todos"));
+        foreach (var category in CategoryOrder)
+            BuildFilterBadges_Add(category, I18n.T(CategoryName(category)));
+    }
+
+    private void BuildFilterBadges_Add(ComponentCategory? category, string label)
+    {
+        bool active = _categoryFilter == category;
+        var accent = ThemeBrushes.Get("AccentBrush");
+
+        var badge = new Border
+        {
+            Background = active ? accent : new SolidColorBrush(accent.Color) { Opacity = 0.14 },
+            CornerRadius = new CornerRadius(BadgeCornerRadius),
+            Padding = new Thickness(BadgeHPadding + 2, BadgeVPadding + 2, BadgeHPadding + 2, BadgeVPadding + 3),
+            Child = new TextBlock
+            {
+                Text = label.ToUpperInvariant(),
+                FontSize = BadgeFontSize,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = active
+                    ? ThemeBrushes.Get("AccentForegroundBrush")
+                    : accent
+            }
+        };
+
+        // Hacerla clicable: el Border no es botón, así que se le da feedback
+        // de hover y el Tapped cambia el filtro. El cursor de mano no se toca:
+        // WinUI no expone ProtectedCursor en Border sin hacks de interop.
+        badge.PointerEntered += (s, e) =>
+        {
+            if (_categoryFilter != category)
+                badge.Background = new SolidColorBrush(accent.Color) { Opacity = 0.28 };
+        };
+        badge.PointerExited += (s, e) =>
+        {
+            if (_categoryFilter != category)
+                badge.Background = new SolidColorBrush(accent.Color) { Opacity = 0.14 };
+        };
+        badge.Tapped += (s, e) =>
+        {
+            // Toggle: clic en la activa vuelve a "Todos".
+            _categoryFilter = active ? null : category;
+            e.Handled = true;
+            RebuildSections();
+        };
+
+        FilterBar.Children.Add(badge);
     }
 
     /// <summary>

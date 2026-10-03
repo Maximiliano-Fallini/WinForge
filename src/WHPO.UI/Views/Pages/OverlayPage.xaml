@@ -159,7 +159,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="2" VerticalAlignment="Center">
                                     <TextBlock Text="Esquina de la pantalla" FontSize="14" FontWeight="SemiBold"/>
-                                    <TextBlock Text="Ubicación por defecto (después podés arrastrarla con el atajo de desbloqueo). Vertical: arriba a la derecha · Horizontal: arriba a la izquierda."
+                                    <TextBlock Text="Ubicación por defecto (después podés arrastrarla con el atajo de desbloqueo). Vertical: arriba a la derecha · Horizontal: arriba a la izquierda · Abajo centrado: fija, centrada en el borde inferior."
                                                FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <ComboBox x:Name="CornerComboBox" Grid.Column="1" MinWidth="170">
@@ -167,6 +167,7 @@
                                     <ComboBoxItem x:Name="CornerTopLeftItem" Content="Arriba a la izquierda" Tag="top-left"/>
                                     <ComboBoxItem x:Name="CornerBottomRightItem" Content="Abajo a la derecha" Tag="bottom-right"/>
                                     <ComboBoxItem x:Name="CornerBottomLeftItem" Content="Abajo a la izquierda" Tag="bottom-left"/>
+                                    <ComboBoxItem x:Name="CornerBottomCenterItem" Content="Abajo centrado" Tag="bottom-center"/>
                                 </ComboBox>
                             </Grid>
 

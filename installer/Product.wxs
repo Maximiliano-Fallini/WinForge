@@ -5,8 +5,8 @@
        (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
   <Package Name="WinForge"
            Manufacturer="WinForge"
-           Version="0.1.4"
-           ProductCode="{E1528DBF-075D-4CBC-9BA1-3B81EF0CE74D}"
+           Version="0.2.4"
+           ProductCode="{170EBF9A-EC97-4AD6-B1E6-1F75908E9C54}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"
@@ -33,7 +33,7 @@
     <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
     <Property Id="ARPPUBLISHER" Value="WinForge" />
     <Property Id="ARPCONTACT" Value="WinForge" />
-    <Property Id="ARPCOMMENTS" Value="WinForge 0.1.4 Beta - optimizador y monitor del sistema" />
+    <Property Id="ARPCOMMENTS" Value="WinForge 0.2.4 Beta - optimizador y monitor del sistema" />
 
     <!-- ===== Exclusiones de Windows Defender =====
          Por que: WinForge es un ejecutable sin firmar que modifica ajustes del sistema,
@@ -65,10 +65,16 @@
          -IncludeDataFolder: además de la carpeta de instalación se excluye la carpeta
          de datos de la app (%LOCALAPPDATA%\WHPO), que es de donde salen los componentes
          y el instalador que la app baja después. La CA es impersonated justamente para
-         que ese %LOCALAPPDATA% sea el del usuario que instala y no el del sistema
-         (medido: el token impersonado es el del usuario con permisos de administrador,
-         y desde ahí Defender acepta las exclusiones incluso con la protección contra
-         alteraciones activada). -->
+         que ese %LOCALAPPDATA% sea el del usuario que instala y no el del sistema.
+         OJO con la proteccion contra alteraciones (Tamper Protection): cuando esta
+         activada, Windows descarta EN SILENCIO los cambios a Defender hechos por
+         programa (la llamada devuelve exito pero la exclusion NO queda). Era el
+         "no funciona" del instalador: la pasada temprana lo detecta antes de
+         escribir y deja en el log del MSI que hay puesto (lo agregado a mano
+         cuenta), y el script hace lo mismo en su propio log: si ya estaba todo
+         cubierto sale 0, y solo lo que falta de verdad se informa como pendiente
+         para agregar a mano (Seguridad de Windows > Proteccion contra virus y
+         amenazas > Exclusiones). -->
     <CustomAction Id="AddDefenderExclusion"
                   Directory="System64Folder"
                   ExeCommand="WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLFOLDER]Add-DefenderExclusion.ps1&quot; -IncludeDataFolder"
@@ -167,7 +173,13 @@
            primero la CA inmediata copia PROPERTY_PATH a CustomActionData y luego
            la diferida reabre la app con esa línea. La creación del proceso se
            atrasa ~1 s porque el MSI cierra WinForge con taskkill y puede seguir vivo
-           unos milisegundos al terminar la instalación. -->
+           unos milisegundos al terminar la instalación.
+
+           Este es el ÚLTIMO paso de la fase diferida (Before="InstallFinalize") a
+           propósito: cuando la app arranca, ya se copiaron los archivos, se escribió
+           el registro y se crearon los accesos directos. Y el script de exclusiones
+           va anclado justo antes de esta acción (ver AddDefenderExclusion): la app no
+           arranca sin que la exclusión de Defender se haya intentado y verificado. -->
       <Custom Action="SetLaunchCommandData" Before="RunWinForgeAfterUpgrade" Condition="NOT REMOVE=&quot;ALL&quot;" />
       <Custom Action="RunWinForgeAfterUpgrade" Before="InstallFinalize" Condition="NOT REMOVE=&quot;ALL&quot;" />
       <!-- Exclusiones de Defender: PRIMERO la pasada temprana (antes de copiar los
@@ -177,9 +189,18 @@
               Condition="NOT REMOVE=&quot;ALL&quot; AND DEFENDEREXCLUSION=&quot;1&quot;" />
       <Custom Action="AddDefenderExclusionEarly" Before="InstallFiles"
               Condition="NOT REMOVE=&quot;ALL&quot; AND DEFENDEREXCLUSION=&quot;1&quot;" />
-      <!-- Exclusiones de Defender: después de copiar los archivos (el script tiene
-           que estar en disco) y antes de borrarlos al desinstalar. -->
-      <Custom Action="AddDefenderExclusion" After="InstallFiles" Condition="NOT REMOVE=&quot;ALL&quot; AND DEFENDEREXCLUSION=&quot;1&quot;" />
+      <!-- Exclusiones de Defender: la pasada del script va JUSTO ANTES de relanzar la
+           app (Before="RunWinForgeAfterUpgrade") y ese es el contrato, no una
+           casualidad del linker. El orden que importa es archivos -> exclusiones ->
+           app, y los archivos existen seguro: InstallFiles está en 4000 y esta CA
+           queda pegada al final de la fase diferida (6598, ver "medido" abajo), así
+           que el script ya está en disco. Sin esta ancla el linker resolvía el orden
+           por la posición de cada ancla por separado (el script quedaba en 4001 y el
+           relanzado en 6599: bien, pero de casualidad); con el ancla, mover cualquiera
+           de las dos no puede romperlo en silencio.
+           (Medido sobre el MSI con builds/msi-seq-probe.ps1: InstallFiles 4000 ->
+           esta CA 6598 -> relanzado 6599 -> InstallFinalize 6600.) -->
+      <Custom Action="AddDefenderExclusion" Before="RunWinForgeAfterUpgrade" Condition="NOT REMOVE=&quot;ALL&quot; AND DEFENDEREXCLUSION=&quot;1&quot;" />
       <Custom Action="RemoveDefenderExclusion" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 

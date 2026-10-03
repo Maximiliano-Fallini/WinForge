@@ -747,6 +747,9 @@ public static class Translations
         ["Arriba a la izquierda"] = ("Top left", "Superior esquerdo", "Oben links", "Haut gauche"),
         ["Abajo a la derecha"] = ("Bottom right", "Inferior direito", "Unten rechts", "Bas droite"),
         ["Abajo a la izquierda"] = ("Bottom left", "Inferior esquerdo", "Unten links", "Bas gauche"),
+        // Esquina "abajo centrado": posición fija, derivada del tamaño del panel (no se arrastra).
+        ["Abajo centrado"] = ("Bottom center", "Inferior centro", "Unten mittig", "Bas centre"),
+        ["Ubicación por defecto (después podés arrastrarla con el atajo de desbloqueo). Vertical: arriba a la derecha · Horizontal: arriba a la izquierda · Abajo centrado: fija, centrada en el borde inferior."] = ("Default position (you can then drag it with the unlock shortcut). Vertical: top right · Horizontal: top left · Bottom center: fixed, centered on the bottom edge.", "Posição padrão (você pode arrastá-la depois com o atalho de desbloqueio). Vertical: acima à direita · Horizontal: acima à esquerda · Inferior centro: fixa, centralizada na borda inferior.", "Standardposition (später mit dem Entsperr-Hotkey verschiebbar). Vertikal: oben rechts · Horizontal: oben links · Unten mittig: fest, mittig am unteren Rand.", "Position par défaut (tu pourras la déplacer ensuite avec le raccourci de déverrouillage). Vertical : en haut à droite · Horizontal : en haut à gauche · Bas centre : fixe, centrée sur le bord inférieur."),
         ["Colores de las métricas"] = ("Metric colors", "Cores das métricas", "Metrik-Farben", "Couleurs des métriques"),
         ["FPS"] = ("FPS", "FPS", "FPS", "FPS"),
         ["Contador de frames por segundo y lows."] = ("Frames per second counter and lows.", "Contador de quadros por segundo e lows.", "Bilder pro Sekunde und Lows.", "Compteur d'images par seconde et lows."),
@@ -1048,6 +1051,11 @@ public static class Translations
         ["Compatible con Windows 10/11"] = ("Compatible with Windows 10/11", "Compatível com Windows 10/11", "Kompatibel mit Windows 10/11", "Compatible avec Windows 10/11"),
         ["Compatible con Windows 11"] = ("Compatible with Windows 11", "Compatível com Windows 11", "Kompatibel mit Windows 11", "Compatible avec Windows 11"),
         ["Compatible con Windows 11 25H2"] = ("Compatible with Windows 11 25H2", "Compatível com Windows 11 25H2", "Kompatibel mit Windows 11 25H2", "Compatible avec Windows 11 25H2"),
+        // Etiqueta de los tweaks que SOLO tienen efecto en Windows 11 (o en una build
+        // concreta). En versiones anteriores la card se muestra deshabilitada.
+        ["Solo Windows 11"] = ("Windows 11 only", "Somente Windows 11", "Nur Windows 11", "Windows 11 uniquement"),
+        ["Solo Windows 11 24H2"] = ("Windows 11 24H2 only", "Somente Windows 11 24H2", "Nur Windows 11 24H2", "Windows 11 24H2 uniquement"),
+        ["Solo Windows 11 25H2"] = ("Windows 11 25H2 only", "Somente Windows 11 25H2", "Nur Windows 11 25H2", "Windows 11 25H2 uniquement"),
         ["Requiere Brave Browser instalado"] = ("Requires Brave Browser installed", "Requer Brave Browser instalado", "Erfordert installierten Brave Browser", "Nécessite Brave Browser installé"),
         ["Requiere Microsoft Edge instalado"] = ("Requires Microsoft Edge installed", "Requer Microsoft Edge instalado", "Erfordert installierten Microsoft Edge", "Nécessite Microsoft Edge installé"),
         ["Requiere precaución"] = ("Requires caution", "Requer cuidado", "Erfordert Vorsicht", "Nécessite de la prudence"),
@@ -2436,22 +2444,35 @@ public static class Translations
     }
 
     // Mapa inverso: texto visible (fuente en español o traducción en CUALQUIER
-    // idioma) → clave fuente en español. Permite al motor de traducciones reconocer
-    // un texto que ya fue traducido (por el recorrido o por código) y revertirlo
-    // al idioma actual, incluso si el elemento nunca se registró en español.
+    // idioma) → CONJUNTO de claves fuente que pueden haberlo producido.
+    //
+    // Guardar el conjunto (y no una sola clave) es lo que evita el bug clásico:
+    // "Start" es a la vez la columna alemana de "Inicio" y la inglesa de "Iniciar".
+    // Con una sola ranura y "gana la primera", el texto de un botón "Iniciar"
+    // creado por código con T("Iniciar") se atribuía a "Inicio" y en inglés
+    // terminaba mostrando "Home". Guardando TODAS las fuentes, el motor reconoce
+    // que un texto ya traducido es una renderización válida de su clave
+    // (IsTranslationOf) en vez de adivinar cuál era.
     // Se reemplaza entero al instalar/quitar un pack (volatile: lectura sin lock).
-    private static volatile Dictionary<string, string> Reverse = BuildReverse();
+    private static volatile Dictionary<string, HashSet<string>> Reverse = BuildReverse();
 
-    private static Dictionary<string, string> BuildReverse()
+    private static Dictionary<string, HashSet<string>> BuildReverse()
     {
-        var rev = new Dictionary<string, string>(StringComparer.Ordinal);
+        var rev = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        void Add(string? value, string source)
+        {
+            if (string.IsNullOrEmpty(value)) return;
+            if (!rev.TryGetValue(value, out var set))
+                rev[value] = set = new HashSet<string>(StringComparer.Ordinal);
+            set.Add(source);
+        }
         foreach (var (es, tr) in All)
         {
-            rev.TryAdd(es, es);
-            if (!string.IsNullOrEmpty(tr.En)) rev.TryAdd(tr.En, es);
-            if (!string.IsNullOrEmpty(tr.Pt)) rev.TryAdd(tr.Pt, es);
-            if (!string.IsNullOrEmpty(tr.De)) rev.TryAdd(tr.De, es);
-            if (!string.IsNullOrEmpty(tr.Fr)) rev.TryAdd(tr.Fr, es);
+            Add(es, es);
+            Add(tr.En, es);
+            Add(tr.Pt, es);
+            Add(tr.De, es);
+            Add(tr.Fr, es);
         }
 
         // Textos de los packs y de los componentes: el motor necesita reconocer una
@@ -2466,18 +2487,68 @@ public static class Translations
         {
             foreach (var kv in map)
             {
-                rev.TryAdd(kv.Key, kv.Key);
-                if (!string.IsNullOrEmpty(kv.Value)) rev.TryAdd(kv.Value, kv.Key);
+                Add(kv.Key, kv.Key);
+                Add(kv.Value, kv.Key);
             }
         }
         return rev;
     }
 
-    /// <summary>Devuelve la clave fuente (español) de un texto visible, o null si no es ni clave ni traducción.</summary>
-    public static string? SourceOf(string text)
-        => Reverse.TryGetValue(text, out var s) ? s : null;
+    /// <summary>
+    /// Clave fuente (español) de un texto visible, resuelta contra el idioma activo.
+    ///
+    /// Entre las claves que pueden haber producido el texto, gana la que <paramref name="lang"/>
+    /// renderiza EXACTAMENTE así (con el mismo fallback que I18n.T: idioma → en-US →
+    /// español): así "Start" en inglés se atribuye a "Iniciar" y no a "Inicio" (que
+    /// es "Start" en alemán). Si aun así quedan dos o más claves (traducciones
+    /// duplicadas: "Borrar" y "Eliminar" son ambas "Delete"), devuelve null a
+    /// propósito: preferir una era justo lo que hacía que un texto terminara traducido
+    /// a la palabra de OTRA clave.
+    /// </summary>
+    public static string? SourceOf(string text, string lang)
+    {
+        // El texto ES la clave fuente: no hay nada que resolver.
+        if (All.ContainsKey(text)) return text;
 
-    /// <summary>True si el texto es una clave (español) o una traducción conocida de alguna clave.</summary>
-    public static bool TryGetSource(string text, out string source)
-        => Reverse.TryGetValue(text, out source!);
+        if (!Reverse.TryGetValue(text, out var set)) return null;
+        if (set.Count == 1) { foreach (var s in set) return s; }
+
+        // Varias claves posibles: gana la que el idioma activo renderiza igual al texto.
+        string? match = null;
+        foreach (var s in set)
+        {
+            if (!string.Equals(Render(lang, s), text, StringComparison.Ordinal)) continue;
+            if (match != null) return null; // sigue siendo ambiguo en este idioma
+            match = s;
+        }
+        return match;
+    }
+
+    /// <summary>
+    /// True si el texto es una clave (español) o una traducción resoluble a UNA sola
+    /// clave para el idioma activo. Con ambigüedad devuelve false (el texto se respeta).
+    /// </summary>
+    public static bool TryGetSource(string text, string lang, out string source)
+    {
+        var single = SourceOf(text, lang);
+        source = single ?? text;
+        return single != null;
+    }
+
+    /// <summary>
+    /// True si <paramref name="text"/> es una renderización conocida de la clave
+    /// <paramref name="source"/>: la clave misma o su traducción en CUALQUIER idioma
+    /// (embebida, de un pack o del catálogo de componentes). Es lo que permite
+    /// re-traducir un elemento YA registrado sin tener que adivinar su clave.
+    /// </summary>
+    public static bool IsTranslationOf(string text, string source)
+        => Reverse.TryGetValue(text, out var set) && set.Contains(source);
+
+    /// <summary>Cómo queda una clave en un idioma, con el fallback de I18n.T (idioma → en-US → español).</summary>
+    private static string Render(string lang, string es)
+    {
+        if (TryTranslate(lang, es, out var t)) return t;
+        if (lang != "en-US" && TryTranslate("en-US", es, out var en)) return en;
+        return es;
+    }
 }

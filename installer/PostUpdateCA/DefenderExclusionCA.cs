@@ -57,6 +57,43 @@ namespace PostUpdateCA
         private const int VerifyTimeoutSeconds = 4;
 
         /// <summary>
+        /// True si la protección contra alteraciones de Defender está activada. Con ella
+        /// encendida, Windows descarta EN SILENCIO los cambios a la configuración de
+        /// Defender hechos por programa (WMI o cmdlets): la llamada devuelve éxito pero
+        /// la exclusión no queda. Intentar igual es quemar 20 s de instalación para nada,
+        /// así que se detecta ANTES y se salta la escritura dejando el motivo en el log.
+        /// Se lee por WMI (Get-MpComputerStatus) porque el registro de esa bandera no es
+        /// legible de forma fiable desde una CA diferida.
+        /// </summary>
+        private static bool IsTamperProtected()
+        {
+            try
+            {
+                var scope = new ManagementScope(@"\\" + Environment.MachineName + @"\" + WmiScope);
+                scope.Connect();
+                using (var searcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT IsTamperProtected FROM MSFT_MpComputerStatus")))
+                using (var results = searcher.Get())
+                {
+                    foreach (ManagementObject status in results)
+                    {
+                        try
+                        {
+                            var value = status["IsTamperProtected"];
+                            if (value != null && Convert.ToBoolean(value)) return true;
+                        }
+                        finally { status.Dispose(); }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // No se pudo leer: no se asume nada, se intenta la escritura igual y la
+                // verificación de abajo dice si quedó o no.
+            }
+            return false;
+        }
+
+        /// <summary>
         /// CustomAction inmediata: arma el CustomActionData de la CA diferida.
         /// Una CA diferida no puede leer propiedades de la sesión (solo recibe su propio
         /// CustomActionData), y la carpeta de instalación y la de datos de la app son
@@ -112,6 +149,23 @@ namespace PostUpdateCA
             if (!TryParseData(session, out paths, out processes))
             {
                 session.Log("DefenderExclusion (temprana): sin datos; no se toca nada.");
+                return ActionResult.Success;
+            }
+
+            // Con la protección contra alteraciones activada, Windows descarta en
+            // silencio los cambios hechos por programa: la llamada WMI devuelve éxito
+            // pero la exclusión no queda (este era el "no funciona" del instalador).
+            // Se detecta antes de escribir y, en vez de quemar el tope de 20 s, se
+            // VERIFICA qué hay puesto y se deja el resultado en el log: lo agregado a
+            // mano cuenta, así que un equipo ya cubierto no se reporta como pendiente.
+            if (IsTamperProtected())
+            {
+                session.Log("DefenderExclusion (temprana): protección contra alteraciones ACTIVADA: "
+                            + "Windows descarta los cambios hechos por programa, no se escribe nada. "
+                            + "Se verifica qué hay puesto (lo agregado a mano cuenta).");
+                VerifyAndLog(session, paths, processes,
+                            "protección contra alteraciones activada; si ya las agregaste a mano, "
+                            + "la app lo confirma en vivo (una exclusión de carpeta superior también cuenta)");
                 return ActionResult.Success;
             }
 
@@ -183,8 +237,16 @@ namespace PostUpdateCA
         /// quedaron. Con la protección contra alteraciones activada el cambio se descarta en
         /// silencio: sin esta verificación el log diría que se aplicó y no habría forma de
         /// saber que no.
+        ///
+        /// La comparación de acá es EXACTA (¿está esta exclusión puntual en el registro?),
+        /// no de cobertura: el log dice si el instalador dejó lo que pidió. Que el ejecutable
+        /// ya esté cubierto por una carpeta superior es igual de válido para la app
+        /// (DefenderExclusionHealthService lo verifica en vivo), pero no es lo que escribió
+        /// esta pasada.
         /// </summary>
-        private static void VerifyAndLog(Session session, List<string> paths, List<string> processes)
+        /// <param name="missingContext">Motivo/camino a seguir cuando algo no quedó, para el
+        /// log. Null = texto genérico (protección contra alteraciones o antivirus activo).</param>
+        private static void VerifyAndLog(Session session, List<string> paths, List<string> processes, string missingContext = null)
         {
             const string baseKey = @"SOFTWARE\Microsoft\Windows Defender\Exclusions";
             var missing = new List<string>();
@@ -214,8 +276,9 @@ namespace PostUpdateCA
             }
             else
             {
-                session.Log("DefenderExclusion (temprana): no quedaron verificadas (revisar la protección contra "
-                            + "alteraciones o el antivirus activo): " + string.Join(" | ", missing));
+                session.Log("DefenderExclusion (temprana): no quedaron aplicadas estas exclusiones exactas ("
+                            + (missingContext ?? "revisar la protección contra alteraciones o el antivirus activo")
+                            + "): " + string.Join(" | ", missing));
             }
         }
 

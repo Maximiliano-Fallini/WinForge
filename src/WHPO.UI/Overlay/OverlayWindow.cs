@@ -32,6 +32,11 @@ public sealed record OverlayConfig(
     double FontScale,
     // "vertical" (panel clásico) u "horizontal" (barra compacta de una línea).
     string Layout,
+    // Esquina elegida en la página: "top-right", "top-left", "bottom-right",
+    // "bottom-left" o "bottom-center". Sólo "bottom-center" (CornerBottomCenter)
+    // se re-aplica en cada render: su posición se deriva del tamaño actual (ver
+    // ApplyBottomCenterAnchor), no de la guardada.
+    string Corner,
     Color FpsColor,
     Color CpuColor,
     Color GpuColor,
@@ -88,13 +93,26 @@ public sealed class OverlayWindow : Form
 
     // Dimensiones del overlay: el ancho es fijo y el alto se calcula según la
     // cantidad de líneas de métricas (cada fila de badges = una línea).
-    private const int OverlayWidth = 360;
+    // El ancho dejó de ser 360: ver el comentario de las columnas de hardware
+    // (el nombre del CPU/GPU no entraba en 360 y salía cortado).
+    private const int OverlayWidth = 396;
     private const int MinOverlayHeight = 120;
 
     // LAYOUTS: "vertical" (panel clásico, filas apiladas) y "horizontal" (barra
     // ancha: una sola fila de métricas compactas).
     public const string LayoutVertical = "vertical";
     public const string LayoutHorizontal = "horizontal";
+
+    /// <summary>Esquina "abajo centrado": el overlay queda centrado horizontalmente
+    /// y pegado al borde inferior del área de trabajo (por encima de la barra de
+    /// tareas). A diferencia de las otras esquinas, la posición NO se guarda: se
+    /// deriva del tamaño actual en cada render, porque el ancho de la barra
+    /// horizontal cambia con el contenido y, si se guardara, quedaría descentrada
+    /// (ver ApplyBottomCenterAnchor).</summary>
+    public const string CornerBottomCenter = "bottom-center";
+
+    /// <summary>Margen del overlay contra el borde del área de trabajo (sin escalar).</summary>
+    private const int CornerMargin = 16;
 
     /// <summary>Verde por defecto de los títulos de familia (CPU/GPU/RAM/FPS) del
     /// overlay: mismo verde del estado "desbloqueado" de la barra.</summary>
@@ -128,6 +146,9 @@ public sealed class OverlayWindow : Form
     /// <summary>¿El overlay está en el layout horizontal (barra compacta)?</summary>
     private bool IsHorizontal => string.Equals(_config.Layout, LayoutHorizontal, StringComparison.Ordinal);
 
+    /// <summary>¿El overlay está anclado al pie, centrado horizontalmente?</summary>
+    private bool IsBottomCentered => string.Equals(_config.Corner, CornerBottomCenter, StringComparison.Ordinal);
+
     /// <summary>Ancho base (sin escala de letra) según el layout activo. En
     /// horizontal el ancho se ajusta al contenido (ver MeasureHorizontalBarWidth).</summary>
     private int OverlayBaseWidth => IsHorizontal ? _horizontalWidth : OverlayWidth;
@@ -160,13 +181,22 @@ public sealed class OverlayWindow : Form
     // Columnas de la grilla de hardware, alineadas a la derecha (sin escala):
     // usage / mhz / temp / watts. Medidas con la fuente real (Consolas bold 12.5px):
     // "100%"=32.5, "5299 MHz"=60.8, "89°C"=32.5, "120 W"=39.6 → con gaps de 22px
-    // entre columnas y 16px de margen derecho (overlay de 360px), la fila completa
-    // de 4 valores queda aireada y el peor caso (3 dígitos de watts) nunca se pega
-    // al valor anterior ni al borde.
-    private const float ColUsageRight = 144;
-    private const float ColMhzRight = 227;
-    private const float ColTempRight = 282;
-    private const float ColWattsRight = 344;
+    // entre columnas y 16px de margen derecho, la fila completa de 4 valores queda
+    // aireada y el peor caso (3 dígitos de watts) nunca se pega al valor anterior
+    // ni al borde.
+    //
+    // La grilla y el panel están corridos +36px sobre la original (144/227/282/344
+    // sobre 360px) porque el NOMBRE del hardware se dibuja en lo que queda a la
+    // izquierda de la primera columna y ese espacio no alcanzaba: el presupuesto
+    // era 91px por unidad de escala (128px con letra al 140%) medido contra el
+    // valor más ancho de la columna 1 ("100%" = 32.5px), mientras que los nombres
+    // que devuelve ShortenName miden hasta ~110px ("Ryzen 7 7800X3D") — el CPU y la
+    // GPU salían truncados con "…" (ej. "13th Gen i7-1370…"). Con estas columnas
+    // el presupuesto es 127px y los nombres reales entran completos.
+    private const float ColUsageRight = 180;
+    private const float ColMhzRight = 263;
+    private const float ColTempRight = 318;
+    private const float ColWattsRight = 380;
 
     // Fuentes dinámicas según la escala de letra configurada (todo Consolas;
     // el candado NO usa fuente: se dibuja vector con GDI+, ver DrawLockGlyph).
@@ -472,6 +502,8 @@ public sealed class OverlayWindow : Form
             // o guardada fuera de toda pantalla):
             // - Vertical: ARRIBA A LA DERECHA del monitor primario.
             // - Horizontal: ARRIBA A LA IZQUIERDA del monitor primario.
+            // - "Abajo centrado": la deriva ApplyBottomCenterAnchor al final de
+            //   este método (acá sólo se apunta al pie del monitor primario).
             var primary = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
             int x = _settings.Get("overlay.posX", int.MinValue);
             int y = _settings.Get("overlay.posY", int.MinValue);
@@ -486,23 +518,22 @@ public sealed class OverlayWindow : Form
             }
             if (!haveSaved)
             {
-                const int m = 16;
-                if (IsHorizontal)
-                {
-                    x = primary.Left + m;               // horizontal: arriba a la IZQUIERDA
-                    y = primary.Top + m;
-                }
-                else
-                {
-                    x = primary.Right - Width - m;      // vertical: arriba a la DERECHA
-                    y = primary.Top + m;
-                }
+                var pos = IsBottomCentered
+                    ? CornerPosition(CornerBottomCenter, primary)   // abajo centrado
+                    : IsHorizontal
+                        ? new Point(primary.Left + CornerMargin, primary.Top + CornerMargin)   // horizontal: IZQUIERDA
+                        : new Point(primary.Right - Width - CornerMargin, primary.Top + CornerMargin); // vertical: DERECHA
+                x = pos.X;
+                y = pos.Y;
             }
 
             // Acotar la posición para que la ventana quede COMPLETA dentro del área de
             // trabajo del monitor más cercano (ver ClampToNearestScreen).
             Location = new Point(x, y);
             ClampToNearestScreen();
+            // Con la esquina "Abajo centrado" la posición se deriva del tamaño
+            // recién aplicado (manda sobre la guardada y sobre el acotado).
+            ApplyBottomCenterAnchor();
         }
         catch (Exception ex)
         {
@@ -547,34 +578,75 @@ public sealed class OverlayWindow : Form
 
     /// <summary>
     /// Ubica el overlay en la esquina pedida del monitor primario ("top-right",
-    /// "top-left", "bottom-right", "bottom-left") y guarda la posición.
+    /// "top-left", "bottom-right", "bottom-left" o "bottom-center") y guarda la
+    /// posición. Con "bottom-center" la ventana recuerda la esquina y la vuelve a
+    /// aplicar en cada render: esa posición se deriva del tamaño actual (ver
+    /// ApplyBottomCenterAnchor), así que no se puede arrastrar.
     /// </summary>
     public void SetCorner(string corner)
     {
         try
         {
+            // Recordar la esquina sin esperar a releer los settings: el próximo
+            // render ya tiene que saber si el ancla del pie está activa.
+            _config = _config with { Corner = corner };
+
             var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
-            int x, y;
-            const int margin = 16;
-            switch (corner)
-            {
-                case "top-left":
-                    x = area.Left + margin; y = area.Top + margin; break;
-                case "bottom-right":
-                    x = area.Right - Width - margin; y = area.Bottom - Height - margin; break;
-                case "bottom-left":
-                    x = area.Left + margin; y = area.Bottom - Height - margin; break;
-                default: // top-right
-                    x = area.Right - Width - margin; y = area.Top + margin; break;
-            }
-            Location = new Point(x, y);
-            _settings.Set("overlay.posX", x);
-            _settings.Set("overlay.posY", y);
+            var pos = CornerPosition(corner, area);
+            Location = pos;
+            _settings.Set("overlay.posX", pos.X);
+            _settings.Set("overlay.posY", pos.Y);
             _settings.Save();
         }
         catch (Exception ex)
         {
             _log.LogWarning($"OverlayWindow: no se pudo ubicar en la esquina: {ex.Message}");
+        }
+    }
+
+    /// <summary>Posición de una esquina dentro del área de trabajo indicada.</summary>
+    private Point CornerPosition(string corner, Rectangle area) => corner switch
+    {
+        "top-left" => new Point(area.Left + CornerMargin, area.Top + CornerMargin),
+        "bottom-right" => new Point(area.Right - Width - CornerMargin, area.Bottom - Height - CornerMargin),
+        "bottom-left" => new Point(area.Left + CornerMargin, area.Bottom - Height - CornerMargin),
+        CornerBottomCenter => new Point(area.Left + (area.Width - Width) / 2, area.Bottom - Height - CornerMargin),
+        // Por defecto: arriba a la derecha (esquina con la que nace el panel vertical).
+        _ => new Point(area.Right - Width - CornerMargin, area.Top + CornerMargin)
+    };
+
+    /// <summary>
+    /// Vuelve a anclar el overlay al pie centrado cuando la esquina elegida es
+    /// "Abajo centrado". La posición se DERIVA del tamaño actual en vez de
+    /// guardarse: el ancho de la barra horizontal se mide en cada render y cambia
+    /// con el contenido (FPS de 2 o 3 dígitos, MHz, título del juego), y el ancho
+    /// del panel vertical cambia con las filas y la escala de letra. Si la posición
+    /// fuera la guardada, la barra quedaría descentrada en cuanto creciera el
+    /// contenido. Consecuencia buscada: con esta esquina el arrastre no mueve la
+    /// ventana (el ancla la recoloca en el próximo render).
+    /// </summary>
+    private void ApplyBottomCenterAnchor()
+    {
+        if (!IsBottomCentered || !IsHandleCreated) return;
+        try
+        {
+            // El monitor se resuelve por el centro ACTUAL: si el usuario la había
+            // llevado a otra pantalla, se centra en ESA (y no en la primaria).
+            var probe = new Point(Location.X + Width / 2, Location.Y + Height / 2);
+            var area = Screen.FromPoint(probe).WorkingArea;
+            var pos = CornerPosition(CornerBottomCenter, area);
+            if (pos.X != Location.X || pos.Y != Location.Y)
+            {
+                Location = pos;
+                // Rastro para diagnosticar (solo cuando cambia, no en cada render): si el
+                // usuario reporta que "no se ancla", el log dice si el ancla corrió.
+                _log.LogInfo($"Overlay: anclado abajo al centro en ({pos.X},{pos.Y}) [{Width}x{Height}] en " +
+                             $"{area.Width}x{area.Height}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning($"OverlayWindow: no se pudo anclar abajo al centro: {ex.Message}");
         }
     }
 
@@ -618,6 +690,10 @@ public sealed class OverlayWindow : Form
             {
                 _log.LogInfo($"Overlay: cambió la pantalla: reencuadre desde ({Location.X},{Location.Y}).");
                 ClampToNearestScreen();
+                // "Abajo centrado" depende del área de trabajo: se recalcula acá
+                // mismo (si no, quedaría con la posición del monitor viejo hasta
+                // el próximo render).
+                ApplyBottomCenterAnchor();
                 AssertTopMost();
                 _log.LogInfo($"Overlay: posición tras el reencuadre: ({Location.X},{Location.Y}).");
             }
@@ -800,6 +876,7 @@ public sealed class OverlayWindow : Form
             Opacity: Math.Clamp(d("overlay.opacity", 0.85), 0.0, 1.0),
             FontScale: Math.Clamp(d("overlay.fontSize", 1.4), 0.6, 2.0),
             Layout: _settings.Get("overlay.layout", LayoutVertical),
+            Corner: _settings.Get("overlay.corner", "top-right"),
             FpsColor: c("overlay.colorFps", DefaultFamilyColor),
             CpuColor: c("overlay.colorCpu", DefaultFamilyColor),
             GpuColor: c("overlay.colorGpu", DefaultFamilyColor),
@@ -899,6 +976,11 @@ public sealed class OverlayWindow : Form
             }
 
             EnsureBuffer();
+
+            // "Abajo centrado": el ancla manda sobre la posición guardada. Se aplica
+            // acá porque recién ahora se conoce el tamaño real (arriba se midió el
+            // ancho de la barra y EnsureBuffer lo aplicó a la ventana).
+            ApplyBottomCenterAnchor();
 
             var g = _bufferGraphics!;
             // Transparente NEGRO: Color.Transparent es blanco con alpha 0 y, según
@@ -1016,7 +1098,10 @@ public sealed class OverlayWindow : Form
             if (_config.ShowGameTitle && haveFps && !string.IsNullOrEmpty(gameName) && gameName != "WinForge")
             {
                 using var gameBrush = new SolidBrush(Color.FromArgb(180, 180, 180));
-                g.DrawString(gameName, LowFont, gameBrush, S(16), y);
+                // Recortado al ancho del panel: con un nombre largo el texto se
+                // salía del borde derecho y quedaba cortado a mitad de palabra
+                // (ahora termina en "…" dentro de la línea).
+                g.DrawString(FitText(g, gameName!, LowFont, _buffer!.Width - S(32)), LowFont, gameBrush, S(16), y);
             }
 
             PaintLayered();
@@ -1238,8 +1323,13 @@ public sealed class OverlayWindow : Form
             float tx = x + S(12);
             DrawHorizontalDivider(g, tx - S(8), S(4), _buffer.Height - S(8));
             using var titleBrush = new SolidBrush(Color.FromArgb(215, 210, 210, 215));
-            var tSize = g.MeasureString(HorizontalTitle, LowFont);
-            g.DrawString(HorizontalTitle, LowFont, titleBrush, tx, midY - tSize.Height / 2f);
+            // Recortado a lo que sobra hasta el borde derecho: el ancho de la barra
+            // se acota al del monitor (MeasureHorizontalBarWidth), así que un nombre
+            // de juego larguísimo se salía del buffer y quedaba cortado.
+            float maxW = _buffer.Width - padX - tx;
+            string title = FitText(g, HorizontalTitle, LowFont, maxW);
+            var tSize = g.MeasureString(title, LowFont);
+            g.DrawString(title, LowFont, titleBrush, tx, midY - tSize.Height / 2f);
         }
     }
     /// <summary>

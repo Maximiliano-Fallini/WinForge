@@ -732,7 +732,7 @@ public sealed partial class ConfiguracionPage : Page
             if (ConfigTabs == null) return;
             foreach (var item in ConfigTabs.Items.OfType<SelectorBarItem>())
             {
-                if (item.Text is string s && Translations.TryGetSource(s, out var source))
+                if (item.Text is string s && Translations.TryGetSource(s, I18n.Current, out var source))
                     item.Text = I18n.T(source);
             }
         }

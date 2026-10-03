@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel.DataTransfer;
+using WHPO.Core;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO_UI.Views.Pages;
@@ -367,6 +368,16 @@ public sealed partial class DebloatPage : Page
         }
         _tweakChecks[tweak.Name] = checkBox;
         _tweakCards[tweak.Name] = card;
+
+        // Requisito de versión de Windows: si este Windows no lo cumple (un tweak de
+        // Windows 11 en Windows 10), la card queda visible con su etiqueta
+        // ("Solo Windows 11") pero no se puede seleccionar ni aplicar.
+        if (!IsTweakSupported(tweak.Name))
+        {
+            checkBox.IsEnabled = false;
+            ToolTipService.SetToolTip(checkBox, I18n.T(tweak.Compatibility));
+            card.Opacity = 0.55;
+        }
 
         var content = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
 
@@ -990,6 +1001,13 @@ public sealed partial class DebloatPage : Page
     private TweakDefinition? GetTweakDefinition(string tweakName)
         => _allTweaks?.FirstOrDefault(t => t.Name == tweakName);
 
+    /// <summary>True si este Windows puede aplicar el tweak (ver WindowsSupport).</summary>
+    private bool IsTweakSupported(string tweakName)
+    {
+        var def = GetTweakDefinition(tweakName);
+        return def == null || WindowsCapabilities.Supports(def.Support);
+    }
+
     // ====== LISTAS DE TWEAKS ======
 
     private List<TweakInfo> GetRemoveApps()
@@ -1022,11 +1040,11 @@ public sealed partial class DebloatPage : Page
         AddTweak(list, "Mozilla Firefox - Desbloat", "Desactiva telemetría, estudios, Pocket, comandos de comentarios y avisos de navegador predeterminado en Firefox.", "Requiere Mozilla Firefox instalado");
         AddTweak(list, "Opera - Desbloat", "Desactiva telemetría, apps en segundo plano, avisos de navegador predeterminado y comentarios en Opera.", "Requiere Opera instalado");
         AddTweak(list, "Microsoft Edge - Desbloat", "Desactiva varias opciones de telemetría, popups y otras molestias en Edge.", "Requiere Microsoft Edge instalado");
-        AddTweak(list, "Microsoft Edge - Eliminar", "Desinstala Microsoft Edge creando un archivo dummy MicrosoftEdge.exe que engaña al desinstalador oficial para una eliminación a nivel de sistema.", "Requiere precaución");
+        AddTweak(list, "Microsoft Edge - Eliminar", "Desinstala Microsoft Edge creando un archivo dummy MicrosoftEdge.exe que engaña al desinstalador oficial para una eliminación a nivel de sistema.", "Solo Windows 11");
         AddTweak(list, "Microsoft OneDrive - Eliminar", "Deniega permisos para eliminar archivos de usuario de OneDrive, usa su desinstalador para quitarlo y restaura los permisos.", "Requiere precaución");
-        AddTweak(list, "Windows AI - Desactivar y eliminar", "Elimina y desactiva todas las funciones y paquetes de IA.", "Compatible con Windows 11");
+        AddTweak(list, "Windows AI - Desactivar y eliminar", "Elimina y desactiva todas las funciones y paquetes de IA.", "Solo Windows 11");
         AddTweak(list, "Barra de juegos (Game Bar) - Desinstalar", "Desinstala el paquete Microsoft.XboxGamingOverlay (la app de la barra de juegos), cerrando antes sus procesos. Windows puede reinstalarla con las actualizaciones.", "Requiere precaución");
-        AddTweak(list, "Widgets - Quitar", "Elimina los molestos widgets en la parte inferior izquierda de la barra de tareas.", "Compatible con Windows 10/11");
+        AddTweak(list, "Widgets - Quitar", "Elimina los molestos widgets en la parte inferior izquierda de la barra de tareas.", "Solo Windows 11");
         AddTweak(list, "Instalación automática de software Razer - Desactivar", "Bloquea TODAS las instalaciones de software Razer. El hardware funciona bien sin software.", "Solo hardware Razer");
         AddTweak(list, "Lista de bloqueo de URL de Adobe - Activar", "Reduce interrupciones bloqueando selectivamente conexiones a servidores de activación y telemetría de Adobe.", "Requiere software Adobe");
         return list;

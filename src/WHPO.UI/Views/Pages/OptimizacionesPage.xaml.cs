@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel.DataTransfer;
+using WHPO.Core;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Controls;
 
@@ -233,7 +234,7 @@ public sealed partial class OptimizacionesPage : Page
             });
             textPanel.Children.Add(new TextBlock
             {
-                Text = I18n.T("{0} tweaks · {1}", tweaks.Length, I18n.T(subtitle)),
+                Text = I18n.T("{0} tweaks · {1}", tweaks.Count(IsTweakSupported), I18n.T(subtitle)),
                 FontSize = 11,
                 Foreground = MutedBrush,
                 TextWrapping = TextWrapping.Wrap
@@ -276,6 +277,8 @@ public sealed partial class OptimizacionesPage : Page
     {
         foreach (var (tweakName, check) in _tweakChecks)
         {
+            // Los tweaks que no aplican en este Windows quedan fuera del preset.
+            if (!check.IsEnabled) continue;
             check.IsChecked = tweaks.Contains(tweakName);
         }
     }
@@ -391,6 +394,16 @@ public sealed partial class OptimizacionesPage : Page
         checkBox.Unchecked += (s, e) => OnSelectionChanged(tweak.Name, card, false);
         _tweakChecks[tweak.Name] = checkBox;
         _tweakCards[tweak.Name] = card;
+
+        // Requisito de versión de Windows: si este Windows no lo cumple (un tweak de
+        // Windows 11 en Windows 10), la card queda visible con su etiqueta
+        // ("Solo Windows 11") pero no se puede seleccionar ni aplicar.
+        if (!IsTweakSupported(tweak.Name))
+        {
+            checkBox.IsEnabled = false;
+            ToolTipService.SetToolTip(checkBox, I18n.T(tweak.Compatibility));
+            card.Opacity = 0.55;
+        }
 
         // Contenido: título + botón de info + descripción
         var content = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
@@ -993,6 +1006,13 @@ public sealed partial class OptimizacionesPage : Page
     private TweakDefinition? GetTweakDefinition(string tweakName)
         => _allTweaks?.FirstOrDefault(t => t.Name == tweakName);
 
+    /// <summary>True si este Windows puede aplicar el tweak (ver WindowsSupport).</summary>
+    private bool IsTweakSupported(string tweakName)
+    {
+        var def = GetTweakDefinition(tweakName);
+        return def == null || WindowsCapabilities.Supports(def.Support);
+    }
+
     // ====== LISTAS DE TWEAKS ======
 
     private List<TweakInfo> GetEssentialTweaks()
@@ -1000,8 +1020,8 @@ public sealed partial class OptimizacionesPage : Page
         var list = new List<TweakInfo>();
         AddTweak(list, "Historial de actividad - Desactivar", "Borra documentos recientes, portapapeles e historial de ejecución.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
         AddTweak(list, "Hibernación - Desactivar", "La hibernación está pensada para portátiles, ya que guarda la memoria antes de apagar el equipo. Realmente nunca debería usarse en escritorios.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
-        AddTweak(list, "Diseño anterior del menú Inicio - Activar", "Restaura el diseño antiguo del menú Inicio anterior al despliegue gradual del nuevo en 25H2. En versiones nuevas de Windows no funcionará.", "Compatible con Windows 11 25H2", true, "Tweaks esenciales");
-        AddTweak(list, "Resultados recomendados de Microsoft Store - Desactivar", "No mostrará apps recomendadas de Microsoft Store al buscar en el menú Inicio.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
+        AddTweak(list, "Diseño anterior del menú Inicio - Activar", "Restaura el diseño antiguo del menú Inicio anterior al despliegue gradual del nuevo en 25H2. En versiones nuevas de Windows no funcionará.", "Solo Windows 11 25H2", true, "Tweaks esenciales");
+        AddTweak(list, "Resultados recomendados de Microsoft Store - Desactivar", "No mostrará apps recomendadas de Microsoft Store al buscar en el menú Inicio.", "Solo Windows 11", true, "Tweaks esenciales");
         AddTweak(list, "Seguimiento de ubicación - Desactivar", "Desactiva el seguimiento de ubicación.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
         AddTweak(list, "Servicios - Configurar en Manual", "Configura algunos servicios en Manual y ajusta SvcHostSplitThresholdInKB para reducir significativamente la cantidad de procesos svchost.exe.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
         AddTweak(list, "ConsumerFeatures - Desactivar", "Detiene instalaciones promocionadas de apps y reduce sugerencias de contenido de Microsoft Store.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
@@ -1009,7 +1029,7 @@ public sealed partial class OptimizacionesPage : Page
         AddTweak(list, "Optimización de entrega - Desactivar", "Evita que Windows use tu ancho de banda para subir actualizaciones a otros equipos en internet o red local.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
         AddTweak(list, "BitLocker - Desactivar", "Desactiva BitLocker.", "Solo si no usas cifrado de disco", true, "Tweaks esenciales");
         AddTweak(list, "Punto de restauración - Crear", "Crea un punto de restauración en tiempo de ejecución por si se necesita revertir modificaciones.", "Requiere permisos de administrador", true, "Tweaks esenciales");
-        AddTweak(list, "Finalizar tarea con clic derecho - Activar", "Habilita la opción de finalizar tarea al hacer clic derecho en un programa de la barra de tareas.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
+        AddTweak(list, "Finalizar tarea con clic derecho - Activar", "Habilita la opción de finalizar tarea al hacer clic derecho en un programa de la barra de tareas.", "Solo Windows 11", true, "Tweaks esenciales");
         AddTweak(list, "Tabla binaria de plataforma Windows (WPBT) - Desactivar", "WPBT permite que el fabricante ejecute programas al iniciar, como software antirrobo o instalaciones forzadas sin consentimiento. Riesgo de seguridad.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
         AddTweak(list, "Prevenir apps complementarias de dispositivos", "Evita que se instale software adicional al conectar dispositivos (ej. anuncios al conectar un monitor). Riesgo de seguridad.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
         AddTweak(list, "Detección automática de carpetas en Explorador - Desactivar", "El Explorador intenta adivinar el tipo de carpeta según su contenido, ralentizando la navegación. ¡ADVERTENCIA! Desactivará la agrupación del Explorador.", "Compatible con Windows 10/11", true, "Tweaks esenciales");
@@ -1021,13 +1041,13 @@ public sealed partial class OptimizacionesPage : Page
         var list = new List<TweakInfo>();
         AddTweak(list, "Advertencias de archivos RDP sin firmar - Desactivar", "Desactiva las advertencias al lanzar archivos RDP sin firmar introducidas en las últimas actualizaciones.", "Compatible con Windows 10/11", true, "Tweaks avanzados");
         AddTweak(list, "Fecha y hora - Configurar en UTC", "Esencial para equipos con dual-boot. Corrige la sincronización horaria con sistemas Linux.", "Solo dual-boot con Linux", true, "Tweaks avanzados");
-        AddTweak(list, "Inicio y Galería del Explorador - Desactivar", "Elimina Inicio y Galería del Explorador y establece Este PC como predeterminado.", "Compatible con Windows 11", true, "Tweaks avanzados");
+        AddTweak(list, "Inicio y Galería del Explorador - Desactivar", "Elimina Inicio y Galería del Explorador y establece Este PC como predeterminado.", "Solo Windows 11", true, "Tweaks avanzados");
         AddTweak(list, "Efectos visuales - Configurar en Máximo rendimiento", "Configura las preferencias del sistema a rendimiento. Puedes hacerlo manualmente con sysdm.cpl.", "Compatible con Windows 10/11", true, "Tweaks avanzados");
         AddTweak(list, "Almacenamiento reservado - Desactivar", "Desactiva el almacenamiento reservado de Windows (7-10 GB para actualizaciones). Solo recomendado en discos pequeños. Re-activar antes de grandes actualizaciones.", "Solo en discos pequeños", true, "Tweaks avanzados");
         AddTweak(list, "Storage Sense - Desactivar", "Storage Sense elimina archivos temporales automáticamente.", "Compatible con Windows 10/11", true, "Tweaks avanzados");
 
         AddTweak(list, "Notificaciones del sistema y calendario - Desactivar", "Desactiva todas las notificaciones INCLUYENDO el calendario.", "Compatible con Windows 10/11", true, "Tweaks avanzados");
-        AddTweak(list, "Menú contextual anterior - Activar", "Restaura el menú contextual clásico del Explorador, reemplazando la versión simplificada de Windows 11.", "Compatible con Windows 11", true, "Tweaks avanzados");
+        AddTweak(list, "Menú contextual anterior - Activar", "Restaura el menú contextual clásico del Explorador, reemplazando la versión simplificada de Windows 11.", "Solo Windows 11", true, "Tweaks avanzados");
         AddTweak(list, "IPv6 - Configurar IPv4 como preferido", "Configurar la preferencia IPv4 puede tener beneficios de latencia y seguridad en redes privadas sin IPv6.", "Compatible con Windows 10/11", true, "Tweaks avanzados");
         AddTweak(list, "Teredo - Desactivar", "Teredo es un túnel IPv6 que puede causar latencia adicional, aunque puede causar problemas con algunos juegos.", "Compatible con Windows 10/11", true, "Tweaks avanzados");
         AddTweak(list, "IPv6 - Desactivar", "Desactiva IPv6.", "Requiere precaución", true, "Tweaks avanzados");

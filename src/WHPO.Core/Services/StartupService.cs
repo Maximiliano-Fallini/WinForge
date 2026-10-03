@@ -17,8 +17,7 @@ namespace WHPO.Core.Services;
 /// </summary>
 public sealed class StartupService : IStartupService
 {
-    // Nombres separados por copia (WHPO / WHPO-Dev): la tarea programada y la
-    // entrada de Run de la build de desarrollo no pisan a las de la instalada.
+    // Nombres unicos de la app: una sola copia registrada (ver AppPaths).
     private static string TaskName => AppPaths.StartupTaskName;
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private static string ValueName => AppPaths.StartupRunValueName;
