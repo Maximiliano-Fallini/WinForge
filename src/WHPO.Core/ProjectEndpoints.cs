@@ -102,4 +102,23 @@ public static class ProjectEndpoints
 
     /// <summary>Asset de un paquete de idioma dentro de la release de idiomas.</summary>
     public static string LanguagePackAsset(string fileName) => ReleaseAsset(LanguagesReleaseTag, fileName);
+
+    // ---------------------------------------------------------------------
+    // Packs de assets del benchmark cinematográfico (ver README-CINEMATICO §7)
+    // ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Release donde se publican los packs de assets de las escenas 3D del componente benchmark
+    /// (modelos glTF y texturas CC0: la DLL del componente NO los lleva). Separada de la de
+    /// componentes y de la de idiomas por el mismo motivo que esa: los packs pesan decenas de MB y
+    /// se actualizan con su propio ritmo.
+    /// </summary>
+    public const string BenchmarkAssetsReleaseTag = "benchmark-assets";
+
+    /// <summary>
+    /// Pack de assets de un set ("neon", "canyon", …). La versión va en el nombre del archivo: publicar
+    /// un pack nuevo no pisa el anterior, así que el SHA-256 de una versión ya publicada no cambia.
+    /// </summary>
+    public static string BenchmarkAssetPack(string set, string version) =>
+        ReleaseAsset(BenchmarkAssetsReleaseTag, $"benchmark-assets-{set}-{version}.zip");
 }

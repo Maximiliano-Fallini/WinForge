@@ -5,13 +5,13 @@ using System.Linq;
 namespace WinForge.Component.Benchmark.Graphics;
 
 /// <summary>
-/// Registro de las APIs gráficas: sondea cuáles existen en ESTA máquina y crea la que el
-/// usuario eligió. El selector de la página se arma con esto, así que nunca se puede elegir
-/// una API que después falle sin explicación.
+/// Registro de las APIs gráficas: sondea cuáles existen en ESTA máquina y crea la que el usuario
+/// eligió. El selector de la página se arma con esto, así que nunca se puede elegir una API que
+/// después falle sin explicación.
 ///
-/// Direct3D 11 y Direct3D 12 están implementadas; Vulkan y OpenGL están DECLARADAS con su
-/// motivo ("todavía no implementada"), que es más honesto que esconderlas o, peor, ofrecerlas
-/// y caerse al arrancar: el día que se implementa su backend, aparece sola en el selector.
+/// Las cuatro del plan están implementadas y cada una dice por qué NO se puede usar cuando no se
+/// puede (falta el cargador, la placa es vieja, Windows no dio ventana): una opción gris sin motivo
+/// es una opción que el usuario no puede arreglar.
 /// </summary>
 public static class BackendRegistry
 {
@@ -50,6 +50,8 @@ public static class BackendRegistry
             {
                 GraphicsApi.D3D11 => D3D11Backend.Probe(),
                 GraphicsApi.D3D12 => D3D12Backend.Probe(),
+                GraphicsApi.Vulkan => VulkanBackend.Probe(),
+                GraphicsApi.OpenGL => OpenGLBackend.Probe(),
                 _ => new BackendAvailability(api, NameOf(api), false,
                     $"{NameOf(api)} todavía no está implementada en este componente.")
             };
@@ -65,6 +67,8 @@ public static class BackendRegistry
     {
         GraphicsApi.D3D11 => new D3D11Backend(),
         GraphicsApi.D3D12 => new D3D12Backend(),
+        GraphicsApi.Vulkan => new VulkanBackend(),
+        GraphicsApi.OpenGL => new OpenGLBackend(),
         _ => throw new NotSupportedException($"{NameOf(api)} todavía no está implementada en este componente.")
     };
 
@@ -73,8 +77,4 @@ public static class BackendRegistry
     /// las APIs: DXGI es el denominador común, así que cambiar de API no cambia la placa medida.
     /// </summary>
     public static IReadOnlyList<AdapterInfo> ListAdapters(GraphicsApi api) => DxgiShared.ListAdapters();
-
-    /// <summary>Primera API disponible, o null si ninguna lo está.</summary>
-    public static GraphicsApi? FirstAvailable() =>
-        ProbeAll().Where(a => a.Available).Select(a => a.Api).Cast<GraphicsApi?>().FirstOrDefault();
 }

@@ -40,6 +40,37 @@ internal static class NativeMethods
     internal const long WS_EX_TOOLWINDOW = 0x00000080L;
     internal const long WS_EX_NOACTIVATE = 0x08000000L;
 
+    internal const uint SWP_NOSIZE = 0x0001;
+    internal const uint SWP_NOMOVE = 0x0002;
+    internal const nint HWND_TOPMOST = -1;
+
+    internal const uint LWA_ALPHA = 0x00000002;
+
+    internal const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
+
+    [DllImport("user32.dll")]
+    internal static extern bool SetLayeredWindowAttributes(nint hWnd, uint colorKey, byte alpha, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MONITORINFO
+    {
+        public uint cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetCursorPos(out POINT point);
+
+    [DllImport("user32.dll")]
+    internal static extern nint MonitorFromPoint(POINT point, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetMonitorInfoW(nint monitor, ref MONITORINFO info);
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct POINT
     {
@@ -208,6 +239,14 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern bool GetWindowRect(nint hWnd, out RECT rect);
 
+    /// <summary>
+    /// Tamaño de VENTANA que hace falta para un CLIENTE del tamaño de <paramref name="rect"/> (suma el
+    /// marco). Es lo que convierte "correr a 1920×1080" en un render de 1920×1080 en vez de 1904×1041.
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool AdjustWindowRectEx(ref RECT rect, long style, bool menu, long extendedStyle);
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct BITMAPINFOHEADER
     {
@@ -235,6 +274,21 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     internal static extern long SetWindowLongW(nint hWnd, int index, long newStyle);
+
+    // ---- Auditoría del z-order (solo el probador la usa) ----
+    // GW_HWNDPREV/GW_HWNDNEXT caminan la lista de hermanos: comparar las dos ventanas así es la
+    // única forma de saber si el HUD quedó por DEBAJO de la escena (pintado pero tapado).
+
+    internal const uint GW_HWNDFIRST = 0;
+    internal const uint GW_HWNDNEXT = 2;
+    internal const uint GW_HWNDPREV = 3;
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetWindow(nint hWnd, uint command);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsWindowVisible(nint hWnd);
 
     internal const long WS_EX_LAYERED = 0x00080000L;
     internal const long WS_EX_TRANSPARENT = 0x00000020L;

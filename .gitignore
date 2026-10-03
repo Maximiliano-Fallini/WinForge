@@ -137,6 +137,11 @@ installer/PostUpdateCA/obj/
 /*.cmd
 /*.sh
 
+# ===== Capturas de verificación =====
+# Las del probador de escenas (tools/BenchmarkProbe --shot): se regeneran en cada corrida,
+# son de 4 MB cada una y no aportan nada al repo.
+/shot-*.bmp
+
 # ===== Carpetas de trabajo =====
 # tools/ entera es del desarrollador: probadores, harnesses y scratch de recuperación.
 # Nada de esa carpeta va al repo.
@@ -158,6 +163,9 @@ node_modules/
 # Las reglas de desarrollo y las notas de recuperación son de trabajo: viven en el
 # disco, no en el repo público.
 /reglas_de_desarollo_.md
+# README de handoff del benchmark cinematográfico: notas de planificación para
+# retomar el trabajo con otras IAs. Trabajo local, no parte del repo público.
+src/Components/WinForge.Component.Benchmark/README-CINEMATICO.md
 
 # ===== Basura del sistema y archivos temporales =====
 .DS_Store

@@ -20,7 +20,7 @@ public sealed class BenchmarkComponent : IWinForgeComponent
     public string Description => "Escenas 3D propias para medir la placa y el equipo, con las métricas en vivo y un informe comparable (sin puntaje).";
     public string IconGlyph => "\uE9D9";   // Diagnostic / rendimiento
     public ComponentCategory Category => ComponentCategory.Rendimiento;
-    public string Version => "0.1.0";
+    public string Version => "0.1.16";
     public string MinAppVersion => "";
     public bool IsCore => false;
 

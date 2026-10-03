@@ -42,23 +42,51 @@ internal sealed class Win32Window : IDisposable
     /// <summary>Dibujo del HUD: recibe el contexto ya listo dentro de BeginPaint/EndPaint.</summary>
     public event Action<nint>? Paint;
 
-    public Win32Window(string title, int width, int height, bool borderless, bool topMost, bool visible, bool clickThrough)
+    /// <param name="width">Ancho del CLIENTE en una ventana CON bordes (el render mide esto) y de la
+    /// ventana entera en una sin bordes, donde las dos cosas son lo mismo.</param>
+    /// <param name="x">Posición horizontal; null = la de siempre (0 sin bordes, 80 con bordes).</param>
+    public Win32Window(string title, int width, int height, bool borderless, bool topMost, bool visible, bool clickThrough,
+        int? x = null, int? y = null)
     {
         _className = "WinForgeBenchmark_" + Guid.NewGuid().ToString("N")[..8];
         RegisterClass();
 
         long style = borderless ? (WS_POPUP | WS_CLIPCHILDREN) : (WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN);
+
+        // CreateWindowEx pide el tamaño de la VENTANA (cliente + marco), y lo que importa acá es el
+        // cliente: es lo que renderiza el backend, lo que mide el informe y lo que el usuario elige
+        // cuando pide una resolución. Sin esta corrección, "1920×1080" renderizaba 1904×1041 y la
+        // resolución elegida dejaba de ser la resolución de la corrida. Sin bordes no hay marco que
+        // compensar (pantalla completa y el HUD van por ese camino).
+        if (!borderless)
+        {
+            var frame = new NativeMethods.RECT { Right = width, Bottom = height };
+            // Estilo extendido 0: esta rama es la ventana CON bordes del benchmark, que no usa borde
+            // especial (la declaración de extendedStyle viene después, y no aporta al marco).
+            if (NativeMethods.AdjustWindowRectEx(ref frame, style, false, 0))
+            {
+                width = frame.Right - frame.Left;
+                height = frame.Bottom - frame.Top;
+            }
+        }
+
         if (visible) style |= WS_VISIBLE;
 
         long extendedStyle = 0;
         if (topMost) extendedStyle |= NativeMethods.WS_EX_TOPMOST;
         if (borderless) extendedStyle |= NativeMethods.WS_EX_TOOLWINDOW;
-        if (clickThrough || topMost) extendedStyle |= NativeMethods.WS_EX_NOACTIVATE;
+        if (clickThrough) extendedStyle |= NativeMethods.WS_EX_NOACTIVATE;
+        // OJO: NOACTIVATE en la ventana de la ESCENA (fullscreenStyle) se eliminó a propósito:
+        // sin foco de teclado no recibe WM_KEYDOWN y el Esc de emergencia no llega nunca.
+        // La ventana de la escena puede y debe robar el foco: es lo que el usuario pidió al correr.
 
-        int x = borderless ? 0 : 80;
-        int y = borderless ? 0 : 60;
+        // La posición se pasa SIEMPRE que se sepa: en un escritorio multimonitor las coordenadas
+        // pueden ser negativas (monitor a la izquierda o arriba del primario), así que "0,0" no
+        // es "donde está el usuario": es la esquina del primario.
+        int left = x ?? (borderless ? 0 : 80);
+        int top = y ?? (borderless ? 0 : 60);
         Handle = NativeMethods.CreateWindowExW(
-            extendedStyle, _className, title, style, x, y, width, height, 0, 0, 0, 0);
+            extendedStyle, _className, title, style, left, top, width, height, 0, 0, 0, 0);
         if (Handle == 0)
         {
             throw new InvalidOperationException(
@@ -73,6 +101,10 @@ internal sealed class Win32Window : IDisposable
             long exStyle = NativeMethods.GetWindowLongW(Handle, NativeMethods.GWL_EXSTYLE);
             NativeMethods.SetWindowLongW(Handle, NativeMethods.GWL_EXSTYLE,
                 exStyle | NativeMethods.WS_EX_LAYERED | NativeMethods.WS_EX_TRANSPARENT);
+            // FALTA IMPERDONABLE de la versión anterior: una ventana LAYERED sin atributos no se
+            // dibuja NUNCA (lo define Win32, no es un detalle): por eso el overlay desapareció.
+            // Alpha 255 + color key 0 = opacidad completa, pintado normal, clicks atravesando.
+            NativeMethods.SetLayeredWindowAttributes(Handle, 0, 255, NativeMethods.LWA_ALPHA);
         }
 
         lock (RouterLock) Router[Handle] = this;
@@ -90,6 +122,10 @@ internal sealed class Win32Window : IDisposable
             style = CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc = Marshal.GetFunctionPointerForDelegate(WindowProcedure),
             hbrBackground = 0,   // el fondo lo pinta la escena (D3D) o el HUD (GDI+)
+            // El icono del componente (ver BenchmarkIcon): los dos tamaños los pide Windows, no
+            // nosotros —el grande para Alt+Tab y la barra de tareas, el chico para el título—.
+            hIcon = BenchmarkIcon.Large,
+            hIconSm = BenchmarkIcon.Small,
             lpszClassName = _className
         };
         if (NativeMethods.RegisterClassExW(ref windowClass) == 0)
@@ -111,8 +147,26 @@ internal sealed class Win32Window : IDisposable
 
     public void SetTitle(string title) => NativeMethods.SetWindowTextW(Handle, title);
 
+    /// <summary>Hace visible una ventana que nació oculta (el HUD se ubica antes de mostrarse).</summary>
+    public void Show()
+    {
+        if (Handle != 0) NativeMethods.ShowWindow(Handle, NativeMethods.SW_SHOW);
+        Visible = true;
+    }
+
     public void Move(int x, int y, int width, int height) =>
         NativeMethods.SetWindowPos(Handle, 0, x, y, width, height, NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
+
+    /// <summary>
+    /// Vuelve a afirmar el TOPMOST. En pantalla completa lo reafirmamos cada medio segundo:
+    /// cualquier otra ventana topmost creada DESPUÉS (otro overlay, una notificación) se pone
+    /// encima y la franja de métricas desaparece de la vista sin estar rota.
+    /// </summary>
+    public void RestickTopMost()
+    {
+        if (Handle != 0) NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+    }
 
     public void Invalidate() => NativeMethods.InvalidateRect(Handle, 0, false);
 
@@ -197,6 +251,53 @@ internal sealed class Win32Window : IDisposable
     public static (int Width, int Height) PrimaryScreenSize() =>
         (Math.Max(640, NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN)),
          Math.Max(480, NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN)));
+
+    /// <summary>
+    /// Rectángulo del monitor donde está el cursor. Los modos de pantalla completa salen ahí y no
+    /// siempre en el primario: el componente vive en el AssemblyLoadContext de la app (no es su UI)
+    /// y no tiene su ventana, así que el cursor es el único dato fiable de dónde está el usuario
+    /// — y es el monitor que está mirando cuando aprieta Iniciar.
+    /// </summary>
+    public static (int X, int Y, int Width, int Height) MonitorUnderCursor()
+    {
+        if (NativeMethods.GetCursorPos(out var cursor))
+        {
+            var monitor = NativeMethods.MonitorFromPoint(cursor, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            var info = new NativeMethods.MONITORINFO { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+            if (monitor != 0 && NativeMethods.GetMonitorInfoW(monitor, ref info))
+            {
+                // rcMonitor y no rcWork: la pantalla completa sin bordes tapa también la barra de tareas.
+                return (info.rcMonitor.Left, info.rcMonitor.Top,
+                        Math.Max(640, info.rcMonitor.Right - info.rcMonitor.Left),
+                        Math.Max(480, info.rcMonitor.Bottom - info.rcMonitor.Top));
+            }
+        }
+
+        // Sin monitor (caso raro): el primario, que es lo que hacía la versión anterior.
+        var (width, height) = PrimaryScreenSize();
+        return (0, 0, width, height);
+    }
+
+    /// <summary>
+    /// Área ÚTIL del monitor donde está el cursor (sin la barra de tareas). Es con ESTA que se encaja
+    /// una resolución de ventana pedida a mano: una ventana con bordes del tamaño del monitor entero
+    /// deja el título arriba y el borde de abajo fuera de la pantalla.
+    /// </summary>
+    public static (int Width, int Height) WorkAreaUnderCursor()
+    {
+        if (NativeMethods.GetCursorPos(out var cursor))
+        {
+            var monitor = NativeMethods.MonitorFromPoint(cursor, NativeMethods.MONITOR_DEFAULTTONEAREST);
+            var info = new NativeMethods.MONITORINFO { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+            if (monitor != 0 && NativeMethods.GetMonitorInfoW(monitor, ref info))
+            {
+                return (Math.Max(640, info.rcWork.Right - info.rcWork.Left),
+                        Math.Max(480, info.rcWork.Bottom - info.rcWork.Top));
+            }
+        }
+
+        return PrimaryScreenSize();
+    }
 
     /// <summary>Mantiene la pantalla y el equipo despiertos mientras dura una corrida.</summary>
     public static void KeepAwake() => NativeMethods.SetThreadExecutionState(

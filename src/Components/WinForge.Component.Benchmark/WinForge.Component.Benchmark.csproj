@@ -22,7 +22,7 @@
          lleva SUS dependencias y el script de empaquetado las mete en el zip. -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Versión del componente: viaja al manifest (components.json) al publicar. -->
-    <Version>0.1.0</Version>
+    <Version>0.1.16</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,6 +40,19 @@
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
     <PackageReference Include="Vortice.Mathematics" Version="2.1.1" />
+    <!-- Lectura de los modelos glTF reales (assets CC0 de Poly Haven): resuelve el grafo de nodos
+         con sus transformaciones, los accessors con byteStride y las imagenes externas. MIT, y una
+         sola DLL sin dependencias transitivas (System.Text.Json ya viene en el framework). -->
+    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- El icono de las ventanas del benchmark (ver Host/BenchmarkIcon.cs). Sale del mismo
+         archivo que usa la app —una sola fuente para el dibujo— y viaja EMBEBIDO en esta DLL:
+         así el zip del componente no depende de que alguien se acuerde de copiar una imagen al
+         lado del ejecutable. -->
+    <EmbeddedResource Include="..\..\WHPO.UI\logos\WinForgeBenchmarkIcono.png"
+                      Link="Assets\WinForgeBenchmarkIcono.png" />
   </ItemGroup>
 
   <ItemGroup>

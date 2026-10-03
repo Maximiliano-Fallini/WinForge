@@ -1,7 +1,26 @@
 using System;
+using System.Numerics;
+using System.Runtime.CompilerServices;
 using WinForge.Component.Benchmark.Scenes;
 
 namespace WinForge.Component.Benchmark.Graphics;
+
+/// <summary>
+/// Esferas de sombra del bloque por frame: hasta <see cref="SceneDefinition.MaxShadowCasters"/>
+/// posiciones (xyz = centro, w = radio). El shader les hace un rayo-esfera contra la dirección del
+/// sol para que los objetos grandes del primer plano se APOYEN en el suelo sin una pasada de
+/// sombras aparte (que costaría pipeline nuevo en las cuatro APIs). Las que no se usan van en cero
+/// y el shader las saltea.
+///
+/// Es un <c>InlineArray</c> y no ocho campos sueltos para que el bloque siga siendo UNA estructura
+/// copiable con <c>MemoryMarshal</c> (Direct3D 11 y Vulkan suben el bloque de una sola escritura),
+/// y para que el tamaño salga del mismo número que usa el layout del cbuffer.
+/// </summary>
+[InlineArray(SceneDefinition.MaxShadowCasters)]
+internal struct ShadowCasterArray
+{
+    private Vector4 _element;
+}
 
 /// <summary>
 /// API gráfica con la que se corre la escena. La elige el usuario y la lista sale de
@@ -39,6 +58,27 @@ public enum PresentationMode
     ExclusiveFullscreen
 }
 
+/// <summary>
+/// Franja de métricas lista para dibujar DENTRO del frame (no como ventana aparte).
+///
+/// Por qué va adentro del frame: con vsync apagado el swapchain se entrega por el camino de
+/// tearing (DXGI) o de presentación inmediata (Vulkan), y en ese camino Windows saca la ventana
+/// de la composición del escritorio (direct scanout): una ventana aparte por encima NO se puede
+/// componer, y por eso parpadeaba en Direct3D o directamente no aparecía en Vulkan. Dibujada en
+/// el frame, la franja se ve SIEMPRE, en las cuatro APIs y en los tres modos de presentación.
+/// </summary>
+/// <param name="Pixels">
+/// Píxeles <c>BGRA</c> PREMULTIPLICADOS por alfa, fila 0 = arriba (mismo orden que la textura).
+/// </param>
+/// <param name="Width">Ancho de la imagen en píxeles.</param>
+/// <param name="Height">Alto de la imagen en píxeles.</param>
+/// <param name="X">Posición horizontal del borde izquierdo, en píxeles del área de la escena.</param>
+/// <param name="Y">Posición vertical del borde superior, en píxeles del área de la escena.</param>
+/// <param name="Version">
+/// Sube cuando cambia el contenido: el backend solo re-sube la textura cuando ve una versión nueva.
+/// </param>
+public sealed record OverlayFrame(byte[] Pixels, int Width, int Height, int X, int Y, long Version);
+
 /// <summary>Todo lo que un backend necesita para arrancar.</summary>
 public sealed class BackendInitOptions
 {
@@ -52,6 +92,12 @@ public sealed class BackendInitOptions
 
     /// <summary>Presentar sincronizado con el monitor. Por defecto NO: el objetivo es medir la escena.</summary>
     public bool VSync { get; init; }
+
+    /// <summary>
+    /// Cómo se dibuja la ESCENA (sombras y lo que venga). Va acá y no en cada backend para que las
+    /// cuatro APIs reciban la misma configuración por el mismo camino: ver <see cref="SceneGraphicsOptions"/>.
+    /// </summary>
+    public SceneGraphicsOptions Graphics { get; init; } = SceneGraphicsOptions.Default;
 }
 
 /// <summary>
@@ -76,6 +122,12 @@ public interface IGraphicsBackend : IDisposable
 
     /// <summary>True si la API puede tomar el monitor en exclusivo.</summary>
     bool SupportsExclusiveFullscreen { get; }
+
+    /// <summary>
+    /// False si se pidió pantalla completa exclusiva y el sistema NO la dio: el informe lo
+    /// aclara en vez de presentar como exclusiva una corrida que salió en ventana.
+    /// </summary>
+    bool ExclusiveFullscreenAccepted { get; }
 
     /// <summary>True si la API expone timestamps de GPU (para reportar ms de GPU por frame).</summary>
     bool HasGpuTiming { get; }
@@ -104,6 +156,21 @@ public interface IGraphicsBackend : IDisposable
     void Initialize(BackendInitOptions options);
     void Resize(int width, int height);
     void SetFullscreen(bool exclusive);
+
+    /// <summary>
+    /// True si la franja de métricas se dibuja DENTRO del frame (este backend la compone en su
+    /// swapchain); false si el anfitrión tiene que usar la ventana siempre arriba (los backends
+    /// que todavía no la integran). Ver <see cref="OverlayFrame"/>: dentro del frame es la única
+    /// forma de que se vea con vsync apagado, donde Windows saca la ventana de la composición.
+    /// </summary>
+    bool OverlayInFrame { get; }
+
+    /// <summary>
+    /// Deja la franja de métricas lista para dibujar dentro del frame (null = sin franja). Se
+    /// llama desde el hilo de render; el backend re-sube la textura solo cuando la
+    /// <see cref="OverlayFrame.Version"/> cambia, así el costo por frame es el de un quad.
+    /// </summary>
+    void SetOverlay(OverlayFrame? frame);
 
     /// <summary>
     /// Dibuja el frame y cierra sus timestamps. NO presenta: presentar es un paso aparte

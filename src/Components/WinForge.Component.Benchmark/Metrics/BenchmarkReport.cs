@@ -37,8 +37,49 @@ public sealed class BenchmarkReport
     public int Height { get; set; }
     public string Presentation { get; set; } = "";
     public bool VSync { get; set; }
+
+    /// <summary>
+    /// Sombras proyectadas encendidas durante la corrida: es parte de la CONFIGURACIÓN, así que dos
+    /// informes con distinto valor no describen la misma escena y no se comparan (junto con la API, la
+    /// escena, el tamaño y la sincronización, que ya se guardaban).
+    /// </summary>
+    public bool Shadows { get; set; } = true;
+
+    /// <summary>Resolución del mapa de sombras de la corrida (el lado del cuadrado). Junto con las
+    /// sombras apagadas/encendidas, es el otro extremo de la misma perilla de calidad.</summary>
+    public int ShadowMapSize { get; set; }
+
+    /// <summary>
+    /// Entorno (IBL del HDRI) encendido en esta corrida. Apagado, la escena usa el cielo procedural del
+    /// estilo: cambia la luz ambiente y los reflejos, no solo el fondo.
+    /// </summary>
+    public bool Environment { get; set; } = true;
+
+    /// <summary>
+    /// Nivel de calidad gráfica con el que se corrió, como texto fuente en español ("Bajo", "Alto",
+    /// "Ultra",
+    /// "Personalizado"…): el NOMBRE del nivel, sin el detalle de lo que fija, que es el mismo rótulo que
+    /// se lee en el desplegable. Es la etiqueta que RESUME la configuración: el detalle de cada perilla está
+    /// en <see cref="Shadows"/>, <see cref="ShadowMapSize"/> y <see cref="Environment"/>, y sigue siendo
+    /// lo que decide si dos corridas se comparan (un preset con perillas distintas no iguala nada).
+    ///
+    /// Vacío en los informes guardados antes de que existiera el dato: la página no muestra el renglón
+    /// en ese caso, en vez de afirmar que se usó "Personalizado".
+    /// </summary>
+    public string GraphicsPreset { get; set; } = "";
     public int DurationSeconds { get; set; }
+
+    /// <summary>Segundos de calentamiento PEDIDOS (los que salen de la escena; ver <see cref="WarmupElapsedSeconds"/>).</summary>
     public double WarmupSeconds { get; set; }
+
+    /// <summary>
+    /// Calentamiento REAL que quedó fuera de la medición y frames que se descartaron con él
+    /// (compilado de shaders, subida de geometría y constantes, primer uso de las caches del
+    /// driver). Puede superar a <see cref="WarmupSeconds"/> si el arranque fue lento: por debajo
+    /// del piso de frames no se empieza a medir (ver SceneHost).
+    /// </summary>
+    public double WarmupElapsedSeconds { get; set; }
+    public int WarmupFrames { get; set; }
     public bool Completed { get; set; }
     public string? AbortReason { get; set; }
 
@@ -132,6 +173,40 @@ public static class BenchmarkStore
     {
         try { return JsonSerializer.Deserialize<BenchmarkReport>(File.ReadAllText(path), BenchmarkReportJson.Options); }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Borra UN informe por su ruta. Devuelve true si el archivo ya no está (se borró ahora o no
+    /// existía): el botón de la página no puede quedar reportando un error por un archivo que el
+    /// usuario ya había movido a mano.
+    /// </summary>
+    public static bool Delete(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return !File.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Borra TODOS los informes guardados y devuelve cuántos se borraron.</summary>
+    public static int DeleteAll()
+    {
+        int deleted = 0;
+        try
+        {
+            if (!Directory.Exists(Folder)) return 0;
+            foreach (var file in Directory.EnumerateFiles(Folder, "benchmark-*.json").ToList())
+            {
+                if (Delete(file)) deleted++;
+            }
+        }
+        catch { }
+        return deleted;
     }
 
     /// <summary>Borra los informes más viejos, dejando los últimos <see cref="KeepLast"/>.</summary>
