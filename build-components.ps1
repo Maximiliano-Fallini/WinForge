@@ -126,7 +126,7 @@ $entry = [pscustomobject]@{
 # traducciones (bloque i18n) que ya estaban publicadas.
 $previous = $catalog.components | Where-Object { $_.id -eq $Component } | Select-Object -First 1
 if ($previous) {
-    foreach ($field in 'name', 'description', 'i18n') {
+    foreach ($field in 'name', 'description', 'i18n', 'inDevelopment') {
         if ($previous.PSObject.Properties[$field]) {
             $entry | Add-Member -NotePropertyName $field -NotePropertyValue $previous.$field -Force
         }
