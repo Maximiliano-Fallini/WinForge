@@ -7,6 +7,7 @@
                            "category":  "Sistema",
                            "version":  "0.1.16",
                            "minAppVersion":  "",
+                           "inDevelopment":  true,
                            "url":  "https://github.com/Maximiliano-Fallini/WinForge/releases/download/components/benchmark-0.1.16.zip",
                            "sha256":  "4cfa426e6bf600877f37cf911075cdf388e5fa9cef49c6118db41d156f2f9876",
                            "sizeBytes":  1912736,

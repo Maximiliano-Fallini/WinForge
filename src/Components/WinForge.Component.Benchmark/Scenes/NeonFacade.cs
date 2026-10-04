@@ -80,11 +80,17 @@ internal static class NeonFacade
             return meshes;
         }
 
-        var modules = MatchModules(GroupByNode(model));
+        var skipped = new List<string>();
+        var modules = MatchModules(GroupByNode(model), skipped);
         if (modules.Count == 0)
         {
             note($"El kit de fachada '{Slug}' no trajo ninguna pared plana de 3 × 3.");
             return meshes;
+        }
+        if (skipped.Count > 0)
+        {
+            note($"El kit de fachada trae paredes con hueco y sin relleno ({string.Join(", ", skipped)}): " +
+                 $"no entran en la fachada, porque dejarían el interior del edificio a la vista.");
         }
 
         var doors = modules.Where(m => m.IsDoor).ToList();
@@ -192,10 +198,19 @@ internal static class NeonFacade
 
     /// <summary>
     /// Empareja cada PARED con el relleno de su hueco. La regla es el nombre: a
-    /// <c>wall_&lt;resto&gt;</c> le corresponde <c>&lt;resto&gt;</c> si existe. Las paredes sin relleno
-    /// (las lisas) son módulos completos por sí mismas.
+    /// <c>wall_&lt;resto&gt;</c> le corresponde <c>&lt;resto&gt;</c> si existe. Las paredes SIN hueco
+    /// (una lisa como <c>wall_standard_standard_01</c>) son módulos completos por sí mismas.
+    ///
+    /// La pared que tiene un hueco y NO tiene relleno en el kit se DESCARTA, y eso que se saltea no
+    /// es un detalle: el kit 1k trae <c>wall_door_window_small_013</c> —una puerta y una ventana
+    /// recortadas— sin su pieza <c>door_window_small_013</c>. Elegida en una celda dejaba dos AGUJEROS
+    /// al descubierto: mirando la fachada se veía el interior vacío de la manzana, que es exactamente
+    /// lo que hace que un edificio se lea hueco. El hueco se detecta por GEOMETRÍA (el área proyectada
+    /// de sus triángulos contra el área de su caja, ver <see cref="HasOpening"/>) y no por el nombre: si
+    /// el kit cambia de nombres, el emparejado sigue valiendo.
     /// </summary>
-    private static List<Module> MatchModules(List<(string Name, List<GltfPart> Parts, Vector3 Min, Vector3 Max)> pieces)
+    private static List<Module> MatchModules(
+        List<(string Name, List<GltfPart> Parts, Vector3 Min, Vector3 Max)> pieces, List<string> skipped)
     {
         var index = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int i = 0; i < pieces.Count; i++) index[pieces[i].Name] = i;
@@ -212,7 +227,16 @@ internal static class NeonFacade
 
             var parts = new List<GltfPart>(piece.Parts);
             string insertName = piece.Name["wall_".Length..];
-            if (index.TryGetValue(insertName, out int insert)) parts.AddRange(pieces[insert].Parts);
+            if (index.TryGetValue(insertName, out int insert))
+            {
+                parts.AddRange(pieces[insert].Parts);
+            }
+            else if (HasOpening(piece.Parts, size))
+            {
+                // Hueco sin relleno: la celda no se puede cerrar, así que el módulo no entra al pool.
+                skipped.Add(piece.Name);
+                continue;
+            }
 
             modules.Add(new Module
             {
@@ -223,6 +247,31 @@ internal static class NeonFacade
             });
         }
         return modules;
+    }
+
+    /// <summary>
+    /// ¿La pared tiene un hueco? Se responde con el ÁREA PROYECTADA: una pared lisa cubre toda su caja
+    /// (3 × 3 m), y una con una ventana o una puerta recortada cubre menos, porque los triángulos no
+    /// pasan por el agujero. Es la única comprobación que no depende de cómo se llame la pieza.
+    /// </summary>
+    private static bool HasOpening(IReadOnlyList<GltfPart> parts, Vector3 size)
+    {
+        double covered = 0.0;
+        foreach (var part in parts)
+        {
+            var vertices = part.Vertices;
+            // Sin índice (el motor dibuja listas de triángulos): cada tres vértices son un triángulo.
+            for (int i = 0; i + 2 < vertices.Length; i += 3)
+            {
+                var a = vertices[i].Position;
+                var b = vertices[i + 1].Position;
+                var c = vertices[i + 2].Position;
+                covered += Math.Abs((double)(b.X - a.X) * (c.Y - a.Y) - (double)(c.X - a.X) * (b.Y - a.Y)) * 0.5;
+            }
+        }
+
+        double box = (double)size.X * size.Y;
+        return box > 0.01 && covered < box * 0.98;
     }
 
     /// <summary>

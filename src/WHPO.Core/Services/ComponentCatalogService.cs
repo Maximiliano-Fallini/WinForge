@@ -92,9 +92,9 @@ public sealed class ComponentCatalogService
     // =====================================================================
 
     /// <summary>
-    /// Componentes RETIRADOS: la entrada sigue en el components.json del repo (borrarla de ahí
-    /// dejaría a las app viejas sin poder mostrar nada) así que el filtro vive acá: no se listan
-    /// en el Workshop, no se pueden instalar y, si estaban instalados, se desinstalan solos.
+    /// Componentes RETIRADOS: el filtro vive acá para que un catálogo viejo cacheado no los
+    /// resucite: no se listan en el Workshop, no se pueden instalar y, si estaban instalados,
+    /// se desinstalan solos.
     ///
     /// "latencia" es el medidor de DPC/ISR del kernel: dejó de ser una pestaña propia porque la
     /// medición de latencia de entrada vive ahora dentro de Overclock USB.

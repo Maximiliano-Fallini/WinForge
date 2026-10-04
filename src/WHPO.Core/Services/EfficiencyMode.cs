@@ -55,8 +55,14 @@ internal static class EfficiencyMode
     /// <summary>
     /// Activa o desactiva Efficiency Mode para el PID indicado. Devuelve false si no se
     /// pudo abrir el proceso (protegido, cerrado o sin permisos): el llamador lo omite.
+    ///
+    /// COMPATIBILIDAD: la API (SetProcessInformation/ProcessPowerThrottling) existe desde
+    /// Win10 20H1, pero en builds viejas la llamada puede fallar con ERROR_BAD_LENGTH o
+    /// no estar implementada. Por eso NUNCA lanza: cualquier fallo devuelve false y el
+    /// llamador sigue como si la opción estuviera apagada. Llamar en un Windows
+    /// incompatible es seguro (no-op), no rompe nada.
     /// </summary>
-    public static bool Set(int pid, bool enabled)
+    internal static bool Set(int pid, bool enabled)
     {
         IntPtr h = OpenProcess(PROCESS_SET_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
         if (h == IntPtr.Zero) return false;

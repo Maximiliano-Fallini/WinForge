@@ -1058,13 +1058,17 @@ public sealed class GameBoostService : IGameBoostService
                     try
                     {
                         if (p.HasExited) continue;
-                        // 1 = Below Normal ("Baja") + Efficiency Mode (EcoQoS): prioridad
-                        // baja, hilos a E-cores en CPUs híbridas y power throttling. El
-                        // snapshot ya guardó la prioridad original para restaurar; el
-                        // Efficiency Mode se apaga explícitamente al restaurar.
-                        bool ok = _processService.ApplyCpuPriority(p.Id, 1);
+                        // 0 = Idle ("Mínima") + Efficiency Mode (EcoQoS): es la combinación
+                        // que Windows define como Efficiency Mode (prioridad baja + EcoQoS)
+                        // y la única con la que Task Manager muestra la hojita; con
+                        // BelowNormal el proceso queda en modo eco pero SIN indicador
+                        // (verificado en Windows 11 25H2: Baja+EcoQoS = sin hojita,
+                        // Idle+EcoQoS = hojita). El snapshot ya guardó la prioridad original
+                        // para restaurar; el Efficiency Mode se apaga explícitamente al
+                        // restaurar.
+                        bool ok = _processService.ApplyCpuPriority(p.Id, 0);
                         bool em = EfficiencyMode.Set(p.Id, enabled: true);
-                        _logging.LogDebug($"GameBoost: {name} (pid {p.Id}) → {(ok ? "Baja" : "sin cambios")} + EM {(em ? "ON" : "no disponible")}");
+                        _logging.LogDebug($"GameBoost: {name} (pid {p.Id}) → {(ok ? "Mínima" : "sin cambios")} + EM {(em ? "ON" : "no disponible")}");
                     }
                     catch (Exception ex)
                     {

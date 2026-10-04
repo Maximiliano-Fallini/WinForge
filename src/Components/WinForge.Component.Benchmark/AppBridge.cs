@@ -17,7 +17,7 @@ namespace WinForge.Component.Benchmark;
 /// pero las INSTANCIAS las construye la app en su contenedor de servicios. Acá hay un solo
 /// salto por reflexión —la propiedad estática <c>App.Services</c>— y de ahí en adelante todo
 /// es TIPADO: se resuelven interfaces de Core y no se invoca nada por nombre. Es el mismo
-/// criterio con el que el Medidor de latencia llega a I18n y a los pinceles del tema.
+/// criterio con el que un componente descargado llega a I18n y a los pinceles del tema.
 ///
 /// Si el puente no está disponible (el componente abierto con una app vieja, o corriendo en
 /// el harness), el componente lo dice y mide igual lo que puede medir solo: la escena y el

@@ -98,6 +98,33 @@
                     </Border>
 
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock x:Name="TrayEcoModeTitle" Text="Modo eficiencia en bandeja" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock
+                                    x:Name="TrayEcoModeDescription"
+                                    Text="Prendido (predeterminado): al ocultar la ventana a la bandeja, WHPO se marca como tarea de fondo (EcoQoS de Windows) para consumir lo mínimo. Al volver se quita solo. En un Windows que no lo soporta no hace nada."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ToggleSwitch
+                                x:Name="TrayEcoModeToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="True"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
                         <StackPanel Spacing="4">
                             <TextBlock Text="Posición de la ventana" FontSize="16" FontWeight="SemiBold"/>
                             <TextBlock

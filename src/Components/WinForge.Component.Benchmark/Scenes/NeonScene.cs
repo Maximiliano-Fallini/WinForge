@@ -183,6 +183,7 @@ public static class NeonScene
         var rows = LayoutBuildings(rng);
         foreach (var row in rows) AddMassing(street, row);
         BuildSigns(street);
+        BuildBackdrop(street);
 
         var meshes = new List<SceneMesh>(64)
         {
@@ -192,7 +193,17 @@ public static class NeonScene
         // ---- FACHADAS: los MÓDULOS REALES del kit glTF del set (ver NeonFacade) ----
         // Esto es lo que reemplaza a la pared generada a mano: el frente se TESELA con las paredes de
         // 3 × 3 m del kit y sus ventanas/puertas, con su albedo, su mapa de normales y su ARM.
-        foreach (var mesh in NeonFacade.Build(root, rows, FacadeOffset, rng, Note)) meshes.Add(mesh);
+        //
+        // Si el kit NO está (una instalación que todavía no bajó el pack de assets), el frente quedaría
+        // ABIERTO —la masa no lleva esa cara, la pone el kit— y cada manzana se vería hueca por dentro:
+        // por eso el camino de emergencia cierra el frente con un plano de ladrillo.
+        var facades = NeonFacade.Build(root, rows, FacadeOffset, rng, Note);
+        if (facades.Count == 0)
+        {
+            AddFlatFronts(street, rows);
+            Add(meshes, "frentes de emergencia", street.FlatFronts, materials.Brick1);
+        }
+        foreach (var mesh in facades) meshes.Add(mesh);
 
         // ---- Superficie ----
         Add(meshes, "veredas", street.Walk, materials.Cement);
@@ -214,8 +225,8 @@ public static class NeonScene
         Add(meshes, "cuerpos de cartel verticales", SignBodyVertices(horizontal: false), street.SignBodiesVertical, materials.Metal);
 
         AddModel(meshes, root, "covered_car", "auto", CarPlacements());
-        AddModel(meshes, root, "street_lamp_01", "farol", LampPlacements(false));
-        AddModel(meshes, root, "street_lamp_02", "farol doble", LampPlacements(true));
+        AddModel(meshes, root, "street_lamp_01", "farol", PostLampPlacements());
+        AddModel(meshes, root, "street_lamp_02", "farol de pared", WallLampPlacements());
         AddModel(meshes, root, "cardboard_box_01", "cajas", BoxPlacements());
 
         // ---- LLUVIA: la ÚLTIMA y con MEZCLA, después de todo lo opaco ----
@@ -487,6 +498,14 @@ public static class NeonScene
         // El CUERPO del cartel (el marco oscuro que lo sostiene): el panel de neón va montado adentro.
         internal readonly List<SceneInstance> SignBodies = new();
         internal readonly List<SceneInstance> SignBodiesVertical = new();
+
+        /// <summary>
+        /// Camino de emergencia cuando el kit de fachadas no está: los frentes PLANOS de ladrillo que
+        /// cierran las manzanas. Acá y no en <c>Walls</c> por el material: lleva el ladrillo CLARO
+        /// (se ve de frente, es la superficie que se mira), mientras que <c>Walls[3]</c> es la masa
+        /// oscura de medianiles, fondos y azoteas que va detrás.
+        /// </summary>
+        internal readonly List<SceneVertex> FlatFronts = new();
     }
 
     private static void BuildRoadSurface(StreetBuilder street)
@@ -693,6 +712,51 @@ public static class NeonScene
             new Vector3(MathF.Max(corniceFace, back), row.Height + ParapetHeight, row.Z1 + 0.02f), BrickRepeat);
     }
 
+    /// <summary>
+    /// Camino de emergencia cuando el kit de fachadas glTF no está en disco: cierra cada frente con un
+    /// plano de ladrillo en el mismo plano y con el mismo alto que llevaría la fachada de módulos, para
+    /// que la manzana no quede hueca por dentro. Es solo eso —un plano ciego— y por eso los carteles y
+    /// los faroles de pared igual se colocan encima: la calle sigue iluminada aunque no haya vanos.
+    /// </summary>
+    private static void AddFlatFronts(StreetBuilder street, IReadOnlyList<NeonFacade.FacadeRow> rows)
+    {
+        foreach (var row in rows)
+        {
+            float face = row.Side * FacadeOffset;
+            var normal = new Vector3(-row.Side, 0f, 0f);
+
+            AddQuad(street.FlatFronts,
+                new Vector3(face, 0f, row.Z0), new Vector3(face, 0f, row.Z1),
+                new Vector3(face, row.Height, row.Z1), new Vector3(face, row.Height, row.Z0),
+                normal, BrickRepeat);
+        }
+    }
+
+    /// <summary>
+    /// El FONDO que cierra la calle en sus dos extremos: sin él se ve el corte seco de la última
+    /// medianera contra el cielo en el plano alto del tramo 3. Son dos manzanas transversales a lo
+    /// ancho de la calle (calzada + veredas + frentes) —una antes del arranque y otra pasando el
+    /// final— con el MISMO alto de azotea que el vecino más alto, así la silueta continúa en vez de
+    /// cortarse. Van en <c>Walls[3]</c>: es masa oscura que se lee contra el cielo, no superficie.
+    /// </summary>
+    private static void BuildBackdrop(StreetBuilder street)
+    {
+        float minX = -(FacadeOffset + BuildingDepth) - 4f;
+        float maxX = -minX;
+        const float depth = 12f;
+
+        // El vecino más alto posible son 6 pisos de la celda del kit: 18 m, más el antepecho de
+        // azotea para que la silueta del fondo no quede por debajo de la de la cuadra.
+        float maxHeight = NeonFacade.Cell * 6f + ParapetHeight;
+
+        foreach (var end in new[] { StreetStart - depth, StreetStart + StreetLength })
+        {
+            AddSlab(street.Walls[3],
+                new Vector3(minX, 0f, end),
+                new Vector3(maxX, maxHeight, end + depth), BrickRepeat);
+        }
+    }
+
     // ---- Medidas del cartel (metros). El panel es la cara que enciende; el cuerpo es el marco ----
     private const float SignPanelHalfWidth = 0.60f;    // 1,20 m de ancho
     private const float SignPanelHalfHeight = 0.19f;   // 0,38 m de alto
@@ -778,28 +842,85 @@ public static class NeonScene
     // Colocación de los objetos de la calle
     // =========================================================================================
 
+    /// <summary>
+    /// Altura a la que se APOYA el auto: el origen del modelo <c>covered_car</c> está a la altura del
+    /// EJE —sus cuatro ruedas cuelgan 0,30 m—, así que apoyarlo en la calzada es ponerlo en +0,30, no
+    /// en la altura del cordón: con <see cref="KerbHeight"/> (0,16) las ruedas quedaban enterradas
+    /// 14 cm en el asfalto.
+    /// </summary>
+    private const float CarRestHeight = 0.30f;
+
     private static IReadOnlyList<SceneInstance> CarPlacements() => new[]
     {
         // El auto héroe: estacionado contra la vereda derecha, apenas abierto hacia la calle. Está a
         // la DERECHA del recorrido del tramo 1 a propósito: la cámara pasa por el carril izquierdo y
         // el auto entra en cuadro de costado, sin que el travelling se le meta adentro (ver CameraAt).
-        Placed(new Vector3(3.2f, KerbHeight, HeroCarZ), 0.30f, 1f),
-        Placed(new Vector3(-3.1f, KerbHeight, HeroCarZ + 24f), -0.22f, 0.96f),
-        Placed(new Vector3(3.3f, KerbHeight, HeroCarZ + 46f), 0.16f, 1.02f),
-        Placed(new Vector3(-3.2f, KerbHeight, HeroCarZ + 71f), -0.30f, 0.94f)
+        Placed(new Vector3(3.2f, CarRestHeight, HeroCarZ), 0.30f, 1f),
+        Placed(new Vector3(-3.1f, CarRestHeight, HeroCarZ + 24f), -0.22f, 0.96f),
+        Placed(new Vector3(3.3f, CarRestHeight, HeroCarZ + 46f), 0.16f, 1.02f),
+        Placed(new Vector3(-3.2f, CarRestHeight, HeroCarZ + 71f), -0.30f, 0.94f)
     };
 
-    private static IReadOnlyList<SceneInstance> LampPlacements(bool doubleHead)
+    // ---- Faroles: poste sobre la vereda y lámpara de pared sobre la fachada ----
+    //
+    // Son DOS modelos distintos y hasta ahora se colocaban como si fueran el mismo. street_lamp_01 es un
+    // poste con su linterna arriba (caja local de 0 a 3,87 m, con su base). street_lamp_02 es un farol
+    // DE PARED: su caja cuelga 0,39 m POR DEBAJO del anclaje y su brazo sale 0,81 m hacia su +Z. Plantado
+    // a nivel de calle —como estaba, y encima en el mismo z que un poste— el brazo entraba en la vereda y
+    // la atravesaba de lado a lado. Acá el poste va en la vereda y la lámpara va montada en el frente.
+
+    /// <summary>Cuánto entra el poste en la vereda (que va de 5,0 a 8,4 m del eje).</summary>
+    private const float PostLampInset = 1.15f;
+    private const float PostLampSpacing = 17f;
+
+    /// <summary>Altura a la que se ancla el brazo de la lámpara de pared, y cada cuánto se repite.</summary>
+    private const float WallLampSpacing = 34f;
+    private const float WallLampHeight = 3.30f;
+
+    /// <summary>Anclaje apenas por delante del plano del frente: pegado a la pared la placa del brazo
+    /// pelearía z con el ladrillo (las dos superficies en el mismo plano).</summary>
+    private const float WallLampOffset = FacadeOffset - 0.04f;
+
+    /// <summary>Altura de la linterna del POSTE en el mundo: el modelo la tiene a 3,32 m sobre su base,
+    /// que va apoyada en la vereda.</summary>
+    private const float PostLampLanternHeight = KerbHeight + 3.32f;
+
+    /// <summary>
+    /// Los postes de la calle. Van sobre la vereda cada 17 m y alternando la vereda (el de la derecha
+    /// corre 6 m): dos hileras enfrentadas a la misma altura delatarían la simetría desde el primer plano.
+    /// </summary>
+    private static IReadOnlyList<SceneInstance> PostLampPlacements()
     {
         var instances = new List<SceneInstance>();
-        float spacing = doubleHead ? 34f : 17f;
-        for (float z = StreetStart + 12f; z < StreetStart + StreetLength - 12f; z += spacing)
+        for (float z = StreetStart + 12f; z < StreetStart + StreetLength - 12f; z += PostLampSpacing)
         {
             foreach (float side in new[] { -1f, 1f })
             {
-                float x = side * (RoadHalfWidth + 1.15f);
+                float x = side * (RoadHalfWidth + PostLampInset);
                 float yaw = side > 0 ? MathF.PI * 0.5f : -MathF.PI * 0.5f;
                 instances.Add(Placed(new Vector3(x, KerbHeight, z + (side > 0 ? 6f : 0f)), yaw, 1f));
+            }
+        }
+        return instances;
+    }
+
+    /// <summary>
+    /// Faroles de PARED montados en el frente, entre los postes y por encima de la cabeza del que pasa.
+    /// El giro deja el +Z del modelo (su brazo) apuntando al CENTRO de la calle, así que la linterna
+    /// queda colgando sobre la vereda a 2,9 m del piso y no atravesada en el paso.
+    /// </summary>
+    private static IReadOnlyList<SceneInstance> WallLampPlacements()
+    {
+        var instances = new List<SceneInstance>();
+        for (float z = StreetStart + 12f + 8.5f; z < StreetStart + StreetLength - 12f; z += WallLampSpacing)
+        {
+            foreach (float side in new[] { -1f, 1f })
+            {
+                // Para la vereda izquierda el centro de la calle cae hacia +X (giro +90°) y para la
+                // derecha hacia −X (giro −90°).
+                float yaw = side > 0 ? -MathF.PI * 0.5f : MathF.PI * 0.5f;
+                instances.Add(Placed(
+                    new Vector3(side * WallLampOffset, WallLampHeight, z + (side > 0 ? 6f : 0f)), yaw, 1f));
             }
         }
         return instances;
@@ -832,12 +953,19 @@ public static class NeonScene
     {
         var lights = new List<ScenePointLight>();
 
-        // Los faroles alumbran el centro de la calzada (el brazo del farol llega hasta ahí) y con
-        // radio largo a propósito: la caída es suave, así que un radio corto apaga la luz antes de
-        // tocar la fachada y la calle queda en un túnel de un solo charco de luz por farol.
-        lights.Add(new ScenePointLight(new Vector3(0f, 6.4f, HeroCarZ + 4f), new Vector3(1.0f, 0.74f, 0.44f), 20f, 26f));
-        lights.Add(new ScenePointLight(new Vector3(0f, 6.4f, HeroCarZ + 22f), new Vector3(1.0f, 0.74f, 0.44f), 17f, 26f));
-        lights.Add(new ScenePointLight(new Vector3(0f, 6.4f, HeroCarZ + 44f), new Vector3(1.0f, 0.74f, 0.44f), 15f, 24f));
+        // Los faroles alumbran desde DONDE ESTÁN: cada una de estas tres luces cae en la linterna de un
+        // poste de verdad (ver PostLampPlacements: los postes de la izquierda están en z = 11 + 17k y
+        // los de la derecha en z = 17 + 17k). Antes estaban a 6,4 m de alto sobre el EJE de la calle
+        // —en el aire, a 2,4 m por encima de cualquier linterna— porque se creía que el farol tenía un
+        // brazo largo que llegaba hasta el centro; el poste mide 3,87 m y su linterna está en la punta.
+        // El radio sigue siendo largo a propósito: la caída es suave y un radio corto apaga la luz antes
+        // de tocar la fachada, que deja la calle en un túnel de un solo charco de luz por farol.
+        lights.Add(new ScenePointLight(new Vector3(-(RoadHalfWidth + PostLampInset), PostLampLanternHeight, 11f),
+            new Vector3(1.0f, 0.74f, 0.44f), 22f, 26f));
+        lights.Add(new ScenePointLight(new Vector3(-(RoadHalfWidth + PostLampInset), PostLampLanternHeight, 28f),
+            new Vector3(1.0f, 0.74f, 0.44f), 19f, 26f));
+        lights.Add(new ScenePointLight(new Vector3(RoadHalfWidth + PostLampInset, PostLampLanternHeight, 51f),
+            new Vector3(1.0f, 0.74f, 0.44f), 17f, 26f));
 
         // Los carteles tiran su color sobre el frente: son la mitad de la identidad de la calle.
         for (int i = 0; i < SignLayout.Length && lights.Count < SceneDefinition.MaxPointLights; i++)

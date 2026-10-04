@@ -907,6 +907,8 @@ public sealed partial class MainWindow : Window
         _systemInfoService.StopMonitoring();
         _loggingService.LogInfo("Monitoreo de sistema detenido (ventana oculta)");
 
+        ApplyTrayEfficiencyMode(hiding: true);
+
         UpdateTrayStatus();
     }
 
@@ -944,6 +946,8 @@ public sealed partial class MainWindow : Window
             try { pausable.ResumeBackgroundTimers(); }
             catch (Exception ex) { _loggingService.LogWarning($"MainWindow: reanudar timers de página: {ex.Message}"); }
         }
+
+        ApplyTrayEfficiencyMode(hiding: false);
 
         UpdateTrayStatus();
     }
@@ -1030,6 +1034,38 @@ public sealed partial class MainWindow : Window
 
     [System.Runtime.InteropServices.DllImport("psapi.dll")]
     private static extern bool EmptyWorkingSet(IntPtr hProcess);
+
+    /// <summary>
+    /// Efficiency Mode propio al ocultar/mostrar la ventana ("tray.ecoMode", default true).
+    /// Al ocultar: aplica Efficiency Mode completo al propio proceso — EcoQoS (hilos a
+    /// E-cores + throttling) y prioridad base Idle, que es la combinación con la que
+    /// Task Manager muestra la hojita (ver <see cref="SelfEfficiencyMode.Set"/>).
+    /// Al mostrar: revierte las dos cosas SIEMPRE que se hubieran aplicado, para que la
+    /// UI nunca quede throtteada al volver (la decisión vive en
+    /// <see cref="SelfEfficiencyMode.ShouldSet"/>, así el test la cubre sin abrir la app).
+    /// Si el Windows no soporta la API, Set devuelve false (no-op seguro) y se sigue como
+    /// si la opción estuviera apagada.
+    /// </summary>
+    private void ApplyTrayEfficiencyMode(bool hiding)
+    {
+        try
+        {
+            bool switchOn = _settingsService.Get("tray.ecoMode", true);
+            if (!SelfEfficiencyMode.ShouldSet(hiding, switchOn, SelfEfficiencyMode.Applied))
+                return;
+
+            bool ok = SelfEfficiencyMode.Set(hiding);
+            _loggingService.LogInfo(ok
+                ? I18n.T(hiding
+                    ? "Efficiency Mode propio activado (ventana oculta en bandeja)."
+                    : "Efficiency Mode propio desactivado (ventana visible).")
+                : I18n.T("Efficiency Mode propio no soportado por este Windows: se sigue sin EcoQoS."));
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: Efficiency Mode propio: {ex.Message}");
+        }
+    }
 
  // ===== Minimizar → bandeja =====
  // En Windows 11, si la ventana queda MINIMIZADA en la barra de tareas, el sistema

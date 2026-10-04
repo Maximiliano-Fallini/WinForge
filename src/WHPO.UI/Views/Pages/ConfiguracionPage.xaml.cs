@@ -83,6 +83,7 @@ public sealed partial class ConfiguracionPage : Page
         I18n.LanguageChanged += OnLanguageChanged;
         MinimizeToTrayToggle.Toggled += OnMinimizeToTrayToggled;
         TrayMetricsToggle.Toggled += OnTrayMetricsToggled;
+        TrayEcoModeToggle.Toggled += OnTrayEcoModeToggled;
         DeveloperLogsToggle.Toggled += OnDeveloperLogsToggled;
         LaunchAtStartupToggle.Toggled += OnLaunchAtStartupToggled;
         StartMinimizedToggle.Toggled += OnStartMinimizedToggled;
@@ -95,6 +96,7 @@ public sealed partial class ConfiguracionPage : Page
         {
             MinimizeToTrayToggle.IsOn = _settingsService.Get("window.minimizeToTray", true);
             TrayMetricsToggle.IsOn = !_settingsService.Get("tray.optimizePerformance", true);
+            TrayEcoModeToggle.IsOn = _settingsService.Get("tray.ecoMode", true);
             DeveloperLogsToggle.IsOn = _settingsService.Get("logging.developerLogs", false);
             LaunchAtStartupToggle.IsOn = _startupService.IsEnabled();
             StartMinimizedToggle.IsOn = _settingsService.Get("window.startMinimized", false);
@@ -162,6 +164,13 @@ public sealed partial class ConfiguracionPage : Page
         _settingsService.Set("tray.optimizePerformance", !TrayMetricsToggle.IsOn);
         _settingsService.Save();
         App.MainWindowInstance?.UpdateTrayStatus();
+    }
+
+    private void OnTrayEcoModeToggled(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        _settingsService.Set("tray.ecoMode", TrayEcoModeToggle.IsOn);
+        _settingsService.Save();
     }
 
     private void OnDeveloperLogsToggled(object sender, RoutedEventArgs e)

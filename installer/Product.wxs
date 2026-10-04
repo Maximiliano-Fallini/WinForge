@@ -5,8 +5,8 @@
        (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
   <Package Name="WinForge"
            Manufacturer="WinForge"
-           Version="0.2.4"
-           ProductCode="{170EBF9A-EC97-4AD6-B1E6-1F75908E9C54}"
+           Version="0.2.7"
+           ProductCode="{65406911-1308-4D40-A6EB-9BCB8A413E9B}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"
@@ -33,7 +33,7 @@
     <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
     <Property Id="ARPPUBLISHER" Value="WinForge" />
     <Property Id="ARPCONTACT" Value="WinForge" />
-    <Property Id="ARPCOMMENTS" Value="WinForge 0.2.4 Beta - optimizador y monitor del sistema" />
+    <Property Id="ARPCOMMENTS" Value="WinForge 0.2.7 Beta - optimizador y monitor del sistema" />
 
     <!-- ===== Exclusiones de Windows Defender =====
          Por que: WinForge es un ejecutable sin firmar que modifica ajustes del sistema,
