@@ -262,7 +262,12 @@ public static class I18n
 
     // ===================== Aplicar a un árbol visual =====================
 
-    /// <summary>Texto original (español) y última traducción aplicada, por elemento Y propiedad.</summary>
+    /// <summary>
+    /// Texto original (español) y última traducción que este motor dejó en el
+    /// elemento, por elemento Y propiedad. LastApplied es la señal de pertenencia:
+    /// aunque un pack se desinstale y el mapa inverso olvide sus traducciones, el
+    /// motor sabe que ESE texto es suyo y puede volver a la fuente desde él.
+    /// </summary>
     private sealed class OriginalText
     {
         public required string Es;
@@ -628,22 +633,35 @@ public static class I18n
 
         if (byProperty.TryGetValue(dp, out var original))
         {
-            // Se re-traduce si el texto actual es la fuente (español) o una traducción
+            // Se re-traduce si el texto actual es la fuente (español), una traducción
             // conocida de esa fuente en cualquier idioma (la haya puesto el recorrido o
-            // el código). Se pregunta por ESTA fuente (IsTranslationOf) y no por "qué
-            // clave le corresponde al texto": un mismo texto puede ser la traducción de
-            // varias claves ("Start" = alemán de "Inicio" e inglés de "Iniciar"), y
-            // preguntar por la fuente registrada evita re-atribuirlo a otra. Si el texto
-            // se modificó dinámicamente con algo que no corresponde a la fuente (mensaje
-            // de estado, contador, valor), se respeta.
+            // el código) o exactamente lo último que este motor le aplicó. Se pregunta
+            // por ESTA fuente (IsTranslationOf) y no por "qué clave le corresponde al
+            // texto": un mismo texto puede ser la traducción de varias claves ("Start"
+            // = alemán de "Inicio" e inglés de "Iniciar"), y preguntar por la fuente
+            // registrada evita re-atribuirlo a otra. Si el texto se modificó
+            // dinámicamente con algo que no corresponde a la fuente (mensaje de estado,
+            // contador, valor), se respeta.
+            //
+            // El caso LastApplied es el que salva el ciclo con packs: al desinstalar un
+            // pack, el mapa inverso pierde SUS traducciones y un texto que el propio
+            // motor dejó en pantalla (el "内存" del pack chino en la card RAM de
+            // Sistema) deja de reconocerse como traducción de su clave: la condición
+            // anterior lo trataba como "texto dinámico", lo respetaba, y el nodo quedaba
+            // clavado en chino hasta reiniciar la app. Con el registro de lo último
+            // aplicado, el nodo vuelve a su fuente aunque el pack ya no exista.
             if (string.Equals(current, original.Es, StringComparison.Ordinal)
-                || Translations.IsTranslationOf(current, original.Es))
+                || Translations.IsTranslationOf(current, original.Es)
+                || string.Equals(current, original.LastApplied, StringComparison.Ordinal))
             {
                 var t = T(original.Es);
+                // Sincronizar SIEMPRE el registro de lo último aplicado, también cuando
+                // el texto no cambia: si el nodo volvió a la fuente (o a otra
+                // traducción), ESE pasa a ser el texto del que el motor es dueño.
+                original.LastApplied = t;
                 if (!string.Equals(t, current, StringComparison.Ordinal))
                 {
                     el.SetValue(dp, t);
-                    original.LastApplied = t;
                     pass.Translated++;
                     if (TraceEnabled && TraceLines.Count < TraceMaxLines)
                         TraceLines.Add($"    → cambio a \"{t}\"");

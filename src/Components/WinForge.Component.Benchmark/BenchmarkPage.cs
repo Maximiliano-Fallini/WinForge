@@ -1220,7 +1220,8 @@ public sealed class BenchmarkPage : Page
             _warningsPanel.Children.Add(fingerprintTitle);
             foreach (var pair in report.System)
             {
-                var line = Text($"{AppBridge.T(pair.Key)}: {pair.Value}");
+                // La clave del informe es un id estable: el rótulo se resuelve y se traduce acá.
+                var line = Text($"{AppBridge.T(AppBridge.FingerprintLabel(pair.Key))}: {pair.Value}");
                 line.Foreground = AppBridge.Brush("TextFillColorSecondaryBrush");
                 _warningsPanel.Children.Add(line);
             }

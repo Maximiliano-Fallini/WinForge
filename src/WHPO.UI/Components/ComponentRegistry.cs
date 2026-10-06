@@ -150,7 +150,7 @@ public sealed class ComponentRegistry
         {
             Id = "tcp", Name = "TCP / Red avanzado", IconGlyph = "\uE8C8", Category = ComponentCategory.Latencia,
             Description = "Ajustes del stack TCP: Nagle, congestion, ECN, RSS y Fast Open.",
-            PageType = typeof(TcpPage), Version = "0.1.0"
+            PageType = typeof(TcpPage), Version = "0.1.1"
         };
         yield return new BuiltinComponent
         {

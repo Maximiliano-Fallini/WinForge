@@ -16,6 +16,17 @@ public static class Translations
 {
     private static readonly Dictionary<string, (string En, string Pt, string De, string Fr)> All = new()
     {
+        // ===== Splash de arranque (velocímetro de carga) =====
+        // Pasos que muestra la ventana de carga mientras arranca la app. El último
+        // estado es "Listo", que ya está definido más abajo porque lo comparten
+        // otros mensajes de la app.
+        ["Iniciando WinForge…"] = ("Starting WinForge…", "Iniciando o WinForge…", "WinForge wird gestartet…", "Démarrage de WinForge…"),
+        ["Preparando el entorno…"] = ("Preparing the environment…", "Preparando o ambiente…", "Umgebung wird vorbereitet…", "Préparation de l'environnement…"),
+        ["Cargando componentes…"] = ("Loading components…", "Carregando componentes…", "Komponenten werden geladen…", "Chargement des composants…"),
+        ["Cargando idiomas…"] = ("Loading languages…", "Carregando idiomas…", "Sprachen werden geladen…", "Chargement des langues…"),
+        ["Aplicando configuración…"] = ("Applying settings…", "Aplicando configurações…", "Einstellungen werden angewendet…", "Application des paramètres…"),
+        ["Preparando la interfaz…"] = ("Preparing the interface…", "Preparando a interface…", "Oberfläche wird vorbereitet…", "Préparation de l'interface…"),
+
         // ===== Asistente de primera configuración =====
         ["Elegí el tema"] = ("Choose a theme", "Escolha o tema", "Wähle ein Design", "Choisissez un thème"),
         ["Menos fatiga visual"] = ("Less eye strain", "Menos fadiga visual", "Weniger Augenbelastung", "Moins de fatigue visuelle"),
@@ -87,7 +98,10 @@ public static class Translations
         // ===== Workshop / componentes =====
         ["Filtro de teclas"] = ("Key filter", "Filtro de teclas", "Tastenfilter", "Filtre de touches"),
         ["Workshop"] = ("Workshop", "Workshop", "Workshop", "Atelier"),
-        ["Juego"] = ("Gaming", "Jogos", "Gaming", "Jeux"),
+        // Singular, distinto de "Videojuegos" ("Games"/"Jogos"/"Spiele"/"Jeux") y de la
+        // clave "Gaming" (el nombre del preset, que es invariante): con "Gaming" acá, el texto
+        // "Gaming" era ambiguo entre esta clave y el preset, y el chino traducía las DOS a 游戏.
+        ["Juego"] = ("Game", "Jogo", "Spiel", "Jeu"),
         ["Rendimiento"] = ("Performance", "Desempenho", "Leistung", "Performance"),
         ["Latencia"] = ("Latency", "Latência", "Latenz", "Latence"),
         ["Monitoreo"] = ("Monitoring", "Monitoramento", "Überwachung", "Surveillance"),
@@ -317,7 +331,7 @@ public static class Translations
         ["Optimizar Rendimiento"] = ("Optimize Performance", "Otimizar desempenho", "Leistung optimieren", "Optimiser les performances"),
         ["Prendido (predeterminado): elimina las métricas del ícono y libera la memoria del proceso al minimizar, para que la app consuma lo mínimo en segundo plano. Apagado: el ícono vuelve a mostrar CPU, memoria y temperatura al pasar el cursor."] = ("On (default): removes the icon metrics and frees process memory when minimized, so the app uses as little as possible in the background. Off: the icon shows CPU, memory and temperature again on hover.", "Ligado (padrão): remove as métricas do ícone e libera a memória do processo ao minimizar, para que o aplicativo consuma o mínimo em segundo plano. Desligado: o ícone volta a mostrar CPU, memória e temperatura ao passar o mouse.", "Ein (Standard): entfernt die Metriken aus dem Symbol und gibt Prozessspeicher beim Minimieren frei, damit die App im Hintergrund möglichst wenig verbraucht. Aus: Das Symbol zeigt beim Überfahren wieder CPU, Speicher und Temperatur.", "Activé (par défaut) : supprime les métriques de l'icône et libère la mémoire du processus lors de la réduction, afin que l'application consomme un minimum en arrière-plan. Désactivé : l'icône affiche à nouveau le CPU, la mémoire et la température au survol."),
         ["Modo eficiencia en bandeja"] = ("Efficiency mode in tray", "Modo eficiência na bandeja", "Effizienzmodus im Infobereich", "Mode efficacité dans la zone de notification"),
-        ["Prendido (predeterminado): al ocultar la ventana a la bandeja, WHPO se marca como tarea de fondo (EcoQoS de Windows) para consumir lo mínimo. Al volver se quita solo. En un Windows que no lo soporta no hace nada."] = ("On (default): when hiding the window to the tray, WHPO marks itself as a background task (Windows EcoQoS) to use as little as possible. It is removed automatically when back. On a Windows that does not support it, it does nothing.", "Ligado (padrão): ao ocultar a janela na bandeja, o WHPO se marca como tarefa em segundo plano (EcoQoS do Windows) para consumir o mínimo. Ao voltar, é removido sozinho. Em um Windows que não o suporta, não faz nada.", "Ein (Standard): Beim Ausblenden des Fensters in den Infobereich markiert sich WHPO als Hintergrundaufgabe (Windows-EcoQoS), um möglichst wenig zu verbrauchen. Beim Zurückkehren wird es automatisch entfernt. Auf einem Windows, das dies nicht unterstützt, geschieht nichts.", "Activé (par défaut) : en masquant la fenêtre dans la zone de notification, WHPO se marque comme tâche d'arrière-plan (EcoQoS de Windows) pour consommer un minimum. Au retour, il est retiré automatiquement. Sur un Windows qui ne le prend pas en charge, il ne fait rien."),
+        ["Prendido (predeterminado): al ocultar la ventana a la bandeja, WHPO se marca como tarea de fondo (EcoQoS de Windows) para consumir lo mínimo. Al volver se quita solo. En un Windows que no lo soporta no hace nada. Las optimizaciones activas siguen aplicándose en segundo plano mientras la app esté en la bandeja."] = ("On (default): when hiding the window to the tray, WHPO marks itself as a background task (Windows EcoQoS) to use as little as possible. It is removed automatically when back. On a Windows that does not support it, it does nothing. Active optimizations keep running in the background while the app sits in the tray.", "Ligado (padrão): ao ocultar a janela na bandeja, o WHPO se marca como tarefa em segundo plano (EcoQoS do Windows) para consumir o mínimo. Ao voltar, é removido sozinho. Em um Windows que não o suporta, não faz nada. As otimizações ativas continuam sendo aplicadas em segundo plano enquanto o aplicativo estiver na bandeja.", "Ein (Standard): Beim Ausblenden des Fensters in den Infobereich markiert sich WHPO als Hintergrundaufgabe (Windows-EcoQoS), um möglichst wenig zu verbrauchen. Beim Zurückkehren wird es automatisch entfernt. Auf einem Windows, das dies nicht unterstützt, geschieht nichts. Aktive Optimierungen werden im Hintergrund weiter angewendet, während die App im Infobereich liegt.", "Activé (par défaut) : en masquant la fenêtre dans la zone de notification, WHPO se marque comme tâche d'arrière-plan (EcoQoS de Windows) pour consommer un minimum. Au retour, il est retiré automatiquement. Sur un Windows qui ne le prend pas en charge, il ne fait rien. Les optimisations actives continuent de s'appliquer en arrière-plan pendant que l'application est dans la zone de notification."),
         ["Efficiency Mode propio activado (ventana oculta en bandeja)."] = ("Self Efficiency Mode enabled (window hidden in tray).", "Modo eficiência próprio ativado (janela oculta na bandeja).", "Eigener Effizienzmodus aktiviert (Fenster im Infobereich ausgeblendet).", "Mode efficacité propre activé (fenêtre masquée dans la zone de notification)."),
         ["Efficiency Mode propio desactivado (ventana visible)."] = ("Self Efficiency Mode disabled (window visible).", "Modo eficiência próprio desativado (janela visível).", "Eigener Effizienzmodus deaktiviert (Fenster sichtbar).", "Mode efficacité propre désactivé (fenêtre visible)."),
         ["Efficiency Mode propio no soportado por este Windows: se sigue sin EcoQoS."] = ("Self Efficiency Mode not supported by this Windows: continuing without EcoQoS.", "Modo eficiência próprio não suportado por este Windows: continua sem EcoQoS.", "Eigener Effizienzmodus wird von diesem Windows nicht unterstützt: Fortsetzung ohne EcoQoS.", "Mode efficacité propre non pris en charge par ce Windows : poursuite sans EcoQoS."),
@@ -406,7 +420,7 @@ public static class Translations
         ["Ejecuta el test completo y aplica automáticamente el DNS con menor latencia."] = ("Runs the full test and automatically applies the DNS with the lowest latency.", "Executa o teste completo e aplica automaticamente o DNS com menor latência.", "Führt den vollständigen Test aus und wendet automatisch den DNS mit der geringsten Latenz an.", "Exécute le test complet et applique automatiquement le DNS avec la latence la plus faible."),
         ["Retraso aceptable (Late Packet Threshold)"] = ("Acceptable delay (Late Packet Threshold)", "Atraso aceitável (Late Packet Threshold)", "Akzeptable Verzögerung (Late Packet Threshold)", "Délai acceptable (Late Packet Threshold)"),
         ["Paquetes por segundo (PPS)"] = ("Packets per second (PPS)", "Pacotes por segundo (PPS)", "Pakete pro Sekunde (PPS)", "Paquets par seconde (PPS)"),
-        ["Packet Loss Test"] = ("Packet Loss Test", "Packet Loss Test", "Packet-Loss-Test", "Test de perte de paquets"),
+        ["Test de paquetes"] = ("Packet Test", "Teste de pacotes", "Paket-Test", "Test de paquets"),
         ["(BETA)"] = ("(BETA)", "(BETA)", "(BETA)", "(BÊTA)"),
         ["Carga · Pérdida de paquetes"] = ("Load · Packet loss", "Carga · Perda de pacotes", "Last · Paketverlust", "Charge · Perte de paquets"),
         ["Descarga · Pérdida de paquetes"] = ("Download · Packet loss", "Download · Perda de pacotes", "Download · Paketverlust", "Téléchargement · Perte de paquets"),
@@ -578,8 +592,6 @@ public static class Translations
         ["Reciclaje TIME_WAIT"] = ("TIME_WAIT recycling", "Reciclagem TIME_WAIT", "TIME_WAIT-Recycling", "Recyclage TIME_WAIT"),
         ["Caché grande del sistema"] = ("Large system cache", "Cache grande do sistema", "Großer Systemcache", "Cache système large"),
         ["Descarga de segmentación (LSO)"] = ("Large Send Offload (LSO)", "Descarga de segmentação (LSO)", "Large Send Offload (LSO)", "Déchargement de segmentation (LSO)"),
-        ["Velocidad y duplex (Wi-Fi / driver *)"] = ("Speed & duplex (Wi-Fi / driver *)", "Velocidade e duplex (Wi-Fi / driver *)", "Geschwindigkeit & Duplex (WLAN / Treiber *)", "Vitesse et duplex (Wi-Fi / pilote *)"),
-        ["Ethernet verde (ahorro de energía)"] = ("Green Ethernet (power saving)", "Ethernet verde (economia de energia)", "Green Ethernet (Energiesparen)", "Ethernet vert (économie d'énergie)"),
         ["Windows reserva ancho de banda para apps multimedia y limita la red a 10 paquetes por milisegundo (ese es el default, valor 10). Desactivarlo (0xFFFFFFFF) quita el tope: bueno para juegos y streaming cuando el PC además reproduce audio o video. → Sin límite para juegos; default de Windows en otros casos."] = ("Windows reserves bandwidth for multimedia apps and caps the network at 10 packets per millisecond (that's the default, value 10). Disabling it (0xFFFFFFFF) removes the cap: good for gaming and streaming when the PC also plays audio or video. → No limit for gaming; Windows default otherwise.", "O Windows reserva largura de banda para apps multimídia e limita a rede a 10 pacotes por milissegundo (esse é o padrão, valor 10). Desativá-lo (0xFFFFFFFF) remove o limite: bom para jogos e streaming quando o PC também reproduz áudio ou vídeo. → Sem limite para jogos; padrão do Windows nos outros casos.", "Windows reserviert Bandbreite für Multimedia-Apps und drosselt das Netzwerk auf 10 Pakete pro Millisekunde (Standard, Wert 10). Deaktivieren (0xFFFFFFFF) entfernt die Drossel: gut für Gaming und Streaming, wenn der PC zusätzlich Audio/Video wiedergibt. → Ohne Limit für Gaming; sonst Windows-Standard.", "Windows réserve de la bande passante aux apps multimédia et plafonne le réseau à 10 paquets par milliseconde (c'est le défaut, valeur 10). Le désactiver (0xFFFFFFFF) supprime le plafond : idéal pour les jeux et le streaming quand le PC lit aussi de l'audio/vidéo. → Sans limite pour les jeux ; défaut Windows sinon."),
         ["Cantidad máxima de puertos dinámicos para conexiones salientes (default 5000, de la era XP). Subirlo a 65534 evita el 'agotamiento de puertos' al abrir y cerrar muchas conexiones rápido (torrents, scanners, varios juegos). → 65534 para uso pesado; 5000 si todo funciona bien."] = ("Maximum number of dynamic ports for outgoing connections (default 5000, from the XP era). Raising it to 65534 avoids 'port exhaustion' when opening and closing many connections fast (torrents, scanners, several games). → 65534 for heavy use; 5000 if everything works fine.", "Número máximo de portas dinâmicas para conexões de saída (padrão 5000, da era XP). Subir para 65534 evita a 'exaustão de portas' ao abrir e fechar muitas conexões rápido (torrents, scanners, vários jogos). → 65534 para uso pesado; 5000 se tudo funciona bem.", "Maximale Anzahl dynamischer Ports für ausgehende Verbindungen (Standard 5000, aus XP-Zeiten). 65534 verhindert 'Port-Erschöpfung' bei vielen schnellen Verbindungen (Torrents, Scanner, mehrere Spiele). → 65534 für intensive Nutzung; 5000 wenn alles läuft.", "Nombre maximum de ports dynamiques pour les connexions sortantes (défaut 5000, hérité de XP). Le monter à 65534 évite l'épuisement des ports avec beaucoup de connexions rapides (torrents, scanners, jeux). → 65534 pour un usage intensif ; 5000 si tout fonctionne."),
         ["Segundos que una conexión cerrada queda reservada antes de liberar el puerto (default 240). Bajarlo a 30 libera puertos mucho más rápido: útil con muchas conexiones cortas (juegos, navegación). → 30 para juegos; 240 (default) en otros casos."] = ("Seconds a closed connection stays reserved before the port is freed (default 240). Lowering it to 30 frees ports much faster: useful with many short connections (gaming, browsing). → 30 for gaming; 240 (default) otherwise.", "Segundos que uma conexão fechada fica reservada antes de liberar a porta (padrão 240). Baixar para 30 libera portas muito mais rápido: útil com muitas conexões curtas (jogos, navegação). → 30 para jogos; 240 (padrão) nos outros casos.", "Sekunden, die eine geschlossene Verbindung reserviert bleibt, bevor der Port freigegeben wird (Standard 240). 30 gibt Ports viel schneller frei: nützlich bei vielen kurzen Verbindungen (Gaming, Browsen). → 30 für Gaming; 240 (Standard) sonst.", "Secondes pendant lesquelles une connexion fermée reste réservée avant libération du port (défaut 240). Baisser à 30 libère les ports bien plus vite : utile avec beaucoup de connexions courtes (jeux, navigation). → 30 pour les jeux ; 240 (défaut) sinon."),
@@ -588,32 +600,8 @@ public static class Translations
         ["Permite al adaptador agrupar envíos grandes en menos paquetes para ahorrar CPU. En algunos drivers agrega picos de latencia. Desactivar el offload (DisableTaskOffload=1) obliga a la CPU a segmentar: más uso de CPU, latencia potencialmente menor. → Depende del driver: probá ON si ves micro-tirones en juegos online."] = ("Lets the adapter group large sends into fewer packets to save CPU. On some drivers it adds latency spikes. Disabling offload (DisableTaskOffload=1) forces the CPU to segment: more CPU use, potentially lower latency. → Driver-dependent: try ON if you see micro-stutters in online games.", "Permite ao adaptador agrupar envios grandes em menos pacotes para poupar CPU. Em alguns drivers adiciona picos de latência. Desativar o offload (DisableTaskOffload=1) força a CPU a segmentar: mais uso de CPU, latência potencialmente menor. → Depende do driver: teste ON se ver micro-engasgos em jogos online.", "Erlaubt dem Adapter, große Sendungen in weniger Paketen zusammenzufassen, um CPU zu sparen. Bei manchen Treibern verursacht es Latenzspitzen. Deaktivieren (DisableTaskOffload=1) zwingt die CPU zu segmentieren: mehr CPU-Last, potenziell niedrigere Latenz. → Treiberabhängig: AN testen bei Mikrorucklern in Onlinespielen.", "Permet à la carte réseau de regrouper les gros envois en moins de paquets pour économiser le CPU. Sur certains pilotes, cela ajoute des pics de latence. Désactiver (DisableTaskOffload=1) force le CPU à segmenter : plus de CPU, latence potentiellement réduite. → Dépend du pilote : à tester en cas de micro-saccades en ligne."),
         ["Función del driver que baja el consumo eléctrico cuando el enlace está inactivo o a baja velocidad. Puede agregar demoras de reactivación que se sienten como micro-tirones o ping más alto. → OFF para juegos/baja latencia; ON si priorizás consumo."] = ("Driver feature that lowers electrical power when the link is idle or at low speed. It can add wake-up delays felt as micro-stutters or higher ping. → OFF for gaming/low latency; ON if you prioritize power usage.", "Função do driver que reduz o consumo elétrico quando o link está ocioso ou em baixa velocidade. Pode adicionar atrasos de reativação sentidos como micro-engasgos ou ping mais alto. → OFF para jogos/baixa latência; ON se você prioriza consumo.", "Treiberfunktion, die den Stromverbrauch senkt, wenn die Verbindung inaktiv oder langsam ist. Kann Aufwachverzögerungen verursachen (Mikroruckler, höherer Ping). → AUS für Gaming/niedrige Latenz; AN wenn Verbrauch zählt.", "Fonction du pilote qui réduit la consommation quand le lien est inactif ou lent. Peut ajouter des délais de réveil (micro-saccades, ping plus élevé). → OFF pour le jeu ; ON si vous privilégiez la consommation."),
         ["Consultando estado TCP..."] = ("Checking TCP state...", "Consultando estado do TCP...", "TCP-Status wird geprüft...", "Vérification de l'état TCP..."),
-        ["Consultando propiedades del adaptador..."] = ("Checking adapter properties...", "Consultando propriedades do adaptador...", "Adaptereigenschaften werden geprüft...", "Vérification des propriétés de l'adaptateur..."),
-        ["No se pudo detectar el adaptador de red activo."] = ("Could not detect the active network adapter.", "Não foi possível detectar o adaptador de rede ativo.", "Aktiver Netzwerkadapter konnte nicht erkannt werden.", "Impossible de détecter l'adaptateur réseau actif."),
-        ["Valor de fábrica (el driver no lo expone en el registro)"] = ("Factory default (driver does not expose it in the registry)", "Valor de fábrica (o driver não o expõe no registro)", "Werkseinstellung (Treiber legt sie nicht in der Registry ab)", "Valeur d'usine (le pilote ne l'expose pas dans le registre)"),
-        ["Aplicando propiedades del adaptador..."] = ("Applying adapter properties...", "Aplicando propriedades do adaptador...", "Adaptereigenschaften werden angewendet...", "Application des propriétés de l'adaptateur..."),
-        ["Propiedades aplicadas. Algunos cambios se activan al reconectar la red."] = ("Properties applied. Some changes take effect after reconnecting the network.", "Propriedades aplicadas. Algumas mudanças são ativadas ao reconectar a rede.", "Eigenschaften angewendet. Einige Änderungen greifen nach dem Neuverbinden des Netzwerks.", "Propriétés appliquées. Certains changements prennent effet après reconnexion du réseau."),
         ["No se pudieron aplicar: {0}"] = ("Could not apply: {0}", "Não foi possível aplicar: {0}", "Konnte nicht angewendet werden: {0}", "Impossible d'appliquer : {0}"),
-        ["Restaurando valores de fábrica..."] = ("Restoring factory values...", "Restaurando valores de fábrica...", "Werkseinstellungen werden wiederhergestellt...", "Restauration des valeurs d'usine..."),
-        ["Valores de fábrica restaurados. Reconectá la red para aplicar todo."] = ("Factory values restored. Reconnect the network to apply everything.", "Valores de fábrica restaurados. Reconecte a rede para aplicar tudo.", "Werkseinstellungen wiederhergestellt. Netzwerk neu verbinden, um alles anzuwenden.", "Valeurs d'usine restaurées. Reconnectez le réseau pour tout appliquer."),
         ["Error restaurando: {0}"] = ("Error restoring: {0}", "Erro ao restaurar: {0}", "Fehler beim Wiederherstellen: {0}", "Erreur lors de la restauration : {0}"),
-        ["Velocidad y duplex"] = ("Speed & Duplex", "Velocidade e duplex", "Geschwindigkeit und Duplex", "Vitesse et duplex"),
-        ["Control de flujo"] = ("Flow Control", "Controle de fluxo", "Flusssteuerung", "Contrôle de flux"),
-        ["Moderación de interrupciones"] = ("Interrupt Moderation", "Moderação de interrupções", "Unterbrechungsmoderation", "Modération des interruptions"),
-        ["Modo ecológico (EEE)"] = ("Energy-Efficient Ethernet (EEE)", "Modo ecológico (EEE)", "Energieeffizientes Ethernet (EEE)", "Ethernet économe en énergie (EEE)"),
-        ["Ahorro de energía de Windows"] = ("Windows power saving", "Economia de energia do Windows", "Windows-Energiesparmodus", "Économie d'énergie Windows"),
-        ["Negociación automática"] = ("Auto Negotiation", "Negociação automática", "Automatische Aushandlung", "Négociation automatique"),
-        ["10 Mbps Half Duplex"] = ("10 Mbps Half Duplex", "10 Mbps Half Duplex", "10 Mbps Halbduplex", "10 Mbps semi-duplex"),
-        ["10 Mbps Full Duplex"] = ("10 Mbps Full Duplex", "10 Mbps Full Duplex", "10 Mbps Vollduplex", "10 Mbps full duplex"),
-        ["100 Mbps Half Duplex"] = ("100 Mbps Half Duplex", "100 Mbps Half Duplex", "100 Mbps Halbduplex", "100 Mbps semi-duplex"),
-        ["100 Mbps Full Duplex"] = ("100 Mbps Full Duplex", "100 Mbps Full Duplex", "100 Mbps Vollduplex", "100 Mbps full duplex"),
-        ["1.0 Gbps Full Duplex"] = ("1.0 Gbps Full Duplex", "1.0 Gbps Full Duplex", "1,0 Gbit/s Vollduplex", "1,0 Gbps full duplex"),
-        ["2.5 Gbps Full Duplex"] = ("2.5 Gbps Full Duplex", "2.5 Gbps Full Duplex", "2,5 Gbit/s Vollduplex", "2,5 Gbps full duplex"),
-        ["Tx y Rx"] = ("Tx & Rx", "Tx e Rx", "Tx und Rx", "Tx et Rx"),
-        ["Solo Rx"] = ("Rx only", "Somente Rx", "Nur Rx", "Rx uniquement"),
-        ["Solo Tx"] = ("Tx only", "Somente Tx", "Nur Tx", "Tx uniquement"),
-        ["Permitir que Windows apague el dispositivo"] = ("Allow Windows to turn off the device", "Permitir que o Windows desligue o dispositivo", "Windows erlauben, das Gerät auszuschalten", "Autoriser Windows à éteindre l'appareil"),
-        ["Impedir que Windows apague el dispositivo"] = ("Prevent Windows from turning off the device", "Impedir que o Windows desligue o dispositivo", "Windows am Ausschalten des Geräts hindern", "Empêcher Windows d'éteindre l'appareil"),
         ["TtAdapterSpeedDuplex"] = ("Forces a fixed link speed instead of auto-negotiation. Keep Auto: it always picks the best the other end supports. Forcing a speed below your link (e.g. 100 Mbps on a gigabit line) caps your bandwidth. Only useful to stabilize a flaky link that keeps renegotiating.", "Força uma velocidade fixa em vez da negociação automática. Mantenha Auto: sempre escolhe o melhor que a outra ponta suporta. Forçar abaixo do seu link (ex.: 100 Mbps num cabo de 1 Gbps) limita sua banda. Útil só para estabilizar um link instável.", "Erzwingt eine feste Verbindungsgeschwindigkeit statt Auto-Negotiation. Auto behalten: wählt immer das Beste, das die Gegenseite unterstützt. Erzwingen unterhalb Ihres Links (z. B. 100 Mbit/s an einer Gigabit-Leitung) begrenzt die Bandbreite. Nur zur Stabilisierung instabiler Verbindungen sinnvoll.", "Force une vitesse de liaison fixe au lieu de la négociation automatique. Gardez Auto : il choisit toujours le meilleur supporté par l'autre extrémité. Forcer en dessous (ex. 100 Mbps sur un lien gigabit) bride votre débit. Utile seulement pour stabiliser un lien instable."),
         ["TtAdapterFlowControl"] = ("Pause frames when the receiver is overwhelmed. On a healthy low-latency LAN it adds delay for nothing; disabling it favors responsiveness. → OFF for gaming; ON if you see packet loss from a congested switch or Wi-Fi.", "Quadros de pausa quando o receptor está sobrecarregado. Em uma LAN saudável de baixa latência, adiciona atraso sem motivo; desativá-lo favorece a resposta. → OFF para jogos; ON se vê perda de pacotes por switch ou Wi-Fi congestionado.", "Pausiert Frames bei überlastetem Empfänger. In einem gesunden LAN mit niedriger Latenz nur unnötige Verzögerung; Deaktivieren begünstigt Reaktionsfähigkeit. → OFF fürs Gaming; ON bei Paketverlust durch überlasteten Switch/WLAN.", "Trames de pause quand le récepteur est saturé. Sur un LAN sain à faible latence, ajoute du délai inutilement ; le désactiver favorise la réactivité. → OFF pour le jeu ; ON si pertes de paquets (switch/Wi-Fi saturé)."),
         ["TtAdapterInterruptModeration"] = ("Batches adapter interrupts instead of one per packet: less CPU overhead, slightly higher latency. Gaming/latency tuning usually disables it; heavy download users keep it. Try both on your NIC.", "Agrupa interrupciones del adaptador en vez de una por paquete: menos uso de CPU, latencia levemente mayor. El tuning de latencia suele desactivarlo; para descargas pesadas conviene dejarlo. Probá ambas en tu placa.", "Bündelt Adapter-Unterbrechungen statt einer pro Paket: weniger CPU-Last, minimal höhere Latenz. Latenz-Tuning deaktiviert es meist; Vielfetcher lassen es an. An Ihrer Karte testen.", "Regroupe les interruptions au lieu d'une par paquet : moins de charge CPU, latence légèrement supérieure. L'optimisation latence le désactive souvent ; pour les gros téléchargements, gardez-le. Testez sur votre carte."),
@@ -1460,7 +1448,6 @@ public static class Translations
         ["Tareas programadas que el boost deshabilita mientras jugás y re-habilita al cerrar el juego. El antivirus (Defender en vivo) no se toca."] = ("Scheduled tasks that the boost disables while you play and re-enables when you close the game. The antivirus (live Defender) is not touched.", "Tarefas agendadas que o boost desativa enquanto você joga e reativa ao fechar o jogo. O antivírus (Defender em tempo real) não é tocado.", "Geplante Aufgaben, die der Boost beim Spielen deaktiviert und beim Schließen des Spiels wieder aktiviert. Das Antivirus (Defender in Echtzeit) wird nicht berührt.", "Tâches planifiées que le boost désactive pendant que vous jouez et réactive à la fermeture du jeu. L'antivirus (Defender en temps réel) n'est pas touché."),
         ["Buscar tarea..."] = ("Search task...", "Buscar tarefa...", "Aufgabe suchen...", "Rechercher une tâche..."),
         ["Whitelist"] = ("Whitelist", "Whitelist", "Whitelist", "Whitelist"),
-        ["Todas"] = ("All", "Todas", "Alle", "Toutes"),
         ["\\Carpeta\\Tarea de la tarea a pausar"] = ("\\Folder\\Task of the task to pause", "\\Pasta\\Tarefa da tarefa a pausar", "\\Ordner\\Aufgabe der zu pausierenden Aufgabe", "\\Dossier\\Tâche de la tâche à mettre en pause"),
         ["Agregar tarea"] = ("Add task", "Adicionar tarefa", "Aufgabe hinzufügen", "Ajouter une tâche"),
         ["Agregadas manualmente"] = ("Added manually", "Adicionadas manualmente", "Manuell hinzugefügt", "Ajoutées manuellement"),
@@ -1726,6 +1713,7 @@ public static class Translations
         ["Filtrá por nombre técnico o nombre para mostrar. El desplegable separa los servicios recomendados para gaming del resto."] = ("Filter by technical or display name. The dropdown separates gaming-recommended services from the rest.", "Filtre por nome técnico ou nome de exibição. O menu suspenso separa os serviços recomendados para gaming do resto.", "Nach technischem oder Anzeigenamen filtern. Das Dropdown trennt die für Gaming empfohlenen Dienste vom Rest.", "Filtrez par nom technique ou d'affichage. Le menu déroulant sépare les services recommandés pour le gaming du reste."),
         ["Recomendados"] = ("Recommended", "Recomendados", "Empfohlen", "Recommandés"),
         ["Todos"] = ("All", "Todos", "Alle", "Tous"),
+        ["Todas"] = ("All tasks", "Todas", "Alle Aufgaben", "Toutes"),
         ["Servicio crítico del sistema: WinForge no permite cambiarlo."] = ("Critical system service: WinForge doesn't allow changing it.", "Serviço crítico do sistema: o WinForge não permite alterá-lo.", "Kritischer Systemdienst: WinForge erlaubt keine Änderung.", "Service système critique : WinForge ne permet pas de le modifier."),
         ["Actualización automática pausada"] = ("Automatic refresh paused", "Atualização automática pausada", "Automatische Aktualisierung pausiert", "Actualisation automatique en pause"),
         ["La lista se actualiza automáticamente"] = ("The list refreshes automatically", "A lista é atualizada automaticamente", "Die Liste wird automatisch aktualisiert", "La liste se met à jour automatiquement"),
@@ -2147,8 +2135,6 @@ public static class Translations
         ["Hacé clic en Analizar para medir el espacio de cada categoría de limpieza. Después podés desmarcar lo que no quieras borrar."] = ("Click Analyze to measure the space of each cleanup category. Then you can uncheck what you don't want to delete.", "Clique em Analisar para medir o espaço de cada categoria de limpeza. Depois você pode desmarcar o que não quiser excluir.", "Klicke auf Analysieren, um den Speicherplatz jeder Reinigungskategorie zu messen. Danach kannst du abwählen, was du nicht löschen willst.", "Clique sur Analyser pour mesurer l'espace de chaque catégorie de nettoyage. Tu peux ensuite décocher ce que tu ne veux pas supprimer."),
         ["Escanear"] = ("Scan", "Escanear", "Scannen", "Scanner"),
         ["Abrir conexiones de red para configurar IPv4 manualmente"] = ("Open network connections to configure IPv4 manually", "Abrir conexões de rede para configurar IPv4 manualmente", "Netzwerkverbindungen öffnen, um IPv4 manuell zu konfigurieren", "Ouvrir les connexions réseau pour configurer IPv4 manuellement"),
-        ["Adaptador de red"] = ("Network adapter", "Adaptador de rede", "Netzwerkadapter", "Adaptateur réseau"),
-        ["Restaurar valores de fábrica"] = ("Restore factory values", "Restaurar valores de fábrica", "Werkswerte wiederherstellen", "Restaurer les valeurs d'usine"),
 
         // ----- Ventiladores, memoria y sistema -----
         ["4 columnas"] = ("4 columns", "4 colunas", "4 Spalten", "4 colonnes"),
@@ -2241,6 +2227,42 @@ public static class Translations
             ["FPS ↑máx ↓mín"] = ("FPS ↑max ↓min", "FPS ↑máx ↓mín", "FPS ↑max ↓min", "FPS ↑max ↓min"),
             ["CPU GHz"] = ("CPU GHz", "CPU GHz", "CPU GHz", "CPU GHz"),
             ["RAM usada/total"] = ("RAM used/total", "RAM usada/total", "RAM belegt/gesamt", "RAM utilisée/totale"),
+            // ===== TCP avanzado: plantillas del stack y textos de las secciones que quedan =====
+            ["Plantillas TCP (avanzado)"] = ("TCP templates (advanced)", "Modelos TCP (avançado)", "TCP-Vorlagen (erweitert)", "Modèles TCP (avancé)"),
+            ["Editor de la plantilla del stack: RTO mínimo, congestión inicial, delayed ACK, RACK y sondeo de pérdida de cola. Son las perillas que usan los tweakers y que Windows no expone en el panel normal."] = ("Stack template editor: minimum RTO, initial congestion window, delayed ACK, RACK and tail-loss probe. These are the knobs tweakers use and Windows doesn't expose in its normal panel.", "Editor do modelo da pilha: RTO mínimo, congestão inicial, delayed ACK, RACK e sondagem de perda de cauda. São os ajustes que os tweakers usam e que o Windows não expõe no painel normal.", "Editor der Stack-Vorlage: minimales RTO, anfängliches Congestion-Fenster, Delayed ACK, RACK und Tail-Loss-Probe. Das sind die Schrauben der Tweaker, die Windows im normalen Panel nicht zeigt.", "Éditeur du modèle de la pile : RTO minimal, congestion initiale, delayed ACK, RACK et sonde de perte de queue. Ce sont les réglages qu'utilisent les tweakers et que Windows n'expose pas dans son panneau normal."),
+            ["Consultando plantillas TCP..."] = ("Reading TCP templates...", "Consultando modelos TCP...", "TCP-Vorlagen werden gelesen...", "Lecture des modèles TCP..."),
+            ["No se pudieron leer las plantillas TCP."] = ("TCP templates could not be read.", "Não foi possível ler os modelos TCP.", "TCP-Vorlagen konnten nicht gelesen werden.", "Les modèles TCP n'ont pas pu être lus."),
+            ["Aplicando plantilla TCP..."] = ("Applying TCP template...", "Aplicando modelo TCP...", "TCP-Vorlage wird angewendet...", "Application du modèle TCP..."),
+            ["Plantilla TCP aplicada. Algunos cambios solo afectan conexiones nuevas."] = ("TCP template applied. Some changes only affect new connections.", "Modelo TCP aplicado. Algumas alterações afetam apenas conexões novas.", "TCP-Vorlage angewendet. Manche Änderungen betreffen nur neue Verbindungen.", "Modèle TCP appliqué. Certaines modifications n'affectent que les nouvelles connexions."),
+            ["Restaurando plantilla..."] = ("Restoring template...", "Restaurando modelo...", "Vorlage wird wiederhergestellt...", "Restauration du modèle..."),
+            ["Plantilla anterior restaurada."] = ("Previous template restored.", "Modelo anterior restaurado.", "Vorherige Vorlage wiederhergestellt.", "Modèle précédent restauré."),
+            ["No hay backup de esta plantilla todavía."] = ("There's no backup for this template yet.", "Ainda não há backup deste modelo.", "Für diese Vorlage gibt es noch kein Backup.", "Il n'y a pas encore de sauvegarde pour ce modèle."),
+            ["Restaurar plantilla"] = ("Restore template", "Restaurar modelo", "Vorlage wiederherstellen", "Restaurer le modèle"),
+            ["gestionada por Windows"] = ("managed by Windows", "gerenciada pelo Windows", "von Windows verwaltet", "gérée par Windows"),
+            ["Windows administra esta plantilla según las condiciones de la red: no tiene valores editables."] = ("Windows manages this template based on network conditions: it has no editable values.", "O Windows administra este modelo conforme as condições da rede: não tem valores editáveis.", "Windows verwaltet diese Vorlage je nach Netzwerkbedingungen: sie hat keine editierbaren Werte.", "Windows gère ce modèle selon les conditions du réseau : il n'a aucune valeur modifiable."),
+            ["Proveedor de congestión"] = ("Congestion provider", "Provedor de congestionamento", "Congestion-Provider", "Fournisseur de congestion"),
+            ["RTO mínimo (ms)"] = ("Minimum RTO (ms)", "RTO mínimo (ms)", "Minimales RTO (ms)", "RTO minimal (ms)"),
+            ["20 a 300"] = ("20 to 300", "20 a 300", "20 bis 300", "20 à 300"),
+            ["Ventana de congestión inicial (MSS)"] = ("Initial congestion window (MSS)", "Janela de congestionamento inicial (MSS)", "Anfängliches Congestion-Fenster (MSS)", "Fenêtre de congestion initiale (MSS)"),
+            ["2 a 64"] = ("2 to 64", "2 a 64", "2 bis 64", "2 à 64"),
+            ["Delayed ACK: espera (ms)"] = ("Delayed ACK: wait (ms)", "Delayed ACK: espera (ms)", "Delayed ACK: Wartezeit (ms)", "Delayed ACK : attente (ms)"),
+            ["10 a 600 · más bajo = ACKs más rápidos"] = ("10 to 600 · lower = faster ACKs", "10 a 600 · menor = ACKs mais rápidos", "10 bis 600 · niedriger = schnellere ACKs", "10 à 600 · plus bas = ACKs plus rapides"),
+            ["Delayed ACK: frecuencia"] = ("Delayed ACK: frequency", "Delayed ACK: frequência", "Delayed ACK: Häufigkeit", "Delayed ACK : fréquence"),
+            ["1 a 255 · 1 = ACK inmediato por segmento"] = ("1 to 255 · 1 = immediate ACK per segment", "1 a 255 · 1 = ACK imediato por segmento", "1 bis 255 · 1 = sofortiges ACK pro Segment", "1 à 255 · 1 = ACK immédiat par segment"),
+            ["Retransmisiones SYN máximas"] = ("Maximum SYN retransmissions", "Retransmissões SYN máximas", "Maximale SYN-Neuübertragungen", "Retransmissions SYN maximales"),
+            ["Resistencia RTT sin SACK"] = ("RTT resiliency without SACK", "Resistência a RTT sem SACK", "RTT-Robustheit ohne SACK", "Résistance au RTT sans SACK"),
+            ["Reinicio de ventana de congestión"] = ("Congestion window restart", "Reinício da janela de congestionamento", "Neustart des Congestion-Fensters", "Redémarrage de la fenêtre de congestion"),
+            ["RACK (recuperación por tiempo)"] = ("RACK (time-based recovery)", "RACK (recuperação por tempo)", "RACK (zeitbasierte Wiederherstellung)", "RACK (récupération temporelle)"),
+            ["Sondeo de pérdida de cola"] = ("Tail-loss probe", "Sondagem de perda de cauda", "Tail-Loss-Probe", "Sonde de perte de queue"),
+            ["Solo la plantilla global expone RACK, el sondeo de pérdida de cola y el reinicio de ventana: en las demás no se pueden leer ni aplicar desde acá."] = ("Only the global template exposes RACK, the tail-loss probe and window restart: in the others they can't be read or applied from here.", "Somente o modelo global expõe RACK, a sondagem de perda de cauda e o reinício de janela: nos demais não se podem ler nem aplicar daqui.", "Nur die globale Vorlage bietet RACK, Tail-Loss-Probe und Fenster-Neustart: bei den anderen lassen sie sich hier nicht lesen oder anwenden.", "Seul le modèle global expose RACK, la sonde de perte de queue et le redémarrage de fenêtre : dans les autres, ils ne peuvent être ni lus ni appliqués ici."),
+            ["No se pudieron leer las reglas de red de Windows."] = ("Windows network rules could not be read.", "Não foi possível ler as regras de rede do Windows.", "Windows-Netzwerkregeln konnten nicht gelesen werden.", "Les règles réseau de Windows n'ont pas pu être lues."),
+            ["Ejecutable"] = ("Executable", "Executável", "Ausführbare Datei", "Exécutable"),
+            ["Reintentar"] = ("Retry", "Tentar novamente", "Erneut versuchen", "Réessayer"),
+            ["No se pudieron aplicar los cambios: {0}"] = ("The changes could not be applied: {0}", "Não foi possível aplicar as alterações: {0}", "Die Änderungen konnten nicht angewendet werden: {0}", "Les modifications n'ont pas pu être appliquées : {0}"),
+            ["Error cargando TCP: {0}"] = ("Error loading TCP: {0}", "Erro ao carregar TCP: {0}", "Fehler beim Laden von TCP: {0}", "Erreur lors du chargement de TCP : {0}"),
+            ["Error cargando el estado TCP: {0}"] = ("Error loading TCP state: {0}", "Erro ao carregar o estado TCP: {0}", "Fehler beim Laden des TCP-Status: {0}", "Erreur lors du chargement de l'état TCP : {0}"),
+            ["Error cargando {0}: {1}"] = ("Error loading {0}: {1}", "Erro ao carregar {0}: {1}", "Fehler beim Laden von {0}: {1}", "Erreur lors du chargement de {0} : {1}"),
+
     };
 
     public static bool HasKey(string es) => All.ContainsKey(es);
@@ -2509,19 +2531,126 @@ public static class Translations
         if (set.Count == 1) { foreach (var s in set) return s; }
 
         // Varias claves posibles: gana la que el idioma activo renderiza igual al texto.
-        string? match = null;
+        var matches = new List<string>();
+        foreach (var s in set)
+            if (string.Equals(Render(lang, s), text, StringComparison.Ordinal)) matches.Add(s);
+
+        if (matches.Count == 1) return matches[0];
+        if (matches.Count > 1)
+        {
+            // Todas rinden igual acá (si no, no estarían en la lista). Si solo una es
+            // clave de la app y las demás son esa misma cadena escrita distinto, gana la
+            // de la app (ver CanonicalSpelling); si no, no se adivina.
+            if (CanonicalSpelling(matches) is { } canonical) return canonical;
+            return null;
+        }
+
+        // Ninguna clave rinde así en el idioma activo: el texto es una traducción (de
+        // un pack o de un componente) que comparten DOS o más claves. Devolver null
+        // dejaba el nodo clavado en el idioma extranjero para siempre: el pack chino
+        // traduce "RAM" y "Memoria" al mismo "内存", así que el título de la card de
+        // RAM quedaba en 内存. (El otro caso reportado, "Sistema Operativo" contra el
+        // "Sistema operativo" del catálogo, se resuelve más arriba: es la misma grafía.)
+        // Se desempata de forma determinista, solo acá (donde antes no se hacía nada):
+        //  1. gana una clave propia de la app (tabla embebida) sobre el español de un
+        //     componente, que puede diferir solo en mayúsculas y colisionar afuera;
+        //  2. entre claves propias, gana la que la app NO traduce en ningún idioma
+        //     embebido: son los acrónimos y nombres propios (RAM, CPU, GPU, BIOS), los
+        //     únicos que un pack traduce a una palabra que otra clave comparte.
+        // Si el ganador no queda único se devuelve null: no se adivina.
+        return TieBreak(set);
+    }
+
+    /// <summary>
+    /// Entre varias claves que rinden EXACTAMENTE igual en el idioma activo, devuelve la
+    /// de la app cuando es la única y todas las demás son esa misma cadena escrita
+    /// distinto (mayúscula, tilde, espacio de más). Es el caso del catálogo de
+    /// componentes, que aporta "Sistema operativo" (minúscula) mientras la tabla tiene
+    /// "Sistema Operativo": las dos rinden 操作系统 en chino y "Operating system" en
+    /// inglés, así que el título de la card de Sistema quedaba en el idioma extranjero en
+    /// los seis idiomas. La grafía de la app es la canónica: no cambia lo que se ve
+    /// (rinden igual) y deja el texto atribuible.
+    ///
+    /// Con dos claves DE LA APP devuelve null: "Prioridad de E/S" (etiqueta) y "prioridad
+    /// de E/S" (frase) son las dos legítimas, y elegir una cambiaría la mayúscula visible.
+    /// </summary>
+    private static string? CanonicalSpelling(List<string> matches)
+    {
+        string? own = null;
+        int ownCount = 0;
+        foreach (var s in matches)
+            if (All.ContainsKey(s)) { ownCount++; own = s; }
+        if (ownCount != 1) return null;
+
+        foreach (var s in matches)
+            if (!IsSameSpelling(s, own!)) return null;
+        return own;
+    }
+
+    /// <summary>True si las dos cadenas son la misma grafía salvo tilde, mayúscula o espacios.</summary>
+    private static bool IsSameSpelling(string a, string b)
+    {
+        if (string.Equals(a, b, StringComparison.Ordinal)) return true;
+        return string.Equals(FoldToLower(a), FoldToLower(b), StringComparison.Ordinal);
+    }
+
+    /// <summary>Forma comparativa: sin tildes, en minúscula y con los espacios colapsados.</summary>
+    private static string FoldToLower(string s)
+    {
+        var decomposed = s.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder(decomposed.Length);
+        foreach (var c in decomposed)
+        {
+            if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c)
+                == System.Globalization.UnicodeCategory.NonSpacingMark) continue;
+            sb.Append(char.ToLowerInvariant(c));
+        }
+        return string.Join(' ', sb.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    /// <summary>
+    /// Desempate de último recurso para un texto que varias claves comparten y que
+    /// ninguna rinde igual en el idioma activo. Solo devuelve una clave si el ganador
+    /// queda único; con empate devuelve null para que el texto se respete.
+    /// </summary>
+    private static string? TieBreak(HashSet<string> set)
+    {
+        string? own = null;
+        int ownCount = 0;
+        foreach (var s in set)
+            if (All.ContainsKey(s)) { ownCount++; own = s; }
+
+        if (ownCount == 0) return null;
+        if (ownCount == 1) return own;
+
+        // El desempate por acrónimo vale SOLO para el choque de a dos: el acrónimo
+        // contra UNA palabra común. Con dos o más palabras comunes compartiendo el
+        // texto, elegir la invariante es adivinar y encima corrompe: el pack chino
+        // traduce «Juego», «Videojuegos» y el preset «Gaming» al mismo 游戏, así que el
+        // ítem «Videojuegos» del desplegable de la biblioteca terminaba escrito
+        // "Gaming" (TieBreak devolvía «Gaming» por ser la única invariante). Acá no se
+        // adivina: se devuelve null y el texto se respeta.
+        if (ownCount > 2) return null;
+
+        string? invariant = null;
         foreach (var s in set)
         {
-            if (!string.Equals(Render(lang, s), text, StringComparison.Ordinal)) continue;
-            if (match != null) return null; // sigue siendo ambiguo en este idioma
-            match = s;
+            if (!All.TryGetValue(s, out var tr)) continue;
+            if (!string.Equals(tr.En, s, StringComparison.Ordinal)) continue;
+            if (!string.Equals(tr.Pt, s, StringComparison.Ordinal)) continue;
+            if (!string.Equals(tr.De, s, StringComparison.Ordinal)) continue;
+            if (!string.Equals(tr.Fr, s, StringComparison.Ordinal)) continue;
+            if (invariant != null) return null;
+            invariant = s;
         }
-        return match;
+        return invariant;
     }
 
     /// <summary>
     /// True si el texto es una clave (español) o una traducción resoluble a UNA sola
-    /// clave para el idioma activo. Con ambigüedad devuelve false (el texto se respeta).
+    /// clave para el idioma activo. Si varias claves comparten el texto se desempata
+    /// (ver <see cref="TieBreak"/>): solo con un ganador único. Si el empate persiste
+    /// devuelve false (el texto se respeta).
     /// </summary>
     public static bool TryGetSource(string text, string lang, out string source)
     {

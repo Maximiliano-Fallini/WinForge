@@ -146,6 +146,14 @@ public sealed partial class OverlayPage : Page
         {
             _loading = false;
         }
+
+        // Reconciliación: si el switch quedó APAGADO (por el ajuste persistido) pero
+        // el servicio sigue activo, se apaga acá. Un estado divergente (switch OFF y
+        // overlay corriendo) dejaba el overlay encima del juego sin forma de
+        // apagarlo desde la página.
+        if (!OverlayEnabledToggle.IsOn && _overlay.Enabled)
+            _overlay.Enabled = false;
+
         UpdateStatusText();
     }
 
@@ -607,8 +615,9 @@ public sealed partial class OverlayPage : Page
         {
             new() { "cpuUsage", "cpuMhz", "cpuTemp", "cpuWatts" },
             new() { "gpuUsage", "gpuMhz", "gpuTemp", "gpuWatts" },
-            new() { "ramMb", "ramMhz" },
-            new() { "fps" },
+            new() { OverlayWindow.GpuMemId },
+            new() { "ramMb", "ramMhz", OverlayWindow.RamPercentId },
+            new() { "fps", OverlayWindow.FpsMaxMinId },
             new() { "low1" },
             new() { "low01" },
             new() { "latencyGraph" }
@@ -629,6 +638,7 @@ public sealed partial class OverlayPage : Page
     private static readonly (string Id, string Label)[] MetricBadgeDefs =
     {
         ("fps", "FPS"),
+        ("fpsMaxMin", "FPS máx/mín"),
         ("low1", "1% low"),
         ("low01", "0.1% low"),
         ("latencyGraph", "Gráfico ms"),
@@ -640,8 +650,10 @@ public sealed partial class OverlayPage : Page
         ("gpuMhz", "GPU MHz"),
         ("gpuTemp", "GPU °C"),
         ("gpuWatts", "GPU W"),
+        ("gpuMem", "GPU VRAM"),
         ("ramMb", "RAM MB"),
-        ("ramMhz", "RAM MHz")
+        ("ramMhz", "RAM MHz"),
+        ("ramPercent", "RAM %")
     };
 
     /// <summary>Etiquetas de badges SOLO en modo horizontal: reflejan lo que la
@@ -651,15 +663,18 @@ public sealed partial class OverlayPage : Page
     /// efecto: la barra no lo dibuja — caso de 1% low, 0.1% low y gráfico ms).</summary>
     private static readonly (string Id, string Label)[] HorizontalBadgeDefs =
     {
-        ("fps", "FPS ↑máx ↓mín"),
+        ("fps", "FPS"),
+        ("fpsMaxMin", "FPS ↑máx ↓mín"),
         ("cpuUsage", "CPU %"),
         ("cpuMhz", "CPU GHz"),
         ("cpuTemp", "CPU °C"),
         ("cpuWatts", "CPU W"),
         ("gpuUsage", "GPU %"),
         ("gpuTemp", "GPU °C"),
+        ("gpuMem", "VRAM usada/total"),
         ("ramMb", "RAM usada/total"),
-        ("ramMhz", "RAM MHz")
+        ("ramMhz", "RAM MHz"),
+        ("ramPercent", "RAM %")
     };
 
     /// <summary>Etiqueta visible de un badge según el layout: en horizontal, la
@@ -765,6 +780,9 @@ public sealed partial class OverlayPage : Page
             enabled = BuildDefaultMetricOrder();
             rows = ChunkRows(enabled);
             rows = OverlayWindow.SplitFpsAndLows(rows);
+            // Filas generadas (no guardadas): NormalizeRows las limpia por familia
+            // (ChunkRows puede mezclar gpu/ram al cambiar la cantidad de badges).
+            rows = OverlayWindow.NormalizeRows(rows);
         }
         else
         {
@@ -776,6 +794,13 @@ public sealed partial class OverlayPage : Page
             rows = OverlayWindow.GroupByFamily(flat);
             rows = OverlayWindow.SplitFpsAndLows(rows);
         }
+
+        // Migración a los badges nuevos (FPS máx/mín separado, VRAM y RAM %):
+        // los ajustes guardados no tienen esos ids → se activan si su familia ya
+        // estaba activa (ver MigrateNewBadgeDefaults).
+        int enabledBeforeMigration = enabled.Count;
+        enabled = OverlayWindow.MigrateNewBadgeDefaults(rows, enabled);
+        bool injectedNewBadges = enabled.Count > enabledBeforeMigration;
 
         // Solo partir filas que pasen de 4 (ChunkRows). NO NormalizeRows:
         // respetar el orden exacto guardado por el usuario.
@@ -793,7 +818,11 @@ public sealed partial class OverlayPage : Page
         _rows = GroupContiguousRows(rows);
         _enabledMetrics.UnionWith(enabled);
         RebuildPanel();
-        if (migrated) SaveMetricOrder();
+        // Persistir la migración YA: el overlay renderiza leyendo los settings, no
+        // el modelo en memoria de la página. Sin este guardado, los badges nuevos
+        // quedaban ON en la página pero el overlay no los dibujaba hasta el
+        // próximo cambio guardado (el mismo síntoma "switch encendido sin efecto").
+        if (migrated || injectedNewBadges) SaveMetricOrder();
         return migrated;
     }
 
@@ -1240,13 +1269,19 @@ public sealed partial class OverlayPage : Page
             if (b("overlay.gpuMhz", true)) order.Add("gpuMhz");
             if (b("overlay.gpuTemp", true)) order.Add("gpuTemp");
             if (b("overlay.gpuWatts", false)) order.Add("gpuWatts");
+            order.Add(OverlayWindow.GpuMemId); // VRAM usada/total
         }
         if (b("overlay.showRam", true))
         {
             order.Add("ramMb");
             order.Add("ramMhz");
+            order.Add(OverlayWindow.RamPercentId); // % de uso
         }
-        if (b("overlay.showFps", true)) order.Add("fps");
+        if (b("overlay.showFps", true))
+        {
+            order.Add("fps");
+            order.Add(OverlayWindow.FpsMaxMinId); // máx/mín de la sesión
+        }
         if (b("overlay.low1", true)) order.Add("low1");
         if (b("overlay.low01", false)) order.Add("low01");
         return order;

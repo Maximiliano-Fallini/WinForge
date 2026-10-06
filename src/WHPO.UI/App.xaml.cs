@@ -22,6 +22,30 @@ public partial class App : Application
     private static bool _createdNew = false;
 
     /// <summary>
+    /// El usuario mandó el arranque a la bandeja desde la X del splash: la ventana
+    /// principal se crea igual, pero se oculta al terminar de cargar en vez de
+    /// mostrarse (el icono de la bandeja queda disponible para abrirla después).
+    /// </summary>
+    private bool _hideToTrayFromSplash;
+
+    // ===== Estado del cierre del arranque (apertura al 100 %) =====
+    // La ventana principal ya no se abre dentro de la carga: se construye oculta
+    // (paso "Preparando la interfaz…") y se abre cuando el 100 % del splash —la
+    // aguja en tope y el estado en "Listo"— ya está en pantalla. La señal la
+    // dispara splash.Complete() a través de SplashWindow.ReadyToOpenAppAsync.
+
+    /// <summary>La ventana principal ya está construida (puede abrirse).</summary>
+    private bool _mainWindowReady;
+
+    /// <summary>El arranque debe abrir la ventana al completarse el splash: false
+    /// en el arranque minimizado a la bandeja o si la X del splash mandó la app a
+    /// la bandeja (en ambos casos la ventana queda oculta de todos modos).</summary>
+    private bool _openAppWhenSplashDone = true;
+
+    /// <summary>La espera del 100 % ya arrancó (no repetirla).</summary>
+    private bool _openAsyncStarted;
+
+    /// <summary>
     /// Initializes the singleton application object. This is the first line of authored code
     /// executed, and as such is the logical equivalent of main or WinMain.
     /// </summary>
@@ -157,9 +181,14 @@ public partial class App : Application
 
     /// <summary>
     /// Invoked when the application is launched.
+    ///
+    /// Es async desde que existe el splash de arranque: entre paso y paso hay que
+    /// devolverle el turno al bucle de mensajes, o la ventana recién creada no pinta
+    /// nada hasta que el arranque entero termine (el splash aparecería recién al
+    /// cerrarse) y la aguja no podría animarse.
     /// </summary>
     /// <param name="args">Details about the launch request and process.</param>
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         // Si ya hay una instancia, salir inmediatamente para no dejar procesos fantasma.
         if (_instanceMutex == null || !_createdNew)
@@ -189,6 +218,46 @@ public partial class App : Application
             return;
         }
 
+        var settingsService = Services.GetRequiredService<ISettingsService>();
+        var startupService = Services.GetRequiredService<IStartupService>();
+
+        // "Iniciar minimizado" se aplica SOLO cuando Windows lanza la app al iniciar
+        // sesión: el valor del registro Run de "Iniciar con Windows" lleva el flag
+        // --start-minimized cuando la opción está activa, así que un arranque manual
+        // (doble clic, acceso directo) siempre abre la ventana normalmente.
+        // Compat: instalaciones que activaron la opción antes de que existiera el flag
+        // siguen minimizando en todo arranque hasta que la página de Configuración
+        // normalice el valor del registro.
+        bool startMinimized = StartupMinimizedRequested();
+        if (!startMinimized
+            && settingsService.Get("window.startMinimized", false)
+            && !startupService.HasStartMinimizedFlag())
+        {
+            startMinimized = startupService.IsEnabled();
+        }
+
+        bool themeRestart = Environment.GetCommandLineArgs().Contains("--theme-restart");
+
+        // ===== Splash de arranque =====
+        // Se muestra apenas arranca la app, ANTES de cualquier trabajo pesado, para
+        // tapar el hueco entre el doble clic y la primera ventana. Se saltea en los
+        // dos casos donde una ventana de carga sería un estorbo: el relanzamiento de
+        // tema (--theme-restart: el usuario viene de cerrar la app y espera volver a
+        // verla, no una carga) y el arranque minimizado a la bandeja (lo lanza Windows
+        // al iniciar sesión, sin nadie mirando la pantalla).
+        SplashWindow? splash = null;
+        if (!themeRestart && !startMinimized)
+        {
+            splash = SplashWindow.Start();
+            if (splash != null)
+            {
+                // La X del splash manda el arranque a la bandeja: la carga sigue igual
+                // y la ventana principal se crea oculta (ver CreateMainWindow).
+                splash.HideToTrayRequested += OnSplashHideToTrayRequested;
+                await splash.ReportAsync(14, I18n.T("Preparando el entorno…"));
+            }
+        }
+
         // Pre-calentar el sensor de temperatura desde el arranque (carga el driver de
         // LHM en segundo plano) para que la pestaña Núcleos muestre la temperatura
         // de inmediato y no quede en "Cargando…" cuando el usuario navegue.
@@ -199,11 +268,23 @@ public partial class App : Application
         // de macros al navegar, solo si el switch está prendido y hay macros con
         // atajo: sin eso no hay hilo ni polling en segundo plano.
 
-        // Workshop: limpieza de desinstalaciones pendientes (*.uninstalled-*) y
-        // carga de los componentes descargados ANTES de crear la ventana — el
-        // navbar se arma a partir del registro en el constructor de MainWindow.
+        if (splash != null)
+            await splash.ReportAsync(42, I18n.T("Cargando componentes…"));
+
+        // ===== Trabajo pesado, fuera del hilo de UI =====
+        // La carga de componentes (leer módulos, hashes SHA-256, cargar ensambles
+        // con AssemblyLoadContext) y de packs de idioma (leer y deserializar JSON
+        // de %LocalAppData%) corre aquí EN EL HILO DE UI congela el splash
+        // alrededor del 75 %: sin repintado ni arrastre durante todo el bloque.
+        // Ya no: se van a segundo plano. Solo llenan listas y diccionarios (el
+        // hilo de UI los toca recién al navegar a una página), y el registro/
+        // {ThemeResource}/pinceles que sí dependen de la UI siguen acá.
         try
         {
+            // El navbar se arma a partir del registro en el constructor de
+            // MainWindow, que corre después de este await: al volver ya está lleno.
+            await Task.Run(() =>
+            {
             var componentCatalog = Services.GetRequiredService<WHPO.Core.Services.ComponentCatalogService>();
             var componentRegistry = Services.GetRequiredService<WHPO_UI.Components.ComponentRegistry>();
             componentCatalog.CleanupPendingUninstalls();
@@ -234,22 +315,28 @@ public partial class App : Application
             var cachedCatalog = componentCatalog.ReadCachedCatalog();
             if (cachedCatalog != null)
                 Translations.SetComponentStrings(cachedCatalog.Components.SelectMany(c => c.Translations()));
+            });
         }
         catch (Exception ex)
         {
             Services.GetRequiredService<ILoggingService>().LogWarning($"Workshop: carga de componentes instalados: {ex.Message}");
         }
 
+        if (splash != null)
+            await splash.ReportAsync(62, I18n.T("Cargando idiomas…"));
+
         // Paquetes de idioma: cargar los packs YA instalados ANTES de crear la ventana.
         // El motor de traducciones solo embebe es-AR (fuente) y en-US; el resto llega
         // como pack descargable. Sin esta carga, un pack instalado quedaba en disco sin
         // mergearse ni registrarse, así que el selector de idioma mostraba únicamente
         // los dos embebidos (el bug: "solo US y ARG").
+        // I/O puro (leer y deserializar JSON): también en segundo plano, por la
+        // misma razón que los componentes.
         try
         {
-            WHPO_UI.LanguagePacks.Initialize(
+            await Task.Run(() => WHPO_UI.LanguagePacks.Initialize(
                 Services.GetRequiredService<WHPO.Core.Services.LanguagePackService>(),
-                Services.GetRequiredService<ILoggingService>());
+                Services.GetRequiredService<ILoggingService>()));
         }
         catch (Exception ex)
         {
@@ -257,26 +344,15 @@ public partial class App : Application
                 .LogWarning($"Idiomas: no se pudieron cargar los packs instalados: {ex.Message}");
         }
 
+        if (splash != null)
+            await splash.ReportAsync(76, I18n.T("Aplicando configuración…"));
+
+        // El 76 % fue el último bloque pesado del hilo de App: desde acá al 100 %
+        // el splash queda fluido (animación y arrastre sin congelamiento) y el
+        // cierre del arranque solo construye la ventana oculta y cede el turno.
+
         // Marcador de sesión en el log: ayuda a separar corridas en fase de desarrollo.
         Services.GetRequiredService<ILoggingService>().LogInfo("===== WinForge iniciado =====");
-
-        var settingsService = Services.GetRequiredService<ISettingsService>();
-        var startupService = Services.GetRequiredService<IStartupService>();
-
-        // "Iniciar minimizado" se aplica SOLO cuando Windows lanza la app al iniciar
-        // sesión: el valor del registro Run de "Iniciar con Windows" lleva el flag
-        // --start-minimized cuando la opción está activa, así que un arranque manual
-        // (doble clic, acceso directo) siempre abre la ventana normalmente.
-        // Compat: instalaciones que activaron la opción antes de que existiera el flag
-        // siguen minimizando en todo arranque hasta que la página de Configuración
-        // normalice el valor del registro.
-        bool startMinimized = StartupMinimizedRequested();
-        if (!startMinimized
-            && settingsService.Get("window.startMinimized", false)
-            && !startupService.HasStartMinimizedFlag())
-        {
-            startMinimized = startupService.IsEnabled();
-        }
 
         // ===== Onboarding de primera ejecución =====
         // OnboardingWindow guarda "onboarding.complete" al terminar (Finish), pero
@@ -285,7 +361,7 @@ public partial class App : Application
         // se crea al cerrarlo: así el tema elegido ya está persistido cuando
         // ThemeService inicializa. Se saltea en relanzamientos de tema
         // (--theme-restart) y en arranques minimizados a la bandeja (inicio de sesión).
-        bool themeRestart = Environment.GetCommandLineArgs().Contains("--theme-restart");
+        // themeRestart y startMinimized se resolvieron arriba, antes del splash.
         bool showOnboarding = !settingsService.Get("onboarding.complete", false)
             && !themeRestart
             && !startMinimized;
@@ -299,6 +375,14 @@ public partial class App : Application
         // Negro/Azul) vuelve a estos valores. Debe correr antes de ts.Initialize.
         void CreateMainWindow()
         {
+            // Último tramo del splash: crear la ventana principal es el trabajo más
+            // pesado del arranque (tema, navbar, primera página).
+            splash?.Report(90, I18n.T("Preparando la interfaz…"));
+
+            // La ventana se construye SIN abrirse: antes el new + Activate del mismo
+            // paso la mostraba a mitad de la carga (el usuario veía la app apenas se
+            // destrababa el 75 %, con el splash todavía corriendo encima). La apertura
+            // real queda esperando el 100 %: MaybeOpenMainWindow → splash.Complete().
             _window = new MainWindow();
             _window.Closed += OnWindowClosed;
             MainWindowInstance = _window as MainWindow;
@@ -309,8 +393,6 @@ public partial class App : Application
             {
                 ts.Initialize();
             }
-
-            _window.Activate();
 
             // Idioma guardado sin su paquete instalado (pt-BR/de-DE/fr-FR se elegían
             // cuando esos idiomas venían embebidos en la app; ahora son descargables).
@@ -325,13 +407,69 @@ public partial class App : Application
             // muestra el ícono "Actualizar a vX" / "Versión X en desarrollo" en el navbar.
             MainWindowInstance?.BeginUpdateCheck();
 
-            if (startMinimized)
+            // Minimizado configurado (arranque con Windows) o pedido desde la X del
+            // splash: la ventana queda oculta (ver HideToTrayAtStartup al final de
+            // MaybeOpenMainWindow) y NO se abre al 100 %.
+            if (startMinimized || _hideToTrayFromSplash)
+                _openAppWhenSplashDone = false;
+
+            _mainWindowReady = true;
+            MaybeOpenMainWindow();
+
+            // Señal del 100 % del splash: acá termina la construcción de la ventana
+            // principal, así que es el momento del "Listo". La apertura real la
+            // ejecuta MaybeOpenMainWindow al recibir esta señal (sin splash, corre
+            // igual porque no espera nada). En el camino del onboarding Complete ya
+            // se llamó con el asistente en pantalla: es idempotente, no duplica nada.
+            splash?.Complete();
+        }
+
+        /// <summary>
+        /// Abre la ventana principal cuando el 100 % del splash ya está en pantalla:
+        /// espera la señal del splash (el hilo de App queda libre mientras el dial
+        /// termina su animación) y recién ahí la activa. Es el mismo Activate que
+        /// existía, pero en el instante exacto del "Listo" y no a mitad de la carga.
+        /// </summary>
+        async void MaybeOpenMainWindow()
+        {
+            // SIN _openAppWhenSplashDone en la guarda: el camino a la bandeja TAMBIÉN
+            // espera la señal y después hace Activate + Hide (la receta original del
+            // arranque oculto). Si retornara acá, la ventana no se abriría NI se
+            // ocultaría: quedaba flotando invisible y muerta en la bandeja.
+            if (!_mainWindowReady || _openAsyncStarted) return;
+            _openAsyncStarted = true;
+            var windowToOpen = _window;
+
+            try
+            {
+                // Señal del 100 % (aguja completada y "Listo"): la pone splash.Complete(),
+                // que corre en este mismo hilo de UI. La espera es pura animación del
+                // splash: el arranque ya no tiene trabajo pesado delante (ver arriba).
+                if (splash != null)
+                    await splash.ReadyToOpenAppAsync();
+            }
+            catch
+            {
+                // El splash desapareció sin completar (tope de seguridad, cierre
+                // externo): abrir igual, como siempre se hacía sin splash.
+            }
+
+            windowToOpen?.Activate();
+
+            // Arranque en la bandeja (minimizado configurado o X del splash): la
+            // ventana se activó para completar la inicialización y se oculta en la
+            // misma vuelta del bucle de mensajes, así no llega a verse.
+            if (!_openAppWhenSplashDone)
             {
                 MainWindowInstance?.HideToTrayAtStartup();
             }
         }
 
-        if (showOnboarding)
+        // La X del splash también saltea el asistente de primera configuración: el
+        // usuario pidió mandar la app a la bandeja, no abrir ventanas. Como el flag
+        // "onboarding.complete" queda en false, el asistente vuelve en el próximo
+        // arranque normal.
+        if (showOnboarding && !_hideToTrayFromSplash)
         {
             try
             {
@@ -343,6 +481,10 @@ public partial class App : Application
                 // próximo arranque), la app continúa al cerrarse la ventana.
                 onboarding.Closed += (_, _) => CreateMainWindow();
                 onboarding.Activate();
+
+                // El splash acompañaba la carga previa al asistente: con el asistente
+                // ya en pantalla, completa el dial, se desvanece y se cierra.
+                splash?.Complete();
             }
             catch (Exception ex)
             {
@@ -423,6 +565,22 @@ public partial class App : Application
                 return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// El usuario mandó el arranque a la bandeja desde la X del splash: se marca para
+    /// que la ventana principal se cree oculta. El splash ya se ocultó solo y la carga
+    /// sigue igual.
+    /// </summary>
+    private void OnSplashHideToTrayRequested()
+    {
+        _hideToTrayFromSplash = true;
+        try
+        {
+            Services.GetService<ILoggingService>()?
+                .LogInfo("Splash: la app terminará de cargar en la bandeja.");
+        }
+        catch { }
     }
 
     private void OnWindowClosed(object sender, Microsoft.UI.Xaml.WindowEventArgs args)

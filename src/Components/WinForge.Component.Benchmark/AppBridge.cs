@@ -220,6 +220,47 @@ internal static class AppBridge
         try { GetService<IOverlayMetricsService>()?.Stop(); } catch { }
     }
 
+    // =====================================================================
+    // Huella del equipo
+    // =====================================================================
+
+    /// <summary>
+    /// Claves ESTABLES de la huella. Viajan en el informe y en su JSON y NO cambian cuando
+    /// cambia el rótulo visible: dos informes se comparan por clave, no por el texto que se
+    /// muestra, así que renombrar una etiqueta no invalida las corridas ya guardadas. El rótulo
+    /// se traduce recién al pintarlo, con <see cref="FingerprintLabel"/>.
+    /// </summary>
+    public const string FingerprintOs = "os";
+    public const string FingerprintMachine = "machine";
+    public const string FingerprintCpu = "cpu";
+    public const string FingerprintRam = "ram";
+    public const string FingerprintGpu = "gpu";
+    public const string FingerprintInstructionSet = "isa";
+    public const string FingerprintPowerPlan = "power-plan";
+    public const string FingerprintResolution = "resolution";
+
+    /// <summary>
+    /// Rótulo fuente (es-AR) de una clave de la huella, listo para traducir con <see cref="T"/>.
+    /// Se escribe EXACTAMENTE igual que la clave de la app donde existe —"Sistema Operativo",
+    /// como el título de la pestaña Sistema— para compartir una sola entrada de traducción en
+    /// vez de competir con ella por el mismo texto traducido.
+    ///
+    /// Una clave desconocida (informe guardado con el formato viejo, que usaba el rótulo como
+    /// clave) se devuelve tal cual y se traduce igual que antes.
+    /// </summary>
+    public static string FingerprintLabel(string key) => key switch
+    {
+        FingerprintOs => "Sistema Operativo",
+        FingerprintMachine => "Equipo",
+        FingerprintCpu => "CPU",
+        FingerprintRam => "RAM",
+        FingerprintGpu => "GPU",
+        FingerprintInstructionSet => "Set de instrucciones",
+        FingerprintPowerPlan => "Plan de energía",
+        FingerprintResolution => "Resolución de pantalla",
+        _ => key
+    };
+
     /// <summary>
     /// Huella del equipo para el informe: es lo que hace VÁLIDA una comparación entre corridas.
     /// Todo dato del sistema se toma de los servicios de la app; lo que no se puede leer, no
@@ -228,18 +269,18 @@ internal static class AppBridge
     public static Dictionary<string, string> BuildFingerprint()
     {
         var fingerprint = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        fingerprint["Sistema operativo"] = DescribeOs();
-        fingerprint["Equipo"] = Safe(() => Environment.MachineName);
+        fingerprint[FingerprintOs] = DescribeOs();
+        fingerprint[FingerprintMachine] = Safe(() => Environment.MachineName);
 
         var systemInfo = GetService<ISystemInfoService>();
         if (systemInfo != null)
         {
-            fingerprint["CPU"] = Safe(() =>
+            fingerprint[FingerprintCpu] = Safe(() =>
             {
                 var cpu = systemInfo.GetCpuInfo();
                 return cpu == null ? "" : $"{cpu.Name} ({cpu.PhysicalCores}C/{cpu.LogicalProcessors}H, hasta {cpu.MaxFrequencyMHz:F0} MHz)";
             });
-            fingerprint["RAM"] = Safe(() =>
+            fingerprint[FingerprintRam] = Safe(() =>
             {
                 var modules = systemInfo.GetMemoryModuleInfo();
                 var memory = systemInfo.GetMemoryInfo();
@@ -248,12 +289,12 @@ internal static class AppBridge
                 string size = totalGb > 0 ? $"{totalGb:F1} GB" : $"{modules.ModuleCount} módulo(s)";
                 return $"{size} · {modules.ChannelMode} · {modules.SpeedMHz} MHz";
             });
-            fingerprint["GPU"] = Safe(() =>
+            fingerprint[FingerprintGpu] = Safe(() =>
                 string.Join(" | ", systemInfo.GetGpuInfo().Select(g => $"{g.Name} (driver {g.DriverVersion}, {g.DedicatedMemoryBytes / 1024 / 1024 / 1024} GB)")));
-            fingerprint["Set de instrucciones"] = Safe(() => systemInfo.GetCpuInstructionSet() ?? "");
+            fingerprint[FingerprintInstructionSet] = Safe(() => systemInfo.GetCpuInstructionSet() ?? "");
         }
 
-        fingerprint["Plan de energía"] = Safe(() =>
+        fingerprint[FingerprintPowerPlan] = Safe(() =>
         {
             var power = GetService<ICpuPowerService>();
             if (power == null) return "";
@@ -263,7 +304,7 @@ internal static class AppBridge
         });
 
         // La resolución importa: una corrida en 4K no se compara con una en 1080p.
-        fingerprint["Resolución de pantalla"] = Safe(() =>
+        fingerprint[FingerprintResolution] = Safe(() =>
         {
             int width = NativeMethodsScreenWidth();
             int height = NativeMethodsScreenHeight();

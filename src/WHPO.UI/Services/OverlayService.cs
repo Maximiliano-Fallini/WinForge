@@ -62,6 +62,15 @@ public sealed class OverlayService
         set
         {
             _settings.Set("overlay.enabled", value);
+            if (value)
+            {
+                // Activar el interruptor maestro es una orden explícita de VER el
+                // overlay: se vuelve a poner visible. Sin esto, un overlay.visible=false
+                // residual (del atajo mostrar/ocultar o de una sesión anterior) dejaba
+                // la ventana oculta PARA SIEMPRE, incluso dentro del juego — la
+                // regresión "activé el overlay y no se ve".
+                _settings.Set("overlay.visible", true);
+            }
             _settings.Save();
             if (value) EnsureStarted();
             else Stop();
@@ -92,24 +101,31 @@ public sealed class OverlayService
 
         _dispatcher.TryEnqueue(() =>
         {
-            EnsureWindow();
-            // Atajos: primero se intenta el registro EXCLUSIVO (RegisterHotKey en la
-            // ventana). Si Windows nos deja dueños, BlueStacks/otras apps dejan de
-            // recibir la combinación. Si alguna falla (ya en uso), se cae al muestreo
-            // por polling (comportamiento anterior) para no perder la función.
-            ReapplyHotkeys();
+            try
+            {
+                EnsureWindow();
+                // Atajos: primero se intenta el registro EXCLUSIVO (RegisterHotKey en la
+                // ventana). Si Windows nos deja dueños, BlueStacks/otras apps dejan de
+                // recibir la combinación. Si alguna falla (ya en uso), se cae al muestreo
+                // por polling (comportamiento anterior) para no perder la función.
+                ReapplyHotkeys();
 
-            var show = _settings.Get("overlay.visible", true);
-            _window!.Visible = show && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0);
-            _window.SetLocked(_settings.Get("overlay.locked", true));
-            if (show && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0))
-            {
-                _window.Show();
-                _window.InvalidateConfig();
+                var show = _settings.Get("overlay.visible", true);
+                _window!.Visible = show && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0);
+                _window.SetLocked(_settings.Get("overlay.locked", true));
+                if (show && (!_settings.Get("overlay.onlyWhenGameDetected", true) || _metrics.Latest?.GamePid > 0))
+                {
+                    _window.Show();
+                    _window.InvalidateConfig();
+                }
+                else
+                {
+                    _window.Hide();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                _window.Hide();
+                _log.LogWarning($"OverlayService: no se pudo iniciar la ventana del overlay: {ex.Message}");
             }
         });
         _log.LogInfo("OverlayService: overlay iniciado");
@@ -130,8 +146,21 @@ public sealed class OverlayService
     /// </summary>
     private void ReevaluateVisibility()
     {
+        if (!_started) return;
+
+        // Autocorrección: los ajustes dicen "desactivado" pero el servicio sigue
+        // corriendo (p. ej. un Stop() que no llegó a ejecutarse). Se detiene acá:
+        // métricas, atajos y ventana. Sin esto, el overlay seguía encima del juego
+        // dando datos con el interruptor apagado.
+        if (!_settings.Get("overlay.enabled", false))
+        {
+            _log.LogWarning("OverlayService: overlay desactivado en los ajustes con el servicio activo: se detiene.");
+            Stop();
+            return;
+        }
+
         var win = _window;
-        if (win == null || !_started) return;
+        if (win == null) return;
         try
         {
             bool show = _settings.Get("overlay.visible", true)
@@ -154,20 +183,58 @@ public sealed class OverlayService
         }
     }
 
-    /// <summary>Detiene el overlay: oculta la ventana, detiene métricas y hotkeys.</summary>
+    /// <summary>
+    /// Detiene el overlay: oculta la ventana, detiene métricas y hotkeys.
+    /// A prueba de fallos: cada paso va aislado y la ventana se oculta SIEMPRE,
+    /// aunque las métricas o los atajos fallen. Antes, una excepción en
+    /// _metrics.Stop() abortaba el método ANTES del Hide: la ventana quedaba
+    /// visible con datos vivos (el reporte: "desactivé el overlay y no desaparece").
+    /// </summary>
     public void Stop()
     {
-        StopHotkeys();
-        _visibilityTimer?.Dispose();
+        try { StopHotkeys(); }
+        catch (Exception ex) { _log.LogWarning($"OverlayService: error deteniendo los atajos: {ex.Message}"); }
+        try { _visibilityTimer?.Dispose(); }
+        catch { }
         _visibilityTimer = null;
-        _metrics.Stop();
-        _dispatcher.TryEnqueue(() =>
-        {
-            _window?.UnregisterHotkeys();
-            _window?.Hide();
-        });
+        try { _metrics.Stop(); }
+        catch (Exception ex) { _log.LogWarning($"OverlayService: error deteniendo las métricas: {ex.Message}"); }
+
+        // La ocultación NO se delega solo al DispatcherQueue: en el hilo de UI se
+        // hace en el acto (Hide de WinForms, sincrónico) y desde otro hilo se
+        // encola con aviso. Un callback perdido ya no deja el overlay pegado.
+        HideWindowNow();
+
         lock (_lock) _started = false;
         _log.LogInfo("OverlayService: overlay detenido");
+    }
+
+    /// <summary>
+    /// Oculta la ventana del overlay de inmediato: directo si estamos en el hilo
+    /// de UI (el caso normal: el switch de la página), encolado si viene de otro
+    /// hilo (atajo por muestreo). Se registra si no se pudo.
+    /// </summary>
+    private void HideWindowNow()
+    {
+        var win = _window;
+        if (win == null) return;
+        void Hide()
+        {
+            try
+            {
+                win.UnregisterHotkeys();
+                win.Hide();
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning($"OverlayService: no se pudo ocultar la ventana del overlay: {ex.Message}");
+            }
+        }
+
+        if (_dispatcher.HasThreadAccess)
+            Hide();
+        else if (!_dispatcher.TryEnqueue(Hide))
+            _log.LogWarning("OverlayService: no se pudo encolar la ocultación del overlay.");
     }
 
     /// <summary>Muestra/oculta el overlay (toggle del hotkey).</summary>
@@ -181,12 +248,44 @@ public sealed class OverlayService
     {
         _settings.Set("overlay.visible", visible);
         _settings.Save();
-        _dispatcher.TryEnqueue(() =>
+        ApplyWindowVisibility(visible);
+    }
+
+    /// <summary>
+    /// Aplica la visibilidad a la ventana ya mismo (mismo criterio que
+    /// HideWindowNow): directo en el hilo de UI, encolado con aviso si no. La
+    /// ventana además se autocorrige en su propio render, así que este camino es
+    /// la vía rápida, no la única.
+    /// </summary>
+    private void ApplyWindowVisibility(bool visible)
+    {
+        var win = _window;
+        if (win == null) return;
+        void Apply()
         {
-            if (_window == null) return;
-            if (visible) _window.Show();
-            else _window.Hide();
-        });
+            try
+            {
+                if (visible)
+                {
+                    win.InvalidateConfig();
+                    win.Show();
+                }
+                else
+                {
+                    win.Hide();
+                }
+                _log.LogInfo($"OverlayService: overlay {(visible ? "mostrado" : "oculto")} por el usuario.");
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning($"OverlayService: no se pudo {(visible ? "mostrar" : "ocultar")} el overlay: {ex.Message}");
+            }
+        }
+
+        if (_dispatcher.HasThreadAccess)
+            Apply();
+        else if (!_dispatcher.TryEnqueue(Apply))
+            _log.LogWarning("OverlayService: no se pudo encolar el cambio de visibilidad del overlay.");
     }
 
     /// <summary>Bloquea/desbloquea el overlay (toggle del hotkey).</summary>

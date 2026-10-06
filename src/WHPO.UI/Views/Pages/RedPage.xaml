@@ -80,7 +80,7 @@
 
             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
 
-<!-- ====== SECCIÓN 5: PACKET LOSS TEST ====== -->
+<!-- ====== SECCIÓN 5: TEST DE PAQUETES ====== -->
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
                 <SymbolIcon Symbol="Repair" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
                 <TextBlock x:Name="PacketLossTitleText" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>

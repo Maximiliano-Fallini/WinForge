@@ -186,6 +186,36 @@ function Write-JsonFile([string]$path, [System.Collections.Generic.List[string]]
 }
 
 # ---------------------------------------------------------------------------
+# Siglas y nombres propios: se escriben IGUAL en todos los idiomas.
+#
+# El traductor automático (Google, vía tools/translate-packs.mjs) los traduce igual:
+# "RAM" sale como 内存 en chino y como ОЗУ en ruso. Eso no es solo feo: la app traduce
+# "RAM" y "Memoria" al MISMO 内存, así que el motor de idioma ya no puede saber cuál de
+# las dos claves produjo ese texto y el nodo queda clavado en el idioma extranjero al
+# volver a español. Dejando la sigla como la fuente, el choque desaparece solo —y de
+# una, para los cinco idiomas del catálogo.
+#
+# La lista es EXPLÍCITA a propósito: una regla de "todo lo que esté en mayúsculas"
+# también agarraría claves que SÍ se traducen ("OVERRIDE", que en chino es 覆盖值).
+# Para sumar una sigla nueva alcanza con agregarla acá.
+#
+# «Gaming» está acá por el mismo motivo aunque no sea una sigla: es el NOMBRE DEL
+# PRESET de Optimizaciones (un nombre propio). El pack chino lo traducía a 游戏 —la
+# misma palabra que «Juego» y «Videojuegos»—, así que el ítem «Videojuegos» del
+# desplegable de la Biblioteca de juegos, al no poder atribuirse, terminaba mostrando
+# el nombre del preset. Invariante, el choque desaparece.
+# ---------------------------------------------------------------------------
+$InvariantTokens = @(
+    'RAM', 'VRAM', 'CPU', 'GPU', 'BIOS', 'TPM', 'IOMMU', 'AVX', 'AVX2', 'AVX-512',
+    'FPS', 'RPM', 'MTU', 'ID', 'SSD', 'HDD', 'USB', 'API', 'Gaming'
+)
+
+function Test-InvariantText([string]$text) {
+    if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+    return $InvariantTokens -contains $text.Trim()
+}
+
+# ---------------------------------------------------------------------------
 # 1) Leer la tabla fuente (claves en español + una columna por idioma)
 # ---------------------------------------------------------------------------
 
@@ -337,6 +367,10 @@ foreach ($code in $targets) {
     $pairs = New-Object System.Collections.Generic.List[string]
     foreach ($e in $entries) {
         $value = $lookup[$e.es]
+        # Sigla o nombre propio: se publica tal cual la fuente, sin importar qué haya
+        # traducido el origen (ver $InvariantTokens). Corrige de una los packs ya
+        # publicados sin volver a traducir nada: no toca el resto de las claves.
+        if (Test-InvariantText $e.es) { $value = $e.es }
         if ([string]::IsNullOrWhiteSpace($value)) { continue }
         $pairs.Add((ConvertTo-JsonText $e.es) + ": " + (ConvertTo-JsonText $value))
     }
@@ -381,10 +415,18 @@ foreach ($code in $targets) {
 
     $fileName = "$code-$Version.json"
     $file = Join-Path $OutDir $fileName
-    Write-JsonFile $file $lines
-
-    $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
-    $size = (Get-Item $file).Length
+    # -Verify es SOLO auditoría: no escribe packs. Antes sí los escribía, y como corre sin
+    # -Version usaba la 1.0.0 por defecto: dejaba el manifest apuntando a una versión MENOR
+    # que la publicada (la app no le habría actualizado el idioma a nadie) y de paso pisaba
+    # los packs 1.0.0 que ya estaban en disco.
+    if ($Verify) {
+        $hash = ""
+        $size = 0
+    } else {
+        Write-JsonFile $file $lines
+        $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        $size = (Get-Item $file).Length
+    }
     $packInfo[$code] = @{
         fileName = $fileName; sha256 = $hash; sizeBytes = $size
         keyCount = $keyCount; completion = $completion
@@ -474,9 +516,11 @@ for ($i = 0; $i -lt $languageEntries.Count; $i++) {
 }
 $manifestLines.Add("  ]")
 $manifestLines.Add("}")
-Write-JsonFile $Manifest $manifestLines
-Write-Output ""
-Write-Output "== Manifest actualizado: $Manifest ($($languageEntries.Count) idiomas)"
+if (-not $Verify) {
+    Write-JsonFile $Manifest $manifestLines
+    Write-Output ""
+    Write-Output "== Manifest actualizado: $Manifest ($($languageEntries.Count) idiomas)"
+}
 
 # ---------------------------------------------------------------------------
 # 6) -Verify: audita claves huérfanas / faltantes contra el pack anterior

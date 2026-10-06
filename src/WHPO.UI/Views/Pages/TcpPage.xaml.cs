@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Shapes;
+using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Services;
 
@@ -14,9 +15,10 @@ namespace WHPO_UI.Views.Pages;
 
 /// <summary>
 /// TCP avanzado (antes era la sección 6 de la pestaña Red, separada en su propia
-/// pestaña). Card única construida en código: presets de juego/Windows, Nagle,
+/// pestaña). Funciona como un TCP Optimizer: presets de juego/Windows, Nagle,
 /// algoritmo de congestión, ECN, timestamps, RSS, Fast Open, autotuning (solo
-/// lectura) y MTU por interfaz. Backup y restauración incluidos.
+/// lectura), MTU por interfaz, editor de las plantillas del stack y las reglas
+/// de red de Windows. Backup y restauración incluidos.
 /// </summary>
 public sealed partial class TcpPage : Page
 {
@@ -25,18 +27,6 @@ public sealed partial class TcpPage : Page
     private bool _dataLoaded;
 
     private TcpService.TcpState? _tcpCurrent;
-
-    // Controles de la card del adaptador (velocidad/duplex, control de flujo, EEE...)
-    private TextBlock? _adapterStatusText;
-    private TextBlock? _adapterResultText;
-    private Button? _adapterApplyButton;
-    private readonly Dictionary<string, ComboBox> _adapterCombos = new();
-    private readonly Dictionary<string, TextBlock> _adapterActual = new();
-    // Selector de adaptador (cuando hay más de una interfaz física).
-    private ComboBox? _adapterSelector;
-    private List<AdapterAdvancedService.AdapterIface> _adapterIfaces = new();
-    private string? _selectedAdapterGuid;
-    private bool _adapterSelectorBuilding;
 
     // Controles de la card TCP (se reconstruyen en cada carga / cambio de idioma)
     private TextBlock? _tcpStatusText;
@@ -117,14 +107,41 @@ public sealed partial class TcpPage : Page
             {
                 _loggingService.LogError($"Error cargando TcpPage: {ex2}", ex2);
                 if (DebugText != null)
-                    DebugText.Text = $"Error: {ex2.Message}";
+                {
+                    DebugText.Text = I18n.T("Error cargando TCP: {0}", ex2.Message);
+                    DebugText.Visibility = Visibility.Visible;
+                }
             }
         });
     }
 
+    /// <summary>
+    /// Card TCP avanzado. Envuelve al cuerpo real para que un fallo NUNCA deje la
+    /// card en "Consultando estado TCP…": el texto de estado siempre se resuelve
+    /// con el error (y un botón Reintentar).
+    /// </summary>
     private async Task BuildTcpAdvancedCardAsync()
     {
-        if (TcpAdvancedPanel == null || AdapterPanel == null) return;
+        try
+        {
+            await BuildTcpAdvancedCardCoreAsync();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError($"TcpPage: error construyendo la card TCP: {ex.Message}", ex);
+            ResolveStatusWithError(_tcpStatusText, I18n.T("Error cargando el estado TCP: {0}", ex.Message));
+            if (DebugText != null)
+            {
+                DebugText.Text = I18n.T("Error cargando TCP: {0}", ex.Message);
+                DebugText.Visibility = Visibility.Visible;
+            }
+        }
+    }
+
+    /// <summary>Cuerpo real de la card TCP avanzado.</summary>
+    private async Task BuildTcpAdvancedCardCoreAsync()
+    {
+        if (TcpAdvancedPanel == null) return;
         TcpAdvancedPanel.Children.Clear();
 
         var card = new Border
@@ -144,7 +161,7 @@ public sealed partial class TcpPage : Page
         var state = await TcpService.GetStateAsync();
         _tcpCurrent = state ?? new TcpService.TcpState();
         if (state == null)
-            Feedback.Error(_tcpStatusText, I18n.T("No se pudo leer el estado TCP: {0}", "netsh"));
+            ResolveStatusWithError(_tcpStatusText, I18n.T("No se pudo leer el estado TCP: {0}", "netsh"));
 
         // Presets primero (antes de las opciones): un clic aplica todo el perfil
         var presetsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
@@ -252,16 +269,61 @@ public sealed partial class TcpPage : Page
             FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
         });
 
+        // Fase B: editor de plantillas del stack (perillas que Windows no expone).
+        await RunSectionGuardedAsync(() => AppendTcpTemplateSectionAsync(panel), "plantillas TCP");
+
         if (state != null)
         {
             Feedback.Set(_tcpStatusText, null);
             _tcpStatusText.Visibility = Visibility.Collapsed;
         }
 
-        // Reglas de Windows (nivel SO) y card del adaptador: misma pasada, la
-        // página se reconstruye entera al cambiar de idioma.
-        await BuildWindowsRulesCardAsync();
-        await BuildAdapterCardAsync();
+        // Reglas de Windows (nivel SO): misma pasada, la página se reconstruye
+        // entera al cambiar de idioma. Va aislada: si falla, la card TCP se sigue
+        // construyendo y no queda con el texto de "Consultando…".
+        await RunSectionGuardedAsync(BuildWindowsRulesCardAsync, "reglas de red");
+    }
+
+    /// <summary>
+    /// Resuelve el texto de estado con un error visible y un botón Reintentar en su
+    /// panel. Nunca deja una carga a medias (el bug de "Consultando estado TCP…").
+    /// </summary>
+    private void ResolveStatusWithError(TextBlock? status, string message, Func<Task>? retryAction = null)
+    {
+        if (status == null) return;
+        Feedback.Error(status, message, persistent: true);
+        status.Visibility = Visibility.Visible;
+        if (status.Parent is Panel host && !host.Children.OfType<Button>().Any(b => (b.Content as string) == I18n.T("Reintentar")))
+        {
+            var retry = new Button
+            {
+                Content = I18n.T("Reintentar"),
+                Padding = new Thickness(12, 6, 12, 6),
+                CornerRadius = new CornerRadius(6),
+                HorizontalAlignment = HorizontalAlignment.Left
+            };
+            var action = retryAction ?? BuildTcpAdvancedCardAsync;
+            retry.Click += async (s, e) => await action();
+            host.Children.Add(retry);
+        }
+    }
+
+    /// <summary>Corre una sección de la página aislada: un fallo no arrastra al resto.</summary>
+    private async Task RunSectionGuardedAsync(Func<Task> section, string sectionName)
+    {
+        try
+        {
+            await section();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError($"TcpPage: error construyendo {sectionName}: {ex.Message}", ex);
+            if (DebugText != null)
+            {
+                DebugText.Text = I18n.T("Error cargando {0}: {1}", sectionName, ex.Message);
+                DebugText.Visibility = Visibility.Visible;
+            }
+        }
     }
 
     // =====================================================================
@@ -333,7 +395,10 @@ public sealed partial class TcpPage : Page
         rulesPanel.Children.Add(presetsRow);
 
         _rulesCurrent = await NetworkTweaksService.GetStateAsync();
-        if (_rulesStatusText != null) _rulesStatusText.Visibility = Visibility.Collapsed;
+        if (_rulesCurrent.Count == 0)
+            ResolveStatusWithError(_rulesStatusText, I18n.T("No se pudieron leer las reglas de red de Windows."), BuildWindowsRulesCardAsync);
+        else if (_rulesStatusText != null)
+            _rulesStatusText.Visibility = Visibility.Collapsed;
 
         foreach (var st in _rulesCurrent)
         {
@@ -435,179 +500,6 @@ public sealed partial class TcpPage : Page
         finally
         {
             if (_rulesApplyButton != null) _rulesApplyButton.IsEnabled = true;
-        }
-    }
-
-    // =====================================================================
-    // Propiedades avanzadas del adaptador (velocidad/duplex, control de
-    // flujo, moderación de interrupciones, EEE, ahorro de energía) — el
-    // mismo set que edita TCP Optimizer. Sirve para cualquier adaptador
-    // físico activo, sea Ethernet o Wi-Fi.
-    // =====================================================================
-
-    private async Task BuildAdapterCardAsync()
-    {
-        AdapterPanel.Children.Clear();
-
-        var card = new Border
-        {
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16)
-        };
-        var panel = new StackPanel { Spacing = 12 };
-        card.Child = panel;
-        AdapterPanel.Children.Add(card);
-
-        // Selector de adaptador (TCP Optimizer permite elegir la interfaz): lista
-        // los adaptadores físicos y aplica/lee las props del seleccionado.
-        _adapterIfaces = await AdapterAdvancedService.GetInterfacesAsync();
-        if (_adapterIfaces.Count > 1)
-        {
-            var selectorRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-            selectorRow.Children.Add(new TextBlock { Text = I18n.T("Adaptador"), VerticalAlignment = VerticalAlignment.Center, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            _adapterSelector = new ComboBox { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var iface in _adapterIfaces)
-            {
-                var item = new ComboBoxItem { Content = $"{iface.Alias} — {iface.Description}", Tag = iface.Guid };
-                _adapterSelector.Items.Add(item);
-                if (string.Equals(iface.Guid, _selectedAdapterGuid, StringComparison.OrdinalIgnoreCase)
-                    || (_selectedAdapterGuid == null && item == _adapterSelector.Items.OfType<ComboBoxItem>().First()))
-                    _adapterSelector.SelectedItem = item;
-            }
-            if (_adapterSelector.SelectedItem == null && _adapterSelector.Items.Count > 0)
-                _adapterSelector.SelectedIndex = 0;
-            _adapterSelector.SelectionChanged += AdapterSelector_SelectionChanged;
-            selectorRow.Children.Add(_adapterSelector);
-            panel.Children.Add(selectorRow);
-            if (_adapterSelector.SelectedItem is ComboBoxItem sel)
-                _selectedAdapterGuid = sel.Tag as string;
-        }
-        else if (_adapterIfaces.Count == 1)
-        {
-            _selectedAdapterGuid = _adapterIfaces[0].Guid;
-        }
-
-        _adapterStatusText = new TextBlock { Text = I18n.T("Consultando propiedades del adaptador..."), FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
-        panel.Children.Add(_adapterStatusText);
-        Feedback.Running(_adapterStatusText, I18n.T("Consultando propiedades del adaptador..."), persistent: true);
-
-        var stateList = await AdapterAdvancedService.GetStateForGuidAsync(_selectedAdapterGuid);
-        if (stateList == null)
-        {
-            Feedback.Set(_adapterStatusText, I18n.T("No se pudo detectar el adaptador de red activo."));
-            return;
-        }
-        Feedback.Set(_adapterStatusText, null);
-        _adapterStatusText.Visibility = Visibility.Collapsed;
-
-        _adapterCombos.Clear();
-        foreach (var state in stateList)
-        {
-            var combo = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var opt in state.Def.Options)
-            {
-                var item = new ComboBoxItem { Content = I18n.T(opt.LabelKey), Tag = opt.Value };
-                combo.Items.Add(item);
-                if (opt.Value == state.RawValue) combo.SelectedItem = item;
-            }
-            // Valor de fábrica: si el registro no trae la propiedad, el driver usa
-            // su default. Seleccionamos el default en el combo para que no se vea vacío.
-            if (combo.SelectedItem == null)
-            {
-                var fb = state.Def.Options?.FirstOrDefault(o => o.Value == state.Def.Fallback);
-                if (fb != null)
-                {
-                    var item = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == fb.Value);
-                    if (item != null) combo.SelectedItem = item;
-                }
-            }
-            _adapterCombos[state.Def.RegName] = combo;
-
-            var (row, actual) = BuildSettingRow(
-                I18n.T(state.Def.Title),
-                state.Supported ? null : I18n.T("Valor de fábrica (el driver no lo expone en el registro)"),
-                null,
-                combo,
-                RuleTooltip(state.Def.Tooltip));
-            _adapterActual[state.Def.RegName] = actual;
-            panel.Children.Add(row);
-        }
-
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-        _adapterApplyButton = new Button { Content = I18n.T("Aplicar"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
-        _adapterApplyButton.Click += async (s, e) => await ApplyAdapterAsync();
-        buttons.Children.Add(_adapterApplyButton);
-        var adapterRestoreBtn = new Button { Content = I18n.T("Restaurar valores de fábrica"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
-        adapterRestoreBtn.Click += async (s, e) => await RestoreAdapterAsync();
-        buttons.Children.Add(adapterRestoreBtn);
-        panel.Children.Add(buttons);
-
-        _adapterResultText = new TextBlock { Text = "", FontSize = 12, Visibility = Visibility.Collapsed, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
-        panel.Children.Add(_adapterResultText);
-    }
-
-    private async void AdapterSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_adapterSelectorBuilding) return;
-        if (sender is not ComboBox cb || cb.SelectedItem is not ComboBoxItem { Tag: string guid }) return;
-        _selectedAdapterGuid = guid;
-        _adapterSelectorBuilding = true;
-        try { await BuildAdapterCardAsync(); }
-        finally { _adapterSelectorBuilding = false; }
-    }
-
-    private async Task RestoreAdapterAsync()
-    {
-        if (_adapterResultText == null) return;
-        _adapterResultText.Visibility = Visibility.Visible;
-        if (_adapterApplyButton != null) _adapterApplyButton.IsEnabled = false;
-        Feedback.Running(_adapterResultText, I18n.T("Restaurando valores de fábrica..."));
-        try
-        {
-            var (ok, msg) = await AdapterAdvancedService.RestoreDefaultsAsync(_selectedAdapterGuid);
-            if (ok) Feedback.Success(_adapterResultText, I18n.T("Valores de fábrica restaurados. Reconectá la red para aplicar todo."));
-            else Feedback.Error(_adapterResultText, I18n.T("Error restaurando: {0}", msg));
-            await BuildAdapterCardAsync();
-        }
-        catch (Exception ex)
-        {
-            Feedback.Error(_adapterResultText, ex.Message);
-        }
-        finally
-        {
-            if (_adapterApplyButton != null) _adapterApplyButton.IsEnabled = true;
-        }
-    }
-
-    private async Task ApplyAdapterAsync()
-    {
-        if (_adapterResultText == null || _adapterCombos.Count == 0) return;
-        _adapterResultText.Visibility = Visibility.Visible;
-        if (_adapterApplyButton != null) _adapterApplyButton.IsEnabled = false;
-        Feedback.Running(_adapterResultText, I18n.T("Aplicando propiedades del adaptador..."));
-        try
-        {
-            var values = new Dictionary<string, string>();
-            foreach (var (regName, combo) in _adapterCombos)
-            {
-                if (combo.SelectedItem is ComboBoxItem { Tag: string tag })
-                    values[regName] = tag;
-            }
-            var failed = await AdapterAdvancedService.ApplyAsync(values, _selectedAdapterGuid);
-            if (failed.Count == 0)
-                Feedback.Success(_adapterResultText, I18n.T("Propiedades aplicadas. Algunos cambios se activan al reconectar la red."));
-            else
-                Feedback.Error(_adapterResultText, I18n.T("No se pudieron aplicar: {0}", string.Join(", ", failed)));
-        }
-        catch (Exception ex)
-        {
-            Feedback.Error(_adapterResultText, ex.Message);
-            _loggingService.LogError("Error aplicando propiedades del adaptador", ex);
-        }
-        finally
-        {
-            if (_adapterApplyButton != null) _adapterApplyButton.IsEnabled = true;
         }
     }
 
@@ -893,7 +785,16 @@ public sealed partial class TcpPage : Page
     private const string TtNetTimedWait = "Segundos que una conexión cerrada queda reservada antes de liberar el puerto (default 240). Bajarlo a 30 libera puertos mucho más rápido: útil con muchas conexiones cortas (juegos, navegación). → 30 para juegos; 240 (default) en otros casos.";
     private const string TtNetLargeCache = "Le dice a Windows que priorice el caché del sistema de archivos en RAM (modo servidor) en vez de la memoria de las apps (default). Puede mejorar el throughput de red con mucha RAM; con poca RAM puede causar tirones. → ON con 16+ GB de RAM y uso intenso de red; OFF (default) en otros casos.";
     private const string TtNetLso = "Permite al adaptador agrupar envíos grandes en menos paquetes para ahorrar CPU. En algunos drivers agrega picos de latencia. Desactivar el offload (DisableTaskOffload=1) obliga a la CPU a segmentar: más uso de CPU, latencia potencialmente menor. → Depende del driver: probá ON si ves micro-tirones en juegos online.";
-    private const string TtGreenEthernet = "Función del driver que baja el consumo eléctrico cuando el enlace está inactivo o a baja velocidad. Puede agregar demoras de reactivación que se sienten como micro-tirones o ping más alto. → OFF para juegos/baja latencia; ON si priorizás consumo.";
+
+    // ===== Tooltips: plantillas TCP =====
+    private const string TtTemplates = "Las plantillas del stack TCP (internet, personalizada, datacenter…) agrupan las perillas finas de Windows: RTO mínimo, ventana de congestión inicial, delayed ACK, RACK y sondeo de pérdida de cola. Son las que usan los tweakers. → Tocá una por vez y probá el efecto en tus partidas antes de dejarla fija.";
+    private const string TtCongestionProvider = "Cómo reacciona TCP a la congestión: CUBIC (default moderno), CTCP (más agresivo con pérdida), DCTCP (para redes con ECN) y BBR2 (experimental, solo Windows 11). → Medí antes y después: no hay un ganador universal.";
+    private const string TtMinRto = "Tiempo mínimo antes de retransmitir un segmento perdido. Más bajo reacciona antes a la pérdida, pero puede retransmitir de más en redes con jitter. Windows usa 300 ms; los perfiles de baja latencia bajan a 20-100. → Bajalo si medís pérdida y querés recuperación rápida.";
+    private const string TtIcw = "Cuántos segmentos puede enviar TCP al arrancar una conexión (Initial Congestion Window). Más alto = la conexión llega a velocidad útil antes (mejor para descargas y para el primer segundo de una partida). → 10 es el default; 12-16 para baja latencia.";
+    private const string TtDelayedAck = "Delayed ACK: Windows espera a juntar confirmaciones para ahorrar paquetes. Bajarlo (o poner frecuencia 1) confirma al instante como el tweak clásico de TcpAckFrequency, pero desde la plantilla y sin tocar el registro de la interfaz. → Bajalo en juegos con muchos paquetes chicos; dejalo alto en descargas.";
+    private const string TtMaxSyn = "Cuántas veces reintenta el handshake SYN antes de dar la conexión por caída. Más alto tolera mejor una red con pérdida, pero tarda más en fallar. → 4 es el default de Windows.";
+    private const string TtNonSack = "Resistencia a la pérdida de ACKs cuando el otro extremo no usa SACK. Activala solo si ves reconexiones raras en una red vieja. → OFF por defecto.";
+    private const string TtRack = "RACK y sondeo de pérdida de cola: recuperación de pérdidas basada en tiempo. Windows los trae activados y Microsoft recomienda dejarlos así (funcionan mejor juntos). → Dejalos ON salvo que tus pruebas muestren lo contrario.";
 
     /// <summary>Clave del servicio → texto español del tooltip (misma mecánica que TtNagle).</summary>
     private static string RuleTooltip(string key) => key switch
@@ -904,12 +805,349 @@ public sealed partial class TcpPage : Page
         "TtNetTimedWait" => TtNetTimedWait,
         "TtNetLargeCache" => TtNetLargeCache,
         "TtNetLso" => TtNetLso,
-        "TtAdapterGreenEthernet" => TtGreenEthernet,
         _ => key
     };
 
     private static ToggleSwitch NewToggle()
         => new() { OnContent = "", OffContent = "" };
+
+    /// <summary>TextBox numérico chico (para las perillas de la plantilla TCP).</summary>
+    private static TextBox NewNumberBox(string value, double minWidth = 90)
+        => new() { Text = value, MinWidth = minWidth, MaxWidth = minWidth + 40 };
+
+    // =====================================================================
+    // Fase B: plantillas TCP (netsh supplemental + Set-NetTCPSetting)
+    // =====================================================================
+
+    private List<TcpTemplateState> _tplStates = new();
+    private ComboBox? _tplSelector;
+    private ComboBox? _tplCongestion;
+    private ComboBox? _tplAutoTuning;
+    private TextBox? _tplMinRto;
+    private TextBox? _tplIcw;
+    private TextBox? _tplAckTimeout;
+    private TextBox? _tplAckFreq;
+    private TextBox? _tplMaxSyn;
+    private ToggleSwitch? _tplEcn;
+    private ToggleSwitch? _tplTimestamps;
+    private ToggleSwitch? _tplNonSack;
+    private ToggleSwitch? _tplCwndRestart;
+    private ToggleSwitch? _tplRack;
+    private ToggleSwitch? _tplTailLoss;
+    private TextBlock? _tplStatus;
+    private TextBlock? _tplResult;
+    private TextBlock? _tplGlobalNote;
+    private StackPanel? _tplFields;
+    private Button? _tplApplyButton;
+    private Button? _tplRestoreButton;
+
+    private async Task AppendTcpTemplateSectionAsync(StackPanel host)
+    {
+        var section = new StackPanel { Spacing = 10, Margin = new Thickness(0, 6, 0, 0) };
+        section.Children.Add(new Rectangle { Height = 1, Fill = ThemeBrushes.Get("CardBorderBrush"), Margin = new Thickness(0, 2, 0, 6) });
+        section.Children.Add(BuildInfoTitle(I18n.T("Plantillas TCP (avanzado)"), TtTemplates));
+        section.Children.Add(new TextBlock
+        {
+            Text = I18n.T("Editor de la plantilla del stack: RTO mínimo, congestión inicial, delayed ACK, RACK y sondeo de pérdida de cola. Son las perillas que usan los tweakers y que Windows no expone en el panel normal."),
+            FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
+        });
+
+        _tplStatus = new TextBlock { Text = I18n.T("Consultando plantillas TCP..."), FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+        section.Children.Add(_tplStatus);
+        Feedback.Running(_tplStatus, I18n.T("Consultando plantillas TCP..."), persistent: true);
+
+        _tplStates = await TcpTemplateService.GetTemplatesAsync();
+        if (_tplStates.Count == 0)
+        {
+            ResolveStatusWithError(_tplStatus, I18n.T("No se pudieron leer las plantillas TCP."), BuildTcpAdvancedCardAsync);
+            host.Children.Add(section);
+            return;
+        }
+        _tplStatus.Visibility = Visibility.Collapsed;
+
+        _tplSelector = new ComboBox { MinWidth = 260, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var t in _tplStates)
+            _tplSelector.Items.Add(new ComboBoxItem
+            {
+                Content = I18n.T(TcpTemplateService.LabelFor(t.Name))
+                          + (t.IsGlobalDefault ? " · " + I18n.T("Actual") : "")
+                          + (t.HasData ? "" : " · " + I18n.T("gestionada por Windows")),
+                Tag = t.Name
+            });
+        _tplSelector.SelectionChanged += (s, e) => PopulateTemplateFields();
+        section.Children.Add(_tplSelector);
+
+        _tplFields = new StackPanel { Spacing = 10 };
+        section.Children.Add(_tplFields);
+
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        var apply = new Button { Content = I18n.T("Aplicar"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        apply.Click += async (s, e) => await ApplyTemplateAsync();
+        var restore = new Button { Content = I18n.T("Restaurar plantilla"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        restore.Click += async (s, e) => await RestoreTemplateAsync();
+        _tplApplyButton = apply;
+        _tplRestoreButton = restore;
+        buttons.Children.Add(apply);
+        buttons.Children.Add(restore);
+        section.Children.Add(buttons);
+
+        _tplResult = new TextBlock { Text = "", FontSize = 12, Visibility = Visibility.Collapsed, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
+        section.Children.Add(_tplResult);
+
+        host.Children.Add(section);
+
+        var defaultIndex = _tplStates.FindIndex(t => t.IsGlobalDefault);
+        _tplSelector.SelectedIndex = defaultIndex >= 0 ? defaultIndex : 0;
+        PopulateTemplateFields();
+    }
+
+    private TcpTemplateState? SelectedTemplate()
+    {
+        if (_tplSelector?.SelectedItem is ComboBoxItem { Tag: string name })
+            return _tplStates.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
+        return null;
+    }
+
+    /// <summary>Vuelca el estado leído en los controles (se llama al cambiar de plantilla).</summary>
+    private void PopulateTemplateFields()
+    {
+        if (_tplFields == null) return;
+        var t = SelectedTemplate();
+        if (t == null) return;
+        _tplFields.Children.Clear();
+
+        // "Automatic" no expone valores: la administra Windows según la red
+        // (Get-NetTCPSetting la devuelve vacía), así que no hay nada que editar.
+        if (!t.HasData)
+        {
+            if (_tplApplyButton != null) _tplApplyButton.IsEnabled = false;
+            if (_tplRestoreButton != null) _tplRestoreButton.IsEnabled = !string.IsNullOrWhiteSpace(_settingsService.Get(TemplateBackupKey(t.Name), ""));
+            _tplFields.Children.Add(new TextBlock
+            {
+                Text = I18n.T("Windows administra esta plantilla según las condiciones de la red: no tiene valores editables."),
+                FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
+            });
+            return;
+        }
+        if (_tplApplyButton != null) _tplApplyButton.IsEnabled = true;
+        if (_tplRestoreButton != null) _tplRestoreButton.IsEnabled = !string.IsNullOrWhiteSpace(_settingsService.Get(TemplateBackupKey(t.Name), ""));
+
+        _tplCongestion = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var p in TcpTemplateService.CongestionProviders)
+            _tplCongestion.Items.Add(new ComboBoxItem { Content = I18n.T(CongestionLabel(p)), Tag = p });
+        var currentProvider = t.CongestionProvider.ToLowerInvariant() switch
+        {
+            "ctcp" => "ctcp",
+            "dctcp" => "dctcp",
+            "bbr2" => "bbr2",
+            _ => "default",
+        };
+        _tplCongestion.SelectedItem = _tplCongestion.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == currentProvider);
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Proveedor de congestión"), null, I18n.T("Actual: {0}", t.CongestionProvider), _tplCongestion, TtCongestionProvider).Row);
+
+        _tplMinRto = NewNumberBox(t.MinRto.ToString());
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("RTO mínimo (ms)"), I18n.T("20 a 300"), null, _tplMinRto, TtMinRto).Row);
+
+        _tplIcw = NewNumberBox(t.InitialCongestionWindow.ToString());
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Ventana de congestión inicial (MSS)"), I18n.T("2 a 64"), null, _tplIcw, TtIcw).Row);
+
+        _tplAckTimeout = NewNumberBox(t.DelayedAckTimeout.ToString());
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Delayed ACK: espera (ms)"), I18n.T("10 a 600 · más bajo = ACKs más rápidos"), null, _tplAckTimeout, TtDelayedAck).Row);
+
+        _tplAckFreq = NewNumberBox(t.DelayedAckFrequency.ToString());
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Delayed ACK: frecuencia"), I18n.T("1 a 255 · 1 = ACK inmediato por segmento"), null, _tplAckFreq, TtDelayedAck).Row);
+
+        _tplMaxSyn = NewNumberBox(t.MaxSynRetransmissions.ToString());
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Retransmisiones SYN máximas"), null, null, _tplMaxSyn, TtMaxSyn).Row);
+
+        _tplAutoTuning = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var (value, label) in new[]
+                 {
+                     ("normal", "Normal (recomendado)"),
+                     ("restricted", "Restringido"),
+                     ("highlyrestricted", "Muy restringido"),
+                     ("experimental", "Experimental"),
+                     ("disabled", "Deshabilitado"),
+                 })
+            _tplAutoTuning.Items.Add(new ComboBoxItem { Content = I18n.T(label), Tag = value });
+        _tplAutoTuning.SelectedItem = _tplAutoTuning.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(i => (string?)i.Tag == (t.AutoTuningLevel ?? "").ToLowerInvariant());
+        _tplAutoTuning.SelectedItem ??= _tplAutoTuning.Items[0];
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Ajuste automático de la ventana TCP"), null, null, _tplAutoTuning, TtAutoTuning).Row);
+
+        _tplEcn = NewToggle();
+        _tplEcn.IsOn = t.EcnEnabled;
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("ECN (Notificación de congestión explícita)"), null, null, _tplEcn, TtEcn).Row);
+
+        _tplTimestamps = NewToggle();
+        _tplTimestamps.IsOn = t.TimestampsEnabled;
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Timestamps TCP (RFC 1323)"), null, null, _tplTimestamps, TtTimestamps).Row);
+
+        _tplNonSack = NewToggle();
+        _tplNonSack.IsOn = t.NonSackRttResiliency;
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Resistencia RTT sin SACK"), null, null, _tplNonSack, TtNonSack).Row);
+
+        _tplCwndRestart = NewToggle();
+        _tplCwndRestart.IsOn = t.CwndRestart ?? false;
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Reinicio de ventana de congestión"), null, null, _tplCwndRestart, TtRack).Row);
+
+        _tplRack = NewToggle();
+        _tplRack.IsOn = t.Rack ?? true;
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("RACK (recuperación por tiempo)"), null, null, _tplRack, TtRack).Row);
+
+        _tplTailLoss = NewToggle();
+        _tplTailLoss.IsOn = t.TailLossProbe ?? true;
+        _tplFields.Children.Add(BuildSettingRow(I18n.T("Sondeo de pérdida de cola"), null, null, _tplTailLoss, TtRack).Row);
+
+        if (!t.IsGlobalDefault)
+        {
+            _tplGlobalNote = new TextBlock
+            {
+                Text = I18n.T("Solo la plantilla global expone RACK, el sondeo de pérdida de cola y el reinicio de ventana: en las demás no se pueden leer ni aplicar desde acá."),
+                FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
+            };
+            _tplFields.Children.Add(_tplGlobalNote);
+        }
+    }
+
+    private static string CongestionLabel(string provider) => provider switch
+    {
+        "ctcp" => "CTCP (más agresivo con pérdida)",
+        "dctcp" => "DCTCP (datacenter, ECN)",
+        "bbr2" => "BBR2 (experimental, Windows 11)",
+        _ => "Default (CUBIC)",
+    };
+
+    private async Task ApplyTemplateAsync()
+    {
+        var t = SelectedTemplate();
+        if (t == null || _tplResult == null) return;
+        if (!t.HasData) return;
+        SaveTemplateBackup(t);
+        _tplResult.Visibility = Visibility.Visible;
+        Feedback.Running(_tplResult, I18n.T("Aplicando plantilla TCP..."));
+        try
+        {
+            var provider = (_tplCongestion?.SelectedItem as ComboBoxItem)?.Tag as string ?? "default";
+            var (ok, msg) = await TcpTemplateService.ApplyAsync(
+                t.Name,
+                provider,
+                ParseInt(_tplMinRto?.Text), ParseInt(_tplIcw?.Text),
+                ParseInt(_tplAckTimeout?.Text), ParseInt(_tplAckFreq?.Text),
+                _tplEcn?.IsOn, _tplTimestamps?.IsOn,
+                (_tplAutoTuning?.SelectedItem as ComboBoxItem)?.Tag as string,
+                ParseInt(_tplMaxSyn?.Text), _tplNonSack?.IsOn,
+                t.IsGlobalDefault ? _tplCwndRestart?.IsOn : null,
+                t.IsGlobalDefault ? _tplRack?.IsOn : null,
+                t.IsGlobalDefault ? _tplTailLoss?.IsOn : null);
+            if (ok) Feedback.Success(_tplResult, I18n.T("Plantilla TCP aplicada. Algunos cambios solo afectan conexiones nuevas."));
+            else Feedback.Error(_tplResult, I18n.T("No se pudieron aplicar los cambios: {0}", msg));
+            await RefreshTemplatesAsync();
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(_tplResult, ex.Message);
+            _loggingService.LogError("TcpPage: error aplicando plantilla TCP", ex);
+        }
+    }
+
+    private async Task RestoreTemplateAsync()
+    {
+        var t = SelectedTemplate();
+        if (t == null || _tplResult == null) return;
+        var json = _settingsService.Get(TemplateBackupKey(t.Name), "");
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            _tplResult.Visibility = Visibility.Visible;
+            Feedback.Info(_tplResult, I18n.T("No hay backup de esta plantilla todavía."));
+            return;
+        }
+        try
+        {
+            var b = JsonSerializer.Deserialize<TemplateBackupDto>(json);
+            if (b == null) return;
+            _tplResult.Visibility = Visibility.Visible;
+            Feedback.Running(_tplResult, I18n.T("Restaurando plantilla..."));
+            var (ok, msg) = await TcpTemplateService.ApplyAsync(
+                t.Name, b.Provider, b.MinRto, b.Icw, b.AckTimeout, b.AckFreq,
+                b.Ecn, b.Timestamps, b.AutoTuning, b.MaxSyn, b.NonSack, b.CwndRestart, b.Rack, b.TailLoss);
+            if (ok) Feedback.Success(_tplResult, I18n.T("Plantilla anterior restaurada."));
+            else Feedback.Error(_tplResult, I18n.T("No se pudieron aplicar los cambios: {0}", msg));
+            await RefreshTemplatesAsync();
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(_tplResult, ex.Message);
+        }
+    }
+
+    /// <summary>Relee las plantillas y repuebla los controles sin reconstruir la card.</summary>
+    private async Task RefreshTemplatesAsync()
+    {
+        var name = SelectedTemplate()?.Name;
+        _tplStates = await TcpTemplateService.GetTemplatesAsync();
+        if (_tplStates.Count == 0 || _tplSelector == null) return;
+        var item = _tplSelector.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == name);
+        if (item != null) _tplSelector.SelectedItem = item;
+        PopulateTemplateFields();
+    }
+
+    private void SaveTemplateBackup(TcpTemplateState t)
+    {
+        try
+        {
+            var dto = new TemplateBackupDto
+            {
+                Provider = t.CongestionProvider.ToLowerInvariant() switch
+                {
+                    "ctcp" => "ctcp",
+                    "dctcp" => "dctcp",
+                    "bbr2" => "bbr2",
+                    _ => "default",
+                },
+                MinRto = t.MinRto,
+                Icw = t.InitialCongestionWindow,
+                AckTimeout = t.DelayedAckTimeout,
+                AckFreq = t.DelayedAckFrequency,
+                Ecn = t.EcnEnabled,
+                Timestamps = t.TimestampsEnabled,
+                AutoTuning = string.IsNullOrWhiteSpace(t.AutoTuningLevel) ? null : t.AutoTuningLevel.ToLowerInvariant(),
+                MaxSyn = t.MaxSynRetransmissions,
+                NonSack = t.NonSackRttResiliency,
+                CwndRestart = t.CwndRestart,
+                Rack = t.Rack,
+                TailLoss = t.TailLossProbe,
+            };
+            _settingsService.Set(TemplateBackupKey(t.Name), JsonSerializer.Serialize(dto));
+            _settingsService.Save();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("TcpPage: error guardando backup de plantilla", ex);
+        }
+    }
+
+    private static string TemplateBackupKey(string name) => "red.tcptpl.backup." + name.ToLowerInvariant();
+
+    private static int? ParseInt(string? text)
+        => int.TryParse((text ?? "").Trim(), out var n) ? n : null;
+
+    private sealed class TemplateBackupDto
+    {
+        public string? Provider { get; set; }
+        public int? MinRto { get; set; }
+        public int? Icw { get; set; }
+        public int? AckTimeout { get; set; }
+        public int? AckFreq { get; set; }
+        public bool? Ecn { get; set; }
+        public bool? Timestamps { get; set; }
+        public string? AutoTuning { get; set; }
+        public int? MaxSyn { get; set; }
+        public bool? NonSack { get; set; }
+        public bool? CwndRestart { get; set; }
+        public bool? Rack { get; set; }
+        public bool? TailLoss { get; set; }
+    }
 
     private sealed class TcpBackupDto
     {

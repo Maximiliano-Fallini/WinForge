@@ -21,13 +21,6 @@
                 <TextBlock Text="Reglas de Windows (red)" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <StackPanel x:Name="WindowsRulesPanel" Spacing="12"/>
-
-<!-- ====== PROPIEDADES AVANZADAS DEL ADAPTADOR (estilo TCP Optimizer) ====== -->
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
-                <SymbolIcon Symbol="World" Foreground="{ThemeResource AccentBrush}" Width="20" Height="20" VerticalAlignment="Center"/>
-                <TextBlock Text="Adaptador de red" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
-            </StackPanel>
-            <StackPanel x:Name="AdapterPanel" Spacing="12"/>
         </StackPanel>
     </ScrollViewer>
 </Page>

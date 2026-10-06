@@ -291,6 +291,12 @@ public static class LanguagePacks
             Installed.RemoveAll(r => string.Equals(r.Code, code, StringComparison.OrdinalIgnoreCase));
             I18n.SetExtraLanguages(Installed.Select(r => r.Code));
         }
+        // Re-pasada inmediata de la UI: el mapa inverso acaba de perder las
+        // traducciones del pack y los textos que lo mostraban en la página en pantalla
+        // quedarían huérfanos hasta la próxima navegación. Las páginas cacheadas se
+        // recuperan solas al visitarlas de nuevo (el motor recuerda lo último que
+        // aplicó a cada nodo); la actual necesita este empujón.
+        I18n.Reapply();
         return true;
     }
 }

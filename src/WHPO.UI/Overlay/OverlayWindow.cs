@@ -15,6 +15,9 @@ namespace WHPO_UI.Overlay;
 /// </summary>
 public sealed record OverlayConfig(
     bool ShowFps,
+    // Máximo (↑) y mínimo (↓) de la sesión: badge propio desde que se separó
+    // del FPS (antes iban pegados al badge "FPS").
+    bool FpsMaxMin,
     bool ShowLow1,
     bool ShowLow01,
     bool ShowCpu,
@@ -27,7 +30,18 @@ public sealed record OverlayConfig(
     bool GpuMhz,
     bool GpuTemp,
     bool GpuWatts,
+    // VRAM usada/total ("gpuMem"): badge propio; antes se dibujaba siempre en
+    // la barra horizontal (sin switch) y no existía en el panel vertical.
+    bool GpuMem,
     bool ShowRam,
+    // Sub-métricas de RAM habilitadas: "ramMb" (usada/total) y "ramMhz"
+    // (velocidad de los módulos). La barra horizontal las usa para gatear cada
+    // valor; sin estos flags, apagar una no tenía efecto y la otra nunca se
+    // dibujaba (solo existía en el panel vertical).
+    bool RamMb,
+    bool RamMhz,
+    // % de uso de RAM ("ramPercent"): badge nuevo.
+    bool RamPercent,
     double Opacity,
     double FontScale,
     // "vertical" (panel clásico) u "horizontal" (barra compacta de una línea).
@@ -135,6 +149,12 @@ public sealed class OverlayWindow : Form
     // vertical). Se computa en BuildHorizontalGroups (lo usan la medición del
     // ancho y el dibujado, que corren en renders distintos).
     private string HorizontalTitle = "";
+
+    // Alto reservado al subtítulo del juego en el panel VERTICAL: se mide el
+    // texto ya envuelto en el ancho del panel (nombres largos → varias líneas)
+    // antes de crear el buffer. Sin esto el título se recortaba a una línea con
+    // "…" (el reporte "si el título es un poco largo se corta").
+    private float _gameTitleHeight;
 
     /// <summary>¿Mostrar el nombre del juego al final de la barra horizontal?
     /// Obedece el mismo switch "overlay.showGameTitle" que el panel vertical.</summary>
@@ -429,6 +449,11 @@ public sealed class OverlayWindow : Form
         var ex = GetWindowLong(Handle, GWL_EXSTYLE);
         SetWindowLong(Handle, GWL_EXSTYLE,
             ex | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE);
+
+        // El render arranca ya en el constructor (OnLoad lo vuelve a llamar; el
+        // método es idempotente): así la autocorrección de visibilidad corre
+        // también cuando la ventana nace oculta porque los ajustes la esconden.
+        StartRendering();
     }
 
     public bool Locked => _locked;
@@ -859,6 +884,7 @@ public sealed class OverlayWindow : Form
         var allIds = metricRows.SelectMany(r => r).ToList();
         return new OverlayConfig(
             ShowFps: allIds.Contains("fps"),
+            FpsMaxMin: allIds.Contains(FpsMaxMinId),
             ShowLow1: allIds.Contains("low1"),
             ShowLow01: allIds.Contains("low01"),
             ShowCpu: allIds.Any(m => m.StartsWith("cpu", StringComparison.Ordinal)),
@@ -871,7 +897,11 @@ public sealed class OverlayWindow : Form
             GpuMhz: allIds.Contains("gpuMhz"),
             GpuTemp: allIds.Contains("gpuTemp"),
             GpuWatts: allIds.Contains("gpuWatts"),
+            GpuMem: allIds.Contains(GpuMemId),
             ShowRam: allIds.Any(m => m.StartsWith("ram", StringComparison.Ordinal)),
+            RamMb: allIds.Contains("ramMb"),
+            RamMhz: allIds.Contains("ramMhz"),
+            RamPercent: allIds.Contains(RamPercentId),
             // La opacidad baja hasta 0 (fondo totalmente transparente).
             Opacity: Math.Clamp(d("overlay.opacity", 0.85), 0.0, 1.0),
             FontScale: Math.Clamp(d("overlay.fontSize", 1.4), 0.6, 2.0),
@@ -899,13 +929,20 @@ public sealed class OverlayWindow : Form
     /// <summary>Id de métrica válido (de los badges configurables).</summary>
     private static bool IsValidMetricId(string id) => id switch
     {
-        "fps" or "low1" or "low01" or FrametimeGraphId or "cpuUsage" or "cpuMhz" or "cpuTemp" or "cpuWatts"
-            or "gpuUsage" or "gpuMhz" or "gpuTemp" or "gpuWatts" or "ramMb" or "ramMhz" => true,
+        "fps" or FpsMaxMinId or "low1" or "low01" or FrametimeGraphId or "cpuUsage" or "cpuMhz" or "cpuTemp" or "cpuWatts"
+            or "gpuUsage" or "gpuMhz" or "gpuTemp" or "gpuWatts" or GpuMemId
+            or "ramMb" or "ramMhz" or RamPercentId => true,
         _ => false
     };
 
     // Id del badge del gráfico de frametime (compartido con OverlayPage).
     public const string FrametimeGraphId = "latencyGraph";
+
+    // Ids de badges NUEVOS (compartidos con OverlayPage): el máx/mín del FPS se
+    // separó en su propio badge, y VRAM / RAM % son switches propios.
+    public const string FpsMaxMinId = "fpsMaxMin";
+    public const string GpuMemId = "gpuMem";
+    public const string RamPercentId = "ramPercent";
 
     // Ventana de tiempo que muestra el gráfico (estilo RTSS) y muestras pedidas
     // al monitor de FPS: 900 frames cubren 3.5 s hasta ~257 fps (el buffer de
@@ -932,9 +969,45 @@ public sealed class OverlayWindow : Form
     private int RenderInterval() =>
         !IsHorizontal && _config.MetricRows.Any(r => r.Contains(FrametimeGraphId)) ? 16 : 250;
 
+    /// <summary>
+    /// ¿La ventana debería estar visible AHORA, según los ajustes? Es la ÚLTIMA
+    /// palabra sobre la visibilidad (activación + mostrar/ocultar + la regla de
+    /// "solo cuando hay juego"): el render la evalúa en cada tick, así que un
+    /// cambio de switch o del atajo se aplica solo aunque el callback del servicio
+    /// se haya perdido — el bug de "desactivé el overlay y siguió encima del juego".
+    /// </summary>
+    private bool ShouldBeVisibleNow()
+    {
+        if (!_settings.Get("overlay.enabled", false)) return false;
+        if (!_settings.Get("overlay.visible", true)) return false;
+        if (_settings.Get("overlay.onlyWhenGameDetected", true) && !(_metrics.Latest?.GamePid > 0)) return false;
+        return true;
+    }
+
     private void Render()
     {
-        if (_disposed || !IsHandleCreated || !Visible) return;
+        if (_disposed || !IsHandleCreated) return;
+
+        // Autocorrección de visibilidad (ver ShouldBeVisibleNow): corre ANTES de
+        // dibujar y vale en los dos sentidos (ocultar y volver a mostrar). Es una
+        // red de seguridad: el servicio oculta/muestra por su cuenta y esto lo
+        // confirma en cada tick, sin depender de un callback del DispatcherQueue.
+        if (!ShouldBeVisibleNow())
+        {
+            if (Visible)
+            {
+                Hide();
+                _log.LogInfo("OverlayWindow: ocultada por configuración (activación, visibilidad o detección de juego).");
+            }
+            return;
+        }
+        if (!Visible)
+        {
+            InvalidateConfig();
+            Show();
+            _log.LogInfo("OverlayWindow: mostrada por configuración.");
+        }
+
         try
         {
             // Z-order: vale repetirlo (ver AssertTopMost). Una vez por segundo alcanza y no
@@ -973,6 +1046,12 @@ public sealed class OverlayWindow : Form
                         metrics != null && metrics.Fps > 0);
                 }
                 finally { if (!ReferenceEquals(mg, _bufferGraphics)) mg.Dispose(); }
+            }
+            else
+            {
+                // Panel vertical: el subtítulo del juego reserva alto según el
+                // texto envuelto (ver MeasureGameTitleHeight).
+                _gameTitleHeight = MeasureGameTitleHeight(metrics);
             }
 
             EnsureBuffer();
@@ -1062,23 +1141,48 @@ public sealed class OverlayWindow : Form
                             cpuBrush, y, showName);
                         break;
                     case "gpu" when metrics != null:
-                        y = DrawHardwareLine(g, metrics.GpuName, metrics.GpuUsagePercent, metrics.GpuMhz,
-                            metrics.GpuTempCelsius, metrics.GpuWatts,
-                            row.Ids.Contains("gpuUsage"), row.Ids.Contains("gpuMhz"),
-                            row.Ids.Contains("gpuTemp"), row.Ids.Contains("gpuWatts"),
-                            gpuBrush, y, showName);
+                    {
+                        // Línea de hardware del GPU: solo si la fila trae alguna de
+                        // sus métricas (una fila con solo "VRAM" va directo a la
+                        // sub-línea y no gasta una línea vacía).
+                        if (row.Ids.Any(id => id != GpuMemId))
+                            y = DrawHardwareLine(g, metrics.GpuName, metrics.GpuUsagePercent, metrics.GpuMhz,
+                                metrics.GpuTempCelsius, metrics.GpuWatts,
+                                row.Ids.Contains("gpuUsage"), row.Ids.Contains("gpuMhz"),
+                                row.Ids.Contains("gpuTemp"), row.Ids.Contains("gpuWatts"),
+                                gpuBrush, y, showName);
+                        // VRAM usada/total ("gpuMem"): sub-línea chica, mismo estilo
+                        // que los lows del FPS. Antes no existía en vertical.
+                        if (row.Ids.Contains(GpuMemId))
+                        {
+                            string? vram = metrics.GpuVramTotalMb > 0
+                                ? $"{metrics.GpuMemUsedMb / 1024.0:0.#}/{metrics.GpuVramTotalMb / 1024.0:0.#} GB"
+                                : metrics.GpuMemUsedMb > 0 ? $"{metrics.GpuMemUsedMb / 1024.0:0.#} GB" : null;
+                            if (vram != null)
+                            {
+                                using var vramBrush = new SolidBrush(_config.MetricColor);
+                                g.DrawString($"VRAM {vram}", LowFont, vramBrush, S(12), y);
+                                y += S(24);
+                            }
+                        }
                         break;
+                    }
                     case "ram" when metrics != null:
                     {
                         // RAM: el nombre es "RAM" seguido de la configuración de
                         // módulos (RAM 2x16 GB), después el uso en MB y la velocidad.
                         // En sub-filas sin core (ej. "RAM MHz" movida abajo) no hay
                         // nombre: solo la línea de valores.
+                        // Cada valor tiene su COLUMNA FIJA: mostrar u ocultar uno no
+                        // mueve a los demás. El % de uso ("ramPercent") usa la
+                        // tercera columna, libre para RAM.
                         var ramValues = new List<(string Text, float RightX)>();
                         if (row.Ids.Contains("ramMb"))
                             ramValues.Add(($"{metrics.RamUsedMb:F0} MB", S(ColUsageRight)));
                         if (row.Ids.Contains("ramMhz") && metrics.RamMhz > 0)
                             ramValues.Add(($"{metrics.RamMhz:F0} MHz", S(ColMhzRight)));
+                        if (row.Ids.Contains(RamPercentId) && metrics.RamPercent > 0)
+                            ramValues.Add(($"{metrics.RamPercent:F0}%", S(ColTempRight)));
 
                         string ramName = showName
                             ? (string.IsNullOrWhiteSpace(metrics.RamConfig) ? "RAM" : "RAM " + metrics.RamConfig)
@@ -1094,14 +1198,15 @@ public sealed class OverlayWindow : Form
             }
 
             // Nombre del juego (subtítulo sutil, abajo de todo) — SOLO si el
-            // switch de la página de apariencia lo habilita.
-            if (_config.ShowGameTitle && haveFps && !string.IsNullOrEmpty(gameName) && gameName != "WinForge")
+            // switch de la página de apariencia lo habilita. Se dibuja en un
+            // rectángulo: con un nombre largo se reparte en varias líneas (el
+            // alto lo reserva ComputeOverlayHeight con _gameTitleHeight) en vez
+            // de cortarse con "…" a mitad de palabra.
+            if (ShowGameTitleEnabled(metrics, haveFps))
             {
                 using var gameBrush = new SolidBrush(Color.FromArgb(180, 180, 180));
-                // Recortado al ancho del panel: con un nombre largo el texto se
-                // salía del borde derecho y quedaba cortado a mitad de palabra
-                // (ahora termina en "…" dentro de la línea).
-                g.DrawString(FitText(g, gameName!, LowFont, _buffer!.Width - S(32)), LowFont, gameBrush, S(16), y);
+                g.DrawString(gameName!, LowFont, gameBrush,
+                    new RectangleF(S(16), y, _buffer!.Width - S(32), _gameTitleHeight));
             }
 
             PaintLayered();
@@ -1118,10 +1223,10 @@ public sealed class OverlayWindow : Form
 
     private static string IdToHGroup(string id) => id switch
     {
-        "fps" or "fpsMax" or "fpsMin" or "low1" or "low01" or FrametimeGraphId => "fps",
+        "fps" or FpsMaxMinId or "fpsMax" or "fpsMin" or "low1" or "low01" or FrametimeGraphId => "fps",
         "cpuUsage" or "cpuTemp" or "cpuMhz" or "cpuWatts" => "cpu",
         "gpuUsage" or "gpuTemp" or "gpuMhz" or "gpuWatts" or "gpuMem" => "gpu",
-        "ramUsed" or "ramMhz" => "ram",
+        "ramUsed" or "ramMhz" or RamPercentId => "ram",
         _ => ""
     };
 
@@ -1150,18 +1255,25 @@ public sealed class OverlayWindow : Form
             ? (metrics?.GameName ?? "").Trim()
             : "";
 
-        // FPS: actual + máximo (↑) y mínimo (↓) de la sesión (si ya hay señal).
-        var fpsParts = new List<string>
+        // FPS: actual, y máximo (↑) / mínimo (↓) de la sesión. Son DOS switches
+        // independientes: el valor actual sale del badge "fps" y la pareja ↑/↓
+        // del badge "fpsMaxMin" (antes iban juntos en un solo badge).
+        if (_config.ShowFps || _config.FpsMaxMin)
         {
-            haveFps && metrics != null ? metrics.Fps.ToString("F0") : "--"
-        };
-        if (metrics != null && metrics.FpsMax > 0)
-            fpsParts.Add($"↑{metrics.FpsMax:F0}");
-        if (metrics != null && metrics.FpsMin > 0)
-            fpsParts.Add($"↓{metrics.FpsMin:F0}");
-        byKey["fps"] = ("FPS", fpsParts);
+            var fpsParts = new List<string>();
+            if (_config.ShowFps)
+                fpsParts.Add(haveFps && metrics != null ? metrics.Fps.ToString("F0") : "--");
+            if (_config.FpsMaxMin)
+            {
+                if (metrics != null && metrics.FpsMax > 0)
+                    fpsParts.Add($"↑{metrics.FpsMax:F0}");
+                if (metrics != null && metrics.FpsMin > 0)
+                    fpsParts.Add($"↓{metrics.FpsMin:F0}");
+            }
+            if (fpsParts.Count > 0) byKey["fps"] = ("FPS", fpsParts);
+        }
 
-        // CPU: % de uso, temperatura y GHz actuales.
+        // CPU: % de uso, temperatura, GHz y vatios actuales.
         var cpuParts = new List<string>();
         if (metrics != null)
         {
@@ -1170,8 +1282,12 @@ public sealed class OverlayWindow : Form
                 cpuParts.Add($"{metrics.CpuTempCelsius:F0}°C");
             if (_config.CpuMhz && metrics.CpuMhz > 0)
                 cpuParts.Add($"{metrics.CpuMhz / 1000.0:0.#} GHz");
+            // Los vatios del CPU FALTABAN en la barra: con el switch encendido no
+            // aparecían nunca (solo existían en el panel vertical).
+            if (_config.CpuWatts && metrics.CpuWatts > 0)
+                cpuParts.Add($"{metrics.CpuWatts:F0} W");
         }
-        byKey["cpu"] = ("CPU", cpuParts);
+        if (cpuParts.Count > 0) byKey["cpu"] = ("CPU", cpuParts);
 
         // GPU: % de uso, temperatura y VRAM usada/total.
         var gpuParts = new List<string>();
@@ -1180,26 +1296,42 @@ public sealed class OverlayWindow : Form
             if (_config.GpuUsage) gpuParts.Add($"{metrics.GpuUsagePercent:F0}%");
             if (_config.GpuTemp && metrics.GpuTempCelsius > 0)
                 gpuParts.Add($"{metrics.GpuTempCelsius:F0}°C");
-            if (metrics.GpuVramTotalMb > 0)
-                gpuParts.Add($"{metrics.GpuMemUsedMb / 1024.0:0.#}/{metrics.GpuVramTotalMb / 1024.0:0.#} GB");
-            else if (metrics.GpuMemUsedMb > 0)
-                gpuParts.Add($"{metrics.GpuMemUsedMb / 1024.0:0.#} GB");
+            // VRAM usada/total: badge propio "gpuMem" (antes se dibujaba siempre).
+            if (_config.GpuMem)
+            {
+                if (metrics.GpuVramTotalMb > 0)
+                    gpuParts.Add($"{metrics.GpuMemUsedMb / 1024.0:0.#}/{metrics.GpuVramTotalMb / 1024.0:0.#} GB");
+                else if (metrics.GpuMemUsedMb > 0)
+                    gpuParts.Add($"{metrics.GpuMemUsedMb / 1024.0:0.#} GB");
+            }
         }
-        byKey["gpu"] = ("GPU", gpuParts);
+        if (gpuParts.Count > 0) byKey["gpu"] = ("GPU", gpuParts);
 
-        // RAM: uso actual / total.
+        // RAM: usada/total (switch propio) y velocidad de los módulos (switch
+        // propio). Antes la usada/total se dibujaba SIEMPRE (apagarla no hacía
+        // nada) y los MHz no se dibujaban NUNCA (encenderla no hacía nada).
         var ramParts = new List<string>();
         if (metrics != null)
         {
-            if (metrics.RamTotalMb > 0)
-                ramParts.Add($"{metrics.RamUsedMb / 1024.0:0.#}/{metrics.RamTotalMb / 1024.0:0.#} GB");
-            else
-                ramParts.Add($"{metrics.RamUsedMb / 1024.0:0.#} GB");
+            // % de uso: badge propio "ramPercent".
+            if (_config.RamPercent && metrics.RamPercent > 0)
+                ramParts.Add($"{metrics.RamPercent:F0}%");
+            if (_config.RamMb)
+            {
+                if (metrics.RamTotalMb > 0)
+                    ramParts.Add($"{metrics.RamUsedMb / 1024.0:0.#}/{metrics.RamTotalMb / 1024.0:0.#} GB");
+                else
+                    ramParts.Add($"{metrics.RamUsedMb / 1024.0:0.#} GB");
+            }
+            if (_config.RamMhz && metrics.RamMhz > 0)
+                ramParts.Add($"{metrics.RamMhz:F0} MHz");
         }
-        byKey["ram"] = ("RAM", ramParts);
+        if (ramParts.Count > 0) byKey["ram"] = ("RAM", ramParts);
 
         // Emitir los grupos en el orden configurado (overlay.hGroupOrder):
         // NormalizeGroupOrder garantiza que los 4 estén presentes sin duplicados.
+        // Los grupos sin ningún valor habilitado/con dato no se emiten: si no,
+        // la barra dibujaba el título solo ("CPU", "RAM") sin ningún valor.
         var ordered = new List<(string Label, List<string> Parts)>();
         foreach (var key in _config.HGroupOrder)
             if (byKey.TryGetValue(key, out var grp))
@@ -1239,9 +1371,37 @@ public sealed class OverlayWindow : Form
             x += S(16); // aire a la derecha del título (no pegado al borde)
         }
         x += padX - S(16); // margen derecho (el último grupo no agrega gap extra)
-        int w = (int)Math.Round(x);
+        // Techo, no redondeo: al dibujar, el título se recorta con FitText contra
+        // maxW = ancho - padX - tx, que es el texto medido ± 0.5 px. Redondeando
+        // hacia abajo, maxW quedaba una fracción por debajo del texto y FitText
+        // cambiaba el último carácter por "…" aunque entrara: el reporte "si el
+        // título es un poco largo se corta".
+        int w = (int)Math.Ceiling(x);
         var area = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
         return Math.Clamp(w, HorizontalMinWidth, Math.Max(HorizontalMinWidth, area.Width - 32));
+    }
+
+    /// <summary>
+    /// Alto (px) que necesita el subtítulo del nombre del juego en el panel
+    /// vertical: se mide el texto ya envuelto en el ancho del panel con la
+    /// fuente real. Sin título (o en horizontal, donde lo mide la barra) devuelve
+    /// el hueco de siempre. El ancho del panel no cambia: el texto se reparte en
+    /// varias líneas en vez de cortarse.
+    /// </summary>
+    private float MeasureGameTitleHeight(WHPO.Core.Services.Interfaces.OverlayMetrics? metrics)
+    {
+        float baseHeight = S(16);
+        if (!ShowGameTitleEnabled(metrics, metrics != null && metrics.Fps > 0)) return baseHeight;
+        Graphics? own = null;
+        try
+        {
+            var g = _bufferGraphics ?? (own = CreateGraphics());
+            float width = Math.Max(1f, ComputeOverlayWidth() - S(32));
+            var size = g.MeasureString(metrics!.GameName, LowFont, (int)width);
+            return Math.Max(baseHeight, (float)Math.Ceiling(size.Height) + S(4));
+        }
+        catch { return baseHeight; }
+        finally { own?.Dispose(); }
     }
 
     /// <summary>Ancho reservado al candado vector (ver DrawLockGlyph).</summary>
@@ -1412,10 +1572,11 @@ public sealed class OverlayWindow : Form
         bool haveFps, List<string> ids, Brush fpsBrush, float y)
     {
         bool showFps = ids.Contains("fps");
+        bool showMaxMin = ids.Contains(FpsMaxMinId);
         bool showLow1 = ids.Contains("low1");
         bool showLow01 = ids.Contains("low01");
         bool showGraph = ids.Contains(FrametimeGraphId);
-        if (!showFps && !showLow1 && !showLow01 && !showGraph) return y;
+        if (!showFps && !showMaxMin && !showLow1 && !showLow01 && !showGraph) return y;
 
         float left = S(12);
         if (showFps)
@@ -1428,6 +1589,21 @@ public sealed class OverlayWindow : Form
             DrawLabeledLine(g, fpsLabel, fpsBrush, y,
                 new List<(string Text, float RightX)> { (fpsText, S(ColUsageRight)) });
             y += S(25);
+        }
+
+        // Máximo (↑) y mínimo (↓) de la sesión: badge propio ("fpsMaxMin"),
+        // separado del valor actual del FPS. Línea chica, mismo estilo que los lows.
+        if (showMaxMin && metrics != null)
+        {
+            var stats = new List<string>();
+            if (metrics.FpsMax > 0) stats.Add($"↑máx: {metrics.FpsMax:F0}");
+            if (metrics.FpsMin > 0) stats.Add($"↓mín: {metrics.FpsMin:F0}");
+            if (stats.Count > 0)
+            {
+                using var statsBrush = new SolidBrush(_config.MetricColor);
+                g.DrawString(string.Join("  ", stats), LowFont, statsBrush, left, y);
+                y += S(24);
+            }
         }
 
         // 1% low / 0.1% low (chico, sobre la MISMA base vertical que las filas de
@@ -1647,7 +1823,7 @@ public sealed class OverlayWindow : Form
 
     private static string FamilyOf(string id) => id switch
     {
-        "fps" or "low1" or "low01" or FrametimeGraphId => "fps",
+        "fps" or FpsMaxMinId or "low1" or "low01" or FrametimeGraphId => "fps",
         _ when id.StartsWith("cpu", StringComparison.Ordinal) => "cpu",
         _ when id.StartsWith("gpu", StringComparison.Ordinal) => "gpu",
         _ when id.StartsWith("ram", StringComparison.Ordinal) => "ram",
@@ -1764,13 +1940,42 @@ public sealed class OverlayWindow : Form
     /// </summary>
     public static List<List<string>> SplitFpsAndLows(List<List<string>> rows)
     {
-        var keep = rows.Select(r => r.Where(id => id is not ("fps" or "low1" or "low01")).ToList())
+        var keep = rows.Select(r => r.Where(id => id is not ("fps" or FpsMaxMinId or "low1" or "low01")).ToList())
                        .Where(r => r.Count > 0).ToList();
         if (rows.Any(r => r.Contains("fps"))) keep.Add(new List<string> { "fps" });
+        if (rows.Any(r => r.Contains(FpsMaxMinId))) keep.Add(new List<string> { FpsMaxMinId });
         if (rows.Any(r => r.Contains("low1"))) keep.Add(new List<string> { "low1" });
         if (rows.Any(r => r.Contains("low01"))) keep.Add(new List<string> { "low01" });
         return keep;
     }
+
+    /// <summary>
+    /// Migración a los badges NUEVOS (FPS máx/mín separado del FPS, VRAM usada/total
+    /// y RAM %): un id que no está en las filas guardadas es de una configuración
+    /// previa a que el badge existiera → se activa por defecto si su familia ya
+    /// estaba activa (mantiene lo que el overlay venía mostrando). Una vez que el
+    /// usuario guarda —o apaga el badge— el id queda en las filas y no se vuelve a
+    /// inyectar. La usan la página (al cargar los badges) y la sonda de tests.
+    /// </summary>
+    public static List<string> MigrateNewBadgeDefaults(IReadOnlyList<List<string>> rows, IEnumerable<string> enabled)
+    {
+        var list = enabled.Where(IsValidMetricId).Distinct(StringComparer.Ordinal).ToList();
+        foreach (var (id, family) in NewBadgeDefaults)
+        {
+            if (list.Contains(id) || rows.Any(r => r.Contains(id))) continue;
+            if (list.Any(x => GroupOf(x) == family)) list.Add(id);
+        }
+        return list;
+    }
+
+    // Badges nuevos con su familia: se activan en la migración si la familia ya
+    // estaba activa (ver MigrateNewBadgeDefaults).
+    private static readonly (string Id, string Family)[] NewBadgeDefaults =
+    {
+        (FpsMaxMinId, "fps"),
+        (GpuMemId, "gpu"),
+        (RamPercentId, "ram")
+    };
 
     /// <summary>Recorta un texto con elipsis si excede el ancho disponible.</summary>
     private static string FitText(Graphics g, string text, Font font, float maxWidth)
@@ -1809,17 +2014,22 @@ public sealed class OverlayWindow : Form
             {
                 case "fps":
                     if (row.Ids.Contains("fps")) y += S(25); // línea igual a las de hardware
+                    if (row.Ids.Contains(FpsMaxMinId)) y += S(24); // sub-línea máx/mín
                     if (row.Ids.Contains("low1") || row.Ids.Contains("low01")) y += S(24);
                     if (row.Ids.Contains(FrametimeGraphId)) y += S(58); // gráfico (50) + gap (8)
                     break;
+                case "gpu":
+                    // Línea de hardware (si la fila trae métricas del GPU) + VRAM.
+                    if (row.Ids.Any(id => id != GpuMemId)) y += S(25);
+                    if (row.Ids.Contains(GpuMemId)) y += S(24);
+                    break;
                 case "ram":
                 case "cpu":
-                case "gpu":
                     y += S(25);
                     break;
             }
         }
-        y += S(16); // nombre del juego
+        y += Math.Max(S(16), _gameTitleHeight); // nombre del juego (puede ocupar varias líneas)
         return Math.Max(MinOverlayHeight, (int)Math.Round(y + S(10)));
     }
 

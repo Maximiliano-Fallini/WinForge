@@ -94,11 +94,11 @@ public static class NetworkTweaksService
         catch { return null; }
     }
 
-    public static Task<List<TweakState>> GetStateAsync()
+    public static async Task<List<TweakState>> GetStateAsync()
     {
-        string? guid = ActiveInterfaceGuid();
+        string? guid = await ActiveInterfaceGuidAsync();
         var list = Definitions.Select(d => new TweakState(d, ReadRaw(d, guid), ReadRaw(d, guid) != null)).ToList();
-        return Task.FromResult(list);
+        return list;
     }
 
     public static async Task<List<string>> ApplyPresetAsync(string preset)
@@ -108,12 +108,12 @@ public static class NetworkTweaksService
         return await ApplyAsync(values);
     }
 
-    public static Task<List<string>> ApplyAsync(Dictionary<string, string> values)
+    public static async Task<List<string>> ApplyAsync(Dictionary<string, string> values)
     {
         var failed = new List<string>();
         try
         {
-            string? guid = ActiveInterfaceGuid();
+            string? guid = await ActiveInterfaceGuidAsync();
             using var baseKey = OpenBase();
             foreach (var def in Definitions)
             {
@@ -131,7 +131,7 @@ public static class NetworkTweaksService
             }
         }
         catch { failed.AddRange(values.Keys); }
-        return Task.FromResult(failed);
+        return failed;
     }
 
     private static bool TryParseU32(string s, out uint v)
@@ -143,11 +143,11 @@ public static class NetworkTweaksService
         return uint.TryParse(s, System.Globalization.NumberStyles.HexNumber, null, out v);
     }
 
-    public static Task<(bool Ok, string Message)> RestoreDefaultsAsync()
+    public static async Task<(bool Ok, string Message)> RestoreDefaultsAsync()
     {
         try
         {
-            string? guid = ActiveInterfaceGuid();
+            string? guid = await ActiveInterfaceGuidAsync();
             using var baseKey = OpenBase();
             foreach (var def in Definitions)
             {
@@ -160,17 +160,22 @@ public static class NetworkTweaksService
                 }
                 catch { }
             }
-            return Task.FromResult((true, "ok"));
+            return (true, "ok");
         }
-        catch (Exception ex) { return Task.FromResult((false, ex.Message)); }
+        catch (Exception ex) { return (false, ex.Message); }
     }
 
-    private static string? ActiveInterfaceGuid()
+    /// <summary>
+    /// GUID de la interfaz física activa. ASYNC a propósito: antes era síncrona
+    /// (GetAwaiter().GetResult()) y bloqueaba el hilo de UI mientras esperaba un
+    /// proceso de PowerShell — la página quedaba congelada.
+    /// </summary>
+    private static async Task<string?> ActiveInterfaceGuidAsync()
     {
         try
         {
             var script = "$a = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1; if ($a) { $a.InterfaceGuid.ToString() }";
-            var (output, exit) = PowerShellRunner.RunAsync(script).GetAwaiter().GetResult();
+            var (output, exit) = await PowerShellRunner.RunAsync(script);
             if (exit != 0) return null;
             var guid = output.Trim().Trim('\'', '"');
             return Guid.TryParse(guid, out _) ? guid : null;

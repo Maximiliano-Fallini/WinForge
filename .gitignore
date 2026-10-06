@@ -12,16 +12,17 @@
 #   languages.json          catálogo de packs de idioma que la app descarga
 #   components.json         catálogo de componentes del Workshop
 #   assets/                 imágenes que usa el README
-#   scripts del pipeline    build-language-packs.ps1 · validate-language-packs.ps1 ·
-#                           dedupe-translations.ps1
+#   build.ps1 · build-components.ps1 · build-language-packs.ps1
+#                           el flujo que necesita un clon: compilar la app y
+#                           publicar sus contenidos
 #   README.md · LICENSE
 #
 # NO SE VERSIONA
 #   Salidas de compilación y distribución (bin, obj, publish, MSI, packs JSON),
-#   el generador del instalador y los scripts de build de la app (viven en el
-#   disco; sus productos van a las releases), la web de difusión, los scripts
-#   de un solo uso (tmp-*, fix-*, diag-*), el scratch de trabajo (tools/) y todo
-#   lo binario o descargable (drivers del filtro, paquetes comprimidos).
+#   el generador del instalador (installer/), las herramientas de trabajo
+#   (dedupe-translations, xaml-scan, validate-language-packs), las sondas
+#   temporales y las notas de trabajo, la web de difusión, el scratch (tools/)
+#   y todo lo binario o descargable (drivers del filtro, paquetes comprimidos).
 # ============================================================================
 
 # ===== .NET: salidas de compilación =====
@@ -75,9 +76,10 @@ _ReSharper*/
 *.dotCover
 *_wpftmp.csproj
 
-# ===== Paquetes e instalador (SALIDAS, no fuentes) =====
-# Las fuentes del instalador (installer/) SÍ van al repo. Lo que no va es lo que
-# produce: el MSI, el publish y el fragmento harvest (se regenera con el script).
+# ===== Paquetes e instalador =====
+# El generador del instalador es tooling local del desarrollador: no se versiona
+# (.wxs, harvest, el CustomAction y el script que arma el MSI). Tampoco lo que
+# produce: el MSI, el publish y el fragmento harvest.
 *.appx
 *.appxbundle
 *.appxupload
@@ -89,10 +91,7 @@ _ReSharper*/
 *.wixpdb
 .wix/
 .tools/
-installer/publish/
-installer/Files.wxs
-installer/PostUpdateCA/bin/
-installer/PostUpdateCA/obj/
+/installer/
 
 # ===== Driver del filtro y paquetes descargados =====
 # El componente de Overclock USB (hidusbf) y los paquetes del autor: binarios de
@@ -105,13 +104,19 @@ installer/PostUpdateCA/obj/
 *.cer
 *.coff
 
-# ===== Tooling de build (disco del desarrollador) =====
-# Los productos no se versionan (van como assets de las releases de GitHub), pero
-# las FUENTES del instalador sí: sin ellas el MSI no se puede reconstruir y se
-# pierde la forma de publicar una versión. Por eso lo que se ignora son sus
-# productos (installer/publish, installer/Files.wxs, el .msi), no la carpeta entera.
-#   build.ps1 / build-components.ps1 → publican la app;
-#   installer/ → produce el MSI que se sube a la release de cada versión.
+# ===== Scripts y restos de trabajo (disco del desarrollador) =====
+# Del tooling solo se versiona el flujo que necesita un clon: build.ps1,
+# build-components.ps1 y build-language-packs.ps1 (compilar la app y publicar sus
+# contenidos). El resto es herramienta de trabajo: arreglos de una sola vez
+# (dedupe-translations), auditorías (xaml-scan), validadores temporales
+# (validate-language-packs), sondas y restos de plantilla.
+/validate-language-packs.ps1
+/dedupe-translations.ps1
+/xaml-scan.ps1
+src/WHPO.UI/TitleBarProbe.cs
+src/WHPO.UI/Package.appxmanifest
+src/Components/WinForge.Component.Benchmark/README-I18N.md
+src/Components/WinForge.Component.Demo/
 
 # ===== Paquetes comprimidos =====
 *.zip

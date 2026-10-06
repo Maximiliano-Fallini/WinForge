@@ -131,7 +131,7 @@ public sealed partial class RedPage : Page, IBackgroundPausable
             _wlanBlockOn = _wlan.BlockScanActive;
             _wlanStreamOn = _wlan.StreamingActive;
 
-            // Título del packet loss test con el badge "(BETA)" en amarillo.
+            // Título del test de paquetes con el badge "(BETA)" en amarillo.
             ApplyPacketLossTitle();
 
             // Las cards (adaptadores, DNS) se construyen en código con I18n.T: al
@@ -183,11 +183,11 @@ public sealed partial class RedPage : Page, IBackgroundPausable
     /// </summary>
     public void ResumeBackgroundTimers() { }
 
-    /// <summary>Título "Packet Loss Test (BETA)" con el badge en amarillo.</summary>
+    /// <summary>Título "Test de paquetes (BETA)" con el badge en amarillo.</summary>
     private void ApplyPacketLossTitle()
     {
         PacketLossTitleText.Inlines.Clear();
-        PacketLossTitleText.Inlines.Add(new Run { Text = I18n.T("Packet Loss Test") + " " });
+        PacketLossTitleText.Inlines.Add(new Run { Text = I18n.T("Test de paquetes") + " " });
         PacketLossTitleText.Inlines.Add(new Run { Text = I18n.T("(BETA)"), Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(BetaColor) });
     }
 

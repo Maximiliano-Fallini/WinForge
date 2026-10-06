@@ -1,0 +1,77 @@
+<Window
+    x:Class="WHPO_UI.SplashWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="WinForge">
+
+<!-- Splash de arranque: una tarjeta cuadrada sin bordes (estilo Discord) con el
+         velocímetro de carga y, debajo, UNA sola línea con el paso en curso.
+         La ventana no tiene barra de título ni bordes (ver SplashWindow.xaml.cs):
+         el contenido ES la ventana y se arrastra desde cualquier punto de la tarjeta. -->
+    <Grid x:Name="RootGrid" PointerPressed="RootGrid_PointerPressed"
+          PointerMoved="RootGrid_PointerMoved" PointerReleased="RootGrid_PointerReleased"
+          PointerCaptureLost="RootGrid_PointerCaptureLost">
+<!-- La tarjeta es LISA: sin borde propio. El contorno claro que se veía alrededor
+             no lo dibujaba la app sino Windows 11 a nivel DWM: lo quitan
+             WindowBorder.RemoveOutline y el recorte propio de la región de ventana,
+             ambos re-aplicados al mostrarse la ventana. -->
+        <Border x:Name="CardBorder">
+            <Grid Padding="26,20,26,20">
+
+<!-- Velocímetro: dial de 240° (0 % abajo a la izquierda, 100 % abajo a la
+                     derecha), arco de progreso, aguja y el % en el centro. Los colores y
+                     las geometrías se resuelven en el code-behind con los pinceles del tema
+                     activo (los {ThemeResource} de una ventana sin MainWindow todavía no
+                     conocen el tema elegido por el usuario).
+
+                     Va centrado en la tarjeta —horizontal y verticalmente— en su propia
+                     capa: la marca y la línea de estado flotan arriba y abajo sin robarle
+                     espacio. El margen inferior corre el lienzo lo justo para que lo que se
+                     VE quede centrado (arco + %), no la caja del lienzo: el dial está
+                     abierto abajo y con el centro exacto el conjunto se veía alto. -->
+                <Canvas x:Name="GaugeCanvas" Width="300" Height="300"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Margin="0,46,0,0" IsHitTestVisible="False">
+<!-- Las marcas van primero (y en su propia capa) para que la aguja pase por
+                         encima; el code-behind las genera una cada 10 %. -->
+                    <Canvas x:Name="TickLayer" Width="300" Height="300"/>
+                    <Path x:Name="TrackArc" StrokeThickness="9" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                    <Path x:Name="ProgressArc" StrokeThickness="9" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                    <Polygon x:Name="Needle">
+                        <Polygon.RenderTransform>
+                            <RotateTransform x:Name="NeedleRotate" CenterX="150" CenterY="150"/>
+                        </Polygon.RenderTransform>
+                    </Polygon>
+                    <Ellipse x:Name="HubOuter" Width="22" Height="22" Canvas.Left="139" Canvas.Top="139"/>
+                    <Ellipse x:Name="HubInner" Width="8" Height="8" Canvas.Left="146" Canvas.Top="146"/>
+                    <TextBlock x:Name="PercentText" Width="300" TextAlignment="Center" Canvas.Left="0" Canvas.Top="178"
+                               FontSize="36" FontWeight="SemiBold" Text="0%"/>
+                </Canvas>
+
+<!-- Marca: logo + nombre. "WinForge" es igual en todos los idiomas. -->
+                <StackPanel Orientation="Horizontal" Spacing="10"
+                            HorizontalAlignment="Center" VerticalAlignment="Top">
+                    <Image Source="/logos/WinForge.png" Width="26" Height="26" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="BrandText" Text="WinForge" FontSize="17" FontWeight="SemiBold"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+
+<!-- Paso en curso: SIEMPRE una sola línea (se recorta con puntos suspensivos). -->
+                <TextBlock x:Name="StatusText" FontSize="13" TextAlignment="Center"
+                           MaxLines="1" TextTrimming="CharacterEllipsis"
+                           HorizontalAlignment="Stretch" VerticalAlignment="Bottom"/>
+            </Grid>
+        </Border>
+
+        <!-- Control de ventana: la tarjeta no tiene barra de título, así que la X es
+             su único botón. Va arriba a la DERECHA, discreta, con el hover estándar de
+             los botones de la app. No cancela el arranque: lo manda a la bandeja — la
+             app termina de cargar sin mostrar la ventana principal. -->
+        <Button x:Name="CloseButton" Width="30" Height="30" Padding="0"
+                BorderThickness="0" CornerRadius="7" Background="Transparent"
+                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0"
+                Click="CloseButton_Click">
+            <FontIcon Glyph="&#xE8BB;" FontSize="12"/>
+        </Button>
+    </Grid>
+</Window>

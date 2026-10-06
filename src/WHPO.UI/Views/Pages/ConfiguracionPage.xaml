@@ -108,7 +108,7 @@
                                 <TextBlock x:Name="TrayEcoModeTitle" Text="Modo eficiencia en bandeja" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock
                                     x:Name="TrayEcoModeDescription"
-                                    Text="Prendido (predeterminado): al ocultar la ventana a la bandeja, WHPO se marca como tarea de fondo (EcoQoS de Windows) para consumir lo mínimo. Al volver se quita solo. En un Windows que no lo soporta no hace nada."
+                                    Text="Prendido (predeterminado): al ocultar la ventana a la bandeja, WHPO se marca como tarea de fondo (EcoQoS de Windows) para consumir lo mínimo. Al volver se quita solo. En un Windows que no lo soporta no hace nada. Las optimizaciones activas siguen aplicándose en segundo plano mientras la app esté en la bandeja."
                                     FontSize="13"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                     TextWrapping="Wrap"/>

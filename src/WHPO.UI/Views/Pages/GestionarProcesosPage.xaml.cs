@@ -133,6 +133,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _cardShadow.Receivers.Add(CardShadowReceiver);        // Selección inicial del desplegable de categorías («Todos»). El
         // SelectionChanged no reconstruye la grilla porque _currentFilter ya es "all".
         FilterComboBox.SelectedIndex = 0;
+        ApplyLibraryFilterLanguage();
         UpdateInstalledCount();
 
         // Simetría de la fila: el botón "?" debe medir lo mismo de alto que el de
@@ -202,6 +203,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     private void OnLanguageChanged()
     {
+        ApplyLibraryFilterLanguage();
+        RetranslateScopeItems(_servicesScopeItems);
+        RetranslateScopeItems(_tasksScopeItems);
         UpdateGameBoostLabel();
         RebuildCards();
         // Re-traducir el contador de juegos instalados: es texto dinámico seteado
@@ -211,6 +215,40 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // El placeholder del buscador también se re-aplica por si cambió de idioma
         // antes de que la página navegara acá.
         SearchBox.PlaceholderText = I18n.T("Buscar juegos...");
+    }
+
+    /// <summary>
+    /// Traduce los ítems del desplegable de categorías de la biblioteca (Todos /
+    /// Videojuegos / Emuladores). Los ComboBoxItem no se realizan en el árbol visual
+    /// hasta que se abre el desplegable —su popup vive en su propio árbol—, así que el
+    /// recorrido de I18n no siempre los alcanza: se traducen por código, mismo patrón que
+    /// los ítems de tema en Configuración y los de preajuste en Memoria.
+    ///
+    /// Además el motor no puede resolverlos al revés: los packs traducen «Todos» y «Todas»
+    /// al mismo 全部, así que un ítem sin registrar quedaba clavado en el idioma anterior
+    /// (y con «Videojuegos» el desempate lo atribuía a la clave «Gaming» y lo escribía
+    /// "Gaming", que es el nombre del preset de Optimizaciones, no el ítem del filtro).
+    /// </summary>
+    private void ApplyLibraryFilterLanguage()
+    {
+        FilterAllItem.Content = I18n.T("Todos");
+        FilterGamesItem.Content = I18n.T("Videojuegos");
+        FilterConsoleEmulatorsItem.Content = I18n.T("Emuladores de consolas");
+        FilterMobileEmulatorsItem.Content = I18n.T("Emuladores de celular");
+    }
+
+    /// <summary>
+    /// Re-traduce los ítems de un desplegable armado por código (el Tag guarda la clave
+    /// fuente). Se llama al cambiar de idioma: el ítem no está en el árbol visual hasta
+    /// abrir el popup, así que el recorrido de I18n no lo alcanza y quedaría en el idioma
+    /// anterior.
+    /// </summary>
+    private static void RetranslateScopeItems(ComboBoxItem[]? items)
+    {
+        if (items == null) return;
+        foreach (var item in items)
+            if (item.Tag is string key)
+                item.Content = I18n.T(key);
     }
 
     private void GameBoostSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -1366,12 +1404,28 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             {
                 for (int i = 0; i < desired.Count; i++)
                 {
-                    if (pickerList.Items[i] is not Grid row || row.Tag is not string tag || !string.Equals(tag, desired[i].name, StringComparison.Ordinal))
+                    if (pickerList.Items[i] is not Grid row || row.Tag is not string tag || !string.Equals(tag, desired[i].name, StringComparison.Ordinal) || !RowBadgeMatches(row, desired[i].badge))
                     {
                         same = false;
                         break;
                     }
                 }
+            }
+
+ // La badge escrita en pantalla: cada fila pinta su pastilla como UN Border
+ // con TextBlock (único hijo directo así). Comparar también el texto —no solo
+ // el nombre del proceso— hace que al agregar a eficiencia/cierre la badge
+ // aparezca EN EL MOMENTO, aunque la lista de procesos no haya cambiado.
+            bool RowBadgeMatches(Grid row, string? expected)
+            {
+                string? shown = null;
+                foreach (var child in row.Children)
+                    if (child is Border badge && badge.Child is TextBlock badgeText)
+                    {
+                        shown = badgeText.Text;
+                        break;
+                    }
+                return string.Equals(shown, expected, StringComparison.Ordinal);
             }
             if (same) return;
 
@@ -1614,6 +1668,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // recomendados para gaming (GameBoostService.ManagedServices), false = todos.
  // "Recomendados" es el default al entrar a la pestaña; se resetea al cerrar.
     private bool _servicesRecommendedOnly = true;
+    // Ítems del desplegable de alcance de la pestaña Servicios (los arma BuildServicesPanel):
+    // el Tag guarda la clave fuente para re-traducirlos al cambiar de idioma. El popup no
+    // está en el árbol visual, así que el recorrido de I18n no los alcanza.
+    private ComboBoxItem[]? _servicesScopeItems;
  // Referencias directas a la lista y el contador de la pestaña de servicios
  // (evita buscar descendientes en el árbol visual, que podía agarrar el
  // TextBlock interno del TextBox de búsqueda).
@@ -1685,8 +1743,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Height = 32,
             CornerRadius = new CornerRadius(6)
         };
-        scopeCombo.Items.Add(I18n.T("Recomendados"));
-        scopeCombo.Items.Add(I18n.T("Todos"));
+        var recommendedItem = new ComboBoxItem { Content = I18n.T("Recomendados"), Tag = "Recomendados" };
+        var allServicesItem = new ComboBoxItem { Content = I18n.T("Todos"), Tag = "Todos" };
+        scopeCombo.Items.Add(recommendedItem);
+        scopeCombo.Items.Add(allServicesItem);
+        _servicesScopeItems = new[] { recommendedItem, allServicesItem };
         scopeCombo.SelectedIndex = 0;
         scopeCombo.SelectionChanged += (_, _) =>
         {
@@ -1926,6 +1987,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private List<(string Path, string Status)>? _allTasksCache;
     private string _tasksFilter = "";
     private bool _tasksWhitelistOnly = true;
+    // Ítems del desplegable de alcance de la pestaña Tareas (mismo motivo que
+    // _servicesScopeItems): el Tag guarda la clave fuente.
+    private ComboBoxItem[]? _tasksScopeItems;
     private ListView? _tasksListView;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _tasksSearchDebounce;
     private int _tasksRefreshGeneration;
@@ -1969,8 +2033,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Height = 32,
             CornerRadius = new CornerRadius(6)
         };
-        scopeCombo.Items.Add(I18n.T("Whitelist"));
-        scopeCombo.Items.Add(I18n.T("Todas"));
+        var whitelistItem = new ComboBoxItem { Content = I18n.T("Whitelist"), Tag = "Whitelist" };
+        var allTasksItem = new ComboBoxItem { Content = I18n.T("Todas"), Tag = "Todas" };
+        scopeCombo.Items.Add(whitelistItem);
+        scopeCombo.Items.Add(allTasksItem);
+        _tasksScopeItems = new[] { whitelistItem, allTasksItem };
         scopeCombo.SelectedIndex = 0;
         scopeCombo.SelectionChanged += (_, _) =>
         {

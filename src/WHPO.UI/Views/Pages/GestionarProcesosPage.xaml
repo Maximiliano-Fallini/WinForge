@@ -92,10 +92,10 @@
                               FontSize="13"
                               VerticalAlignment="Center"
                               SelectionChanged="FilterComboBox_SelectionChanged">
-                        <ComboBoxItem Content="Todos"/>
-                        <ComboBoxItem Content="Videojuegos"/>
-                        <ComboBoxItem Content="Emuladores de consolas"/>
-                        <ComboBoxItem Content="Emuladores de celular"/>
+                        <ComboBoxItem x:Name="FilterAllItem" Content="Todos"/>
+                        <ComboBoxItem x:Name="FilterGamesItem" Content="Videojuegos"/>
+                        <ComboBoxItem x:Name="FilterConsoleEmulatorsItem" Content="Emuladores de consolas"/>
+                        <ComboBoxItem x:Name="FilterMobileEmulatorsItem" Content="Emuladores de celular"/>
                     </ComboBox>
                 </StackPanel>
 <!-- Modo juego de WinForge (BETA) -->

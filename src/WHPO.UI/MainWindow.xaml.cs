@@ -218,11 +218,20 @@ public sealed partial class MainWindow : Window
         // Interceptar botón cerrar (X) para minimizar a bandeja si está activado
         this.AppWindow.Closing += AppWindow_Closing;
 
+        // El recorte de la franja superior se recalcula al cambiar el tamaño: la región se
+        // expresa en píxeles y hay que rehacerla en cada resize (y al maximizar/restaurar).
+        this.SizeChanged += (_, _) => ApplyWindowFrameTreatment();
+
         // Garantizar la restauración/centrado en la primera activación: aplicar la
         // posición antes de Activate puede ser ignorado por Windows, y con el
         // evento queda seguro. (Misma posición que la del constructor: no salta.)
         this.Activated += (_, args) =>
         {
+            // El tratamiento del marco se re-aplica en CADA cambio de activación —también
+            // al desactivarse—: el cambio de estado recrea el marco y DWM pierde el color
+            // de borde fundido.
+            ApplyWindowFrameTreatment();
+
             // El alto real lo termina de aplicar el sistema al activarse la ventana: acá se
             // reconcilia con el de la barra propia (ver AlignTitleBarHeight).
             if (args.WindowActivationState != WindowActivationState.Deactivated) AlignTitleBarHeight();
@@ -3107,6 +3116,14 @@ public sealed partial class MainWindow : Window
             const int DWMWCP_ROUND = 2;
             int pref = DWMWCP_ROUND;
             DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, ref pref, sizeof(int));
+
+            // Sin el reborde de 1px claro que Windows 11 dibuja alrededor de los menús
+            // (a nivel DWM, por fuera de lo que pinta WinForms): sobre el menú oscuro ese
+            // filete se ve como un contorno blanco, el mismo problema que tenían las
+            // ventanas. El borde oscuro propio del menú (DarkMenuRenderer) queda intacto.
+            const int DWMWA_BORDER_COLOR = 34;
+            int none = unchecked((int)0xFFFFFFFE);   // DWMWA_COLOR_NONE
+            DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, ref none, sizeof(int));
         }
         catch { }
     }
@@ -3145,6 +3162,35 @@ public sealed partial class MainWindow : Window
         return File.Exists(icoPath) ? icoPath : null;
     }
 
+    /// <summary>Color con el que se funde el borde de la ventana: el fondo de la barra de
+    /// título del tema activo. Lo actualiza ApplyTitleBarTheme en cada cambio de tema.</summary>
+    private Windows.UI.Color _frameBorderColor = Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17);
+
+    /// <summary>
+    /// Tratamiento del marco de la ventana: esquinas redondeadas del SISTEMA (sin región de
+    /// recorte) + borde fundido con el color del contenido.
+    ///
+    /// Historia (para no repetir el camino): recortar la ventana con una región propia da
+    /// esquinas redondeadas dibujadas por la app, PERO genera un reborde blanco nuevo en
+    /// costados y abajo que ignora el atributo de color de borde y sobrevivió a recortes de
+    /// 1 y 3 px. Sin región no hay ningún reborde (COLOR_NONE alcanza), pero el redondeo del
+    /// sistema dibuja en las esquinas de arriba los dos puntos claros. La salida es no tocar
+    /// la forma (redondeo nativo, antialiaseado) y fundir el borde con el color del
+    /// contenido: los píxeles del arco se dibujan, pero no contrastan con nada.
+    /// </summary>
+    private void ApplyWindowFrameTreatment()
+    {
+        try
+        {
+            WindowBorder.BlendBorderWithContent(this, _frameBorderColor);
+
+            // Por si DWM recrea el marco un instante después (show, DPI, activación), se
+            // re-aplica cuando la cola quede libre (idempotente y sin costo).
+            DispatcherQueue.TryEnqueue(() => WindowBorder.BlendBorderWithContent(this, _frameBorderColor));
+        }
+        catch { }
+    }
+
     /// <summary>
     /// Aplica los colores de la barra de título según el tema activo.
     /// </summary>
@@ -3162,6 +3208,15 @@ public sealed partial class MainWindow : Window
             _ => App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark
         };
         ApplyTitleBarColors(appWindow, dark);
+
+        // Sin el reborde de 1px blanco/gris que Windows 11 pinta alrededor de TODAS
+        // las ventanas —incluidas las de barra de título propia— a nivel DWM, por
+        // fuera de lo que la app dibuja: sobre la interfaz oscura ese filete claro se
+        // ve como un contorno blanco. Es el mismo trato que el splash y el overlay
+        // (DWMWA_COLOR_NONE). Se re-aplica al activarse la ventana (ver el handler de
+        // Activated): fijado solo antes del primer show, DWM lo resetea al crear el
+        // frame y el reborde vuelve.
+        ApplyWindowFrameTreatment();
 
         // El NavigationView cachea el {ThemeResource} de su Background: al cambiar
         // entre temas de la misma base (Negro/Azul → Oscuro, ambos Dark) el
@@ -3186,6 +3241,13 @@ public sealed partial class MainWindow : Window
             // temas Negro/Azul y Rosa/Blanco quedaban dos tonos distintos (el navbar es
             // #0E1524 / blanco y el color calculado por ApplyTitleBarColors es #151517 / blanco).
             AppTitleBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
+
+            // El borde de la ventana se funde con ESTE color (el fondo del título del tema):
+            // con COLOR_NONE DWM igual dibuja con el color por defecto los píxeles del arco
+            // de las esquinas (los dos puntos claros); con el color del contenido no
+            // contrastan. Queda cacheado para las re-aplicaciones de Activated/resize.
+            _frameBorderColor = navColor;
+            WindowBorder.BlendBorderWithContent(this, navColor);
         }
         catch { /* arranque temprano */ }
     }
