@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using WHPO.Core.Services.Interfaces;
+using WHPO_UI.Controls;
 
 namespace WHPO_UI;
 
@@ -494,10 +495,13 @@ public static class I18n
     /// </summary>
     private static void HookBeforeOpen(DependencyObject node)
     {
-        if (node is ComboBox combo && !OpenHooks.TryGetValue(combo, out _))
+        if (node is ComboBox combo)
         {
-            OpenHooks.Add(combo, new object());
-            combo.DropDownOpened += (_, _) => TranslateNow(combo);
+            if (!OpenHooks.TryGetValue(combo, out _))
+            {
+                OpenHooks.Add(combo, new object());
+                combo.DropDownOpened += (_, _) => TranslateNow(combo);
+            }
         }
 
         if (node is FrameworkElement owner)

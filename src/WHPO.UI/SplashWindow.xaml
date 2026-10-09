@@ -15,6 +15,22 @@
              no lo dibujaba la app sino Windows 11 a nivel DWM: lo quitan
              WindowBorder.RemoveOutline y el recorte propio de la región de ventana,
              ambos re-aplicados al mostrarse la ventana. -->
+        <!-- ===== Fondo del tema + la tarjeta como PANEL (ver ApplyBackdrop) =====
+             La misma composición que la ventana principal: la foto del tema, el parche
+             desenfocado que va detrás de los paneles y el velo del tema; y encima la tarjeta
+             con el color de panel y la transparencia vigente. Así el arranque se ve con el tema
+             ELEGIDO y no con los colores base del tema claro/oscuro (que es lo que se veía: el
+             splash se construye antes de que el diccionario tenga la paleta del tema). Los
+             pinceles los arma el code-behind, porque los {ThemeResource} de una ventana sin
+             MainWindow todavía no conocen el tema elegido. -->
+        <Border x:Name="BackdropBorder" IsHitTestVisible="False"/>
+        <Rectangle x:Name="BlurPatch" Visibility="Collapsed" IsHitTestVisible="False">
+            <Rectangle.Fill>
+                <ImageBrush Stretch="Fill"/>
+            </Rectangle.Fill>
+        </Rectangle>
+        <Border x:Name="ScrimBorder" IsHitTestVisible="False"/>
+
         <Border x:Name="CardBorder">
             <Grid Padding="26,20,26,20">
 

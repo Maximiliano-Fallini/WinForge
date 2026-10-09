@@ -37,8 +37,8 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
 
     // Línea de la grilla y rellenos de los encabezados (coinciden con el XAML).
     private SolidColorBrush LineBrush => ThemeBrushes.Get("SensorGridLineBrush");
-    private SolidColorBrush GroupFillBrush => ThemeBrushes.Get("SensorGroupFillBrush");
-    private SolidColorBrush CategoryFillBrush => ThemeBrushes.Get("SensorCategoryFillBrush");
+    private Brush GroupFillBrush => ThemeBrushes.GetSurface("SensorGroupFillBrush");
+    private Brush CategoryFillBrush => ThemeBrushes.GetSurface("SensorCategoryFillBrush");
 
     private const double ValueColumnWidth = 100;
 

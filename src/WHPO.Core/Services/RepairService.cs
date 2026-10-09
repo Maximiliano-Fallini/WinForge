@@ -405,7 +405,7 @@ public class RepairService : IRepairService
             new RepairToolInfo(
                 "component_store",
                 "Reparación del almacén de componentes",
-                "Limpia el almacén de componentes de Windows (WinSxS) para liberar espacio y eliminar versiones obsoletas de archivos del sistema.",
+                "Ejecuta el mantenimiento de componentes de Windows (WinSxS) para quitar versiones obsoletas. No usa ResetBase y conserva la posibilidad de desinstalar actualizaciones instaladas.",
                 "Compatible con Windows 10/11",
                 true,
                 true

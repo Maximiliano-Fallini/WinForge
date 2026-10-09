@@ -7,13 +7,20 @@
         <StackPanel Spacing="16" Margin="24">
             <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
-<!-- ====== SECCIÓN 1: STANDBY LIST CLEANER ====== -->
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <FontIcon Glyph="&#xE7F1;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                <TextBlock Text="Limpiador de lista standby" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+<!-- ====== ENCABEZADO DE PÁGINA (mismo estilo que Panel de Windows / Optimizaciones) ====== -->
+            <StackPanel Spacing="2" Margin="0,12,0,4">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <FontIcon Glyph="&#xEEA0;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Memoria" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock Text="Limpieza inteligente y automática de la caché en la memoria RAM."
+                           FontSize="13"
+                           Foreground="{ThemeResource SecondaryTextBrush}"
+                           TextWrapping="Wrap"/>
             </StackPanel>
             <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
                 <StackPanel Spacing="12">
+                    <TextBlock Text="Limpiador de lista standby" FontSize="16" FontWeight="SemiBold"/>
 <!-- Estadísticas de memoria: fila 1 -->
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
@@ -64,10 +71,15 @@
                     </StackPanel>
                     <TextBlock x:Name="CleanStandbyResultText" Text="" FontSize="12" Visibility="Collapsed" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
 
-                    <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,2"/>
+                </StackPanel>
+            </Border>
+
+<!-- ====== CARD 2: LIMPIEZA AUTOMÁTICA ====== -->
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                <StackPanel Spacing="12">
 
 <!-- Configuración de limpieza automática -->
-                    <TextBlock Text="Limpieza automática" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock Text="Limpieza automática" FontSize="16" FontWeight="SemiBold"/>
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <StackPanel Spacing="6">
                             <TextBlock Text="Preajuste" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>

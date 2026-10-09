@@ -23,7 +23,7 @@ public sealed partial class ReparacionPage : Page
     // Pinceles desde los recursos de tema de la app (claro/oscuro): las cards creadas
     // en código acompañan al tema igual que las del XAML. Se resuelven con el tema
     // EFECTIVO (ThemeBrushes), no con el del sistema.
-    private static Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Microsoft.UI.Xaml.Media.Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static Microsoft.UI.Xaml.Media.SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
     private static Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
     private static Microsoft.UI.Xaml.Media.SolidColorBrush SuccessBrush => (Microsoft.UI.Xaml.Media.SolidColorBrush)App.Current.Resources["SuccessBrush"];
@@ -461,7 +461,7 @@ public sealed partial class ReparacionPage : Page
             "sfc" => "sfc /scannow",
             "dism" => "dism /Online /Cleanup-Image /RestoreHealth",
             "chkdsk" => "chkdsk C: /scan",
-            "component_store" => "dism /Online /Cleanup-Image /StartComponentCleanup /ResetBase",
+            "component_store" => "dism /Online /Cleanup-Image /StartComponentCleanup",
             "reset_network" => "netsh winsock reset && netsh int ip reset",
             "flush_dns" => "ipconfig /flushdns",
             _ => tool.Id

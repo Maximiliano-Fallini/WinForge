@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -282,6 +283,11 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
     {
         try
         {
+            // Botones de acción de las cards (TPM / VBS). El texto se asigna acá y no en el
+            // XAML para que el cambio de idioma también los re-traduzca.
+            TpmManageButtonText.Text = I18n.T("Administrar TPM");
+            VbsOpenButtonText.Text = I18n.T("Abrir Seguridad de Windows");
+
             // TPM
             if (_securityFeatures.TpmPresent)
             {
@@ -351,17 +357,64 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
             // también el caso "configurado pero sin ejecutar" (VBS habilitado sin
             // hipervisor corriendo, o HVCI desactivado por un driver incompatible),
             // que antes quedaba sin detalle porque solo se miraba VbsStatus == 2.
-            VbsDetailText.Text = _securityFeatures.HvciRunning
-                ? I18n.T("Integridad de memoria activa")
-                : _securityFeatures.HvciConfigured
-                    ? I18n.T("Integridad de memoria configurada, sin ejecutar")
-                    : _securityFeatures.VbsStatus >= 0
-                        ? I18n.T("Sin integridad de memoria")
-                        : "";
+            if (_securityFeatures.HvciRunning)
+            {
+                VbsDetailText.Text = I18n.T("Integridad de memoria activa");
+                HvciIndicator.Fill = StatusBrush("SuccessBrush");
+            }
+            else if (_securityFeatures.HvciConfigured)
+            {
+                VbsDetailText.Text = I18n.T("Integridad de memoria configurada, sin ejecutar");
+                HvciIndicator.Fill = StatusBrush("WarningBrush");
+            }
+            else if (_securityFeatures.VbsStatus >= 0)
+            {
+                VbsDetailText.Text = I18n.T("Sin integridad de memoria");
+                HvciIndicator.Fill = StatusBrush("ErrorBrush");
+            }
+            else
+            {
+                VbsDetailText.Text = I18n.T("No detectado");
+                HvciIndicator.Fill = StatusBrush("WarningBrush");
+            }
         }
         catch (Exception ex)
         {
             try { _loggingService.LogWarning($"Error aplicando estado de seguridad: {ex.Message}"); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Abre la consola del TPM (tpm.msc): activarlo, desactivarlo o borrarlo. Si Windows no
+    /// lo tiene disponible, la propia consola avisa que hay que habilitarlo en la BIOS/UEFI.
+    /// Es el método que documenta Microsoft para habilitar el TPM desde Windows.
+    /// </summary>
+    private void TpmManageButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("tpm.msc") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Sistema: no se pudo abrir la consola del TPM (tpm.msc): {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Abre Aislamiento del núcleo en Seguridad de Windows (deep link oficial), donde se
+    /// activa o desactiva la Integridad de memoria (HVCI). Mismo destino que el aviso de
+    /// Overclock USB, para que el usuario llegue siempre al mismo lugar.
+    /// </summary>
+    private void VbsOpenButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("windowsdefender://coreisolation") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Sistema: no se pudo abrir Seguridad de Windows: {ex.Message}");
         }
     }
 

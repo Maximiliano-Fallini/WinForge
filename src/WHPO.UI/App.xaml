@@ -20,7 +20,15 @@
                          comparten el gris #151517 (definido también en AccentOverrides.xaml). -->
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF0C0C0E"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF151517"/>
+                    <SolidColorBrush x:Key="ToolTipBackgroundBrush" Color="#FF151517"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3A3A3C"/>
+<!-- Borde de las CARDS: TRANSPARENTE. Las cards de la app no llevan contorno (ver
+                         CardStyle en Controls/Cards.xaml). Antes era un filete al 10 % y además el
+                         ajuste de transparencia lo llevaba al tope del vidrio cuando el desenfoque
+                         estaba encendido (0,62), así que se veía como un reborde marcado —el caso
+                         #19000000 -> #9E000000 del log—. La clave queda declarada para que un tema o
+                         un estilo puedan darle contorno cuando sea intencional. -->
+                    <SolidColorBrush x:Key="CardStrokeBrush" Color="#00000000"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF9FA0A2"/>
 <!-- Texto principal del tema, para lo que se pinta desde código: mismo valor que el
                          TextFillColorPrimaryBrush de WinUI en oscuro. Ver ThemeBrushes/FanIcon: las claves
@@ -82,11 +90,62 @@
 <!-- Cards de núcleos (Núcleos): mismo color que las cards/navbar. -->
                     <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FF151517"/>
                     <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FF0F0F11"/>
+
+<!-- ===== Capa de fondo de la ventana (ver MainWindow.xaml) =====
+                         Piezas del fondo: el relleno base y dos resplandores radiales que
+                         se colocan en las esquinas de la ventana. Acá —en los temas
+                         clásicos— el relleno es un color PLANO igual al del fondo de las
+                         páginas y los resplandores van transparentes: la capa existe pero no
+                         se ve, así que estos temas se ven exactamente igual que antes. Los
+                         temas con backdrop propio (Marea) los pisan desde
+                         ThemePalettes con un gradiente. -->
+                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FF0C0C0E"/>
+                    <SolidColorBrush x:Key="WindowGlowABrush" Color="#00000000"/>
+                    <SolidColorBrush x:Key="WindowGlowBBrush" Color="#00000000"/>
+
+<!-- ===== Fondo de la VENTANA (imagen del tema, ver MainWindow.xaml) =====
+                         Va detrás de TODO: menú, barra de título y contenido. Acá —temas
+                         clásicos— está vacía (transparente), así la ventana se ve como
+                         siempre; los temas con fondo propio (Marea, Aurora y
+                         Brasa) la pisan desde su archivo en Themes\ con un ImageBrush y
+                         dejan transparentes el fondo de las páginas y el del contenido del
+                         NavigationView para que la imagen se vea a través de ellos. -->
+                    <SolidColorBrush x:Key="WindowWallpaperBrush" Color="#00000000"/>
+                    <SolidColorBrush x:Key="WindowWallpaperScrimBrush" Color="#00000000"/>
+
+<!-- ===== Botón "Actualizar" de la barra de título =====
+                         Pastilla del ACENTO del tema: el azul de la app acá (en los temas
+                         clásicos) y el acento de cada tema con paleta propia en los suyos,
+                         que sale de los colores de su imagen de fondo (menta en Aurora,
+                         naranja en Brasa, turquesa en Marea). Vive en
+                         los diccionarios de tema para que ThemePalettes lo escriba junto
+                         con el resto de la paleta y el snapshot lo restaure al volver a un
+                         tema clásico. El texto es el mismo par del tema
+                         (AccentBrush/AccentForegroundBrush): oscuro sobre el azul claro, con
+                         mucho contraste; hover/pressed son la rampa del acento
+                         (SystemAccentColorLight1/Dark1). ApplyUpdateIndicator lo aplica desde
+                         código con pinceles live (ver MainWindow.xaml.cs). -->
+                    <SolidColorBrush x:Key="UpdateButtonBrush" Color="#FF8AB4F8"/>
+                    <SolidColorBrush x:Key="UpdateButtonForegroundBrush" Color="#FF101418"/>
+                    <SolidColorBrush x:Key="UpdateButtonPointerOverBrush" Color="#FFA2C2FA"/>
+                    <SolidColorBrush x:Key="UpdateButtonPressedBrush" Color="#FF6D9EF6"/>
+
+<!-- ===== Desenfoque de paneles =====
+                         El desenfoque NO es una capa de ventana: con el deslizador encendido,
+                         el relleno de CADA superficie (cards, menú, chips) pasa a un pincel
+                         acrílico con el color del panel como tinte — cada panel desenfoca la
+                         imagen del fondo a través de su propio relleno, y lo no tapado queda
+                         nítido. Los pinceles los arma PanelAppearance en tiempo de ejecución
+                         (WriteSurfaceBrush), así que acá no se declara ningún recurso. -->
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFE8EAEE"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF"/>
+                    <SolidColorBrush x:Key="ToolTipBackgroundBrush" Color="#FFFFFFFF"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFD8DDE3"/>
+<!-- Ver la nota del tema oscuro: las cards no llevan contorno, la clave queda
+                         declarada en transparente para un contorno intencional. -->
+                    <SolidColorBrush x:Key="CardStrokeBrush" Color="#00000000"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#FF5C6470"/>
 <!-- Ver la nota del tema oscuro: mismo valor que el TextFillColorPrimaryBrush de WinUI en claro
                          (#E4000000), para que en el caso normal el icono se vea exactamente igual que antes. -->
@@ -139,6 +198,26 @@
 
                     <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FFF4F6F8"/>
                     <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FFE6EAEF"/>
+
+<!-- Capa de fondo de la ventana: ver la nota del tema oscuro (acá el relleno
+                         plano es el mismo gris claro del fondo de las páginas). -->
+                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FFE8EAEE"/>
+                    <SolidColorBrush x:Key="WindowGlowABrush" Color="#00000000"/>
+                    <SolidColorBrush x:Key="WindowGlowBBrush" Color="#00000000"/>
+<!-- Ver la nota del tema oscuro: en los temas clásicos el fondo de la ventana va vacío. -->
+                    <SolidColorBrush x:Key="WindowWallpaperBrush" Color="#00000000"/>
+                    <SolidColorBrush x:Key="WindowWallpaperScrimBrush" Color="#00000000"/>
+
+<!-- Botón "Actualizar" (ver la nota del tema oscuro): en claro el texto es BLANCO, así
+                         que la pastilla arranca en el escalón oscuro del acento
+                         (SystemAccentColorDark1) para conservar el contraste; el hover sube
+                         al acento y el pressed baja un escalón más (Dark2). -->
+                    <SolidColorBrush x:Key="UpdateButtonBrush" Color="#FF2C63B8"/>
+                    <SolidColorBrush x:Key="UpdateButtonForegroundBrush" Color="#FFFFFFFF"/>
+                    <SolidColorBrush x:Key="UpdateButtonPointerOverBrush" Color="#FF3D7EDB"/>
+                    <SolidColorBrush x:Key="UpdateButtonPressedBrush" Color="#FF2554A1"/>
+
+
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
             <ResourceDictionary.MergedDictionaries>
@@ -157,18 +236,6 @@
             </ResourceDictionary.MergedDictionaries>
 <!-- Paleta de estado (coincide con Feedback.cs) -->
             <SolidColorBrush x:Key="SuccessBrush" Color="#FF4CAF50"/>
-<!-- Botón "Actualizar" de la barra de título: verde llamativo FIJO en todos los
-                 temas (claro/oscuro/sistema/Rosa/Negro-Azul). Vive FUERA de los diccionarios
-                 de tema —igual que SuccessBrush/ErrorBrush— para que ninguna paleta lo pise;
-                 el texto va en verde casi negro para contraste alto sobre el verde brillante. -->
-            <SolidColorBrush x:Key="UpdateButtonBrush" Color="#FF22C55E"/>
-            <SolidColorBrush x:Key="UpdateButtonForegroundBrush" Color="#FF06210F"/>
-<!-- Hover/pressed del botón "Actualizar": verdes fijos de la misma familia, para que
-                 el estilo default del Button no pinte el acento del tema al pasar el mouse.
-                 ApplyUpdateIndicator los aplica/quita en Button.Resources según el modo
-                 (ver MainWindow.xaml.cs): en "Desarrollo" se quitan para usar el hover del tema. -->
-            <SolidColorBrush x:Key="UpdateButtonPointerOverBrush" Color="#FF16A34A"/>
-            <SolidColorBrush x:Key="UpdateButtonPressedBrush" Color="#FF15803D"/>
 <!-- Fondo de una pastilla de estado (mismo verde, con alfa): vive con SuccessBrush, FUERA de
                  los diccionarios de tema, porque el verde de "disponible" no cambia entre claro y
                  oscuro — igual que el del propio SuccessBrush. -->

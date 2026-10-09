@@ -365,12 +365,19 @@ public sealed class BenchmarkPage : Page
         return Card(panel);
     }
 
+    /// <summary>
+    /// Una card del componente: la superficie del tema (el mismo relleno que usan las cards de la app
+    /// \u2014ver AppBridge.Brush, que pide el pincel de superficie\u2014) con su borde. El fondo NO es decorativo:
+    /// es lo que le da al motor algo que desenfocar, as\u00ed que una card transparente se ver\u00eda con el
+    /// borde pero sin vidrio.
+    /// </summary>
     private static Border Card(UIElement child) => new()
     {
         CornerRadius = new CornerRadius(10),
         Padding = new Thickness(16),
         BorderThickness = new Thickness(1),
         BorderBrush = AppBridge.Brush("CardBorderBrush"),
+        Background = AppBridge.Brush("CardBackgroundBrush"),
         Child = child
     };
 

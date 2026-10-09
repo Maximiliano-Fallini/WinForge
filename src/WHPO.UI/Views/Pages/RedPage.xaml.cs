@@ -26,7 +26,7 @@ public sealed partial class RedPage : Page, IBackgroundPausable
     // Las cards creadas en código (DNS, adaptadores) acompañan al tema de la app.
     // Pinceles desde los recursos de tema (claro/oscuro), resueltos con el tema
     // EFECTIVO (ThemeBrushes), no con el del sistema.
-    private static Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Microsoft.UI.Xaml.Media.Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static Microsoft.UI.Xaml.Media.SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
     private static Microsoft.UI.Xaml.Media.SolidColorBrush MutedTextBrush => ThemeBrushes.Get("MutedBrush");
     private static readonly Microsoft.UI.Xaml.Media.SolidColorBrush LatencyErrorBrush = new(Windows.UI.Color.FromArgb(255, 255, 100, 100));

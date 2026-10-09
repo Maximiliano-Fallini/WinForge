@@ -129,11 +129,16 @@
 
 <!-- Tooltip Style -->
     <Style x:Key="DefaultToolTipStyle" TargetType="ToolTip">
-        <Setter Property="Background" Value="{ThemeResource ToolTipBackground}"/>
-        <Setter Property="Foreground" Value="{ThemeResource ToolTipForeground}"/>
-        <Setter Property="CornerRadius" Value="4"/>
-        <Setter Property="Padding" Value="8,4"/>
-        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Background" Value="{ThemeResource ToolTipBackgroundBrush}"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource MenuFlyoutPresenterBorderBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="6"/>
+        <Setter Property="Padding" Value="10,7"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="MaxWidth" Value="420"/>
+        <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
     </Style>
 
 <!-- Avatar/Profile Picture Placeholder -->

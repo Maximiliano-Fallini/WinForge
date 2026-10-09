@@ -3,12 +3,13 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls">
 
-<!-- Base Card Style -->
+<!-- Base Card Style: SIN contorno. Las cards son superficies planas; el filete de 1 px
+         se leía como un reborde sobre todo con el vidrio encendido (ver CardStrokeBrush en
+         App.xaml). Para un contorno intencional está OutlinedCardStyle. -->
     <Style x:Key="CardStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
         <Setter Property="CornerRadius" Value="8"/>
-        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
-        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Padding" Value="16"/>
     </Style>
 
@@ -23,9 +24,10 @@
         </Setter>
     </Style>
 
-<!-- Outlined Card Style -->
+<!-- Outlined Card Style: el único que dibuja contorno, y con el color de borde del tema
+         (CardBorderBrush, el mismo de los diálogos y las pastillas). -->
     <Style x:Key="OutlinedCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
-        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
     </Style>

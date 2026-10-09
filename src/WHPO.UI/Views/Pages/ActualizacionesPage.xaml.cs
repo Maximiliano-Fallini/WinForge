@@ -15,9 +15,9 @@ public sealed partial class ActualizacionesPage : Page
 
     // Fondos desde los recursos de tema: siguen la paleta activa (oscuro/claro).
     // Se resuelven con el tema EFECTIVO de la app (ThemeBrushes), no con el del sistema.
-    private static SolidColorBrush CardBgDefault => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Brush CardBgDefault => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static SolidColorBrush CardBgSelected => ThemeBrushes.Get("CardSelectedBrush");
-    private static SolidColorBrush CardBgDisabled => ThemeBrushes.Get("DisabledCardBackgroundBrush");
+    private static Brush CardBgDisabled => ThemeBrushes.GetSurface("DisabledCardBackgroundBrush");
     private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
     private static SolidColorBrush RedBorderBrush => (SolidColorBrush)App.Current.Resources["ErrorBrush"];
     private static readonly SolidColorBrush TransparentBrush = new(Windows.UI.Color.FromArgb(0, 0, 0, 0));
@@ -73,7 +73,7 @@ public sealed partial class ActualizacionesPage : Page
         UpdateCardVisual(DisabledCard, DisabledCardCheck, mode == WindowsUpdateMode.Disabled, CardBgDisabled, RedBorderBrush, CardBgSelected);
     }
 
-    private static void UpdateCardVisual(Border card, FontIcon check, bool selected, SolidColorBrush unselectedBg, SolidColorBrush unselectedBorder, SolidColorBrush selectedBg)
+    private static void UpdateCardVisual(Border card, FontIcon check, bool selected, Brush unselectedBg, Brush unselectedBorder, SolidColorBrush selectedBg)
     {
         card.BorderBrush = selected ? AccentBrush : unselectedBorder;
         card.BorderThickness = new Thickness(selected ? 2 : 1);

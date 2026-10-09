@@ -977,23 +977,6 @@ public class UsbOverclockService : IUsbOverclockService
         });
     }
 
- /// <summary>Busca el driver del paquete extraído, prefiriendo la variante AMD64_AS y luego AMD64 (nunca NTX86/98ME).</summary>
-    private static string? LocateDriverSys(string root)
-    {
-        try
-        {
-            var all = Directory.EnumerateFiles(root, "hidusbf.sys", SearchOption.AllDirectories).ToList();
-            if (all.Count == 0) return null;
-            foreach (var variant in new[] { "AMD64_AS", "AMD64" })
-            {
-                var hit = all.FirstOrDefault(p => p.Contains(variant, StringComparison.OrdinalIgnoreCase));
-                if (hit != null) return hit;
-            }
-            return null;
-        }
-        catch { return null; }
-    }
-
  /// <summary>Sanity check del binario: PE (MZ) y tamaño plausible para un driver.</summary>
     private static bool LooksLikeDriverSys(string path)
     {

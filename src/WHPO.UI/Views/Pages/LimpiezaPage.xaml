@@ -21,7 +21,7 @@
         </Grid.Resources>
 
 <!-- ====== NAVBAR INTERNO: Chequeo / Limpieza personalizada / Buscador de duplicados / Admin. de inicio ====== -->
-        <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+        <Border x:Name="LimpiezaNavBar" Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="LimpiezaTabs"
                          Margin="20,10,20,4"
                          Background="Transparent"
@@ -51,7 +51,6 @@
                 <Border x:Name="ChequeoHeroCard" Grid.Row="0"
                         Visibility="Collapsed"
                         Background="{ThemeResource CardBackgroundBrush}"
-                        BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                         CornerRadius="14" Padding="22,18"
                         Margin="24,16,24,0">
                         <StackPanel Spacing="16">
@@ -129,7 +128,6 @@
                                 VerticalAlignment="Center"
                                 Margin="24,0">
                         <Border Background="{ThemeResource CardBackgroundBrush}"
-                                BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                                 CornerRadius="14" Padding="30,26"
                                 MaxWidth="440" HorizontalAlignment="Center">
                             <StackPanel Spacing="14">
@@ -163,8 +161,8 @@
                     <StackPanel x:Name="ChequeoProgressPanel" Grid.Row="1" Spacing="12" Visibility="Collapsed"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center"
-                                Width="260">
-<!-- Velocímetro de progreso del análisis -->
+                                Width="300">
+<!-- Velocímetro de progreso del análisis: el mismo dial del arranque -->
                         <controls:SpeedometerGauge x:Name="ChequeoRing"
                                                    HorizontalAlignment="Center"/>
                         <TextBlock x:Name="ChequeoProgressText"
@@ -369,7 +367,6 @@
 
 <!-- Opciones: grupos de carpetas que se analizan -->
                             <Border Background="{ThemeResource CardBackgroundBrush}"
-                                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                                     CornerRadius="12" Padding="16"
                                     MaxWidth="480"
                                     HorizontalAlignment="Center">
@@ -408,7 +405,6 @@
 
 <!-- Card hero: total encontrado + acciones (re-analizar / limpiar) -->
                             <Border Background="{ThemeResource CardBackgroundBrush}"
-                                    BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1"
                                     CornerRadius="12" Padding="18">
                                 <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
                                     <Border Width="4" Background="{ThemeResource AccentBrush}" CornerRadius="2"
@@ -441,8 +437,8 @@
                         <StackPanel x:Name="CustomProgressPanel" Grid.Row="1" Spacing="12" Visibility="Collapsed"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
-                                    Width="260">
-<!-- Velocímetro de progreso del análisis -->
+                                    Width="300">
+<!-- Velocímetro de progreso del análisis: el mismo dial del arranque -->
                             <controls:SpeedometerGauge x:Name="CustomRing"
                                                        HorizontalAlignment="Center"/>
                             <TextBlock x:Name="CustomProgressText"
@@ -607,6 +603,19 @@
                                 <TextBlock Grid.Column="2" Text="Estado" FontSize="11" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}" HorizontalAlignment="Center"/>
                                 <TextBlock Grid.Column="3"/>
                             </Grid>
+
+<!-- Carga de las entradas: mismo velocímetro que el resto del componente,
+                                 en modo indeterminado (todavía no hay avance que medir).
+                                 Lo alterna LoadStartupEntriesAsync. -->
+                            <StackPanel x:Name="StartupLoadingPanel" Spacing="10" Visibility="Collapsed"
+                                        HorizontalAlignment="Center" Margin="0,4">
+                                <controls:SpeedometerGauge x:Name="StartupRing"
+                                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Cargando entradas de inicio..." FontSize="12"
+                                           Foreground="{ThemeResource SecondaryTextBrush}"
+                                           TextAlignment="Center"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
 
                             <StackPanel x:Name="StartupEntriesHost" Spacing="2"/>
 

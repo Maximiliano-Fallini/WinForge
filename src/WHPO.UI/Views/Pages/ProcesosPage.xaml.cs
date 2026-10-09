@@ -858,7 +858,7 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
         }
         else
         {
-            bg = ThemeBrushes.Get("CardBackgroundBrush");
+            bg = ThemeBrushes.GetSurface("CardBackgroundBrush");
             fg = ThemeBrushes.Get("SecondaryTextBrush");
         }
         button.Background = bg;

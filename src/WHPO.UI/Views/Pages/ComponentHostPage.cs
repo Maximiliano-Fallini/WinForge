@@ -29,6 +29,16 @@ public sealed partial class ComponentHostPage : Page
     // ("unexpected parameters"), imposible de catchear en managed.
     internal static string? PendingComponentId;
 
+    /// <summary>
+    /// Id del componente que está EN PANTALLA en este momento ("" en una visita sin
+    /// componente válido). Lo consulta MainWindow al desinstalar: la pestaña activa
+    /// puede ser un host en el back stack o bajo el mouse, y el servicio de navegación
+    /// solo conoce la página de la navegación MÁS RECIENTE (navegar a un core desde un
+    /// ítem de menú no la actualiza). El host también se usa como marcador de página:
+    /// el Frame no permite leer el contenido de sus entradas del back stack.
+    /// </summary>
+    internal static string CurrentComponentId { get; private set; } = "";
+
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -36,6 +46,12 @@ public sealed partial class ComponentHostPage : Page
         var id = e.Parameter as string ?? PendingComponentId;
         var registry = App.Services.GetRequiredService<ComponentRegistry>();
         var component = id == null ? null : registry.Find(id);
+
+        // Registrar el id en pantalla ANTES de decidir: el redireccionamiento que
+        // dispara el Workshop al desinstalar la pestaña activa consulta esta
+        // propiedad (al re-navegar al Workshop pasa de nuevo por acá y se
+        // actualiza sola). Cualquier camino sale con un id definido.
+        CurrentComponentId = component != null ? component.Id : "";
 
         if (component == null)
         {

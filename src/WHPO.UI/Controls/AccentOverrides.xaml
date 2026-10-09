@@ -56,6 +56,19 @@
             <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FF2A2A2C"/>
             <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FF262626"/>
 
+<!-- Cuadros de texto (TextBox): el template del control pinta su fondo con estas
+                 CUATRO claves —una por estado—, así que son las que hay que redefinir para
+                 que un cuadro de texto sea una superficie más de la app: mismo color que
+                 las cards, el alfa del ajuste de transparencia y el vidrio del desenfoque
+                 (ver PanelAppearance.SurfaceKeys). Sin esto el TextBox conserva el relleno
+                 del sistema y queda opaco mientras el resto de la UI responde a los
+                 deslizadores. Los temas con paleta propia las pisan con sus tonos en
+                 Themes\<Tema>Theme.cs (OverrideBrushes). -->
+            <SolidColorBrush x:Key="TextControlBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FF1A1A1C"/>
+            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FF202022"/>
+            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FF151517"/>
+
 <!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
                  XamlControlsResources (si se define solo en el raíz de App.xaml,
                  WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
@@ -92,6 +105,12 @@
             <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FFD8E3F3"/>
             <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FFE2E9F6"/>
 
+<!-- Cuadros de texto (TextBox): ver el comentario del tema Dark. -->
+            <SolidColorBrush x:Key="TextControlBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFF7F8FA"/>
+            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FFEDEFF2"/>
+            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FFFFFFFF"/>
+
             <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
             <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>
         </ResourceDictionary>
@@ -102,5 +121,32 @@
          Lo hacemos simétrico 0,4,0,4. Theme-independent: va al nivel raíz
          del diccionario y gana por orden de merge en App.xaml. -->
     <Thickness x:Key="NavigationViewItemSeparatorMargin">0,4,0,4</Thickness>
+
+<!-- Filetes del template de NavigationView: por defecto el SplitView interno
+         dibuja un borde de 1 px en los CUATRO lados (NavigationViewBorderThickness, con
+         el trazo claro de NavigationViewItemSeparatorForeground) y el contenedor del
+         contenido otro de 1 px ARRIBA Y A LA IZQUIERDA (1,1,0,0, con
+         NavigationViewContentGridBorderBrush). Sobre la foto del fondo esas dos líneas se
+         leían como una separación entre la barra de título, el navbar interno de cada
+         componente y el borde del área de la pestaña, y además cortaban la imagen con un
+         trazo claro. No aportan nada: la ventana ya tiene su propio borde (ver
+         WindowBorder). Se anulan acá, al nivel raíz, igual que el separador de arriba. -->
+    <Thickness x:Key="NavigationViewBorderThickness">0</Thickness>
+    <Thickness x:Key="NavigationViewContentGridBorderThickness">0</Thickness>
+
+<!-- Esquinas redondas del bloque central (el "huevo"): la plantilla del
+         NavigationView redondea DOS esquinas del área central. El SplitView interno
+         lleva CornerRadius = OverlayCornerRadius filtrado a la DERECHA (8 px arriba y
+         abajo a la derecha → huevo en la esquina superior derecha del navbar) y su
+         ContentGrid lleva NavigationViewContentGridCornerRadius = 8,0,0,0 (8 px arriba a
+         la izquierda → huevo en la esquina superior izquierda del área de cada
+         componente). Sobre una UI que es un solo bloque no aportan nada (igual que los
+         filetes de arriba). El del ContentGrid se anula acá por recurso, porque esa
+         clave solo la usa NavigationView; el del SplitView no se puede anular por
+         recurso sin cuadrar TAMBIÉN diálogos y flyouts (todos comparten
+         OverlayCornerRadius) — ese se fija en 0 por código, en
+         MainWindow.ApplyPanelColors, junto al PaneBackground. -->
+    <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
+    <CornerRadius x:Key="TopNavigationViewContentGridCornerRadius">0</CornerRadius>
 
 </ResourceDictionary>

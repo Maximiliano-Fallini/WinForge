@@ -35,6 +35,15 @@ public class ThemeService : IThemeService
         var savedTheme = _settingsService.Get("AppTheme", AppTheme.SystemDefault);
         if (!Enum.IsDefined(typeof(AppTheme), savedTheme))
             savedTheme = AppTheme.SystemDefault;
+#pragma warning disable CS0618 // Nebula eliminado: migrar a Tide una sola vez.
+        if (savedTheme == AppTheme.Nebula)
+        {
+            savedTheme = AppTheme.Tide;
+            _settingsService.Set("AppTheme", savedTheme);
+            _settingsService.Save();
+            _logger.LogInfo("Tema Nebulosa eliminado: migrado a Marea.");
+        }
+#pragma warning restore CS0618
         _currentTheme = savedTheme;
     }
 

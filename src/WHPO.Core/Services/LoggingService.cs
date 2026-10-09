@@ -26,8 +26,18 @@ public class LoggingService : ILoggingService
     // y se arranca uno nuevo, así el disco nunca se llena pero queda historial reciente.
     private const long MaxLogBytes = 5 * 1024 * 1024; // 5 MB
 
-    // Archivos considerados "logs" (app.log, el rotado y el de errores no controlados).
-    private static readonly string[] LogFileNames = { "app.log", "app.log.old", "errors.log" };
+    // Archivos considerados "logs" al borrar/tamaño: app.log, el rotado, el de errores
+    // no controlados y las bitácoras de diagnóstico (i18n, apariencia), que también
+    // quedan detrás del switch de "Logs de desarrollo".
+    private static readonly string[] LogFileNames =
+        { "app.log", "app.log.old", "errors.log", "i18n.log", "i18n-pagina.log", "appearance.log" };
+
+    /// <summary>
+    /// Consulta estática del switch, para el código que escribe bitácoras sin pasar
+    /// por este servicio (clases estáticas de la UI como I18nDiagnostics o
+    /// PanelAppearance.Diag). Lee el settings.json, igual que la instancia.
+    /// </summary>
+    public static bool IsDeveloperLoggingEnabled() => ReadDeveloperLogsSetting();
 
     public LoggingService(ILogger<LoggingService> logger)
     {

@@ -69,13 +69,13 @@ public sealed class CleanupService : ICleanupService
         // ===== Sistema de Windows =====
         new()
         {
-            Id = "sys_temp", Name = "Temp de Windows", Kind = TargetKind.Files,
+            Id = "temp_windows", Name = "Temp de Windows", Kind = TargetKind.Files,
             Description = "Archivos temporales del sistema (%WINDIR%\\Temp). Se regeneran solos.",
             GetPaths = () => [WinDir("Temp")]
         },
         new()
         {
-            Id = "sys_usertemp", Name = "Temporal del usuario", Kind = TargetKind.Files,
+            Id = "temp_user", Name = "Temporal del usuario", Kind = TargetKind.Files,
             Description = "Archivos temporales de tu sesión (%TEMP%). Se regeneran solos.",
             GetPaths = () => [Path.GetTempPath()]
         },
@@ -96,6 +96,12 @@ public sealed class CleanupService : ICleanupService
             Id = "sys_wer", Name = "Reportes de errores de Windows (WER)", Kind = TargetKind.Files,
             Description = "Cola de reportes de errores de Windows. Útil solo para depurar.",
             GetPaths = () => [Path.Combine(ProgramData, "Microsoft", "Windows", "WER")]
+        },
+        new()
+        {
+            Id = "sys_dxshader", Name = "Caché de sombreadores de DirectX", Kind = TargetKind.Files,
+            Description = "Caché de sombreadores compilados de DirectX. Windows y los juegos la regeneran; la primera ejecución posterior puede tardar más.",
+            GetPaths = () => [Path.Combine(LocalAppData, "D3DSCache")]
         },
 
         new()
@@ -150,6 +156,17 @@ public sealed class CleanupService : ICleanupService
             }
         },
 
+        // ---------- Aplicaciones ----------
+        new()
+        {
+            Id = "app_storecache", Name = "Caché de Microsoft Store", Kind = TargetKind.Files,
+            Description = "Archivos de caché de Microsoft Store. La aplicación los reconstruye; puede volver a descargarlos.",
+            GetPaths = () =>
+            [
+                Path.Combine(LocalAppData, "Packages", "Microsoft.WindowsStore_8wekyb3d8bbwe", "LocalCache")
+            ]
+        },
+
         // ---------- Utilidades ----------
         new()
         {
@@ -194,6 +211,16 @@ public sealed class CleanupService : ICleanupService
             Id = "dl_programfiles", Name = "Archivos de programa descargados", Kind = TargetKind.Files,
             Description = "Carpeta legada Downloaded Program Files (ActiveX/Java).",
             GetPaths = () => [WinDir("Downloaded Program Files")]
+        },
+        new()
+        {
+            Id = "dl_deliveryopt", Name = "Caché de Optimización de distribución", Kind = TargetKind.Files,
+            DefaultChecked = false, IsAdvanced = true,
+            Description = "Caché de descargas compartidas de Windows Update. Windows la administra; los archivos en uso se omiten y la limpieza puede requerir permisos de administrador.",
+            GetPaths = () =>
+            [
+                WinDir("ServiceProfiles", "NetworkService", "AppData", "Local", "Microsoft", "Windows", "DeliveryOptimization", "Cache")
+            ]
         },
 
         // ---------- Avanzado ----------
@@ -284,17 +311,23 @@ public sealed class CleanupService : ICleanupService
 
     private static readonly CleanupCategoryInfo[] CustomCategories =
     [
+        new("temporales", "Archivos temporales de Windows",
+            "Archivos temporales de Windows y de tu sesión. Se pueden analizar antes de limpiar.",
+            CustomTargets.Where(t => t.Id.StartsWith("temp_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
         new("sistema", "Sistema de Windows",
             "Archivos temporales y de error del sistema operativo.",
-        CustomTargets.Where(t => t.Id.StartsWith("sys_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
+            CustomTargets.Where(t => t.Id.StartsWith("sys_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
         new("multimedia", "Multimedia",
-            "Miniaturas, caché de íconos y transcodes de reproducción.",
+            "Miniaturas, cachés del Explorador y de reproducción.",
             CustomTargets.Where(t => t.Id.StartsWith("mm_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
+        new("aplicaciones", "Aplicaciones",
+            "Cachés temporales de aplicaciones instaladas.",
+            CustomTargets.Where(t => t.Id.StartsWith("app_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
         new("utilidades", "Utilidades",
             "Recientes de la sesión y autocompletados del historial (Windows).",
             CustomTargets.Where(t => t.Id.StartsWith("ut_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
         new("descargas", "Descargas de Windows",
-            "Descargas de actualizaciones y componentes ya instalados.",
+            "Descargas de actualizaciones y cachés de distribución de Windows.",
             CustomTargets.Where(t => t.Id.StartsWith("dl_", StringComparison.Ordinal)).Select(ToInfo).ToList()),
         new("avanzado", "Avanzado",
             "Limpieza de bajo nivel, recomendada solo para usuarios que saben lo que borran.",

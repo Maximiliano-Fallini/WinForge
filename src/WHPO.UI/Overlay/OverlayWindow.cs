@@ -5,6 +5,7 @@ using System.Drawing.Text;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 using WinFormsTimer = System.Windows.Forms.Timer;
 
@@ -130,8 +131,6 @@ public sealed class OverlayWindow : Form
 
     /// <summary>Verde por defecto de los títulos de familia (CPU/GPU/RAM/FPS) del
     /// overlay: mismo verde del estado "desbloqueado" de la barra.</summary>
-    /// <summary>Verde por defecto de los títulos de familia (CPU/GPU/RAM/FPS) del
-    /// overlay: mismo verde del estado "desbloqueado" de la barra.</summary>
     public const string DefaultFamilyColor = "#78DC8C";
 
     /// <summary>Blanco por defecto de los valores de las métricas (setting
@@ -183,18 +182,15 @@ public sealed class OverlayWindow : Form
         : (int)Math.Round(OverlayWidth * _config.FontScale);
 
     // === Layout horizontal ===
-    // Etiqueta ("CPU", "GPU"...) en gris apagado; los valores al 100% del color.
-    private const int LabelGray = 155;
-    // Separadores verticales entre familias: gris claro con alpha alta — tienen
-    // que NOTARSE (antes eran tan tenues que se confundían con el panel).
+    // Separadores verticales entre familias: el texto secundario del tema con alpha alta —
+    // tienen que NOTARSE (antes eran tan tenues que se confundían con el panel) y, al salir de
+    // la paleta del tema, dejan de ser un gris fijo que no combina con él.
     private const int DividerAlpha = 150;
-    private const int DividerLighten = 90;
 
     /// <summary>Separador vertical de la barra (línea corta y centrada).</summary>
     private void DrawHorizontalDivider(Graphics g, float x, float y, float height)
     {
-        using var pen = new Pen(Color.FromArgb(DividerAlpha,
-            15 + DividerLighten, 15 + DividerLighten, 18 + DividerLighten), 1f);
+        using var pen = new Pen(_dividerColor, 1f);
         g.DrawLine(pen, x, y + height * 0.18f, x, y + height * 0.82f);
     }
 
@@ -239,6 +235,183 @@ public sealed class OverlayWindow : Form
 
     /// <summary>Escala de layout proporcional al tamaño de letra configurado.</summary>
     private float S(float v) => v * (float)_config.FontScale;
+
+    // =====================================================================
+    // Paleta del TEMA y ritmo vertical
+    // =====================================================================
+
+    // El overlay es una ventana GDI+ fuera del árbol de XAML: no ve los pinceles del diccionario
+    // de tema, así que hasta ahora el panel era SIEMPRE un gris fijo (#0F0F12) y sobre un tema con
+    // identidad (Marea, Brasa, Aurora…) quedaba como un bloque ajeno. Ahora el CROMO del overlay
+    // —panel, texto secundario, divisores y candado— sale de la definición del tema activo
+    // (ThemePalettes, la misma fuente que el splash y el ajuste de transparencia). Los colores de
+    // las MÉTRICAS no se tocan: siguen siendo los que elige el usuario en la página de Overlay.
+    private Color _panelColor = Color.FromArgb(15, 15, 18);
+    private Color _secondaryColor = Color.FromArgb(180, 180, 180);
+    private Color _dividerColor = Color.FromArgb(DividerAlpha, 105, 105, 108);
+    private Color _lockedGlyphColor = Color.FromArgb(215, 205, 205, 210);
+    private Color _unlockedGlyphColor = Color.FromArgb(215, 120, 220, 140);
+
+    // Filete INTERIOR de 1 px con el color de BORDE del tema (CardBorderBrush: los temas lo
+    // definen como su acento al 20 %). Es lo que define el borde del panel cuando el vidrio del
+    // tema es muy transparente: sin él, un panel al 10 % de alfa no tiene dónde terminar y sobre
+    // un juego claro se lee como texto flotando. Se dibuja RECORTADO al path (ver DrawPanelRim),
+    // no como pluma del relleno: la pluma sin recortar dejaba la fila del borde con alfa parcial
+    // y se veía un reborde gris (medido con tools/OverlayPixelProbe).
+    private Color _rimColor = Color.FromArgb(38, 255, 255, 255);
+
+    /// <summary>Tema con el que se resolvió la paleta: si cambia, Render la vuelve a leer.</summary>
+    private AppTheme? _paletteTheme;
+
+    /// <summary>¿La paleta vigente salió del tema? False = el HUD oscuro de siempre (ver RefreshPalette).</summary>
+    private bool _paletteFromTheme;
+
+    // Ritmo vertical y sangrías del panel (valores base; S() los escala con la letra). El alto del
+    // panel (ComputeOverlayHeight) calcula con ESTOS MISMOS números: antes eran literales repetidos
+    // en los dos lados (25, 24, 12, 16) y alcanzaba con tocar uno para que el alto dejara de
+    // coincidir con lo dibujado. El ritmo de las sub-líneas (LowFont, 11px) es más corto que el de
+    // las líneas con nombre y valores (LineFont, 12.5px) para que cada sub-línea se lea pegada a su
+    // línea madre.
+    private const float PadTop = 8f;
+    private const float StateLineHeight = 21f;    // línea del candado
+    private const float MetricLineHeight = 25f;   // línea con nombre + valores (LineFont)
+    private const float SubLineHeight = 22f;      // sub-línea chica (LowFont): lows, máx/mín, VRAM
+    private const float PanelPadX = 12f;          // sangría izquierda de todo el contenido
+    private const float LabelValueGap = 8f;       // aire mínimo entre el nombre y el primer valor
+    private const float GraphHeight = 50f;
+    private const float GraphGap = 8f;
+    private const float BarPadX = 14f;            // sangría de la barra horizontal
+
+    /// <summary>
+    /// Resuelve el cromo del overlay con el tema activo. La llama ReadConfig (y por lo tanto
+    /// InvalidateConfig) y Render cuando detecta que el tema cambió, así el cambio se ve sin
+    /// reiniciar la app.
+    /// </summary>
+    private void RefreshPalette()
+    {
+        var theme = PanelAppearance.EffectiveTheme();
+        _paletteTheme = theme;
+
+        // El overlay es un HUD sobre el juego y su texto es CLARO (los colores de las métricas los
+        // elige el usuario; por defecto blanco y verde claro): con un tema de base clara —Claro y
+        // Rosa/Blanco, cuya card es blanca— un panel blanco dejaría el texto invisible. Ahí el
+        // overlay se queda con el HUD oscuro de siempre; los temas con identidad propia son todos
+        // oscuros (Marea #062430, Brasa #240F0C, Aurora #07242A, Negro/Azul
+        // #0E1524, ~0,1 de luminancia), así que en ésos sí toma el color del tema.
+        var themeCard = ThemeColor(theme, "CardBackgroundBrush");
+        _paletteFromTheme = themeCard is { } card && Luminance(card) <= 0.45;
+
+        _panelColor = _paletteFromTheme ? themeCard!.Value : Color.FromArgb(15, 15, 18);
+        var secondary = _paletteFromTheme
+            ? (ThemeColor(theme, "SecondaryTextBrush") ?? Color.FromArgb(180, 180, 180))
+            : Color.FromArgb(180, 180, 180);
+        _secondaryColor = secondary;
+        _dividerColor = Color.FromArgb(DividerAlpha, secondary.R, secondary.G, secondary.B);
+        _lockedGlyphColor = Color.FromArgb(215, secondary.R, secondary.G, secondary.B);
+        var accent = _paletteFromTheme
+            ? (ThemeColor(theme, "AccentBrush") ?? Color.FromArgb(120, 220, 140))
+            : Color.FromArgb(120, 220, 140);
+        _unlockedGlyphColor = Color.FromArgb(215, accent.R, accent.G, accent.B);
+
+        // El filete: el color de BORDE del tema (que los temas definen como su acento al 20 %), o
+        // un blanco al 15 % si el tema no lo define (los clásicos) o si el overlay se quedó con el
+        // HUD oscuro por ser un tema claro.
+        _rimColor = (_paletteFromTheme ? ThemeColor(theme, "CardBorderBrush") : null)
+            ?? Color.FromArgb(38, 255, 255, 255);
+
+        // Verificación sin pantalla: la misma bitácora que el splash y el ajuste de paneles
+        // (el overlay es una ventana GDI+ que ninguna sonda puede mirar desde afuera).
+        PanelAppearance.Diag(
+            $"overlay: tema {theme} — panel {Hex(_panelColor)} " +
+            $"({(_paletteFromTheme ? "del tema" : "HUD oscuro: el tema es claro")}) con el vidrio del tema " +
+            $"{ThemePanelAlpha() * 100:0} % (transparencia de paneles vigente), filete {Hex(_rimColor)}, " +
+            $"secundario {Hex(_secondaryColor)}, divisor {Hex(_dividerColor)}, candado libre {Hex(_unlockedGlyphColor)}");
+    }
+
+    /// <summary>
+    /// Alfa (0..1) que el TEMA le da a sus paneles con el ajuste de transparencia vigente: es el
+    /// mismo cálculo que pinta las cards, el menú y la barra de título de la app
+    /// (<see cref="PanelAppearance.ApplyToColor(Windows.UI.Color)"/>), así que el overlay se ve tan
+    /// de vidrio como los paneles del tema activo — 10 % en los temas de entorno (90 % de
+    /// transparencia), 100 % en los planos y de degradado — y sigue EN VIVO el deslizador de la
+    /// pestaña Apariencia. Se lee en cada render: es una cuenta, no un estado.
+    ///
+    /// Antes el alfa salía solo del ajuste de opacidad del overlay (85 %), así que el panel quedaba
+    /// como un bloque sólido idéntico en todos los temas: el reporte "el componente es sólido, no
+    /// reacciona al tema que le pongamos a la app".
+    /// </summary>
+    private static double ThemePanelAlpha()
+    {
+        try
+        {
+            // Blanco opaco de prueba: ApplyToColor le devuelve el MISMO color con el alfa de
+            // paneles del tema, así que el alfa del resultado es el que buscamos.
+            var probe = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            return PanelAppearance.ApplyToColor(probe).A / 255.0;
+        }
+        catch
+        {
+            // Sin app (una sonda, un arranque temprano): paneles opacos, como los clásicos.
+            return 1.0;
+        }
+    }
+
+    /// <summary>
+    /// Luminancia relativa del color (0 = negro, 1 = blanco). Decide si el panel del tema sirve
+    /// como fondo de un HUD de texto claro (ver RefreshPalette).
+    /// </summary>
+    private static double Luminance(Color color)
+        => (0.2126 * color.R + 0.7152 * color.G + 0.0722 * color.B) / 255.0;
+
+    /// <summary>
+    /// Color de una clave del tema activo, o null si el tema no la define en ningún lado. Los
+    /// llamadores tienen su respaldo: NUNCA se quedan con un color transparente (una clave sin
+    /// color de fábrica dejaba el texto invisible).
+    /// </summary>
+    private static Color? ThemeColor(AppTheme theme, string key)
+    {
+        try
+        {
+            if (ThemePalettes.TryGetFactoryColor(theme, key, out var color))
+                return Color.FromArgb(color.A, color.R, color.G, color.B);
+        }
+        catch { }
+        return null;
+    }
+
+    private static string Hex(Color color) => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    /// <summary>
+    /// Filete interior de 1 px del panel, con el color de BORDE del tema (CardBorderBrush, que los
+    /// temas definen como su acento al 20 %). Es lo que le da final al panel cuando el vidrio del
+    /// tema es muy transparente: sin él, un panel al 10 % de alfa no tiene dónde terminar.
+    ///
+    /// Va RECORTADO al propio path, con la pluma de 2 px: el recorte deja ver solo la mitad de
+    /// adentro, así el contorno queda de 1 px nítido y no se corre hacia afuera —la pluma sin
+    /// recortar era el reborde gris que se veía sobre fondos claros (ver el comentario del
+    /// FillPath). Su alfa escala con la opacidad del ajuste: en 0 % desaparece con el panel.
+    /// </summary>
+    private void DrawPanelRim(Graphics g, GraphicsPath path)
+    {
+        int alpha = (int)Math.Round(_rimColor.A * _config.Opacity);
+        if (alpha <= 0) return;
+
+        var state = g.Save();
+        try
+        {
+            g.SetClip(path, CombineMode.Replace);
+            using var pen = new Pen(Color.FromArgb(alpha, _rimColor.R, _rimColor.G, _rimColor.B), 2f);
+            g.DrawPath(pen, path);
+        }
+        catch
+        {
+            // El filete es decorativo: si el recorte falla, el panel se dibuja igual.
+        }
+        finally
+        {
+            g.Restore(state);
+        }
+    }
 
     // ===== P/Invoke: estilos extendidos + UpdateLayeredWindow =====
 
@@ -1018,7 +1191,10 @@ public sealed class OverlayWindow : Form
                 _lastTopMostAssert = now;
                 AssertTopMost();
             }
-            if (_configDirty)
+            // La paleta se relee también cuando cambió el TEMA: el usuario puede cambiar de tema con
+            // el overlay andando (el cambio se aplica en vivo), y hasta ahora el panel quedaba del
+            // color viejo hasta reiniciar la app.
+            if (_configDirty || _paletteTheme != PanelAppearance.EffectiveTheme())
             {
                 _config = ReadConfig();
                 _configDirty = false;
@@ -1073,14 +1249,21 @@ public sealed class OverlayWindow : Form
             // transparente NEGRO (FromArgb(0,0,0,0)) y PaintLayered copia los
             // píxeles premultiplicados tal cual, así las esquinas fuera del path
             // quedan realmente transparentes.
-            int bgAlpha = (int)(_config.Opacity * 255);
-            // Barra horizontal: radio más suave (el alto es chico y un radio
-            // grande comería media barra).
+            // El alfa final = VIDRIO DEL TEMA × ajuste de opacidad del overlay. El vidrio lo fija
+            // el tema (ver ThemePanelAlpha: 10 % en los de entorno, 100 % en los planos y de
+            // degradado) y sigue en vivo el deslizador de transparencia de la pestaña Apariencia;
+            // el ajuste de opacidad escala dentro de eso, así que 0 % = panel invisible y 100 % =
+            // el vidrio pleno del tema. Antes el alfa salía solo del ajuste (85 % siempre), y por
+            // eso el overlay era el mismo bloque sólido en todos los temas.
+            int bgAlpha = Math.Clamp((int)Math.Round(ThemePanelAlpha() * _config.Opacity * 255), 0, 255);
+            // Radio: el panel vertical usa el de las cards de la app (12 DIP con la letra al 100 %),
+            // acotado para que la escala de letra no lo deforme; la barra horizontal, la mitad (el
+            // alto es chico y un radio grande comería media barra).
             int radius = IsHorizontal
-                ? (int)MathF.Max(4f, 8f * (float)_config.FontScale)
-                : (int)MathF.Max(6f, 12f * (float)_config.FontScale);
+                ? (int)Math.Clamp(8f * (float)_config.FontScale, 4f, 14f)
+                : (int)Math.Clamp(12f * (float)_config.FontScale, 6f, 18f);
             using (var path = RoundedRect(new Rectangle(0, 0, _buffer!.Width, _buffer.Height), radius))
-            using (var bgBrush = new SolidBrush(Color.FromArgb(bgAlpha, 15, 15, 18)))
+            using (var bgBrush = new SolidBrush(Color.FromArgb(bgAlpha, _panelColor.R, _panelColor.G, _panelColor.B)))
             {
                 // SOLO FillPath anti-aliased, SIN pluma de contorno. La pluma del
                 // reborde (aunque sea del mismo color del fondo) cruza el límite del
@@ -1091,9 +1274,10 @@ public sealed class OverlayWindow : Form
                 // puro cubre el píxel del borde al ~91% y compone casi igual al
                 // interior: sin reborde visible sobre ningún fondo.
                 g.FillPath(bgBrush, path);
+                DrawPanelRim(g, path);
             }
 
-            float y = S(8);
+            float y = S(PadTop);
             string? gameName = metrics?.GameName;
             bool haveFps = metrics != null && metrics.Fps > 0;
 
@@ -1112,13 +1296,11 @@ public sealed class OverlayWindow : Form
             // Estado con CANDADO VECTOR centrado (igual que la barra horizontal):
             // cerrado y gris = bloqueado (click-through), abierto y verde =
             // desbloqueado (arrastrable). Ya no va el texto traducido.
-            using (var stateBrush = new SolidBrush(_locked
-                       ? Color.FromArgb(215, 205, 205, 210)
-                       : Color.FromArgb(215, 120, 220, 140)))
+            using (var stateBrush = new SolidBrush(_locked ? _lockedGlyphColor : _unlockedGlyphColor))
             {
                 DrawLockGlyph(g, ((float)_buffer!.Width - LockGlyphWidth(g)) / 2f, y + S(7), stateBrush);
             }
-            y += S(21);
+            y += S(StateLineHeight);
 
             // Métricas en las FILAS de badges de la configuración (arrastrables):
             // cada fila de la página es una línea de la superposición, dibujada en
@@ -1161,8 +1343,8 @@ public sealed class OverlayWindow : Form
                             if (vram != null)
                             {
                                 using var vramBrush = new SolidBrush(_config.MetricColor);
-                                g.DrawString($"VRAM {vram}", LowFont, vramBrush, S(12), y);
-                                y += S(24);
+                                g.DrawString($"VRAM {vram}", LowFont, vramBrush, S(PanelPadX), y);
+                                y += S(SubLineHeight);
                             }
                         }
                         break;
@@ -1204,9 +1386,11 @@ public sealed class OverlayWindow : Form
             // de cortarse con "…" a mitad de palabra.
             if (ShowGameTitleEnabled(metrics, haveFps))
             {
-                using var gameBrush = new SolidBrush(Color.FromArgb(180, 180, 180));
+                // El gris del texto secundario sale del tema (con Marea es el celeste apagado del
+                // tema, no un gris neutro que no combina con el panel).
+                using var gameBrush = new SolidBrush(_secondaryColor);
                 g.DrawString(gameName!, LowFont, gameBrush,
-                    new RectangleF(S(16), y, _buffer!.Width - S(32), _gameTitleHeight));
+                    new RectangleF(S(PanelPadX), y, _buffer!.Width - S(PanelPadX * 2), _gameTitleHeight));
             }
 
             PaintLayered();
@@ -1216,22 +1400,6 @@ public sealed class OverlayWindow : Form
             _log.LogWarning($"OverlayWindow: error de render: {ex.Message}");
         }
     }
-
-    // ===== Layout horizontal: barra compacta =====
-
-    // ===== Grupos de la barra horizontal =====
-
-    private static string IdToHGroup(string id) => id switch
-    {
-        "fps" or FpsMaxMinId or "fpsMax" or "fpsMin" or "low1" or "low01" or FrametimeGraphId => "fps",
-        "cpuUsage" or "cpuTemp" or "cpuMhz" or "cpuWatts" => "cpu",
-        "gpuUsage" or "gpuTemp" or "gpuMhz" or "gpuWatts" or "gpuMem" => "gpu",
-        "ramUsed" or "ramMhz" or RamPercentId => "ram",
-        _ => ""
-    };
-
-    private static bool IsHGroupCore(string id) =>
-        id is "fps" or "cpuUsage" or "gpuUsage" or "ramUsed";
 
     /// <summary>
     /// Grupos de la barra horizontal con los
@@ -1426,16 +1594,14 @@ public sealed class OverlayWindow : Form
     private void DrawHorizontalBar(Graphics g, WHPO.Core.Services.Interfaces.OverlayMetrics? metrics,
         bool haveFps)
     {
-        float padX = S(14);
+        float padX = S(BarPadX);
         float midY = _buffer!.Height / 2f;
 
         // Candado de estado (VECTOR, ver DrawLockGlyph): cerrado = bloqueado
         // (click-through, los clics van al juego), abierto = desbloqueado
         // (arrastrable). Gris cuando está bloqueado; verde tenue cuando está
         // desbloqueado, como el estado en la página.
-        using (var lockBrush = new SolidBrush(_locked
-                   ? Color.FromArgb(215, 205, 205, 210)
-                   : Color.FromArgb(215, 120, 220, 140)))
+        using (var lockBrush = new SolidBrush(_locked ? _lockedGlyphColor : _unlockedGlyphColor))
         {
             DrawLockGlyph(g, padX, midY, lockBrush);
         }
@@ -1482,7 +1648,8 @@ public sealed class OverlayWindow : Form
         {
             float tx = x + S(12);
             DrawHorizontalDivider(g, tx - S(8), S(4), _buffer.Height - S(8));
-            using var titleBrush = new SolidBrush(Color.FromArgb(215, 210, 210, 215));
+            // Mismo texto secundario del tema que el subtítulo del panel vertical.
+            using var titleBrush = new SolidBrush(Color.FromArgb(215, _secondaryColor.R, _secondaryColor.G, _secondaryColor.B));
             // Recortado a lo que sobra hasta el borde derecho: el ancho de la barra
             // se acota al del monitor (MeasureHorizontalBarWidth), así que un nombre
             // de juego larguísimo se salía del buffer y quedaba cortado.
@@ -1514,7 +1681,7 @@ public sealed class OverlayWindow : Form
         // reinventa el título del procesador, la línea queda sin nombre.
         string text = hasLabel ? (string.IsNullOrWhiteSpace(label) ? "—" : label) : "";
         DrawLabeledLine(g, text, brush, y, values);
-        return y + S(25);
+        return y + S(MetricLineHeight);
     }
 
     /// <summary>
@@ -1550,11 +1717,11 @@ public sealed class OverlayWindow : Form
             foreach (var (text, rightX) in values)
                 minStart = Math.Min(minStart, rightX - g.MeasureString(text, LineFont).Width);
 
-            maxLabelWidth = minStart - S(12) - S(8);
+            maxLabelWidth = minStart - S(PanelPadX) - S(LabelValueGap);
             if (maxLabelWidth < S(24)) maxLabelWidth = S(24);
         }
 
-        g.DrawString(FitText(g, label, LineFont, maxLabelWidth), LineFont, brush, S(12), y);
+        g.DrawString(FitText(g, label, LineFont, maxLabelWidth), LineFont, brush, S(PanelPadX), y);
         // Los valores van con el color general de métricas (no blanco fijo).
         using var white = new SolidBrush(_config.MetricColor);
         foreach (var (text, rightX) in values)
@@ -1578,7 +1745,7 @@ public sealed class OverlayWindow : Form
         bool showGraph = ids.Contains(FrametimeGraphId);
         if (!showFps && !showMaxMin && !showLow1 && !showLow01 && !showGraph) return y;
 
-        float left = S(12);
+        float left = S(PanelPadX);
         if (showFps)
         {
             string api = metrics?.GfxApi ?? "";
@@ -1588,7 +1755,7 @@ public sealed class OverlayWindow : Form
             // alineado a la derecha en la primera columna de la grilla.
             DrawLabeledLine(g, fpsLabel, fpsBrush, y,
                 new List<(string Text, float RightX)> { (fpsText, S(ColUsageRight)) });
-            y += S(25);
+            y += S(MetricLineHeight);
         }
 
         // Máximo (↑) y mínimo (↓) de la sesión: badge propio ("fpsMaxMin"),
@@ -1602,7 +1769,7 @@ public sealed class OverlayWindow : Form
             {
                 using var statsBrush = new SolidBrush(_config.MetricColor);
                 g.DrawString(string.Join("  ", stats), LowFont, statsBrush, left, y);
-                y += S(24);
+                y += S(SubLineHeight);
             }
         }
 
@@ -1620,7 +1787,7 @@ public sealed class OverlayWindow : Form
         if (lows.Count > 0)
         {
             g.DrawString(string.Join("  ", lows), LowFont, white, left, y);
-            y += S(24);
+            y += S(SubLineHeight);
         }
 
         // Gráfico de frametime (ms) debajo de los lows,
@@ -1651,12 +1818,12 @@ public sealed class OverlayWindow : Form
     /// </summary>
     private float DrawFrametimeGraph(Graphics g, FrametimeSample[] series, Brush lineBrush, float y)
     {
-        float x = S(12);
+        float x = S(PanelPadX);
         // Área reservada a la derecha del panel para el valor de ms actual
         // (verticalmente centrado, fuera del gráfico).
         float valueArea = S(56);
-        float w = (float)_buffer!.Width - S(24) - valueArea;
-        float h = S(50);
+        float w = (float)_buffer!.Width - S(PanelPadX * 2) - valueArea;
+        float h = S(GraphHeight);
         if (w < 40 || h < 12) return y;
         if (IsHorizontal) return y; // el gráfico completo solo existe en el layout vertical
 
@@ -1755,7 +1922,7 @@ public sealed class OverlayWindow : Form
             g.DrawString(txt, LowFont, lineBrush, vx, vy);
         }
 
-        return y + h + S(8);
+        return y + h + S(GraphGap);
     }
 
     /// <summary>
@@ -2007,25 +2174,28 @@ public sealed class OverlayWindow : Form
         // Barra horizontal: alto fijo (una sola línea).
         if (IsHorizontal) return (int)Math.Round(HorizontalHeight * _config.FontScale);
 
-        float y = S(8) + S(21); // margen superior + línea de estado
+        // Los avances salen de las MISMAS constantes que usa el dibujado (ver el bloque
+        // "Paleta del TEMA y ritmo vertical"): si acá hubiera literales, tocar el dibujo dejaba
+        // el alto desincronizado (texto recortado o franja vacía al pie).
+        float y = S(PadTop) + S(StateLineHeight); // margen superior + línea de estado
         foreach (var row in BuildRenderRows(_config.MetricRows))
         {
             switch (row.Family)
             {
                 case "fps":
-                    if (row.Ids.Contains("fps")) y += S(25); // línea igual a las de hardware
-                    if (row.Ids.Contains(FpsMaxMinId)) y += S(24); // sub-línea máx/mín
-                    if (row.Ids.Contains("low1") || row.Ids.Contains("low01")) y += S(24);
-                    if (row.Ids.Contains(FrametimeGraphId)) y += S(58); // gráfico (50) + gap (8)
+                    if (row.Ids.Contains("fps")) y += S(MetricLineHeight); // línea igual a las de hardware
+                    if (row.Ids.Contains(FpsMaxMinId)) y += S(SubLineHeight); // sub-línea máx/mín
+                    if (row.Ids.Contains("low1") || row.Ids.Contains("low01")) y += S(SubLineHeight);
+                    if (row.Ids.Contains(FrametimeGraphId)) y += S(GraphHeight + GraphGap);
                     break;
                 case "gpu":
                     // Línea de hardware (si la fila trae métricas del GPU) + VRAM.
-                    if (row.Ids.Any(id => id != GpuMemId)) y += S(25);
-                    if (row.Ids.Contains(GpuMemId)) y += S(24);
+                    if (row.Ids.Any(id => id != GpuMemId)) y += S(MetricLineHeight);
+                    if (row.Ids.Contains(GpuMemId)) y += S(SubLineHeight);
                     break;
                 case "ram":
                 case "cpu":
-                    y += S(25);
+                    y += S(MetricLineHeight);
                     break;
             }
         }
@@ -2055,7 +2225,7 @@ public sealed class OverlayWindow : Form
             var area = Screen.FromPoint(Location).WorkingArea;
             int nx = Math.Max(area.Left, Math.Min(Location.X, area.Right - Width));
             int ny = Math.Max(area.Top, Math.Min(Location.Y, area.Bottom - Height));
-            const int m = 16;
+            const int m = CornerMargin;
             if (Width > area.Width)
                 nx = IsHorizontal ? area.Left + m : area.Right - (int)Math.Round(OverlayWidth * _config.FontScale) - m;
             if (Height > area.Height)
@@ -2143,7 +2313,9 @@ public sealed class OverlayWindow : Form
             var body = new RectangleF(x, bodyTop, w, totalH - S(5.5f));
             using var bodyPath = RoundedRectF(body, S(1.3f));
             g.FillPath(brush, bodyPath);
-            using var holeBrush = new SolidBrush(Color.FromArgb(235, 38, 40, 46));
+            // Keyhole: un agujero del COLOR DEL PANEL (antes un gris fijo que no coincidía con el
+            // tema).
+            using var holeBrush = new SolidBrush(Color.FromArgb(235, _panelColor.R, _panelColor.G, _panelColor.B));
             float hole = S(1.9f);
             g.FillEllipse(holeBrush,
                 x + w / 2f - hole / 2f, bodyTop + body.Height / 2f - hole / 2f, hole, hole);

@@ -24,7 +24,7 @@ public sealed partial class OptimizacionesPage : Page
     // Pinceles desde los recursos de tema de la app (claro/oscuro): las cards creadas en
     // código acompañan al tema igual que las del XAML. Se resuelven con el tema EFECTIVO
     // (ThemeBrushes), no con el del sistema.
-    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static SolidColorBrush CardHoverBrush => ThemeBrushes.Get("CardHoverBrush");
     private static SolidColorBrush CardSelectedBrush => ThemeBrushes.Get("CardSelectedBrush");
     private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");

@@ -4,8 +4,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using WHPO.Core;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
@@ -23,7 +25,9 @@ public sealed partial class ConfiguracionPage : Page
     private readonly WHPO_UI.Components.ComponentRegistry _navRegistry;
     private bool _isLoading;
 
-    // Pestaña seleccionada del navbar interno (0=Inicio, 1=Caché, 2=Navegación, 3=Desarrollo).
+    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Caché, Navegación,
+    // Desarrollo). Solo se usa como respaldo: ApplyTabVisibility compara contra el ítem
+    // seleccionado, no contra el índice.
     private int _selectedTabIndex;
 
     private OnboardingSimulatorWindow? _onboardingSimulator;
@@ -70,7 +74,22 @@ public sealed partial class ConfiguracionPage : Page
         _navRegistry = App.Services.GetRequiredService<WHPO_UI.Components.ComponentRegistry>();
 
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
         _themeService.ThemeChanged += OnThemeChanged;
+
+        // El navbar INTERNO se pinta a mano (ver RepaintConfigNavBar) porque WinUI cachea su
+        // {ThemeResource}: es una superficie que no sigue al ajuste por sí sola, así que se suscribe a
+        // la aplicación del ajuste y se repinta con él ya aplicado. La página usa caché de navegación:
+        // la suscripción y la baja se atan a Loaded/Unloaded para no dejar el handler colgado.
+        Loaded += (_, _) =>
+        {
+            // Baja antes del alta: la página se carga más de una vez (caché de navegación) y no puede
+            // quedar suscrita dos veces.
+            WHPO_UI.PanelAppearance.Applied -= RepaintConfigNavBar;
+            WHPO_UI.PanelAppearance.Applied += RepaintConfigNavBar;
+            RepaintConfigNavBar();
+        };
+        Unloaded += (_, _) => WHPO_UI.PanelAppearance.Applied -= RepaintConfigNavBar;
 
         // La página usa caché de navegación: estas suscripciones se hacen una sola vez.
         // Sincroniza el indicador de la pestaña interna "Actualizaciones" con el estado
@@ -101,6 +120,21 @@ public sealed partial class ConfiguracionPage : Page
             LaunchAtStartupToggle.IsOn = _startupService.IsEnabled();
             StartMinimizedToggle.IsOn = _settingsService.Get("window.startMinimized", false);
 
+            // Pestaña Apariencia: los controles reflejan el ajuste VIGENTE (el que tienen
+            // puesto las superficies ahora mismo), no el guardado en disco: ese se escribe
+            // 400 ms después del último movimiento del deslizador, así que puede quedar un
+            // paso atrás. Al volver a entrar a la página (queda en caché) el deslizador
+            // aparecía en un valor que no era el que estaba aplicado, y llevarlo "de vuelta"
+            // a ese valor no cambiaba nada: se ve como que la transparencia no funciona. El
+            // ajuste guardado sigue mandando al arrancar, cuando los dos valen lo mismo.
+            PanelTransparencySlider.Value = Math.Clamp(
+                WHPO_UI.PanelAppearance.TransparencyPercent,
+                0.0, WHPO_UI.PanelAppearance.MaxTransparencyPercent);
+            PanelBlurSlider.Value = Math.Clamp(WHPO_UI.PanelAppearance.BlurPercent, 0.0, 100.0);
+            UpdatePanelTransparencyText();
+            UpdatePanelBlurText();
+            UpdateBlurAvailability();
+
             // Normaliza el valor del registro de inicio (agrega/quita el flag de
             // minimizado según la opción actual) y limpia feedbacks viejos.
             SyncStartupRegistration();
@@ -110,8 +144,7 @@ public sealed partial class ConfiguracionPage : Page
 
             BuildNavMenu();
             ApplyConfigTabsLanguage();
-            SelectTheme(_themeService.CurrentTheme);
-            ApplyThemeOptionsLanguage();
+            BuildThemePicker();
             UpdateDeveloperLogsSize();
             UpdateCacheSize();
             App.MainWindowInstance?.UpdateTrayStatus();
@@ -125,30 +158,127 @@ public sealed partial class ConfiguracionPage : Page
         }
     }
 
-    private void SelectTheme(AppTheme theme)
+    /// <summary>
+    /// Al salir de la página se vuelca el guardado pendiente de la transparencia: el
+    /// temporizador de 400 ms puede no llegar a dispararse si el usuario se va enseguida, y
+    /// el ajuste quedaba sin persistir (al volver, el deslizador y las superficies no
+    /// contaban la misma historia).
+    /// </summary>
+    private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        var tag = theme.ToString();
-        var item = ThemeComboBox.Items
-            .OfType<ComboBoxItem>()
-            .FirstOrDefault(comboItem => string.Equals(comboItem.Tag?.ToString(), tag, StringComparison.Ordinal));
-        ThemeComboBox.SelectedItem = item;
+        try
+        {
+            if (_appearanceSaveTimer != null)
+            {
+                _appearanceSaveTimer.Stop();
+                _appearanceSaveTimer = null;
+                WHPO_UI.PanelAppearance.SaveCurrent();
+            }
+        }
+        catch { }
     }
 
-    private void ThemeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    /// <summary>
+    /// Arma la grilla de temas de la card de apariencia: una card por tema con su miniatura,
+    /// agrupadas por tipo de fondo (Entorno / Degradado / Planos) y con el filtro Todos / Oscuro /
+    /// Claro. Reemplaza al desplegable, que no mostraba nada del tema hasta aplicarlo.
+    /// Se vuelve a llamar al cambiar de idioma (las cards se etiquetan al armarlas).
+    /// </summary>
+    private void BuildThemePicker()
     {
-        if (_isLoading || ThemeComboBox.SelectedItem is not ComboBoxItem { Tag: string tag })
+        try
         {
-            return;
+            ThemePickerUi.Build(ThemeGridHost, ThemeFilterBar, _themeService.CurrentTheme, ApplyThemeSelection);
         }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Configuración: no se pudo armar el selector de temas: {ex.Message}");
+        }
+    }
 
-        if (Enum.TryParse<AppTheme>(tag, out var theme))
+    /// <summary>
+    /// Elige un tema desde la grilla: la misma elección que hacía el desplegable. Si el tema ya
+    /// está aplicado es un no-op (es el caso de entrar a la página: la card vigente viene marcada);
+    /// si es otro, se persiste y la app se reinicia para arrancar COMPLETA con la apariencia nueva
+    /// (sin repintados parciales página por página).
+    /// </summary>
+    private void ApplyThemeSelection(AppTheme theme)
+    {
+        if (_isLoading || theme == _themeService.CurrentTheme) return;
+
+        ThemePickerUi.MarkSelected(theme);
+        _themeService.SetTheme(theme);
+        App.MainWindowInstance?.RestartForThemeChange();
+    }
+
+    /// <summary>
+    /// Transparencia de los paneles: se aplica AL INSTANTE (PanelAppearance muta el
+    /// alfa de los pinceles del tema y la UI repinta sola) — a diferencia del tema, que
+    /// sí reinicia la app, porque acá no hay que reconstruir ninguna página.
+    /// </summary>
+    private void PanelTransparencySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        UpdatePanelTransparencyText();
+        if (_isLoading) return;
+        WHPO_UI.PanelAppearance.SetTransparencyPercent(
+            Math.Clamp(e.NewValue, 0.0, WHPO_UI.PanelAppearance.MaxTransparencyPercent), persist: false);
+
+        // La barra interna de pestañas se pinta a mano (WinUI cachea el {ThemeResource}):
+        // es un panel más, así que sigue al deslizador igual que el navbar de la ventana.
+        RepaintConfigNavBar();
+
+        // El archivo de ajustes se escribe UNA vez, 400 ms después del último tick: al
+        // arrastrar, el deslizador dispara muchos cambios por segundo y no tiene sentido
+        // guardar en disco en cada uno (ni dejar valores intermedios escritos).
+        ScheduleAppearanceSave();
+    }
+
+    /// <summary>
+    /// Blur (desenfoque de los paneles): mismo trato que la transparencia —se aplica en
+    /// caliente— y el porcentaje es la INTENSIDAD: elige el radio del desenfoque de la foto que
+    /// queda detrás de cada panel (cards, chips, menú, barra de título). La copia de la foto se
+    /// decodifica una vez y solo se vuelve a desenfocar al mover el deslizador, así que el paso es
+    /// gradual y no un encendido; 0 % apaga la capa y los paneles vuelven al relleno sólido del
+    /// tema (ver PanelAppearance.SetBlurPercent).
+    /// </summary>
+    private void PanelBlurSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        UpdatePanelBlurText();
+        if (_isLoading) return;
+        WHPO_UI.PanelAppearance.SetBlurPercent(Math.Clamp(e.NewValue, 0.0, 100.0), persist: false);
+        ScheduleAppearanceSave();
+    }
+
+    private DispatcherQueueTimer? _appearanceSaveTimer;
+
+    private void ScheduleAppearanceSave()
+    {
+        if (_appearanceSaveTimer == null)
         {
-            // SetTheme persiste la elección y aplica lo que pueda en caliente; el
-            // reinicio garantiza que la app arranque COMPLETA con la apariencia
-            // nueva (sin repintados parciales página por página).
-            _themeService.SetTheme(theme);
-            App.MainWindowInstance?.RestartForThemeChange();
+            _appearanceSaveTimer = DispatcherQueue.CreateTimer();
+            _appearanceSaveTimer.Interval = TimeSpan.FromMilliseconds(400);
+            _appearanceSaveTimer.Tick += (_, _) =>
+            {
+                _appearanceSaveTimer.Stop();
+                WHPO_UI.PanelAppearance.SaveCurrent();
+            };
         }
+        _appearanceSaveTimer.Stop();
+        _appearanceSaveTimer.Start();
+    }
+
+    /// <summary>Refleja el valor del deslizador como porcentaje (0 % = paneles opacos).</summary>
+    private void UpdatePanelTransparencyText()
+    {
+        if (PanelTransparencyValueText != null && PanelTransparencySlider != null)
+            PanelTransparencyValueText.Text = $"{Math.Round(PanelTransparencySlider.Value)} %";
+    }
+
+    /// <summary>Refleja el valor del deslizador de blur como porcentaje (0 % = apagado).</summary>
+    private void UpdatePanelBlurText()
+    {
+        if (PanelBlurValueText != null && PanelBlurSlider != null)
+            PanelBlurValueText.Text = $"{Math.Round(PanelBlurSlider.Value)} %";
     }
 
     private void OnMinimizeToTrayToggled(object sender, RoutedEventArgs e)
@@ -679,7 +809,9 @@ public sealed partial class ConfiguracionPage : Page
     {
         ApplyConfigTabsLanguage();
         UpdateNavMenuSummary();
-        ApplyThemeOptionsLanguage();
+        // La grilla de temas se etiqueta al armarla (I18n.T en cada card): se rearma para que los
+        // nombres y los encabezados de grupo queden en el idioma nuevo.
+        ThemePickerUi.Relabel(_themeService.CurrentTheme);
         UpdateDeveloperLogsSize();
     }
 
@@ -695,36 +827,70 @@ public sealed partial class ConfiguracionPage : Page
     {
         // El repintado en caliente quedó reemplazado por el reinicio de la app
         // (RestartForThemeChange): aquí solo se refleja la elección en el picker.
+        ThemePickerUi.MarkSelected(theme);
+        RepaintConfigNavBar();
+        UpdateBlurAvailability();
+    }
+
+    /// <summary>
+    /// El desenfoque solo tiene efecto donde hay una FOTO detrás de los paneles: los temas de
+    /// entorno. En los planos y de degradado (y en Claro/Oscuro) no hay copia que desenfocar
+    /// —PanelBlurLayer se queda sin fuente—, así que el deslizador se apaga para que no parezca
+    /// roto —por eso esos temas declaran 0 % de blur (ver ThemeCatalog.KindOf).
+    ///
+    /// En los temas PLANOS tampoco hay nada detrás que la transparencia pueda mostrar (ni foto
+    /// ni gradiente): las dos cards se ocultan y los valores quedan fijos en 0 % y 0 %
+    /// (ver PanelAppearance.Resolve).
+    /// </summary>
+    private void UpdateBlurAvailability()
+    {
         try
         {
-            var sysDark = theme == AppTheme.SystemDefault
-                && App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark;
-            var dark = theme == AppTheme.Dark || theme == AppTheme.BlueBlack || sysDark;
-            var navColor = theme switch
-            {
-                AppTheme.BlueBlack => Windows.UI.Color.FromArgb(255, 0x0E, 0x15, 0x24),
-                AppTheme.PinkLight => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF),
-                _ => dark
-                    ? Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17)
-                    : Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF)
-            };
-            ConfigNavBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
+            var theme = WHPO_UI.PanelAppearance.EffectiveTheme();
+            bool hasPhoto = WHPO_UI.Wallpaper.SavedImagePath(theme) != null;
+            PanelBlurSlider.IsEnabled = hasPhoto;
+            bool isFlat = WHPO_UI.ThemeCatalog.KindOf(theme) == WHPO_UI.ThemeCatalog.ThemeKind.Flat;
+            PanelTransparencyCard.Visibility = isFlat
+                ? Microsoft.UI.Xaml.Visibility.Collapsed
+                : Microsoft.UI.Xaml.Visibility.Visible;
+            PanelBlurCard.Visibility = isFlat
+                ? Microsoft.UI.Xaml.Visibility.Collapsed
+                : Microsoft.UI.Xaml.Visibility.Visible;
         }
         catch { /* arranque temprano */ }
     }
 
     /// <summary>
-    /// Traduce los ítems del desplegable de tema. Los ComboBoxItem no se realizan
-    /// en el árbol visual hasta que se abre el desplegable, así que el recorrido
-    /// del I18n no los alcanza: hay que traducirlos por código.
+    /// Relleno de la barra de pestañas interna, reusado entre pasadas: con el vidrio encendido es el
+    /// ACRÍLICO de la plataforma (ver <see cref="WHPO_UI.PanelAppearance.SurfaceFill"/>) y con el
+    /// desenfoque apagado el sólido de siempre.
     /// </summary>
-    private void ApplyThemeOptionsLanguage()
+    private Brush? _navFill;
+
+    /// <summary>
+    /// Pinta el navbar interno (ConfigNavBar) con el color del panel del tema, ya con la
+    /// transparencia vigente.
+    ///
+    /// El Border usa {ThemeResource NavigationViewDefaultPaneBackground}, que WinUI cachea: al
+    /// cambiar entre temas de la misma base (Negro/Azul → Oscuro) el diccionario se actualiza
+    /// pero el control no repinta, y al mover el deslizador de transparencia tampoco. Setear el
+    /// Background con el color de la DEFINICIÓN del tema (el mismo del panel del menú y de la
+    /// barra de título) es lo único que funciona de forma confiable y además deja la barra de
+    /// pestañas de Configuración como parte de la misma pieza que el menú.
+    /// </summary>
+    private void RepaintConfigNavBar()
     {
-        ThemeSystemItem.Content = I18n.T("Usar sistema");
-        ThemeDarkItem.Content = I18n.T("Oscuro");
-        ThemeLightItem.Content = I18n.T("Claro");
-        ThemePinkItem.Content = I18n.T("Rosa / Blanco");
-        ThemeBlueBlackItem.Content = I18n.T("Negro / Azul");
+        try
+        {
+            // El relleno sale del MISMO helper que el de las otras barras internas (Núcleos y
+            // Limpieza, ver PanelAppearance.PaneBarFill): color del panel del menú con el alfa del
+            // ajuste y el vidrio vigente —compositor, acrílico o sólido—. Acá solo queda asignarlo:
+            // la barra tiene que adoptar la instancia NUEVA cuando el camino cambia (encender o
+            // apagar el vidrio), que es lo que el {ThemeResource} del XAML no hace.
+            _navFill = WHPO_UI.PanelAppearance.PaneBarFill(_navFill);
+            ConfigNavBar.Background = _navFill;
+        }
+        catch { /* arranque temprano */ }
     }
 
     // ===================== Navbar interno (pestañas) =====================
@@ -736,10 +902,16 @@ public sealed partial class ConfiguracionPage : Page
     /// </summary>
     private void ApplyConfigTabsLanguage()
     {
+        TranslateSelectorBar(ConfigTabs);
+    }
+
+    /// <summary>Traduce los ítems de un SelectorBar por colección lógica (no viven en el árbol visual).</summary>
+    private static void TranslateSelectorBar(SelectorBar? bar)
+    {
         try
         {
-            if (ConfigTabs == null) return;
-            foreach (var item in ConfigTabs.Items.OfType<SelectorBarItem>())
+            if (bar == null) return;
+            foreach (var item in bar.Items.OfType<SelectorBarItem>())
             {
                 if (item.Text is string s && Translations.TryGetSource(s, I18n.Current, out var source))
                     item.Text = I18n.T(source);
@@ -760,11 +932,16 @@ public sealed partial class ConfiguracionPage : Page
 
     private void ApplyTabVisibility()
     {
-        if (HomeTab == null || CacheTab == null || NavTab == null || DevTab == null) return;
-        HomeTab.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
-        CacheTab.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-        NavTab.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
-        DevTab.Visibility = _selectedTabIndex == ConfigTabs.Items.IndexOf(DevelopmentTabItem)
+        if (HomeTab == null || AppearanceTab == null || CacheTab == null || NavTab == null || DevTab == null) return;
+
+        // Cada panel se muestra según el ÍTEM seleccionado (no por índice fijo): así
+        // sumar una pestaña en el medio no corre la visibilidad de las demás.
+        var selected = ConfigTabs.SelectedItem;
+        HomeTab.Visibility = ReferenceEquals(selected, HomeTabItem) ? Visibility.Visible : Visibility.Collapsed;
+        AppearanceTab.Visibility = ReferenceEquals(selected, AppearanceTabItem) ? Visibility.Visible : Visibility.Collapsed;
+        CacheTab.Visibility = ReferenceEquals(selected, CacheTabItem) ? Visibility.Visible : Visibility.Collapsed;
+        NavTab.Visibility = ReferenceEquals(selected, NavTabItem) ? Visibility.Visible : Visibility.Collapsed;
+        DevTab.Visibility = ReferenceEquals(selected, DevelopmentTabItem)
             && DevelopmentTabItem.Visibility == Visibility.Visible
             ? Visibility.Visible
             : Visibility.Collapsed;

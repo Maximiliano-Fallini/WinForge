@@ -323,6 +323,17 @@ public sealed class ComponentCatalogService
         var result = new List<IWinForgeComponent>();
         foreach (var record in GetInstalled())
         {
+            // Retirado: no se registra (sin pestaña, sin UI usable) y se limpia acá
+            // mismo, sin esperar a que se baje el catálogo: si no, el retirado se
+            // cargaba igual y quedaba usable toda la sesión (DropRetiredComponents
+            // limpiaba el registro y la carpeta, pero no el registry ya cargado).
+            if (RetiredComponentIds.Contains(record.Id))
+            {
+                _logging.LogInfo($"Workshop: '{record.Id}' está retirado: no se carga y se desinstala.");
+                Uninstall(record.Id);
+                continue;
+            }
+
             var component = LoadInstalled(record, out var error);
             if (component == null)
             {

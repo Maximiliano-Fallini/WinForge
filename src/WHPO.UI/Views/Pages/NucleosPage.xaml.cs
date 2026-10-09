@@ -105,6 +105,14 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
     private static SolidColorBrush BCrosshair => ThemeBrush("ChartCrosshairBrush");
     private static SolidColorBrush BChartBg => ThemeBrush("ChartBackgroundBrush");
     private static SolidColorBrush BChartBgHot => ThemeBrush("ChartBackgroundHotBrush");
+
+    // El ÁREA del gráfico va como superficie (el mismo relleno que los canvas de Estabilidad, que
+    // el XAML resuelve solo): es un panel, así que le tocan el alfa del ajuste y el vidrio. Los dos
+    // colores de arriba —planos— quedan para lo que NO es una superficie: el anillo de 2 px del
+    // punto de hover, que existe justamente para separar el punto de lo que tiene detrás y se vería
+    // mal desenfocado.
+    private static Brush BChartFill => ThemeBrushes.GetSurface("ChartBackgroundBrush");
+    private static Brush BChartFillHot => ThemeBrushes.GetSurface("ChartBackgroundHotBrush");
     private static SolidColorBrush BTimeLabel => ThemeBrush("ChartAxisTextBrush");
     private static SolidColorBrush BNeutral => ThemeBrush("ChartAxisTextBrush");
     private static SolidColorBrush BChartHoverText => ThemeBrush("ChartHoverTextBrush");
@@ -121,12 +129,25 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
 
     // ---- Cards de núcleos: fondo y pista desde los recursos de tema (en el tema base
     // coinciden con los valores originales; las variantes los redefinen). ----
-    private static SolidColorBrush CoreCardBrush => ThemeBrushes.Get("CoreCardBackgroundBrush");
+    private static Brush CoreCardBrush => ThemeBrushes.GetSurface("CoreCardBackgroundBrush");
 
- /// <summary>Fondo de las filas de planes: un tono distinto a la card para que se lean como tabla.</summary>
-    private static SolidColorBrush RowBackgroundBrush =>
-        ThemeBrushes.Get(ThemeBrushes.ActiveThemeKey() == "Light" ? "ChartHoverBadgeBgBrush" : "ChartBackgroundBrush");
+ /// <summary>
+ /// Fondo de las cards de plan (un tono distinto al de la card grande, para que se lean como tabla):
+ /// es una card, así que lleva el pincel de superficie —vidrio del motor incluido— como cualquier
+ /// otra. En claro el tono sale de otra clave de gráfico, que también se pide como superficie para que
+ /// las dos variantes de tema se vean con el mismo tipo de relleno.
+ /// </summary>
+    private static Brush RowBackgroundBrush =>
+        ThemeBrushes.GetSurface(ThemeBrushes.ActiveThemeKey() == "Light" ? "ChartHoverBadgeBgBrush" : "ChartBackgroundBrush");
     private static SolidColorBrush CoreTrackBrush => ThemeBrushes.Get("CoreTrackBackgroundBrush");
+
+ /// <summary>
+ /// Superficie de card del tema: es la que el ajuste de transparencia atenúa y la que el
+ /// desenfoque reconoce como panel (ver PanelBlurLayer). Las superficies que se arman en código
+ /// —los resultados de la comparación de planes— la usan igual que las cards del XAML; con
+ /// cualquier otro relleno quedaban fuera de los dos deslizadores.
+ /// </summary>
+    private static Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
 
     // ---- Barras por núcleo ----
     private readonly List<CoreBar> _coreBars = new();
@@ -175,11 +196,45 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         // (el evento de idioma es estático y vive toda la app).
         I18n.LanguageChanged += OnLanguageChanged;
 
+        // El navbar INTERNO se pinta a mano (ver PaintNavBar): su {ThemeResource} no sigue al ajuste
+        // de apariencia —WinUI no lo vuelve a resolver cuando el relleno cambia de TIPO al encender o
+        // apagar el vidrio—, así que la franja se quedaba plana mientras las cards ya tenían vidrio.
+        // La baja va antes del alta: la página puede cargarse más de una vez y no puede quedar
+        // suscrita dos veces al evento estático.
+        Loaded += (s, e) =>
+        {
+            PanelAppearance.Applied -= PaintNavBar;
+            PanelAppearance.Applied += PaintNavBar;
+            PaintNavBar();
+        };
+
         Unloaded += (s, e) =>
         {
             StopSampling();
             I18n.LanguageChanged -= OnLanguageChanged;
+            PanelAppearance.Applied -= PaintNavBar;
         };
+    }
+
+    // ===================== Navbar interno =====================
+
+    /// <summary>Relleno de la barra de pestañas interna (PlanTabs), reusado entre pasadas.</summary>
+    private Brush? _navBarFill;
+
+    /// <summary>
+    /// Pinta la barra interna con el color del panel del menú, el alfa de la transparencia vigente y el
+    /// vidrio que esté en juego (ver <see cref="PanelAppearance.PaneBarFill"/>). Es la misma pieza que el
+    /// menú lateral: sin esto, la franja de la página quedaba sin desenfoque aunque el resto de los
+    /// paneles sí lo tuviera.
+    /// </summary>
+    private void PaintNavBar()
+    {
+        try
+        {
+            _navBarFill = PanelAppearance.PaneBarFill(_navBarFill);
+            PlanNavBar.Background = _navBarFill;
+        }
+        catch { /* arranque temprano */ }
     }
 
     // ===================== Ciclo de vida =====================
@@ -568,7 +623,7 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         _lastYAxisMax = -1;
         YAxisCanvas.Children.Clear();
         ChartCanvas.Children.Clear();
-        ChartCanvas.Background = BChartBg;
+        ChartCanvas.Background = BChartFill;
         ThermalWarningBadge.Visibility = Visibility.Collapsed;
         RedrawChart();
     }
@@ -613,7 +668,7 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         ChartInner.Width = _chartWidth;
         HoverCanvas.Width = _chartWidth;
 
-        ChartCanvas.Background = CurrentTemp() >= 90 ? BChartBgHot : BChartBg;
+        ChartCanvas.Background = CurrentTemp() >= 90 ? BChartFillHot : BChartFill;
 
         ChartCanvas.Children.Clear();
 
@@ -1193,14 +1248,14 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         {
             var result = await _cpuPowerService.SetActivePowerPlanAsync(planGuid);
 
-            // Recargar primero (refresca el marcador "(activo)") y mostrar el resultado
-            // DESPUÉS, para que el mensaje de confirmación no se borre con la recarga.
-            if (result.Success)
+            // La selección del combo no representa el estado del sistema: volver a leer ambos
+            // desde Windows asegura que la card muestre el plan que realmente quedó activo.
+            await LoadPowerPlansAsync();
+            var turboPlanActivated = await LoadTurboCeilingAsync(planGuid);
+            if (result.Success && !turboPlanActivated)
             {
-                await LoadPowerPlansAsync();
-                // El techo de turbo pertenece al plan: si cambió el plan activo, se relee
-                // (el techo del plan nuevo puede ser otro, o no estar expuesto).
-                await LoadTurboCeilingAsync();
+                result = new CommandResult(false,
+                    I18n.T("Windows no confirmó el cambio al plan {0}; la card muestra el plan que realmente quedó activo.", planName));
             }
 
             if (result.Success)
@@ -1221,11 +1276,24 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
 
     // ===================== Techo de turbo =====================
 
-    private async Task LoadTurboCeilingAsync()
+    private async Task<bool> LoadTurboCeilingAsync(string? expectedPlanGuid = null)
     {
         try
         {
-            // powercfg + registro del catálogo de energía: fuera del hilo de UI.
+            // powercfg + registro del catálogo de energía: fuera del hilo de UI. Si se acaba
+            // de activar otro plan, esperar a que Windows refleje ese GUID antes de leer sus
+            // ajustes; así no se conserva ni se presenta como nuevo el estado del plan anterior.
+            if (!string.IsNullOrWhiteSpace(expectedPlanGuid))
+            {
+                for (int attempt = 0; attempt < 10; attempt++)
+                {
+                    var activeGuid = await Task.Run(() => _cpuPowerService.GetActivePowerPlanGuid());
+                    if (activeGuid.Equals(expectedPlanGuid, StringComparison.OrdinalIgnoreCase))
+                        break;
+                    if (attempt < 9) await Task.Delay(100);
+                }
+            }
+
             var state = await Task.Run(() => _turboCeilingService.GetState());
             _cpuName = state.CpuName;
             if (_cpuNominalMhz <= 0)
@@ -1235,10 +1303,13 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
                 catch { }
             }
             ApplyTurboState(state);
+            return string.IsNullOrWhiteSpace(expectedPlanGuid)
+                || state.PlanGuid.Equals(expectedPlanGuid, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"NucleosPage: no se pudo leer el techo de turbo: {ex.Message}");
+            return false;
         }
     }
 
@@ -2447,23 +2518,30 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
             var sgA = i < _detailA.Subgroups.Count ? _detailA.Subgroups[i] : null;
             var sgB = i < _detailB.Subgroups.Count ? _detailB.Subgroups[i] : null;
 
-            var expA = sgA != null ? BuildSubgroupExpander(sgA, _detailB, _colorA, isPlanA: true) : null;
-            var expB = sgB != null ? BuildSubgroupExpander(sgB, _detailA, _colorB, isPlanA: false) : null;
+            var cardA = sgA != null ? BuildSubgroupCard(sgA, _detailB, _colorA) : null;
+            var cardB = sgB != null ? BuildSubgroupCard(sgB, _detailA, _colorB) : null;
 
             // Sincronizar el estado de colapso: si se abre/cierra uno, el otro lo sigue,
             // así las filas quedan alineadas entre las dos cuadrículas.
+            var expA = SubgroupExpanderOf(cardA);
+            var expB = SubgroupExpanderOf(cardB);
             if (expA != null && expB != null)
             {
                 expA.Expanding += (_, _) => expB.IsExpanded = true;
                 expA.Collapsed += (_, _) => expB.IsExpanded = false;
             }
 
-            if (expA != null) ComparePlanAContainer.Children.Add(expA);
-            if (expB != null) ComparePlanBContainer.Children.Add(expB);
+            if (cardA != null) ComparePlanAContainer.Children.Add(cardA);
+            if (cardB != null) ComparePlanBContainer.Children.Add(cardB);
         }
 
         CompareScroll.Visibility = Visibility.Visible;
         CompareActionsPanel.Visibility = Visibility.Visible;
+
+        // Las cards de los resultados son paneles nuevos: se le pide al desenfoque que los busque en
+        // el acto (ver PanelBlurLayer.ContentChanged). Sin esto, el vidrio recién aparecía cuando
+        // otro cambio de layout disparaba el barrido periódico, y con la ventana quieta no llegaba.
+        PanelBlurLayer.ContentChanged("resultados de la comparación listos");
 
         // Traducir el contenido de comparación recién creado cuando sus templates ya existen.
         ApplyLanguageAfterLayout();
@@ -2476,10 +2554,17 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
     private void SetAllExpandersExpanded(bool expanded)
     {
         foreach (var child in ComparePlanAContainer.Children)
-            if (child is Expander expA) expA.IsExpanded = expanded;
+            if (SubgroupExpanderOf(child) is { } expA) expA.IsExpanded = expanded;
         foreach (var child in ComparePlanBContainer.Children)
-            if (child is Expander expB) expB.IsExpanded = expanded;
+            if (SubgroupExpanderOf(child) is { } expB) expB.IsExpanded = expanded;
     }
+
+ /// <summary>
+ /// El plegable de un subgrupo de los resultados: vive dentro de su card (ver
+ /// <see cref="BuildSubgroupCard"/>), que es la que aporta la superficie del tema.
+ /// </summary>
+    private static Expander? SubgroupExpanderOf(object? container)
+        => container is Border { Child: Expander expander } ? expander : null;
 
     private static Border BuildPlanHeader(string name, Color color)
     {
@@ -2501,17 +2586,50 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         };
         ToolTipService.SetToolTip(planName, name);
         stack.Children.Add(planName);
-        return new Border
+        // El contenido se corre con su propio margen (no con el Padding del Border) para que el
+        // tinte del plan pinte la card ENTERA: el encabezado es una sola superficie teñida, y no una
+        // caja de color metida adentro de otra.
+        stack.Margin = new Thickness(12, 10, 12, 10);
+
+        // El encabezado es parte de los resultados, así que lleva la superficie de card del tema
+        // (ver CardBrush): es la que responde a la transparencia y la que el desenfoque reconoce
+        // como panel. El tinte del color del plan —lo que distingue la columna A de la B— va encima
+        // como capa aparte, para no pisar la superficie del tema.
+        var tint = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x18, color.R, color.G, color.B)),
+            CornerRadius = new CornerRadius(10)
+        };
+        var layers = new Grid();
+        layers.Children.Add(tint);
+        layers.Children.Add(stack);
+
+        return new Border
+        {
+            Background = CardBrush,
             CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(12, 10, 12, 10),
             Margin = new Thickness(0, 0, 0, 12),
-            Child = stack
+            Child = layers
         };
     }
 
-    private Expander BuildSubgroupExpander(PowerSubgroupInfo sg, PowerPlanDetail? other, Color color, bool isPlanA)
+ /// <summary>
+ /// Un subgrupo de los resultados: la card del tema con el plegable adentro. La card es la que
+ /// hace que las filas de los resultados se vean afectadas por la transparencia y el desenfoque
+ /// igual que el resto de la app (ver CardBrush y PanelBlurLayer): sin ella quedaban apoyadas
+ /// directamente sobre el fondo del tema y ninguno de los dos deslizadores las alcanzaba.
+ /// </summary>
+    private Border BuildSubgroupCard(PowerSubgroupInfo sg, PowerPlanDetail? other, Color color)
+        => new()
+        {
+            Background = CardBrush,
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(10, 5, 10, 9),
+            Margin = new Thickness(0, 0, 0, 8),
+            Child = BuildSubgroupExpander(sg, other, color)
+        };
+
+    private Expander BuildSubgroupExpander(PowerSubgroupInfo sg, PowerPlanDetail? other, Color color)
     {
         int diffCount = 0;
         var body = new StackPanel { Spacing = 0 };
@@ -2559,6 +2677,10 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         {
             Header = header,
             Content = body,
+            // El plegable vive DENTRO de la card de resultados (ver BuildSubgroupCard): sin relleno
+            // ni contorno propios, así la superficie —y su parche de vidrio— es una sola.
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             IsExpanded = true

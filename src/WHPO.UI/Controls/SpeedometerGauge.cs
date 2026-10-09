@@ -1,343 +1,340 @@
+using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
-using Windows.UI;
+// Alias: con los usings implícitos del SDK, "Path" choca con System.IO.Path.
+using XamlPath = Microsoft.UI.Xaml.Shapes.Path;
 
 namespace WHPO_UI.Controls;
 
 /// <summary>
-/// Velocímetro de progreso estilo tablero de auto: arco de 270° que va de
-/// abajo-izquierda a abajo-derecha, con marcas de escala, una aguja que gira
-/// según el avance y el porcentaje completado en el centro-inferior del dial.
-/// Construido 100% en código C# (igual que RingGauge: este proyecto compila
-/// XAML sin generador de fuentes parciales).
-/// API compatible con los usos previos de RingGauge en LimpiezaPage:
-/// <see cref="Progress"/> (0.0 a 1.0), <see cref="Value"/> ("42%"),
-/// <see cref="Label"/> y <see cref="ConfigureSize"/>.
+/// Velocímetro de progreso: el MISMO dial que la pantalla de arranque
+/// (<see cref="WHPO_UI.SplashWindow"/>) como control reutilizable, para que los
+/// loadings de las páginas —los análisis de Limpieza del dispositivo— se vean
+/// igual que la carga de la app.
+///
+/// Es el dial de 240° del splash: 0 % abajo a la izquierda, 100 % abajo a la
+/// derecha, marcas cada 10 %, aguja con cola, porcentaje en el centro y los
+/// colores del tema activo. La cuenta de ángulos vive en <see cref="SplashGauge"/>,
+/// compartida con el splash: la aguja y el arco no pueden desincronizarse.
+///
+/// El dibujo se arma sobre un lienzo lógico de 300×300 —las medidas del splash—
+/// y <see cref="ConfigureSize"/> lo reescala completo (trazos, marcas, aguja y
+/// tipografías incluidos): al tamaño por defecto el velocímetro es el del
+/// arranque, y a cualquier otro tamaño conserva las proporciones. El % del
+/// centro sale de <see cref="Progress"/>: no hay que escribirlo a mano.
+///
+/// Los colores SIEMPRE salen del tema activo (<see cref="ThemeBrushes"/>): son
+/// pinceles live y se repintan solos al cambiar de tema; acá no hay colores
+/// fijos. Construido 100 % en código C#, igual que el resto de los controles de
+/// este proyecto (el XAML se compila sin generador de fuentes parciales).
 /// </summary>
 public sealed class SpeedometerGauge : Grid
 {
-    // Geometría del dial: el arco arranca abajo a la izquierda (135°) y barre
-    // 270° en sentido horario hasta abajo a la derecha (45°).
-    private const double StartAngleDeg = 135.0;
-    private const double SweepAngleDeg = 270.0;
+    // ===== Geometría del dial (las medidas del splash, sobre un lienzo de 300) =====
+    private const double DialSize = 300;
+    private const double DialCenter = DialSize / 2;
+    private const double TrackRadius = 118;
+    private const double TrackStroke = 9;
+    private const double TickInnerRadius = 96;
+    private const double TickOuterRadius = 105;
+    private const double NeedleLength = 92;
+    private const double NeedleHalfWidth = 7;
+    private const double NeedleTail = 16;
+    private const double HubOuterSize = 22;
+    private const double HubInnerSize = 8;
+    private const double PercentTop = 178;
+    private const double PercentFontSize = 36;
 
-    // Marcas de escala: 21 posiciones (cada 13.5°); cada 5ta es mayor,
-    // quedando las mayores justo en 0%, 25%, 50%, 75% y 100%.
-    private const int TickCount = 21;
+    /// <summary>Una marca cada 10 % (11 en total); la de cada 5ª posición
+    /// —0 %, 50 % y 100 %— va más gruesa, como en el splash.</summary>
+    private const int TickCount = 11;
     private const int MajorTickEvery = 5;
 
-    // Dimensiones del dial; se ajustan según ConfigureSize.
-    private double _size = 140;   // diámetro total de la pista
-    private double _radius = 65;  // radio medio del arco
-    private double _stroke = 10;  // grosor del arco
+    /// <summary>Tamaño por defecto: el dial completo del arranque.</summary>
+    public const double DefaultSize = DialSize;
 
-    private static readonly Brush TrackBrushDefault = new SolidColorBrush(Color.FromArgb(255, 60, 60, 60));
-    private static readonly Brush ProgressBrushDefault = new SolidColorBrush(Color.FromArgb(255, 138, 180, 248));
-    private static readonly Brush NeedleBrushDefault = new SolidColorBrush(Color.FromArgb(255, 235, 90, 90));
-    private static readonly Brush TickBrushDefault = new SolidColorBrush(Color.FromArgb(255, 150, 150, 150));
-    private static readonly Brush LabelBrushDefault = new SolidColorBrush(Color.FromArgb(255, 150, 150, 150));
+    /// <summary>Piso de tamaño: por debajo el dial deja de ser legible.</summary>
+    private const double MinSize = 90;
 
-    private readonly Microsoft.UI.Xaml.Shapes.Path _trackPath;
-    private readonly Microsoft.UI.Xaml.Shapes.Path _progressPath;
-    private readonly Canvas _dialCanvas;   // marcas de escala + aguja + cubo central
-    private readonly Line _needle;
-    private readonly Ellipse _hub;
-    private readonly TextBlock _valueText;
-    private readonly TextBlock _labelText;
+    // ===== Animación de la aguja (mismos tiempos que el splash) =====
+    private const double NeedleAnimationMaxMs = 600;
+    private const double NeedleAnimationMinMs = 180;
+
+    /// <summary>Medio ciclo del barrido del modo indeterminado.</summary>
+    private const double IndeterminateCycleSeconds = 1.4;
+
+    private readonly Canvas _canvas;
+    private readonly Canvas _tickLayer;
+    private readonly XamlPath _trackArc;
+    private readonly XamlPath _progressArc;
+    private readonly Polygon _needle;
+    private readonly RotateTransform _needleRotate;
+    private readonly Ellipse _hubOuter;
+    private readonly Ellipse _hubInner;
+    private readonly TextBlock _percentText;
+    private readonly ScaleTransform _scale;
+
+    /// <summary>Progreso real (0.0 a 1.0): el que se ve al salir del modo indeterminado.</summary>
     private double _progress;
+
+    /// <summary>Barrido continuo en curso: lo prende <see cref="IsIndeterminate"/>.</summary>
+    private bool _indeterminate;
+
+    /// <summary>Animación de la aguja en curso: se mantiene referenciada mientras
+    /// corre (un Storyboard sin referencia viva puede terminar antes de tiempo).</summary>
+    private Storyboard? _needleAnimation;
+
+    /// <summary>Barrido del modo indeterminado (bucle infinito).</summary>
+    private Storyboard? _indeterminateAnimation;
+
+    /// <summary>Ángulo al que apunta la animación de la aguja: la duración de cada
+    /// tramo se calcula contra este valor y no contra el ángulo dibujado, que va
+    /// atrás persiguiendo la animación.</summary>
+    private double _needleTargetAngle = SplashGauge.AngleForPercent(0);
 
     public SpeedometerGauge()
     {
-        Width = 160;
-        Height = 160;
+        Width = Height = DefaultSize;
 
-        var root = new Grid();
-
-        // Arco de fondo (track completo del dial)
-        _trackPath = new Microsoft.UI.Xaml.Shapes.Path
+        // Lienzo lógico de 300×300 anclado arriba a la izquierda: el
+        // ConfigureSize lo reescala desde ahí (origen 0,0), así el dial ocupa
+        // exactamente el tamaño pedido sin descuadres por el centrado.
+        _canvas = new Canvas
         {
-            Width = _size,
-            Height = _size,
-            Stroke = TrackBrushDefault,
-            StrokeThickness = _stroke,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
+            Width = DialSize,
+            Height = DialSize,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Top
         };
+        _scale = new ScaleTransform { ScaleX = 1, ScaleY = 1 };
+        _canvas.RenderTransform = _scale;
+        _canvas.RenderTransformOrigin = new Point(0, 0);
 
-        // Arco de progreso (se llena según Progress)
-        _progressPath = new Microsoft.UI.Xaml.Shapes.Path
+        // Las marcas van primero (y en su propia capa) para que la aguja pase por
+        // encima de ellas.
+        _tickLayer = new Canvas { Width = DialSize, Height = DialSize };
+
+        _trackArc = NewArc();
+        _progressArc = NewArc();
+
+        _needle = new Polygon();
+        _needleRotate = new RotateTransform { CenterX = DialCenter, CenterY = DialCenter };
+        _needle.RenderTransform = _needleRotate;
+
+        _hubOuter = new Ellipse { Width = HubOuterSize, Height = HubOuterSize };
+        _hubInner = new Ellipse { Width = HubInnerSize, Height = HubInnerSize };
+        Canvas.SetLeft(_hubOuter, DialCenter - HubOuterSize / 2);
+        Canvas.SetTop(_hubOuter, DialCenter - HubOuterSize / 2);
+        Canvas.SetLeft(_hubInner, DialCenter - HubInnerSize / 2);
+        Canvas.SetTop(_hubInner, DialCenter - HubInnerSize / 2);
+
+        _percentText = new TextBlock
         {
-            Width = _size,
-            Height = _size,
-            Stroke = ProgressBrushDefault,
-            StrokeThickness = _stroke,
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        // Lienzo con marcas de escala, aguja y cubo central (coordenadas absolutas)
-        _dialCanvas = new Canvas
-        {
-            Width = _size,
-            Height = _size,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        _needle = new Line
-        {
-            Stroke = NeedleBrushDefault,
-            StrokeThickness = Math.Max(2.5, _stroke * 0.28),
-            StrokeStartLineCap = PenLineCap.Round,
-            StrokeEndLineCap = PenLineCap.Round
-        };
-
-        double hubSize = Math.Max(12, _stroke * 1.5);
-        _hub = new Ellipse
-        {
-            Width = hubSize,
-            Height = hubSize,
-            Fill = new SolidColorBrush(Color.FromArgb(255, 70, 70, 70))
-        };
-
-        _dialCanvas.Children.Add(_needle);
-        _dialCanvas.Children.Add(_hub);
-
-        // Texto central-inferior: % completado + etiqueta opcional
-        var textPanel = new StackPanel
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Spacing = 0,
-            Margin = new Thickness(0, 46, 0, 0)
-        };
-
-        _valueText = new TextBlock
-        {
+            Width = DialSize,
             Text = "0%",
-            FontSize = 26,
+            FontSize = PercentFontSize,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            HorizontalAlignment = HorizontalAlignment.Center
+            TextAlignment = TextAlignment.Center
         };
+        Canvas.SetLeft(_percentText, 0);
+        Canvas.SetTop(_percentText, PercentTop);
 
-        _labelText = new TextBlock
-        {
-            Text = "",
-            FontSize = 11,
-            Foreground = LabelBrushDefault,
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
+        _canvas.Children.Add(_tickLayer);
+        _canvas.Children.Add(_trackArc);
+        _canvas.Children.Add(_progressArc);
+        _canvas.Children.Add(_needle);
+        _canvas.Children.Add(_hubOuter);
+        _canvas.Children.Add(_hubInner);
+        _canvas.Children.Add(_percentText);
 
-        textPanel.Children.Add(_valueText);
-        textPanel.Children.Add(_labelText);
+        Children.Add(_canvas);
 
-        root.Children.Add(_trackPath);
-        root.Children.Add(_progressPath);
-        root.Children.Add(_dialCanvas);
-        root.Children.Add(textPanel);
-
-        Children.Add(root);
-
-        // Estado inicial: dial vacío, aguja en reposo (0%)
-        RebuildTicks();
-        ApplyProgress(0);
+        BuildDial();
+        ApplyTheme();
+        ApplyProgress(0, animateNeedle: false);
     }
 
     /// <summary>
-    /// Valor mostrado bajo la aguja (por defecto "0%").
-    /// </summary>
-    public string Value
-    {
-        get => _valueText.Text;
-        set => _valueText.Text = value;
-    }
-
-    /// <summary>
-    /// Etiqueta opcional debajo del porcentaje.
-    /// </summary>
-    public string Label
-    {
-        get => _labelText.Text;
-        set => _labelText.Text = value;
-    }
-
-    /// <summary>
-    /// Progreso del velocímetro (0.0 a 1.0): llena el arco y gira la aguja.
+    /// Progreso (0.0 a 1.0): llena el arco y actualiza el porcentaje del centro
+    /// al instante, y lleva la aguja hasta ahí con la animación propia — el
+    /// mismo movimiento suave del arranque, aunque los pasos lleguen a saltos.
     /// </summary>
     public double Progress
     {
         get => _progress;
-        set => ApplyProgress(value);
+        set => ApplyProgress(value, animateNeedle: true);
     }
 
     /// <summary>
-    /// Color del arco de progreso.
+    /// Modo indeterminado: la aguja barre el dial de punta a punta en bucle y el
+    /// porcentaje queda en "…" (no hay avance que mostrar). Al apagarlo vuelve al
+    /// progreso real, sin animación.
     /// </summary>
-    public Brush ProgressBrush
+    public bool IsIndeterminate
     {
-        get => _progressPath.Stroke;
-        set => _progressPath.Stroke = value;
+        get => _indeterminate;
+        set
+        {
+            if (_indeterminate == value) return;
+            _indeterminate = value;
+            if (value) StartIndeterminate();
+            else StopIndeterminate();
+        }
     }
 
     /// <summary>
-    /// Color del arco de fondo (track).
-    /// </summary>
-    public Brush TrackBrush
-    {
-        get => _trackPath.Stroke;
-        set => _trackPath.Stroke = value;
-    }
-
-    /// <summary>
-    /// Ajusta el tamaño TOTAL del control reescalando pista, arco, marcas,
-    /// aguja y tipografías. Sin llamarlo queda el tamaño por defecto (160),
-    /// igual que en los usos existentes.
+    /// Ajusta el tamaño TOTAL del control reescalando el dial completo (pista,
+    /// arco, marcas, aguja, cubo y tipografías) con un solo factor. Sin llamarlo
+    /// queda el tamaño por defecto: el mismo de la pantalla de arranque.
     /// </summary>
     public void ConfigureSize(double controlSize)
     {
-        _stroke = Math.Max(7.0, controlSize * 0.075);
-        _size = controlSize - _stroke - 10;
-        _radius = _size / 2 - _stroke / 2;
-
-        Width = Height = controlSize;
-        _trackPath.Width = _trackPath.Height = _size;
-        _trackPath.StrokeThickness = _stroke;
-        _progressPath.Width = _progressPath.Height = _size;
-        _progressPath.StrokeThickness = _stroke;
-        _dialCanvas.Width = _dialCanvas.Height = _size;
-
-        _needle.StrokeThickness = Math.Max(2.5, _stroke * 0.28);
-
-        double hubSize = Math.Max(12, _stroke * 1.5);
-        _hub.Width = _hub.Height = hubSize;
-
-        _valueText.FontSize = Math.Max(14, controlSize * 0.16);
-        _labelText.FontSize = Math.Max(9, controlSize * 0.07);
-
-        RebuildTicks();
-        ApplyProgress(_progress);
+        double size = Math.Max(MinSize, controlSize);
+        Width = Height = size;
+        _scale.ScaleX = _scale.ScaleY = size / DialSize;
     }
 
     /// <summary>
-    /// Aplica el progreso: recalcula arco, posición de la aguja y estado interno.
+    /// Aplica el progreso al dial. La aguja se mueve animada o se coloca directo
+    /// según <paramref name="animateNeedle"/>.
     /// </summary>
-    private void ApplyProgress(double value)
+    private void ApplyProgress(double value, bool animateNeedle)
     {
-        _progress = Math.Clamp(value, 0.0, 1.0);
-        UpdateArc(_progress);
-        UpdateNeedle(_progress);
+        _progress = Math.Clamp(double.IsNaN(value) ? 0.0 : value, 0.0, 1.0);
+
+        // Modo indeterminado: manda el barrido. El progreso igual queda guardado
+        // para cuando se lo apague.
+        if (_indeterminate) return;
+
+        double percent = _progress * 100.0;
+        _progressArc.Data = BuildArcGeometry(0, percent);
+        _percentText.Text = $"{(int)Math.Round(percent)}%";
+
+        if (animateNeedle) AnimateNeedleTo(_progress);
+        else SetNeedle(_progress);
+    }
+
+    /// <summary>Coloca la aguja en el ángulo del progreso, sin animación.</summary>
+    private void SetNeedle(double progress)
+    {
+        double angle = SplashGauge.AngleForPercent(progress * 100.0);
+        _needleTargetAngle = angle;
+        _needleRotate.Angle = angle;
     }
 
     /// <summary>
-    /// Dibuja las marcas de escala sobre el dial (las mayores más largas).
+    /// Mueve la aguja al porcentaje pedido con una animación PROPIA sobre el
+    /// ángulo (DoubleAnimation + Storyboard). La ejecuta el compositor, así que
+    /// la aguja sigue barriendo aunque el hilo de la UI esté ocupado — el caso
+    /// típico durante un análisis, que corre pesado en segundo plano. La duración
+    /// es proporcional al tramo que falta, con piso y techo, para que un paso
+    /// corto no se arrastre ni uno largo se eternice.
     /// </summary>
-    private void RebuildTicks()
+    private void AnimateNeedleTo(double progress)
     {
-        // Conservar aguja y cubo: solo se regeneran las líneas de escala.
-        for (int i = _dialCanvas.Children.Count - 1; i >= 0; i--)
+        double angle = SplashGauge.AngleForPercent(Math.Clamp(progress, 0.0, 1.0) * 100.0);
+        double delta = Math.Abs(angle - _needleTargetAngle);
+        _needleTargetAngle = angle;
+
+        int duration = (int)Math.Clamp(
+            Math.Round(delta / 120.0 * NeedleAnimationMaxMs),
+            NeedleAnimationMinMs,
+            NeedleAnimationMaxMs);
+
+        try
         {
-            if (_dialCanvas.Children[i] is Line) _dialCanvas.Children.RemoveAt(i);
-        }
-
-        double tickOuter = _radius - _stroke / 2 - 3;
-        double minorLen = Math.Max(4, _radius * 0.09);
-        double majorLen = Math.Max(7, _radius * 0.16);
-
-        for (int i = 0; i < TickCount; i++)
-        {
-            bool major = i % MajorTickEvery == 0;
-            double len = major ? majorLen : minorLen;
-            double angleRad = (StartAngleDeg + SweepAngleDeg * i / (TickCount - 1)) * Math.PI / 180.0;
-            double cos = Math.Cos(angleRad);
-            double sin = Math.Sin(angleRad);
-            double cx = _size / 2;
-            double cy = _size / 2;
-
-            var line = new Line
+            var animation = new DoubleAnimation
             {
-                X1 = cx + tickOuter * cos,
-                Y1 = cy + tickOuter * sin,
-                X2 = cx + (tickOuter - len) * cos,
-                Y2 = cy + (tickOuter - len) * sin,
-                Stroke = TickBrushDefault,
-                StrokeThickness = major ? Math.Max(1.5, _stroke * 0.22) : Math.Max(1.0, _stroke * 0.13),
-                StrokeStartLineCap = PenLineCap.Round,
-                StrokeEndLineCap = PenLineCap.Round
+                To = angle,
+                Duration = new Duration(TimeSpan.FromMilliseconds(duration)),
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
-            _dialCanvas.Children.Add(line);
+            Storyboard.SetTarget(animation, _needleRotate);
+            Storyboard.SetTargetProperty(animation, nameof(RotateTransform.Angle));
+
+            var storyboard = new Storyboard();
+            storyboard.Children.Add(animation);
+            storyboard.Begin();
+            _needleAnimation = storyboard;
         }
-
-        // Reposicionar el cubo central (su tamaño pudo haber cambiado)
-        double hubLeft = _size / 2 - _hub.Width / 2;
-        double hubTop = _size / 2 - _hub.Height / 2;
-        Canvas.SetLeft(_hub, hubLeft);
-        Canvas.SetTop(_hub, hubTop);
-    }
-
-    /// <summary>
-    /// Actualiza el arco de progreso según la fracción indicada.
-    /// </summary>
-    private void UpdateArc(double progress)
-    {
-        if (progress <= 0)
+        catch
         {
-            _progressPath.Data = null;
-            return;
+            // Sin compositor (o sin árbol): al menos que la aguja no quede atrás.
+            _needleRotate.Angle = angle;
         }
-
-        double endAngle = StartAngleDeg + SweepAngleDeg * progress;
-        _progressPath.Data = BuildArcGeometry(StartAngleDeg, endAngle);
     }
 
-    /// <summary>
-    /// Gira la aguja hacia el ángulo correspondiente al progreso.
-    /// La aguja tiene una cola corta detrás del centro para dar efecto de balanza.
-    /// </summary>
-    private void UpdateNeedle(double progress)
+    /// <summary>Arranca el barrido continuo del modo indeterminado.</summary>
+    private void StartIndeterminate()
     {
-        double angleRad = (StartAngleDeg + SweepAngleDeg * progress) * Math.PI / 180.0;
-        double cos = Math.Cos(angleRad);
-        double sin = Math.Sin(angleRad);
-        double cx = _size / 2;
-        double cy = _size / 2;
+        try { _needleAnimation?.Stop(); } catch { }
+        _needleAnimation = null;
 
-        double tipLen = _radius - _stroke * 1.5;
-        double tailLen = Math.Max(6, _radius * 0.14);
+        // Sin arco de progreso y sin número: no hay avance que mostrar.
+        _progressArc.Data = null;
+        _percentText.Text = "…";
 
-        _needle.X1 = cx - tailLen * cos;
-        _needle.Y1 = cy - tailLen * sin;
-        _needle.X2 = cx + tipLen * cos;
-        _needle.Y2 = cy + tipLen * sin;
+        try
+        {
+            var sweep = new DoubleAnimation
+            {
+                From = SplashGauge.AngleForPercent(0),
+                To = SplashGauge.AngleForPercent(100),
+                Duration = new Duration(TimeSpan.FromSeconds(IndeterminateCycleSeconds)),
+                AutoReverse = true,
+                RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+            };
+            Storyboard.SetTarget(sweep, _needleRotate);
+            Storyboard.SetTargetProperty(sweep, nameof(RotateTransform.Angle));
+
+            var storyboard = new Storyboard();
+            storyboard.Children.Add(sweep);
+            storyboard.Begin();
+            _indeterminateAnimation = storyboard;
+        }
+        catch
+        {
+            // Sin animación: queda la aguja quieta y el texto de carga, que ya
+            // comunica que el trabajo está en curso.
+        }
     }
 
-    /// <summary>
-    /// Construye el arco entre dos ángulos (grados, sentido horario).
-    /// </summary>
-    private Geometry BuildArcGeometry(double startAngleDeg, double endAngleDeg)
+    /// <summary>Corta el barrido y vuelve al progreso real del dial.</summary>
+    private void StopIndeterminate()
     {
-        Point start = PointOnDial(startAngleDeg);
-        Point end = PointOnDial(endAngleDeg);
+        try { _indeterminateAnimation?.Stop(); } catch { }
+        _indeterminateAnimation = null;
+
+        // La aguja vuelve a su lugar de una: el barrido dejó el ángulo donde
+        // caía y animarlo desde ahí parecería un retroceso del progreso.
+        ApplyProgress(_progress, animateNeedle: false);
+    }
+
+    /// <summary>Arco del dial entre dos porcentajes (el trazo va sobre el radio).</summary>
+    private static Geometry BuildArcGeometry(double fromPercent, double toPercent)
+    {
+        double fromAngle = SplashGauge.AngleForPercent(fromPercent);
+        double toAngle = SplashGauge.AngleForPercent(toPercent);
+        var (x1, y1) = SplashGauge.PointOnDial(DialCenter, DialCenter, TrackRadius, fromAngle);
+        var (x2, y2) = SplashGauge.PointOnDial(DialCenter, DialCenter, TrackRadius, toAngle);
 
         var figure = new PathFigure
         {
-            StartPoint = start,
+            StartPoint = new Point(x1, y1),
             IsClosed = false,
             IsFilled = false
         };
-
         figure.Segments.Add(new ArcSegment
         {
-            Point = end,
-            Size = new Size(_radius, _radius),
-            SweepDirection = SweepDirection.Clockwise,
-            IsLargeArc = (endAngleDeg - startAngleDeg) > 180.0
+            Point = new Point(x2, y2),
+            Size = new Size(TrackRadius, TrackRadius),
+            IsLargeArc = Math.Abs(toAngle - fromAngle) > 180,
+            SweepDirection = SweepDirection.Clockwise
         });
 
         var geometry = new PathGeometry();
@@ -345,15 +342,85 @@ public sealed class SpeedometerGauge : Grid
         return geometry;
     }
 
-    /// <summary>
-    /// Punto sobre el círculo del dial para un ángulo dado en grados
-    /// (0° = derecha, positivo = sentido horario en pantalla).
-    /// </summary>
-    private Point PointOnDial(double angleDegrees)
+    /// <summary>Arco del dial con el trazo redondeado en las dos puntas.</summary>
+    private static XamlPath NewArc() => new()
     {
-        double radians = angleDegrees * Math.PI / 180.0;
-        double cx = _size / 2;
-        double cy = _size / 2;
-        return new Point(cx + _radius * Math.Cos(radians), cy + _radius * Math.Sin(radians));
+        StrokeThickness = TrackStroke,
+        StrokeStartLineCap = PenLineCap.Round,
+        StrokeEndLineCap = PenLineCap.Round
+    };
+
+    /// <summary>
+    /// Marcas de escala, aguja, pista completa y estado inicial del dial.
+    /// </summary>
+    private void BuildDial()
+    {
+        for (int i = 0; i < TickCount; i++)
+        {
+            double angle = SplashGauge.AngleForPercent(i * 10);
+            var (x1, y1) = SplashGauge.PointOnDial(DialCenter, DialCenter, TickInnerRadius, angle);
+            var (x2, y2) = SplashGauge.PointOnDial(DialCenter, DialCenter, TickOuterRadius, angle);
+            _tickLayer.Children.Add(new Line
+            {
+                X1 = x1,
+                Y1 = y1,
+                X2 = x2,
+                Y2 = y2,
+                StrokeThickness = i % MajorTickEvery == 0 ? 3 : 2,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round
+            });
+        }
+
+        // Aguja: punta hacia arriba (ángulo 0 = 12 en punto) y una cola corta que
+        // equilibra el centro, como un velocímetro real.
+        _needle.Points = new PointCollection
+        {
+            new Point(DialCenter, DialCenter - NeedleLength),
+            new Point(DialCenter + NeedleHalfWidth, DialCenter),
+            new Point(DialCenter, DialCenter + NeedleTail),
+            new Point(DialCenter - NeedleHalfWidth, DialCenter)
+        };
+
+        _trackArc.Data = BuildArcGeometry(0, 100);
+        _needleRotate.Angle = SplashGauge.AngleForPercent(0);
+    }
+
+    /// <summary>
+    /// Colores del tema activo. Igual que el splash: pista apagada, arco y aguja
+    /// con el acento, cubo exterior con el acento y el interior con el fondo de
+    /// las cards (el "agujero" del centro), marcas tenues y el % en el color
+    /// primario de texto. Los pinceles son live: al cambiar de tema se repintan
+    /// solos, sin volver a llamar a esto.
+    /// </summary>
+    private void ApplyTheme()
+    {
+        try
+        {
+            var accent = ThemeBrushes.Get("AccentBrush");
+
+            _trackArc.Stroke = ThemeBrushes.Get("MutedBrush");
+            _trackArc.Opacity = 0.35;
+            _progressArc.Stroke = accent;
+            _needle.Fill = accent;
+            _hubOuter.Fill = accent;
+            _hubInner.Fill = ThemeBrushes.Get("CardBackgroundBrush");
+            _percentText.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
+
+            var tick = ThemeBrushes.Get("ChartGridBrush");
+            foreach (var child in _tickLayer.Children)
+            {
+                if (child is Shape shape)
+                {
+                    shape.Stroke = tick;
+                    shape.Opacity = 0.6;
+                }
+            }
+        }
+        catch
+        {
+            // Sin App/tema todavía (construcción muy temprana): el dial queda con
+            // los pinceles por defecto en vez de romper la página que lo usa.
+        }
     }
 }

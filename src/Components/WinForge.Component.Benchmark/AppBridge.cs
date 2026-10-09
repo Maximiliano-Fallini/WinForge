@@ -36,6 +36,7 @@ internal static class AppBridge
     private static MethodInfo? _translate;
     private static MethodInfo? _translateFormat;
     private static MethodInfo? _themeBrush;
+    private static MethodInfo? _themeFill;
     private static bool _languageHooked;
     private static bool _metricsStartedByUs;
 
@@ -73,6 +74,12 @@ internal static class AppBridge
 
                 var brushes = appAssembly.GetType(ThemeBrushesTypeName, throwOnError: false);
                 _themeBrush = brushes?.GetMethod("Get", BindingFlags.Public | BindingFlags.Static, null,
+                    new[] { typeof(string) }, null);
+
+                // El relleno de una SUPERFICIE (una card): el mismo que usan las cards de la app,
+                // vidrio del motor incluido (ver ThemeBrushes.Fill). Se busca aparte porque una app
+                // vieja no lo tiene —ahí queda el sólido de Get, como hasta ahora—.
+                _themeFill = brushes?.GetMethod("Fill", BindingFlags.Public | BindingFlags.Static, null,
                     new[] { typeof(string) }, null);
             }
             catch
@@ -114,10 +121,22 @@ internal static class AppBridge
         catch { return template; }
     }
 
-    /// <summary>Pincel del tema EFECTIVO de la ventana (nunca los recursos del sistema).</summary>
+    /// <summary>
+    /// Pincel del tema EFECTIVO de la ventana (nunca los recursos del sistema).
+    ///
+    /// Para las claves de SUPERFICIE ("CardBackgroundBrush" y compa\u00f1\u00eda) devuelve el relleno de
+    /// superficie de la app: es el que le da a una card del componente el MISMO fondo que a una card
+    /// del XAML —el vidrio del motor cuando est\u00e1 encendido, el s\u00f3lido del tema cuando no—. Sin eso,
+    /// una card transparente (solo con borde) no puede tener vidrio: no hay superficie que desenfocar.
+    /// </summary>
     public static Brush Brush(string key)
     {
         Resolve();
+        try
+        {
+            if (_themeFill?.Invoke(null, new object[] { key }) is Brush surface) return surface;
+        }
+        catch { }
         try
         {
             if (_themeBrush?.Invoke(null, new object[] { key }) is Brush brush) return brush;

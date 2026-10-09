@@ -214,8 +214,6 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     }
 
     private readonly List<FanCard> _cards = new();
-    private bool _restoreAllVisible;
-
     // Layout de cards: 3 o 4 columnas como máximo (persistido en settings).
     private const string ColumnsSettingsKey = "fancontrol.columns";
     private const double CardSpacing = 18;
@@ -240,7 +238,7 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     }
 
     private static SolidColorBrush MutedBrush => ThemeBrushes.Get("MutedBrush");
-    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static SolidColorBrush StrokeBrush => ThemeBrushes.Get("CardBorderBrush");
     private static SolidColorBrush HoverBrush => ThemeBrushes.Get("CardHoverBrush");
 
@@ -410,7 +408,6 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
                 : I18n.T("⚠ Instalá el driver PawnIO para ver y controlar los ventiladores.");
             StatusText.Foreground = Feedback.WarningBrush;
             RestoreAllButton.Visibility = Visibility.Collapsed;
-            _restoreAllVisible = false;
             return;
         }
 
@@ -424,7 +421,6 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             StatusText.Text = I18n.T("ℹ No se detectó ningún canal de ventilador. Si otro monitor de hardware está corriendo (HWiNFO, Afterburner, etc.), cerralo y volvé a entrar a esta pestaña.");
             StatusText.Foreground = Feedback.WarningBrush;
             RestoreAllButton.Visibility = Visibility.Collapsed;
-            _restoreAllVisible = false;
             return;
         }
 
@@ -434,7 +430,6 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         // El restablecimiento global queda siempre a mano: no requiere que haya
         // algo en manual o con curva para aparecer.
         RestoreAllButton.Visibility = Visibility.Visible;
-        _restoreAllVisible = true;
     }
 
     // =====================================================================

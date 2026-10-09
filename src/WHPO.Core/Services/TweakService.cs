@@ -979,10 +979,10 @@ public class TweakService : ITweakService
             () => RunCommandAsync("powershell", "-Command \"New-Item -Path 'HKCU:\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}' -Name InprocServer32 -Value '' -Force; Stop-Process -Name explorer\""));
 
         AddTweak(dict, "WPFTweaksDiskCleanup", "Limpieza de disco - Ejecutar",
-            "Ejecuta la limpieza del disco C: y elimina actualizaciones de Windows antiguas.",
+            "Abre el Liberador de espacio en disco de Windows para que elijas qué categorías limpiar.",
             "Compatible con Windows 10/11", true, "Tweaks esenciales", true,
             () => false,
-            () => RunCommandAsync("powershell", "-Command \"cleanmgr.exe /d C: /VERYLOWDISK; Dism.exe /online /Cleanup-Image /StartComponentCleanup /ResetBase\""));
+            () => RunCommandAsync("cleanmgr.exe", "/d C:"));
 
         AddTweak(dict, "WPFTweaksDeleteTempFiles", "Archivos temporales - Eliminar",
             "Borra las carpetas TEMP.",

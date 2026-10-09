@@ -272,10 +272,16 @@ public static class RevealEffect
         return null;
     }
 
-    /// <summary>¿Tiene pinta de card? (fondo de card del tema + esquinas + tamaño razonable)</summary>
+    /// <summary>
+    /// ¿Tiene pinta de card? (fondo de card del tema + esquinas + tamaño razonable)
+    ///
+    /// El color del fondo se lee con <see cref="ThemeBrushes.FillColor"/>, que entiende el vidrio del
+    /// compositor además del sólido: pedir <see cref="SolidColorBrush"/> dejaba sin halo a todas las
+    /// cards desde que su relleno es vidrio.
+    /// </summary>
     private static bool IsCard(Border b)
     {
-        if (b.Background is not SolidColorBrush scb)
+        if (ThemeBrushes.FillColor(b.Background) is not { } fill)
             return false;
 
         double w = b.ActualWidth, h = b.ActualHeight;
@@ -287,7 +293,7 @@ public static class RevealEffect
         if (r < CardMinCornerRadius)
             return false;
 
-        return IsCardBrushColor(scb.Color);
+        return IsCardBrushColor(fill);
     }
 
     /// <summary>¿El color corresponde al fondo (o al estado hover/selección) de una card?
@@ -342,7 +348,7 @@ public static class RevealEffect
     {
         foreach (var key in CardBrushKeys)
         {
-            if (dict.TryGetValue(key, out var value) && value is SolidColorBrush brush && brush.Color == color)
+            if (dict.TryGetValue(key, out var value) && ThemeBrushes.FillColor(value as Brush) == color)
                 return true;
         }
         return false;

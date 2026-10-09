@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI;
@@ -79,6 +80,15 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
 
+        // Versión de la app al lado del nombre en la barra de título, en el mismo Run-line
+        // que "WinForge" (ver el comentario del XAML): el espacio que separa ambos textos
+        // lo pone este string, no el marcado. Sale del ensamblado (el mismo
+        // AppUpdateService.CurrentVersion() que usa el chequeo de actualizaciones), así que
+        // no hay un número escrito a mano que se olvide de actualizar al publicar, y en las
+        // builds en desarrollo muestra la versión adelantada respecto de la última
+        // release publicada.
+        AppVersionRun.Text = " " + AppUpdateService.CurrentVersion();
+
         // Obtener servicios desde DI
         _navigationService = App.Services.GetRequiredService<INavigationService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
@@ -91,6 +101,13 @@ public sealed partial class MainWindow : Window
         _gameBoostService = App.Services.GetService<IGameBoostService>();
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
         _componentRegistry = App.Services.GetRequiredService<ComponentRegistry>();
+
+        // ⏱ Tiempos de arranque: este constructor corre con el hilo de UI tomado, así que
+        // cada tramo de acá es tiempo en el que el splash no repinta ni se puede arrastrar.
+        // Las marcas son baratas y solo se ven con "logs de desarrollo" prendido.
+        var startupWatch = Stopwatch.StartNew();
+        void MarkStartup(string what) => _loggingService.LogInfo($"[arranque] {what} +{startupWatch.ElapsedMilliseconds} ms");
+        MarkStartup("servicios resueltos");
 
         // El overlay nunca se restaura automáticamente al iniciar. Solo se activa
         // desde su página cuando el usuario lo solicita explícitamente.
@@ -176,28 +193,39 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("workshop", typeof(WorkshopPage));
             ns.RegisterPage("macros", typeof(MacrosPage));
         }
+        MarkStartup("paginas del navbar registradas");
 
         // Navbar dinámico: insertar las pestañas de los componentes no-core del
         // registro (built-ins y componentes descargados del Workshop) después del
         // ítem Workshop. Debe correr ANTES de ApplyInstallerTabSelection /
         // ApplyNavigationVisibility / AttachNavItemMenus / TranslateNavbar.
         IntegrateComponentNavbar();
+        MarkStartup("navbar de componentes integrado");
         _componentRegistry.Changed += () => DispatcherQueue.TryEnqueue(RefreshComponentNavItems);
+        // Al desinstalar el componente en pantalla (desde el Workshop o desde el menú ⋮
+        // de su pestaña), la vista activa sigue siendo funcional aunque la pestaña ya
+        // no exista. Este handler la manda a una página válida ANTES de reconciliar el
+        // navbar (ver CloseUninstalledComponentPage).
+        _componentRegistry.Removed += id => DispatcherQueue.TryEnqueue(() => CloseUninstalledComponentPage(id));
 
         // Aplicar la selección de pestañas hecha en el instalador (una sola vez).
         ApplyInstallerTabSelection();
+        MarkStartup("pestañas del instalador aplicadas");
 
         // Aplicar la visibilidad de apartados según la configuración (claves "nav.*").
         ApplyNavigationVisibility();
+        MarkStartup("visibilidad del navbar aplicada");
 
         // Botón "⋮" al extremo derecho de cada pestaña: menú con "Ocultar" para
         // esconder la pestaña sin pasar por Configuración. Se agrega ANTES de
         // TranslateNavbar para capturar el texto fuente en español del XAML.
         AttachNavItemMenus();
+        MarkStartup("menus de pestaña adjuntos");
 
         // Navegar directamente a la página de Sistema (sin título de cabecera)
         _navigationService.NavigateTo("sistema");
         NavigationViewControl.SelectedItem = NavigationViewControl.MenuItems[0];
+        MarkStartup("pagina Sistema navegada");
 
         // Traducir el navbar iterando MenuItems (lógico, sin depender de que el
         // template visual esté realizado): el recorrido del árbol visual con
@@ -206,11 +234,30 @@ public sealed partial class MainWindow : Window
         // idioma. Los ítems del XAML conservan el texto español como fuente y acá
         // se captura y se traduce al idioma guardado.
         TranslateNavbar();
+        MarkStartup("navbar traducido");
 
         // Barra de título PROPIA, más alta que la nativa. Se engancha acá, temprano en el
         // constructor: si se hace más tarde, Windows muestra primero la barra nativa y
         // después la esconde (parpadeo al abrir).
         SetupCustomTitleBar();
+        MarkStartup("barra de titulo propia");
+
+        // Apariencia del usuario (pestaña Apariencia de Configuración): acá solo se
+        // ENGANGHA la ventana. Los ajustes se aplican cuando el tema
+        // queda aplicado (ThemeApplier avisa a PanelAppearance), y no antes: en este punto
+        // del arranque la paleta del tema todavía no se escribió en los diccionarios
+        // (ThemeService.Initialize corre después de crear la ventana), así que aplicarla
+        // acá tomaba los colores del diccionario base como "de fábrica" y después los
+        // pintaba encima del tema elegido — el bug por el que el tema con fondo propio
+        // quedaba en colores planos y al volver a 0 % no se recuperaba.
+        PanelAppearance.Attach(this);
+
+        // La capa del fondo desenfocado (ver PanelBlurLayer): necesita el árbol de la ventana para
+        // medir los paneles y el elemento del XAML donde recortarlos.
+        if (Content is Microsoft.UI.Xaml.FrameworkElement blurRoot)
+            PanelBlurLayer.Attach(blurRoot, PanelBlurLayerCanvas);
+
+        MarkStartup("apariencia enganchada");
 
         // Configurar minimize to tray
         this.Closed += MainWindow_Closed;
@@ -302,7 +349,7 @@ public sealed partial class MainWindow : Window
             _ = Task.Run(() => { try { _systemInfoService.GetCpuTemperature(); } catch { } });
         });
 
-        _loggingService.LogInfo("MainWindow inicializada");
+        _loggingService.LogInfo($"[arranque] MainWindow inicializada: {startupWatch.ElapsedMilliseconds} ms en total");
     }
 
     private void SetupTrayIcon()
@@ -1437,6 +1484,11 @@ public sealed partial class MainWindow : Window
 
     private void ScheduleWindowPositionSave()
     {
+        // En pantalla completa no se guarda nada: esa geometría la puso F11, no el
+        // usuario, y quedaría como tamaño de arranque de la próxima sesión (la
+        // ventana reabriría del tamaño de la pantalla, sin estar maximizada).
+        if (_isFullScreen) return;
+
         if (_windowPosSaveTimer == null)
         {
             _windowPosSaveTimer = DispatcherQueue.CreateTimer();
@@ -1500,6 +1552,102 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             _loggingService.LogWarning($"No se pudo restablecer la posición de la ventana: {ex.Message}");
+        }
+    }
+
+    // ===== Pantalla completa (F11) =====
+
+    /// <summary>La ventana está en pantalla completa (la puso F11).</summary>
+    private bool _isFullScreen;
+    private bool _wasMaximizedBeforeFullScreen;
+    private Windows.Graphics.PointInt32 _positionBeforeFullScreen;
+    private Windows.Graphics.SizeInt32 _sizeBeforeFullScreen;
+
+    /// <summary>
+    /// F11: pasa la ventana a pantalla completa y la devuelve al estado anterior.
+    /// El acelerador está declarado en el Grid raíz del XAML, así que llega con el
+    /// foco en cualquier parte de la ventana.
+    /// </summary>
+    private void FullScreenAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        // Marcado como manejado para que F11 no siga viajando: las páginas que
+        // capturan teclas (buscadores de hotkeys del autoclicker/macros) no deben
+        // quedarse con esta tecla.
+        args.Handled = true;
+        ToggleFullScreen();
+    }
+
+    /// <summary>
+    /// Alterna la pantalla completa. Entrar es cambiar el presenter de la ventana a
+    /// FullScreen: la ventana cubre la pantalla —barra de tareas incluida— y Windows
+    /// deja de dibujar los botones de minimizar/maximizar/cerrar. Salir vuelve al
+    /// presenter Overlapped, que NO recuerda la geometría anterior (nace con el
+    /// tamaño por defecto), así que la posición, el tamaño y el estado maximizado se
+    /// guardan antes de entrar y se reponen al salir.
+    ///
+    /// La barra de título propia se oculta mientras dura la pantalla completa: ahí no
+    /// hay ventana que arrastrar y el contenido gana esos 48 px. Al salir se repone, y
+    /// con ella el alto que informa el sistema, el color del tema y el botón
+    /// "Actualizar" (ver ApplyUpdateIndicator, que la tiene en cuenta).
+    /// </summary>
+    private void ToggleFullScreen()
+    {
+        try
+        {
+            var appWindow = GetAppWindow();
+            if (appWindow == null) return;
+
+            if (!_isFullScreen)
+            {
+                var overlapped = appWindow.Presenter as OverlappedPresenter;
+                _wasMaximizedBeforeFullScreen = overlapped?.State == OverlappedPresenterState.Maximized;
+                _positionBeforeFullScreen = appWindow.Position;
+                _sizeBeforeFullScreen = appWindow.Size;
+
+                appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+                _isFullScreen = true;
+
+                AppTitleBar.Visibility = Visibility.Collapsed;
+                UpdateButton.Visibility = Visibility.Collapsed;
+
+                _loggingService.LogInfo("Pantalla completa: activada (F11).");
+                return;
+            }
+
+            // Salir: primero el presenter y después la geometría (el Overlapped nuevo
+            // nace con un tamaño por defecto y pisaría cualquier medida previa).
+            appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+            _isFullScreen = false;
+
+            // Mismo criterio que el arranque (RestoreOrCenterWindow): una medida
+            // guardada razonable se repone; si no, la ventana queda centrada.
+            if (_sizeBeforeFullScreen.Width >= 400 && _sizeBeforeFullScreen.Height >= 300
+                && _positionBeforeFullScreen.X > -10000 && _positionBeforeFullScreen.Y > -10000)
+            {
+                appWindow.MoveAndResize(new Windows.Graphics.RectInt32(
+                    _positionBeforeFullScreen.X, _positionBeforeFullScreen.Y,
+                    _sizeBeforeFullScreen.Width, _sizeBeforeFullScreen.Height));
+            }
+
+            if (_wasMaximizedBeforeFullScreen && appWindow.Presenter is OverlappedPresenter restored)
+                restored.Maximize();
+
+            AppTitleBar.Visibility = Visibility.Visible;
+            ApplyUpdateIndicator();   // repone el botón "Actualizar" según el último chequeo
+
+            // Cambiar de presenter rehace la barra de título: hay que volver a
+            // declararla propia (el modo alto incluido), re-alinear su alto con el que
+            // informa el sistema y repintarla con el color del tema (también el navbar
+            // y el borde de la ventana, que se funde con ese color).
+            SetupCustomTitleBar();
+            AlignTitleBarHeight();
+            ApplyTitleBarTheme(App.Services.GetRequiredService<IThemeService>());
+
+            _loggingService.LogInfo("Pantalla completa: desactivada (F11).");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Pantalla completa (F11): {ex.Message}");
         }
     }
 
@@ -1691,6 +1839,7 @@ public sealed partial class MainWindow : Window
             var menu = NavigationViewControl.MenuItems;
 
             // 1) Quitar ítems generados cuyo componente ya no está registrado.
+            bool activePageJustClosed = false;
             for (int i = menu.Count - 1; i >= 0; i--)
             {
                 if (menu[i] is not NavigationViewItem item || item.Tag is not string tag) continue;
@@ -1698,7 +1847,22 @@ public sealed partial class MainWindow : Window
                 if (_componentRegistry.Find(tag) != null) continue;
                 menu.RemoveAt(i);
                 if (string.Equals(_navigationService.CurrentPage, tag, StringComparison.OrdinalIgnoreCase))
-                    _navigationService.NavigateTo("sistema");
+                {
+                    // El redireccionamiento puede fallar si el componente estaba en el
+                    // back stack (GoBack re-pinta un host cuyo CreatePage revienta al
+                    // no encontrar su componente: en WinUI 3 eso tumba la app entera).
+                    // La salida ES navegar igual: flag y highlight al final.
+                    try { _navigationService.NavigateTo("sistema"); }
+                    catch (Exception navEx) { _loggingService.LogWarning($"Navbar: redirección tras desinstalar '{tag}' falló: {navEx.Message}"); }
+                    activePageJustClosed = true;
+                }
+            }
+            if (activePageJustClosed)
+            {
+                // NavigateTo por servicio no toca el SelectedItem del NavigationView:
+                // sin esto el ítem removido seguía con el highlight (y desaparecía con
+                // él, dejando la selección “en el aire”).
+                HighlightNavItemForPage(_navigationService.CurrentPage);
             }
 
             // 2) Insertar los nuevos (componente recién instalado), en orden del
@@ -1722,6 +1886,111 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             _loggingService.LogWarning($"MainWindow: reconciliación del navbar: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Desinstalar el componente en pantalla no debe dejar la vista funcionando: el
+    /// usuario sigue viendo (y usando) una pestaña que ya no existe, con procesos y
+    /// timers activos, hasta que navegue por su cuenta. Al desinstalar desde el
+    /// Workshop o desde el menú ⋮, la pestaña abierta se redirige al Workshop — donde
+    /// la card queda con el botón Reinstalar.
+    ///
+    /// Los hosts de componentes no se cachearon nunca (NavigationCacheMode.Disabled):
+    /// el problema es el back stack del Frame — GoBack re-pinta un host cuyo
+    /// CreatePage revienta al no encontrar su componente — y las entradas ocultas por
+    /// el menú ⋮ (navegar a un core desde un menú no toca _currentPage). Por eso la
+    /// detección va por el id en pantalla del host y la limpieza borra TODAS las
+    /// entradas del back stack de hosts (el Frame no permite leer su contenido).
+    /// El estado de sesión de la app vive en settings, no en el back stack: se puede
+    /// purgar sin perder nada.
+    /// </summary>
+    private void CloseUninstalledComponentPage(string removedId)
+    {
+        try
+        {
+            // Caso 1a: la vista activa es un host de componente descargado cuyo id ya
+            // no está registrado. Cubre la navegación por menú (⋮ / contextuales), que
+            // no actualiza _currentPage del servicio. El chequeo por CONTENIDO del
+            // Frame (y no solo por el id estático) evita un falso positivo: el id queda
+            // “viejo” si después de visitar el componente se navegó a una página
+            // normal, que nunca refresca esa variable.
+            bool redirect = false;
+            if (ContentFrame.Content is ComponentHostPage
+                && string.Equals(ComponentHostPage.CurrentComponentId, removedId, StringComparison.OrdinalIgnoreCase))
+            {
+                redirect = true;
+            }
+            else
+            {
+                // Caso 1b: la vista activa es la página del integrado desinstalado
+                // (builtin.removed.<id> = true): los integrados navegan a su tipo real,
+                // no al host, y siguen registrados — solo se ocultan por settings.
+                if (ContentFrame.Content is Page activePage
+                    && _componentRegistry.Find(removedId) is BuiltinComponent removedBuiltin
+                    && removedBuiltin.PageType == activePage.GetType())
+                {
+                    redirect = true;
+                }
+            }
+
+            if (redirect)
+            {
+                _loggingService.LogInfo($"Navbar: '{removedId}' desinstalado con su pestaña en pantalla: se redirige al Workshop.");
+                _navigationService.NavigateTo("workshop");
+                HighlightNavItemForPage("workshop");
+            }
+
+            // Caso 2: el componente desinstalado vive en una entrada del back stack.
+            // Frame.BackStack no expone el contenido de cada entrada, así que las de
+            // hosts se borran TODAS (no se puede saber cuál es cuál): nadie puede volver
+            // a una página de componente desinstalado, aunque haya varias apiladas. Las
+            // páginas de integrados sí se pueden identificar por tipo.
+            var backStack = ContentFrame.BackStack;
+            int before = backStack.Count;
+            Type? removedBuiltinPageType = _componentRegistry.Find(removedId) is BuiltinComponent b ? b.PageType : null;
+            for (int i = backStack.Count - 1; i >= 0; i--)
+            {
+                var entryType = backStack[i].SourcePageType;
+                if (entryType == typeof(ComponentHostPage) || (removedBuiltinPageType != null && entryType == removedBuiltinPageType))
+                    backStack.RemoveAt(i);
+            }
+            if (backStack.Count != before)
+                _loggingService.LogInfo($"Navbar: {before - backStack.Count} entradas de componentes salieron del back stack (desinstalación de '{removedId}').");
+
+            // Mismo criterio para el stack “adelante” (solo se llena tras un GoBack,
+            // pero cuesta nada y cierra el escape completo).
+            var forwardStack = ContentFrame.ForwardStack;
+            int fwdBefore = forwardStack.Count;
+            for (int i = forwardStack.Count - 1; i >= 0; i--)
+            {
+                var entryType = forwardStack[i].SourcePageType;
+                if (entryType == typeof(ComponentHostPage) || (removedBuiltinPageType != null && entryType == removedBuiltinPageType))
+                    forwardStack.RemoveAt(i);
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: no se pudo cerrar la pestaña del componente desinstalado: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Marca con el highlight del navbar la pestaña de una página ya navegada por
+    /// código (NavigateTo del servicio no actualiza SelectedItem). Si no hay ítem
+    /// visible con ese tag, se queda sin selección (mejor que un ítem muerto).
+    /// </summary>
+    private void HighlightNavItemForPage(string? pageKey)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(pageKey)) return;
+            var item = FindNavItem(pageKey);
+            NavigationViewControl.SelectedItem = item;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: highlight del navbar para '{pageKey}': {ex.Message}");
         }
     }
 
@@ -2137,13 +2406,6 @@ public sealed partial class MainWindow : Window
 
     private void NavDrag_PointerCanceled(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => EndNavDrag();
 
-    private void NavDrag_PointerCaptureLost(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        // Si el sistema nos quitó la captura a mitad del gesto (la ventana perdió
-        // foco, apareció otro puntero), cortar el drag sin mover nada.
-        if (_dragging) EndNavDrag();
-    }
-
     private void EndNavDrag()
     {
         // La captura de puntero NO se libera explícitamente: el contrato de
@@ -2219,12 +2481,23 @@ public sealed partial class MainWindow : Window
             // El árbol puede estar parcialmente realizado durante Navigated, pero
             // traducir lo disponible evita que el idioma inicial dependa del timing.
             I18n.ApplyToVisualTree(fe);
+
+            // La capa del desenfoque recorta un parche por panel y los busca en el árbol que está A
+            // LA VISTA: al cambiar de página hay que rehacer esa búsqueda, o los parches quedan
+            // sobre las cards de la página vieja y la nueva se ve sin vidrio (ver PanelBlurLayer).
+            PanelBlurLayer.PanelsChanged();
+
             if (fe is Page page)
             {
                 // Repetir al terminar el primer layout cubre controles perezosos y
                 // páginas que crean contenido durante Loaded.
                 page.Loaded -= Page_Loaded_Translate;
                 page.Loaded += Page_Loaded_Translate;
+
+                // Y lo mismo con los paneles del desenfoque: las páginas arman parte de su
+                // contenido recién en Loaded (sondeos, listas del sistema).
+                page.Loaded -= Page_Loaded_Blur;
+                page.Loaded += Page_Loaded_Blur;
             }
 
             // Y seguir re-pasando mientras la página arme contenido solo (sondeos,
@@ -2239,6 +2512,9 @@ public sealed partial class MainWindow : Window
         I18n.ApplyToVisualTree(element);
         element.DispatcherQueue.TryEnqueue(() => I18n.ApplyToVisualTree(element));
     }
+
+    private static void Page_Loaded_Blur(object sender, RoutedEventArgs e)
+        => PanelBlurLayer.PanelsChanged();
 
     private void OnLanguageChanged()
     {
@@ -2389,6 +2665,16 @@ public sealed partial class MainWindow : Window
         {
             var info = _latestUpdate;
             AppUpdateStateChanged?.Invoke();
+
+            // En pantalla completa (F11) el botón no tiene barra donde vivir: queda
+            // oculto hasta salir — ToggleFullScreen vuelve a llamar a este método para
+            // reponerlo con el estado del último chequeo.
+            if (_isFullScreen)
+            {
+                UpdateButton.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             if (info == null)
             {
                 UpdateButton.Visibility = Visibility.Collapsed;
@@ -2398,23 +2684,27 @@ public sealed partial class MainWindow : Window
             switch (info.Status)
             {
                 case AppUpdateStatus.UpdateAvailable:
-                    // Botón "Actualizar" en VERDE LLAMATIVO FIJO (UpdateButtonBrush +
-                    // UpdateButtonForegroundBrush de App.xaml): el mismo verde en TODOS los
-                    // temas. Con SetValue (no ClearValue): ClearValue BORRARÍA el valor local
-                    // del XAML y el botón caería al estilo default del tema (azul/gris).
-                    // También se re-afirman los overrides de hover/pressed verdes en
-                    // Button.Resources — en "Desarrollo" se quitaron para usar el hover del tema.
+                    // Botón "Actualizar" en el ACENTO del tema (UpdateButtonBrush +
+                    // UpdateButtonForegroundBrush de los diccionarios de App.xaml): cada tema
+                    // con fondo propio lo pinta con el color de su imagen (menta en Aurora,
+                    // naranja en Brasa, turquesa en Marea) y los clásicos
+                    // con el azul de la app. Con SetValue (no ClearValue): ClearValue BORRARÍA
+                    // el valor local del XAML y el botón caería al estilo default (azul/gris).
+                    // Los pinceles salen de ThemeBrushes (LIVE): al cambiar de tema,
+                    // ThemeBrushes.Refresh muta su Color y la pastilla se repinta sola.
+                    // También se re-afirman los overrides de hover/pressed en
+                    // Button.Resources — en "Desarrollo" se quitan para usar el hover default.
                     UpdateTextPanel.Visibility = Visibility.Visible;
                     UpdateButtonText.Text = I18n.T("Actualizar");
-                    UpdateButtonText.Foreground = (WinBrush)WinUIApp.Current.Resources["UpdateButtonForegroundBrush"];
+                    UpdateButtonText.Foreground = ThemeBrushes.Get("UpdateButtonForegroundBrush");
                     UpdateButtonIconGlyph.Glyph = "\uE896"; // descarga
-                    UpdateButtonIconGlyph.Foreground = (WinBrush)WinUIApp.Current.Resources["UpdateButtonForegroundBrush"];
+                    UpdateButtonIconGlyph.Foreground = ThemeBrushes.Get("UpdateButtonForegroundBrush");
                     UpdateButtonIconGlyph.Visibility = Visibility.Visible;
-                    UpdateButton.Background = (WinBrush)WinUIApp.Current.Resources["UpdateButtonBrush"];
-                    UpdateButton.BorderBrush = (WinBrush)WinUIApp.Current.Resources["UpdateButtonBrush"];
+                    UpdateButton.Background = ThemeBrushes.Get("UpdateButtonBrush");
+                    UpdateButton.BorderBrush = ThemeBrushes.Get("UpdateButtonBrush");
                     UpdateButton.BorderThickness = new Thickness(0);
-                    UpdateButton.Resources["ButtonBackgroundPointerOver"] = WinUIApp.Current.Resources["UpdateButtonPointerOverBrush"];
-                    UpdateButton.Resources["ButtonBackgroundPressed"] = WinUIApp.Current.Resources["UpdateButtonPressedBrush"];
+                    UpdateButton.Resources["ButtonBackgroundPointerOver"] = ThemeBrushes.Get("UpdateButtonPointerOverBrush");
+                    UpdateButton.Resources["ButtonBackgroundPressed"] = ThemeBrushes.Get("UpdateButtonPressedBrush");
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Actualizar a {0}", $"v{info.LatestVersion}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;
@@ -2430,9 +2720,14 @@ public sealed partial class MainWindow : Window
                     UpdateButtonIconGlyph.Glyph = "\uE946"; // info
                     UpdateButtonIconGlyph.Foreground = ThemeBrushes.Get("TextFillColorSecondaryBrush");
                     UpdateButtonIconGlyph.Visibility = Visibility.Visible;
+                    // Alto: el mismo que la pastilla verde (Height=30 del XAML, compartido por
+                    // los dos estados). El borde de 1 px NO cambia el alto exterior —Height es
+                    // fijo— pero se fija explícitamente en vez de ClearValue para que no quede
+                    // al azar del estilo default: el color sí se limpia para tomar el borde del
+                    // tema (ButtonBorderBrush).
                     UpdateButton.Background = ThemeBrushes.Get("CardBorderBrush");
                     UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderBrushProperty);
-                    UpdateButton.ClearValue(Microsoft.UI.Xaml.Controls.Button.BorderThicknessProperty);
+                    UpdateButton.BorderThickness = new Thickness(1);
                     UpdateButton.Resources.Remove("ButtonBackgroundPointerOver");
                     UpdateButton.Resources.Remove("ButtonBackgroundPressed");
                     ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"));
@@ -2723,6 +3018,14 @@ public sealed partial class MainWindow : Window
                 _settingsService.Set("nav." + tag, false);
                 _settingsService.Save();
                 ApplyNavigationVisibility();
+                // Si se ocultó la pestaña en pantalla, la vista activa queda sin ítem
+                // en el navbar: ir al Workshop, donde la puede volver a tildar
+                // (Configuración también, pero el ⋮ vive en el navbar).
+                if (string.Equals(_navigationService.CurrentPage, tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    _navigationService.NavigateTo("workshop");
+                    HighlightNavItemForPage("workshop");
+                }
             }
             catch (Exception ex)
             {
@@ -2775,6 +3078,10 @@ public sealed partial class MainWindow : Window
                 _settingsService.Set("builtin.removed." + tag, true);
                 _settingsService.Set("nav." + tag, false);
                 _settingsService.Save();
+                // Changed + Removed: cierra la pestaña abierta (si era la de este
+                // componente) y reconcilia el navbar. Visibilidad después de la
+                // posible navegación para que el ítem no titile.
+                _componentRegistry.NotifyRemoved(tag);
                 ApplyNavigationVisibility();
             }
             else
@@ -2882,7 +3189,7 @@ public sealed partial class MainWindow : Window
             ColumnSpacing = 8,
             Padding = new Thickness(8, 4, 6, 4),
             CornerRadius = new CornerRadius(6),
-            Background = ThemeBrushes.Get("CardBackgroundBrush")
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush")
         };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -3016,13 +3323,12 @@ public sealed partial class MainWindow : Window
         return remove;
     }
 
-    /// <summary>Estilo del presentador del menú de idiomas: mismo fondo/borde que las cards
-    /// para que las filas (que también son cards) no floten sobre un panel ajeno al tema.</summary>
+    /// <summary>Usa el mismo fondo y borde tematizados que los desplegables ComboBox.</summary>
     private static Style BuildLanguageFlyoutStyle()
     {
         var style = new Style(typeof(FlyoutPresenter));
-        style.Setters.Add(new Setter(WinControl.BackgroundProperty, ThemeBrushes.Get("CardBackgroundBrush")));
-        style.Setters.Add(new Setter(WinControl.BorderBrushProperty, ThemeBrushes.Get("CardBorderBrush")));
+        style.Setters.Add(new Setter(WinControl.BackgroundProperty, ThemeBrushes.Get("ComboBoxDropDownBackground")));
+        style.Setters.Add(new Setter(WinControl.BorderBrushProperty, ThemeBrushes.Get("ComboBoxDropDownBorderBrush")));
         style.Setters.Add(new Setter(WinControl.BorderThicknessProperty, new Thickness(1)));
         style.Setters.Add(new Setter(WinControl.CornerRadiusProperty, new CornerRadius(8)));
         style.Setters.Add(new Setter(WinControl.PaddingProperty, new Thickness(6)));
@@ -3167,6 +3473,159 @@ public sealed partial class MainWindow : Window
     private Windows.UI.Color _frameBorderColor = Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17);
 
     /// <summary>
+    /// Pincel del panel del MENÚ en los temas con fondo propio. El NavigationView pinta esa
+    /// franja por dentro con {ThemeResource NavigationViewDefaultPaneBackground} y CACHEA el
+    /// recurso: cuando el deslizador de transparencia lo reescribe en el diccionario, el panel
+    /// no repinta y el menú quedaba siempre opaco. Se pisa con un recurso LOCAL del control
+    /// (tiene prioridad sobre el de la app) y se muta SIEMPRE esta misma instancia, que es lo
+    /// único que el panel ve sin volver a resolver el recurso.
+    ///
+    /// Es un Brush y no un SolidColorBrush porque con el vidrio encendido el relleno es el ACRÍLICO
+    /// de la plataforma (ver <see cref="PanelAppearance.SurfaceFill"/>), que no es un pincel sólido.
+    /// </summary>
+    private Microsoft.UI.Xaml.Media.Brush? _navPaneBrush;
+
+    /// <summary>
+    /// Fondo del navbar y de la barra de título, pintados a mano por el mismo motivo que la franja
+    /// del menú (ver <see cref="ApplyPanelColors"/>): se reusa la instancia por lo mismo, para que el
+    /// ajuste los alcance sin depender de que WinUI vuelva a resolver el {ThemeResource}.
+    /// </summary>
+    private Microsoft.UI.Xaml.Media.Brush? _navBrush;
+
+    /// <summary>SplitView interno del NavigationView: es quien pinta la franja del menú.</summary>
+    private Microsoft.UI.Xaml.Controls.SplitView? _navPaneHost;
+
+    /// <summary>Timer del reintento del pintado del menú (ver <see cref="SchedulePaneHostRetry"/>).</summary>
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _paneHostTimer;
+
+    /// <summary>Ticks gastados por el reintento (cota de seguridad: 30 s a 150 ms).</summary>
+    private int _paneHostRetries;
+
+    /// <summary>El aviso de "SplitView no encontrado" se emite una vez por proceso, no ocho por arranque.</summary>
+    private bool _paneHostWarned;
+
+    /// <summary>
+    /// El SplitView que pinta la franja del menú dentro del NavigationView (su `PaneBackground` es
+    /// el {ThemeResource NavigationViewDefaultPaneBackground} del template).
+    /// </summary>
+    private Microsoft.UI.Xaml.Controls.SplitView? FindPaneHost()
+    {
+        try
+        {
+            // La plantilla del NavigationView se puede RE-APLICAR (cambio de tema): el SplitView
+            // encontrado antes queda descolgado del árbol y el caché apuntaría a un muerto — cada
+            // pasada pintaría el descolgado y el vivo conservaría el pincel de la plantilla.
+            if (_navPaneHost != null && !IsDescendantOf(_navPaneHost, NavigationViewControl))
+                _navPaneHost = null;
+            _navPaneHost ??= FindDescendant<Microsoft.UI.Xaml.Controls.SplitView>(NavigationViewControl);
+        }
+        catch { }
+        return _navPaneHost;
+    }
+
+    /// <summary>¿Está el nodo dentro del subárbol de root? (Guarda de caché para re-aplicaciones de plantilla.)</summary>
+    private static bool IsDescendantOf(Microsoft.UI.Xaml.DependencyObject node, Microsoft.UI.Xaml.DependencyObject root)
+    {
+        try
+        {
+            while (node != null)
+            {
+                if (ReferenceEquals(node, root)) return true;
+                node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>
+    /// Busca un descendiente por <c>x:Name</c>: la plantilla del NavigationView nombra sus piezas
+    /// internas (ContentGrid, RootSplitView, PaneRoot…), y esas piezas no se pueden alcanzar por
+    /// tipo (hay varios Grid y varios SplitView en el árbol).
+    /// </summary>
+    private static Microsoft.UI.Xaml.FrameworkElement? FindDescendantByName(Microsoft.UI.Xaml.DependencyObject parent, string name)
+    {
+        try
+        {
+            int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+                if (child is Microsoft.UI.Xaml.FrameworkElement element && element.Name == name) return element;
+                if (FindDescendantByName(child, name) is { } nested) return nested;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static T? FindDescendant<T>(Microsoft.UI.Xaml.DependencyObject parent) where T : Microsoft.UI.Xaml.DependencyObject
+    {
+        try
+        {
+            int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+                if (child is T match) return match;
+                if (FindDescendant<T>(child) is { } nested) return nested;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>
+    /// La plantilla del NavigationView se realiza de forma PEREZOSA y ASINCRÓNICA: el SplitView
+    /// interno puede aparecer mucho después del primer layout (la propia NavigationView difiere
+    /// su plantilla al arranque). Los disparadores puntuales —un tick del dispatcher con cota y
+    /// el Loaded del control— se agotaban ANTES de esa realización: el arranque quedaba con la
+    /// franja del menú sin su pintado directo (transparencia ignorada, fondo pelado) y solo se
+    /// reparaba cuando el usuario movía el deslizador, que era la primera pasada con la
+    /// plantilla ya realizada.
+    ///
+    /// El reintento correcto es un timer corto que consulta HASTA que el SplitView exista: cada
+    /// tick es un recorrido barato del árbol visual; al encontrarlo pinta con los valores
+    /// vigentes (idempotente), deja constancia en app.log y se apaga. Cota de seguridad: 30 s.
+    /// </summary>
+    private void SchedulePaneHostRetry()
+    {
+        if (_paneHostTimer != null) return; // ya corriendo
+        _paneHostRetries = 0;
+
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = System.TimeSpan.FromMilliseconds(150);
+        timer.Tick += (s, e) =>
+        {
+            try
+            {
+                if (FindPaneHost() is { } host)
+                {
+                    _paneHostTimer = null;
+                    timer.Stop();
+                    RefreshPanelColors();
+                    _loggingService.LogInfo($"Apariencia: SplitView del menú encontrado y pintado (reintento {_paneHostRetries} ticks; transparencia {PanelAppearance.TransparencyPercent:0} %).");
+                    return;
+                }
+
+                if (++_paneHostRetries > 200)
+                {
+                    _paneHostTimer = null;
+                    timer.Stop();
+                    if (!_paneHostWarned)
+                    {
+                        _paneHostWarned = true;
+                        _loggingService.LogWarning("Apariencia: el SplitView del menú no apareció en 30 s; la franja del menú queda sin pintado directo.");
+                    }
+                }
+            }
+            catch { }
+        };
+        _paneHostTimer = timer;
+        timer.Start();
+    }
+
+    /// <summary>
     /// Tratamiento del marco de la ventana: esquinas redondeadas del SISTEMA (sin región de
     /// recorte) + borde fundido con el color del contenido.
     ///
@@ -3199,14 +3658,7 @@ public sealed partial class MainWindow : Window
         var appWindow = GetAppWindow();
         if (appWindow == null) return;
 
-        bool dark = themeService.CurrentTheme switch
-        {
-            AppTheme.Dark => true,
-            AppTheme.Light => false,
-            AppTheme.BlueBlack => true,   // identidad oscura (negro)
-            AppTheme.PinkLight => false,  // identidad clara (blanco)
-            _ => App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark
-        };
+        bool dark = ThemeIsDark(themeService);
         ApplyTitleBarColors(appWindow, dark);
 
         // Sin el reborde de 1px blanco/gris que Windows 11 pinta alrededor de TODAS
@@ -3226,30 +3678,187 @@ public sealed partial class MainWindow : Window
         // de forma confiable en WinUI 3.
         try
         {
-            var t = themeService.CurrentTheme;
-            var sysDark = t == AppTheme.SystemDefault
-                && App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark;
-            var navColor = (dark, t) switch
-            {
-                (_, AppTheme.BlueBlack) => Windows.UI.Color.FromArgb(255, 0x0E, 0x15, 0x24),
-                (_, AppTheme.PinkLight) => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF),
-                (true, _) => Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17),  // Oscuro / Sistema oscuro
-                (false, _) => Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF) // Claro / Sistema claro
-            };
-            NavigationViewControl.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
-            // La barra de título propia lleva el MISMO color que el navbar: sin esto, en los
-            // temas Negro/Azul y Rosa/Blanco quedaban dos tonos distintos (el navbar es
-            // #0E1524 / blanco y el color calculado por ApplyTitleBarColors es #151517 / blanco).
-            AppTitleBar.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(navColor);
-
-            // El borde de la ventana se funde con ESTE color (el fondo del título del tema):
-            // con COLOR_NONE DWM igual dibuja con el color por defecto los píxeles del arco
-            // de las esquinas (los dos puntos claros); con el color del contenido no
-            // contrastan. Queda cacheado para las re-aplicaciones de Activated/resize.
-            _frameBorderColor = navColor;
-            WindowBorder.BlendBorderWithContent(this, navColor);
+            ApplyPanelColors(themeService.CurrentTheme, dark);
         }
         catch { /* arranque temprano */ }
+    }
+
+    /// <summary>
+    /// ¿El tema pinta sobre una base oscura? (Lo usan el color del navbar, la barra de
+    /// título y el color de los botones del sistema.)
+    /// </summary>
+    private static bool ThemeIsDark(IThemeService themeService)
+        => themeService.CurrentTheme switch
+        {
+            AppTheme.Light => false,
+            AppTheme.PinkLight => false,  // identidad clara (blanco)
+            AppTheme.Dark => true,
+            AppTheme.BlueBlack => true,   // identidad oscura (negro)
+            AppTheme.Tide => true,        // identidad oscura (fondo con imagen)
+            AppTheme.Aurora => true,      // identidad oscura (fondo con imagen)
+            AppTheme.Brasa => true,       // identidad oscura (fondo con imagen)
+            AppTheme.Twilight => true,    // identidad oscura (fondo con gradiente propio)
+            _ => App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark
+        };
+
+    /// <summary>
+    /// Color con el que se pintan a mano el navbar (y el borde de la ventana) para un tema.
+    /// Sale de la DEFINICIÓN del tema —la clave NavigationViewDefaultPaneBackground, la
+    /// misma que usa el panel del menú—, así la barra de título y el menú son el mismo tono
+    /// por construcción y no hay dos valores que se puedan desincronizar cuando alguien
+    /// cambia un tema. El alfa propio de la definición se ignora: el que manda es el de la
+    /// transparencia de paneles, que lo aplica PanelAppearance.ApplyToColor.
+    /// </summary>
+    private static Windows.UI.Color NavColorForTheme(AppTheme theme, bool dark)
+    {
+        if (ThemePalettes.TryGetFactoryColor(theme, "NavigationViewDefaultPaneBackground", out var pane))
+            return pane;
+
+        // Sin paleta propia (Claro/Oscuro/Sistema): los valores de siempre.
+        return dark
+            ? Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17)  // Oscuro / Sistema oscuro
+            : Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF); // Claro / Sistema claro
+    }
+
+    /// <summary>
+    /// Pinta el navbar, la barra de título propia y el borde de la ventana con el color
+    /// del tema, ya con la transparencia de paneles aplicada (ver PanelAppearance).
+    ///
+    /// Estos tres se pintan a mano a propósito: el NavigationView cachea el {ThemeResource}
+    /// de su Background y no repinta al cambiar entre temas de la misma base (Negro/Azul →
+    /// Oscuro), así que el color se fija directo. Como consecuencia, la transparencia de los
+    /// paneles tiene que aplicarse acá también o el menú lateral quedaría siempre opaco.
+    /// </summary>
+    private void ApplyPanelColors(AppTheme theme, bool dark)
+    {
+        var navColor = PanelAppearance.ApplyToColor(NavColorForTheme(theme, dark));
+
+        // Temas con FONDO DE VENTANA (Marea, Aurora y Brasa con su foto; Crepúsculo con
+        // su gradiente): el NavigationView NO pinta una capa propia, así el área de contenido deja
+        // ver ese fondo (WindowBackdropBrush / WindowWallpaperBrush, ver MainWindow.xaml). Lo que
+        // distingue al menú es su propio panel (la clave NavigationViewDefaultPaneBackground, que
+        // pinta el NavigationView por dentro) y a la barra de título, el mismo tono aplicado acá.
+        // El tipo lo resuelve la definición del tema (ver ThemeCatalog.KindOf): agregar un tema con
+        // fondo no requiere tocar esta lista.
+        bool backdrop = ThemeCatalog.ShowsWindowBackdrop(theme);
+        var transparent = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+
+        // El relleno del navbar y de la barra de título se decide con LA MISMA regla que el de las
+        // cards (ver PanelAppearance.SurfaceFill): acrílico in-app con el vidrio encendido —que
+        // desenfoca la foto que estos paneles tienen DETRÁS, sin nada que seguir ni parche que
+        // recortar— y el sólido de siempre cuando no. Se pintan a mano justo por eso: el
+        // NavigationView cachea su {ThemeResource}, así que la única forma de que el vidrio los
+        // alcance es asignarles el pincel directo.
+        // ChromeFill y no SurfaceFill: estas dos piezas (más las barras internas de cada página)
+        // van PEGADAS entre sí, así que con el desenfoque encendido llevan el tinte solo y el
+        // desenfoque lo aporta la copia COMPARTIDA detrás (ver PanelAppearance.ChromeSharedGlass): con
+        // el vidrio por elemento, cada junta mostraba la foto cortada en seco.
+        _navBrush = PanelAppearance.ChromeFill(_navBrush, navColor);
+        NavigationViewControl.Background = backdrop ? transparent : _navBrush;
+
+        // El contenedor del CONTENIDO de la plantilla (ContentGrid) lleva
+        // {ThemeResource NavigationViewContentBackground}: en los temas con foto esa clave es
+        // transparente (el tema la sobrescribe), pero la plantilla la resuelve al REALIZARSE —y
+        // puede haber quedado con el valor opaco del XAML base—, el mismo problema que tenía el
+        // panel del menú (ver abajo). Esa capa tapa la foto y los parches del desenfoque en TODO
+        // el contenido: las cards y las barras internas de cada página quedan sin vidrio aunque el
+        // menú y la barra de título (que están FUERA del ContentGrid) sí lo muestren.
+        // En los temas con foto se fuerza transparente por código, igual que el panel del menú.
+        if (backdrop && FindDescendantByName(NavigationViewControl, "ContentGrid") is Microsoft.UI.Xaml.Controls.Grid contentGrid)
+            contentGrid.Background = transparent;
+
+        // La barra de título propia lleva el MISMO tono que el panel del menú —sin esto, en
+        // Negro/Azul y Rosa/Blanco quedaban dos tonos distintos: el navbar es #0E1524 /
+        // blanco y el color calculado por ApplyTitleBarColors es #151517 / blanco— con la
+        // transparencia de paneles ya aplicada: es un panel más, así que en 0 % queda opaca
+        // (tapa la foto) y arriba deja verla.
+        AppTitleBar.Background = _navBrush;
+
+        // El panel del MENÚ es un caso aparte: la franja la pinta por dentro un SplitView cuya
+        // `PaneBackground` es {ThemeResource NavigationViewDefaultPaneBackground} (ver el template
+        // de NavigationView en generic.xaml), y ese {ThemeResource} se resuelve al cargar la
+        // plantilla — reescribir el diccionario después NO repinta el menú, que quedaba siempre
+        // opaco. Se le asigna el pincel DIRECTO al SplitView, sin {ThemeResource} de por medio, y se
+        // muta siempre la MISMA instancia: así el menú acompaña al deslizador igual que la barra de
+        // título. Si todavía no existe (plantilla sin cargar), se engancha en la próxima pasada.
+        if (FindPaneHost() is { } paneHost)
+        {
+            _navPaneBrush = PanelAppearance.ChromeFill(_navPaneBrush, navColor);
+            paneHost.PaneBackground = _navPaneBrush;
+
+            // La plantilla le da al SplitView un CornerRadius redondeado del lado DERECHO
+            // (OverlayCornerRadius filtrado: 8 px arriba y abajo) — el "huevo" de la esquina
+            // superior derecha del navbar. Va a 0 por código y no por recurso: su radio sale
+            // de OverlayCornerRadius, que también usan diálogos y flyouts (esos SÍ deben
+            // seguir redondeados). El SetValue reemplaza el Binding de la plantilla; como
+            // ApplyPanelColors corre en cada tema y en cada cambio de transparencia, si la
+            // plantilla restablece el radio, la siguiente pasada lo vuelve a dejar en 0.
+            paneHost.CornerRadius = new Microsoft.UI.Xaml.CornerRadius(0);
+        }
+        else
+        {
+            // Plantilla sin realizar: TODAS las llamadas del arranque (tema, transparencia y la
+            // autocomprobación) corren antes del primer pase de layout y acá caen — el log
+            // registraba "no se encontró el SplitView" ocho veces por arranque y el navbar
+            // quedaba sin su pintado directo (se veía el fondo pelado) hasta que el usuario
+            // movía el deslizador, que era la primera pasada con la plantilla ya realizada.
+            // Se agenda el pintado para cuando exista. Vale para TODOS los temas: la franja del
+            // menú se pinta a mano también en los clásicos, no solo en los de fondo.
+            SchedulePaneHostRetry();
+            if (backdrop && !_paneHostWarned)
+            {
+                _paneHostWarned = true;
+                _loggingService.LogWarning("Apariencia: no se encontró el SplitView del menú para pintarlo; se reintenta cuando la plantilla se realice.");
+            }
+        }
+
+        // El desenfoque alcanza también a la barra de título y a la franja del menú. Con el vidrio de
+        // la plataforma ya lo hacen sus propios pinceles (justo arriba); esto es para el camino de
+        // respaldo —la capa que recorta parches de la foto desenfocada—, que no reconoce por el
+        // diccionario a estos pinceles pintados a mano y necesita que se los declaren.
+        PanelBlurLayer.SetExtraBrushes(_navBrush, _navPaneBrush);
+
+        // Color del CONTENIDO para el borde de la ventana: en los temas con fondo propio el
+        // fondo de las páginas es transparente (ahí manda la imagen del contenido), así que
+        // la composición cae al tono representativo de la capa de fondo —el que se ve en la
+        // barra y el menú, que son los que tocan los bordes superior y laterales—; en los
+        // clásicos es el mismo color de siempre.
+        var contentColor = navColor;
+        if (backdrop && ThemePalettes.TryGetFactoryColor(theme, "AppBackgroundBrush", out var pageVeil))
+        {
+            contentColor = PanelAppearance.ApplyToColor(pageVeil);
+        }
+
+        // El borde de la ventana se funde con el color del fondo que se ve en los bordes:
+        // con COLOR_NONE DWM igual dibuja con su color por defecto los píxeles del arco de
+        // las esquinas (los dos puntos claros); con el color del contenido no contrastan.
+        // Va OPACO (DWM ignora el alfa), así que se compone sobre el fondo del tema.
+        //
+        // En los temas con gradiente el borde toma el color de las PÁGINAS (el velo sobre el
+        // gradiente), no el del navbar: el filete rodea toda la ventana y el fondo que se ve
+        // contra el marco es el del contenido — con el color del panel del menú quedaba un
+        // contorno oscuro que cortaba el gradiente por los cuatro lados.
+        _frameBorderColor = PanelAppearance.ComposeOpaque(contentColor);
+        WindowBorder.BlendBorderWithContent(this, _frameBorderColor);
+    }
+
+    /// <summary>
+    /// Reaplica navbar, barra de título y borde de la ventana con la transparencia de
+    /// paneles vigente. Lo llama PanelAppearance al mover el deslizador de transparencia:
+    /// esos tres colores no pasan por el diccionario del tema (se fijan a mano), así que
+    /// no se enteran solos del ajuste.
+    /// </summary>
+    public void RefreshPanelColors()
+    {
+        try
+        {
+            var themeService = App.Services.GetRequiredService<IThemeService>();
+            ApplyPanelColors(themeService.CurrentTheme, ThemeIsDark(themeService));
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Apariencia: no se pudo repintar el navbar/borde: {ex.Message}");
+        }
     }
 
     /// <summary>

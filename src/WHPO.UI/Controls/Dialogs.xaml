@@ -132,9 +132,11 @@
          framework y el tooltip queda SIN fondo (transparente). Por eso el ControlTemplate
          de abajo: pinta un Border sólido con los pinceles del estilo. -->
     <Style TargetType="ToolTip">
-        <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+        <!-- Recurso propio y opaco: no forma parte de las superficies afectadas por la
+             transparencia ni por el blur de los paneles. -->
+        <Setter Property="Background" Value="{ThemeResource ToolTipBackgroundBrush}"/>
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
-        <Setter Property="BorderBrush" Value="{ThemeResource CardBorderBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource MenuFlyoutPresenterBorderBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="Padding" Value="10,7"/>
         <Setter Property="FontSize" Value="13"/>

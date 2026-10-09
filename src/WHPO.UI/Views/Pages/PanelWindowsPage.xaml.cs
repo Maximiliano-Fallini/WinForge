@@ -39,7 +39,7 @@ public sealed partial class PanelWindowsPage : Page
     // ---- Pinceles desde los recursos de tema de la app: al cambiar de variante la
     // app reinicia y estas propiedades resuelven los colores nuevos (las cards se
     // reconstruyen en ActualThemeChanged al cambiar claro/oscuro). ----
-    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static SolidColorBrush CardHoverBrush => ThemeBrushes.Get("CardHoverBrush");
     private static SolidColorBrush MutedBrush => ThemeBrushes.Get("SecondaryTextBrush");
     private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");

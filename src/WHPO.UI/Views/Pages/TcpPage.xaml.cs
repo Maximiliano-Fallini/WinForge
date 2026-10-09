@@ -146,7 +146,7 @@ public sealed partial class TcpPage : Page
 
         var card = new Border
         {
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(16)
         };
@@ -373,7 +373,7 @@ public sealed partial class TcpPage : Page
 
         var rulesCard = new Border
         {
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(16)
         };

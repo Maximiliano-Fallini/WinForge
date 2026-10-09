@@ -22,7 +22,7 @@ public sealed partial class HerramientasPage : Page
     // Pinceles desde los recursos de tema de la app (claro/oscuro). Se resuelven con
     // el tema EFECTIVO (ThemeBrushes), no con el del sistema: así las cards creadas en
     // código acompañan al tema igual que las del XAML.
-    private static SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
     private static SolidColorBrush CardBorderBrush => ThemeBrushes.Get("CardBorderBrush");
     private static SolidColorBrush AccentBrush => ThemeBrushes.Get("AccentBrush");
     private static SolidColorBrush SuccessBrush => (SolidColorBrush)App.Current.Resources["SuccessBrush"];

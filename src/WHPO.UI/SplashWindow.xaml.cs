@@ -10,10 +10,14 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
+using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 using Windows.Foundation;
 using Windows.Graphics;
+using Windows.Graphics.Imaging;
+using Windows.Security.Cryptography;
 
 namespace WHPO_UI;
 
@@ -43,8 +47,14 @@ public sealed partial class SplashWindow : Window
 {
     // Tamaño en DIPs: se convierte a píxeles físicos con el DPI del monitor (una
     // ventana sin bordes con tamaño fijo en píxeles quedaría recortada al 150 %).
+    //
+    // El alto es MENOR que el ancho: la tarjeta no necesita ser cuadrada. El dial mide
+    // 300 de alto y va en un lienzo de 346 (los 46 de margen compensan que el dial está
+    // abierto abajo, ver GaugeCanvas), así que dentro de los 368 DIP de contenido quedan
+    // 11 DIP de aire arriba y abajo: la marca y la línea de estado siguen entrando y la
+    // tarjeta se lee más baja, sin el aire de sobra que tenía con 448.
     private const double WindowWidthDip = 448;
-    private const double WindowHeightDip = 448;
+    private const double WindowHeightDip = 408;
 
     /// <summary>Radio de esquina de la tarjeta como fracción del ancho: 14 DIP sobre
     /// 448 DIP de ancho (el mismo estilo Discord a cualquier DPI).</summary>
@@ -446,32 +456,165 @@ public sealed partial class SplashWindow : Window
         WindowBorder.ApplyOwnRoundedRegion(this, CardCornerFraction, RegionInsetPixels);
     }
 
+    /// <summary>
+    /// Pinta el FONDO del tema y la tarjeta como un panel más: la foto del tema (la misma que usa la
+    /// ventana principal), el velo encima y, detrás de la tarjeta, el parche desenfocado cuando el
+    /// deslizador de blur está encendido. La tarjeta queda con el color de panel del tema y la
+    /// transparencia vigente, así que el arranque se lee como el resto de la app y no como un
+    /// recuadro aparte.
+    ///
+    /// POR QUÉ NO SALE DEL DICCIONARIO: el splash se construye ANTES de que ThemeApplier aplique el
+    /// tema, así que los pinceles del diccionario son los base (Light/Dark) y no la paleta del tema
+    /// elegido. Las dos fuentes que sí lo conocen son <see cref="ThemePalettes"/> (la definición del
+    /// tema) y <see cref="Wallpaper.ActiveImagePath"/> (la foto que le toca).
+    /// </summary>
+    private void ApplyBackdrop()
+    {
+        try
+        {
+            var theme = PanelAppearance.EffectiveTheme();
+
+            // Los ajustes GUARDADOS, no los vigentes: el splash se construye antes de que
+            // OnThemeApplied los lea, así que PanelAppearance.TransparencyPercent y BlurPercent
+            // todavía son 0 y la tarjeta habría quedado opaca y sin vidrio.
+            var (transparency, blur) = PanelAppearance.SavedAppearance();
+
+            // La tarjeta ES un panel: mismo color de fábrica y misma transparencia que las cards.
+            var card = ThemePalettes.TryGetFactoryColor(theme, "CardBackgroundBrush", out var cardColor)
+                ? cardColor
+                : Microsoft.UI.Colors.Transparent;
+            // El color CON el alfa aplicado es el que se pinta; la línea de diagnóstico lo registra a
+            // él (y no al de fábrica) porque es lo que prueba que el ajuste llegó al arranque.
+            var cardBrush = PanelAppearance.ApplyToColor(card, transparency, blur);
+            CardBorder.Background = new SolidColorBrush(cardBrush);
+
+            // El velo del tema: es parte de la identidad del fondo, no un panel, así que el ajuste de
+            // transparencia no lo toca (igual que en la ventana principal).
+            var scrim = ThemePalettes.TryGetFactoryColor(theme, "WindowWallpaperScrimBrush", out var scrimColor)
+                ? scrimColor
+                : Microsoft.UI.Colors.Transparent;
+
+            // El fondo GUARDADO, no el vigente: Mode/CustomPath recién se llenan en Wallpaper.Apply,
+            // que corre al aplicar el tema (con la ventana principal ya creada).
+            var path = Wallpaper.SavedImagePath(theme);
+            if (path != null && System.IO.File.Exists(path))
+            {
+                BackdropBorder.Background = new ImageBrush
+                {
+                    ImageSource = new BitmapImage(new Uri(path)),
+                    Stretch = Stretch.Fill
+                };
+                ScrimBorder.Background = new SolidColorBrush(scrim);
+                // Verificación sin pantalla: la línea de appearance.log dice con qué tema, foto,
+                // transparencia y desenfoque se pintó el arranque (ver PanelAppearance.Diag).
+                PanelAppearance.Diag(
+                    $"splash: tema {theme} con foto {System.IO.Path.GetFileName(path)}; velo {Hex(scrim)}; " +
+                    $"tarjeta {Hex(cardBrush)} (fábrica {Hex(card)}) con transparencia {transparency:0} % " +
+                    $"(fábrica del tema {ThemeCatalog.DefaultPanelTransparency(theme):0} % de transparencia " +
+                    $"y {ThemeCatalog.DefaultPanelBlur(theme):0} % de desenfoque); " +
+                    $"desenfoque guardado {blur:0} %; acento del dial {Hex(AccentColor(theme))}");
+                _ = PaintBlurAsync(path, blur);
+                return;
+            }
+
+            // Sin foto: el fondo del tema, tal cual lo define. Si el tema trae un DEGRADIENTE
+            // (WindowBackdropBrush, como Crepúsculo), se pinta el pincel de la definición —es lo que
+            // el splash no puede sacar de los diccionarios, que todavía tienen el tema base—; si no,
+            // queda el color de página compuesto opaco, como en los clásicos.
+            var backdrop = ThemePalettes.DefinitionBrush(theme, "WindowBackdropBrush");
+            bool gradient = backdrop is LinearGradientBrush or RadialGradientBrush;
+            if (gradient)
+            {
+                BackdropBorder.Background = backdrop;
+            }
+            else
+            {
+                var page = ThemePalettes.TryGetFactoryColor(theme, "AppBackgroundBrush", out var pageColor)
+                    ? pageColor
+                    : Microsoft.UI.Colors.Transparent;
+                BackdropBorder.Background = new SolidColorBrush(PanelAppearance.ComposeOpaque(page));
+            }
+
+            PanelAppearance.Diag(
+                $"splash: tema {theme} sin foto (fondo {(gradient ? "con el degradado del tema" : "plano")}); " +
+                $"tarjeta {Hex(cardBrush)} (fábrica {Hex(card)}) con transparencia {transparency:0} %; " +
+                $"desenfoque {blur:0} %");
+        }
+        catch (Exception ex)
+        {
+            _log?.LogWarning($"Splash: no se pudo pintar el fondo del tema: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// El parche desenfocado de la tarjeta: decodifica la foto del tema a la resolución de trabajo,
+    /// la desenfoca con la intensidad guardada y la pinta en el rectángulo que va detrás de la
+    /// tarjeta. Es el mismo algoritmo que usa la ventana principal (<see cref="PanelBlurAlgorithm"/>),
+    /// pero no su mismo camino: <see cref="PanelBlur"/> publica la copia en la ventana principal, que
+    /// en este momento todavía no existe.
+    /// </summary>
+    private async Task PaintBlurAsync(string path, double percent)
+    {
+        try
+        {
+            if (percent <= 0.0) return;
+
+            var (data, width, height) = await PanelBlur.DecodeAsync(path);
+            await Task.Run(() =>
+            {
+                PanelBlurAlgorithm.Apply(data, width, height, percent);
+                PanelBlurAlgorithm.Opaque(data);
+            });
+
+            var bitmap = SoftwareBitmap.CreateCopyFromBuffer(
+                CryptographicBuffer.CreateFromByteArray(data),
+                BitmapPixelFormat.Bgra8, width, height, BitmapAlphaMode.Premultiplied);
+            var source = new SoftwareBitmapSource();
+            await source.SetBitmapAsync(bitmap);
+
+            if (BlurPatch.Fill is ImageBrush brush) brush.ImageSource = source;
+            BlurPatch.Visibility = Visibility.Visible;
+            PanelAppearance.Diag($"splash: parche desenfocado {width}x{height} al {percent:0} %");
+        }
+        catch (Exception ex)
+        {
+            _log?.LogWarning($"Splash: no se pudo desenfocar el fondo: {ex.Message}");
+        }
+    }
+
     /// <summary>Colores del tema activo resueltos SIN ventana principal: los
     /// {ThemeResource} de XAML no conocen todavía el tema elegido por el usuario.</summary>
     private void ApplyTheme()
     {
         try
         {
+            // El tema ELEGIDO, por definición y no por diccionario: ver ThemeColor.
+            var theme = PanelAppearance.EffectiveTheme();
+
             RootGrid.RequestedTheme = ThemeBrushes.ActiveThemeKey() == "Light"
                 ? ElementTheme.Light
                 : ElementTheme.Dark;
 
-            RootGrid.Background = ThemeBrushes.Get("CardBackgroundBrush");
-            BrandText.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
-            StatusText.Foreground = ThemeBrushes.Get("SecondaryTextBrush");
-            PercentText.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
-            CloseButton.Foreground = ThemeBrushes.Get("SecondaryTextBrush");
+            RootGrid.Background = ThemeColor("CardBackgroundBrush", theme);
 
-            var accent = ThemeBrushes.Get("AccentBrush");
-            var track = ThemeBrushes.Get("MutedBrush");
-            var tick = ThemeBrushes.Get("ChartGridBrush");
+            // Y el fondo del tema + la tarjeta como panel (foto, velo, transparencia y desenfoque):
+            // ver ApplyBackdrop. Va acá, junto al resto de los colores.
+            ApplyBackdrop();
+            BrandText.Foreground = ThemeColor("PrimaryTextBrush", theme);
+            StatusText.Foreground = ThemeColor("SecondaryTextBrush", theme);
+            PercentText.Foreground = ThemeColor("PrimaryTextBrush", theme);
+            CloseButton.Foreground = ThemeColor("SecondaryTextBrush", theme);
+
+            var accent = ThemeColor("AccentBrush", theme);
+            var track = ThemeColor("MutedBrush", theme);
+            var tick = ThemeColor("ChartGridBrush", theme);
 
             TrackArc.Stroke = track;
             TrackArc.Opacity = 0.35;
             ProgressArc.Stroke = accent;
             Needle.Fill = accent;
             HubOuter.Fill = accent;
-            HubInner.Fill = ThemeBrushes.Get("CardBackgroundBrush");
+            HubInner.Fill = ThemeColor("CardBackgroundBrush", theme);
 
             foreach (var child in TickLayer.Children)
             {
@@ -487,6 +630,44 @@ public sealed partial class SplashWindow : Window
             _log?.LogWarning($"Splash: no se pudieron aplicar los colores del tema: {ex.Message}");
         }
     }
+
+    /// <summary>El acento del tema elegido, para la línea de diagnóstico (ver ApplyBackdrop).</summary>
+    private static Windows.UI.Color AccentColor(AppTheme theme)
+        => ThemePalettes.TryGetFactoryColor(theme, "AccentBrush", out var color)
+            ? color
+            : Microsoft.UI.Colors.Transparent;
+
+    /// <summary>Color en #AARRGGBB para la línea de diagnóstico (ver ApplyBackdrop).</summary>
+    private static string Hex(Windows.UI.Color color)
+        => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    /// <summary>
+    /// Pincel de una clave del tema ELEGIDO.
+    ///
+    /// Por qué no solo <see cref="ThemeBrushes.Get"/>: los pinceles del diccionario resuelven por el tema
+    /// EFECTIVO (claro/oscuro), y el splash se construye ANTES de que ThemeApplier escriba la paleta del
+    /// tema, así que para un tema con identidad propia (Marea, Brasa…) el diccionario todavía
+    /// tiene los colores base: el acento del dial salía en el azul del sistema en vez del turquesa de la
+    /// foto. La definición del tema (<see cref="ThemePalettes.TryGetFactoryColor"/>) lo conoce desde el
+    /// arranque y su respaldo es, justamente, ese mismo tema base.
+    ///
+    /// Y por qué el respaldo al final: los colores de fábrica se capturan de las DEFINICIONES de los
+    /// temas (ThemePalettes.AllSemanticKeys), así que una clave que no la define ningún tema —
+    /// PrimaryTextBrush, por ejemplo, que sale del diccionario base — no tiene color de fábrica y sin
+    /// esta caída el texto quedaría TRANSPARENTE (invisible).
+    /// </summary>
+    /// <remarks>
+    /// El respaldo va contra el tema PEDIDO, no contra el activo: el diccionario vigente en este
+    /// momento todavía es el del tema con el que arranca la app (oscuro), así que pedir el pincel live
+    /// a secas devolvía el blanco del tema oscuro y con un tema de base clara —Rosa/Blanco— la marca
+    /// "WinForge" quedaba blanca sobre la tarjeta blanca: el reporte "en el loading del tema blanco no
+    /// se ve el texto". <see cref="ThemeBrushes.Get(string, AppTheme)"/> resuelve contra el diccionario
+    /// BASE del tema pedido, que es justo el color que le corresponde.
+    /// </remarks>
+    private static Brush ThemeColor(string key, AppTheme theme)
+        => ThemePalettes.TryGetFactoryColor(theme, key, out var color)
+            ? new SolidColorBrush(color)
+            : ThemeBrushes.Get(key, theme);
 
     /// <summary>Marcas del dial, aguja y arcos. Las marcas van primero para que la
     /// aguja pase por encima de ellas.</summary>

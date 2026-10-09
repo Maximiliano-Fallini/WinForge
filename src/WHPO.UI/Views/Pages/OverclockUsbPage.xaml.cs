@@ -1023,14 +1023,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     /// (y si no, lo que dice Raw Input), así que la pista y el test apuntan a lo que es.</summary>
     private InputDeviceKind? EffectiveLatencyKind() => DetectLatencyKind(_selectedLatencyKey);
 
-    private static string KindLabelKey(InputDeviceKind? kind) => kind switch
-    {
-        InputDeviceKind.Mouse => "Mouse",
-        InputDeviceKind.Keyboard => "Teclado",
-        InputDeviceKind.Gamepad => "Mando",
-        _ => "Automático"
-    };
-
     /// <summary>Instrucción según lo que REALMENTE se mide con ese tipo.</summary>
     private void UpdateLatencyHint()
     {
@@ -1792,7 +1784,7 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
                     CornerRadius = new CornerRadius(5),
                     BorderThickness = new Thickness(1),
                     BorderBrush = ThemeBrushes.Get("SensorGridLineBrush"),
-                    Background = ThemeBrushes.Get("SensorGroupFillBrush"),
+                    Background = ThemeBrushes.GetSurface("SensorGroupFillBrush"),
                     Child = label
                 };
                 Canvas.SetLeft(cap, x);
@@ -2040,7 +2032,12 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
                 bool lit = cap.LitUntilMs > now;
                 if (lit == cap.Lit) continue; // nada que repintar
                 cap.Lit = lit;
-                cap.Cap.Background = ThemeBrushes.Get(lit ? "AccentBrush" : "SensorGroupFillBrush");
+                // El encabezado de la grilla es una superficie (SensorGroupFillBrush): se pide por
+                // GetSurface —vidrio incluido— cuando no está encendido, y por el sólido del acento
+                // cuando lo está.
+                cap.Cap.Background = lit
+                    ? ThemeBrushes.Get("AccentBrush")
+                    : ThemeBrushes.GetSurface("SensorGroupFillBrush");
                 cap.Cap.BorderBrush = ThemeBrushes.Get(lit ? "AccentBrush" : "SensorGridLineBrush");
                 cap.Label.Foreground = ThemeBrushes.Get(lit ? "AccentForegroundBrush" : "SecondaryTextBrush");
             }

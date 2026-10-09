@@ -31,7 +31,7 @@
 <!-- ====== NAVBAR INTERNO: Núcleos / Gestionar / Comparar ====== -->
 <!-- Borde de ancho completo con el color del navbar: la franja conecta con
              el panel izquierdo y el borde superior sin quedar recortada por márgenes. -->
-        <Border Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+        <Border x:Name="PlanNavBar" Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <SelectorBar x:Name="PlanTabs"
                          Margin="20,10,20,4"
                          Background="Transparent"

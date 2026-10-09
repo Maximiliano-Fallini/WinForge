@@ -6,16 +6,22 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
         <StackPanel Spacing="16" Margin="24">
 
-<!-- ====== TEMPORIZADOR: estado actual + ajuste de resolución en una sola card ====== -->
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,4,0,0">
-                <FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                <TextBlock Text="Temporizador" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
+<!-- ====== ENCABEZADO DE PÁGINA (mismo estilo que Panel de Windows / Optimizaciones) ====== -->
+            <StackPanel Spacing="2" Margin="0,12,0,4">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <FontIcon Glyph="&#xE823;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Resolución del Temporizador" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock Text="Ajuste de latencia: habilita la regla de Windows GlobalTimerResolutionRequest para reducir la latencia de entrada (input lag)."
+                           FontSize="13"
+                           Foreground="{ThemeResource SecondaryTextBrush}"
+                           TextWrapping="Wrap"/>
             </StackPanel>
-            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
-                <StackPanel Spacing="14">
 
-<!-- Estado actual -->
-                    <TextBlock Text="Estado actual" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+<!-- ====== CARD 1: ESTADO ACTUAL ====== -->
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Estado actual" FontSize="16" FontWeight="SemiBold"/>
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="12">
                         <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                             <StackPanel Spacing="2">
@@ -43,10 +49,15 @@
                         </StackPanel>
                     </Border>
 
-                    <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}"/>
+                </StackPanel>
+            </Border>
+
+<!-- ====== CARD 2: AJUSTAR RESOLUCIÓN ====== -->
+            <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16">
+                <StackPanel Spacing="12">
 
 <!-- Ajustar resolución -->
-                    <TextBlock Text="Ajustar resolución" FontSize="13" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock Text="Ajustar resolución" FontSize="16" FontWeight="SemiBold"/>
 
  <!-- Switch: petición global (solo aporta en Win11; badge recomendado) -->
                     <Border x:Name="GlobalRequestCard" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="14" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">

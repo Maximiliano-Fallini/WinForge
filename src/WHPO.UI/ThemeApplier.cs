@@ -46,6 +46,10 @@ public class ThemeApplier : IThemeApplier
             AppTheme.Light => ElementTheme.Light,
             AppTheme.PinkLight => ElementTheme.Light,   // base clara con paleta rosa
             AppTheme.BlueBlack => ElementTheme.Dark,    // base oscura con paleta azul
+            AppTheme.Tide => ElementTheme.Dark,         // base oscura con fondo propio
+            AppTheme.Aurora => ElementTheme.Dark,       // base oscura con fondo propio
+            AppTheme.Brasa => ElementTheme.Dark,        // base oscura con fondo propio
+            AppTheme.Twilight => ElementTheme.Dark,     // base oscura con gradiente propio
             _ => ElementTheme.Default
         };
 
@@ -72,6 +76,14 @@ public class ThemeApplier : IThemeApplier
         // code-behind referencia SIEMPRE las mismas instancias; mutar su Color
         // en sitio es lo que la hace cambiar de tema sin recrear páginas.
         ThemeBrushes.Refresh(ThemePalettes.BaseThemeFor(theme) == AppTheme.Light ? "Light" : "Dark");
+
+        // Recién AHORA se puede aplicar la apariencia del usuario (transparencia de los
+        // paneles y desenfoque de la ventana): son ajustes que se suman ENCIMA del tema y
+        // leen sus colores de la definición del tema, así que tienen que correr después de
+        // que la paleta quedó escrita. Aplicarlos antes (como se hacía desde el constructor
+        // de MainWindow) tomaba los colores del diccionario base y los pintaba encima del
+        // tema elegido.
+        PanelAppearance.OnThemeApplied();
     }
 
     public AppTheme GetSystemTheme()

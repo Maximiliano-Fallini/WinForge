@@ -808,7 +808,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// <summary>Card estándar del popup: fondo/borde de card del tema, esquinas y padding.</summary>
     private static Border MakeSettingsCard(UIElement inner) => new()
     {
-        Background = ThemeBrushes.Get("CardBackgroundBrush"),
+        Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
         BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
         BorderThickness = new Thickness(1),
         CornerRadius = new CornerRadius(8),
@@ -2734,7 +2734,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // Pincel LIVE de ThemeBrushes: tema claro/oscuro/paletas correcto y
             // se repinta solo al cambiar de tema (el lookup directo en
             // Application.Resources usaría el tema del SISTEMA, no el de la app).
-            Background = ThemeBrushes.Get("SensorGroupFillBrush"),
+            Background = ThemeBrushes.GetSurface("SensorGroupFillBrush"),
             CornerRadius = new CornerRadius(6),
             Margin = new Thickness(0, 0, 0, 3),
             Child = row
@@ -3134,7 +3134,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var card = new Border
         {
             // Sin reborde (mismo estilo de cards que el resto de la app).
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
             // "no-reveal": excluye la card del efecto reveal global (RevealEffect);
             // los juegos ya tienen su propio hover (elevación + overlay de lanzar).
@@ -4150,7 +4150,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var card = new Border
         {
             // Sin reborde (mismo estilo de cards que el resto de la app).
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             CornerRadius = new CornerRadius(12),
             // "no-reveal": excluye la card del efecto reveal global (RevealEffect);
             // los juegos ya tienen su propio hover (elevación + overlay de lanzar).

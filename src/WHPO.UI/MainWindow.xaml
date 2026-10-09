@@ -10,11 +10,73 @@
          lo define WinUI, y por eso se redefine en un diccionario mergeado DESPUÉS
          de XamlControlsResources para que el override gane (si se define solo en
          el raíz de App.xaml, el panel queda con el AcrylicBrush por defecto). -->
-    <Grid>
+    <!-- KeyboardAcceleratorPlacementMode=Hidden: WinUI muestra las teclas de un
+         acelerador en el TOOLTIP del elemento que lo declara y, como el F11 vive en este
+         Grid raíz, ese tooltip cubría la ventana entera. Al abrir la app con el mouse ya
+         encima, Windows lo mostraba sin que nadie moviera el mouse —y sin movimiento de
+         puntero no llega el evento que lo cierra—, así que quedaba un tooltip "F11"
+         colgado sobre la ventana. Con esto el acelerador sigue funcionando igual, pero
+         deja de anunciarse: no hay tooltip que pueda quedar pegado. -->
+    <Grid KeyboardAcceleratorPlacementMode="Hidden">
+        <!-- F11 = pantalla completa. El acelerador se declara en el Grid RAÍZ para que
+             llegue con el foco en cualquier parte de la ventana (contenido, navbar o
+             barra de título); el manejo está en MainWindow.xaml.cs (ToggleFullScreen). -->
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="F11" Invoked="FullScreenAccelerator_Invoked"/>
+        </Grid.KeyboardAccelerators>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
+
+        <!-- ===== Capa de fondo de la ventana =====
+             Primera del orden de dibujo y cubriendo las DOS filas: queda detrás del
+             navbar y del contenido. Es lo que hacen posibles los temas con backdrop
+             (Marea): sus superficies —navbar, barra de título, páginas y
+             cards— llevan alfa, así que el gradiente de acá se ve a través de ellas.
+             En los temas clásicos pinta un solo color plano (igual al fondo de las
+             páginas) y los resplandores van transparentes, así que la ventana se ve
+             exactamente igual que antes. IsHitTestVisible=False: no toca el input. -->
+        <Grid x:Name="WindowBackdrop" Grid.Row="0" Grid.RowSpan="2" IsHitTestVisible="False">
+            <Rectangle Fill="{ThemeResource WindowBackdropBrush}"/>
+            <Ellipse Width="900" Height="900" Fill="{ThemeResource WindowGlowABrush}"
+                     HorizontalAlignment="Right" VerticalAlignment="Top"
+                     Margin="0,-420,-320,0"/>
+            <Ellipse Width="820" Height="820" Fill="{ThemeResource WindowGlowBBrush}"
+                     HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                     Margin="-300,0,0,-380"/>
+
+<!-- ===== Imagen de fondo del tema + velo =====
+                 Van ACÁ, en la capa de fondo de la ventana, y no dentro del contenido: la
+                 foto del tema tiene que verse DETRÁS DE TODO —menú lateral, barra de título
+                 y contenido—, que es lo que hace que la ventana se lea como una sola pieza
+                 con el fondo propio del tema. Para que se vea a través de esas capas, el
+                 tema deja transparentes el fondo de las páginas (AppBackgroundBrush) y el
+                 del contenido del NavigationView, y el menú (NavigationViewDefaultPane
+                 Background) lleva color con alfa: cómo de translúcido lo decide la
+                 transparencia de paneles (ver PanelAppearance).
+                 La segunda capa es el velo del tema, que oscurece la foto lo justo para que
+                 el texto y las cards se lean; es parte de la identidad del fondo, así que el
+                 deslizador de transparencia no la toca.
+                 En los temas clásicos las dos van vacías (transparentes) y lo único que se
+                 ve acá es el color o el gradiente de arriba. -->
+            <Border Background="{ThemeResource WindowWallpaperBrush}"/>
+
+<!-- ===== Parche desenfocado de los paneles (ver PanelBlurLayer) =====
+                     Va ENCIMA de la foto y DEBAJO del velo, cubriendo la ventana: su pincel es
+                     la misma foto pero desenfocada, con el MISMO ajuste (Stretch=Fill sobre la
+                     ventana) que la foto nítida, así que cada parche queda en fase con lo que hay
+                     detrás del panel. Lo que decide DÓNDE se ve es el recorte: un rectángulo por
+                     panel, calculado en PanelBlurLayer recorriendo el árbol. Acá no hay ningún
+                     recurso de tema que declarar: el pincel se lo asigna esa clase en runtime. -->
+            <Canvas x:Name="PanelBlurLayerCanvas"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed"/>
+
+            <Border Background="{ThemeResource WindowWallpaperScrimBrush}"/>
+
+        </Grid>
 
 <!-- ===== Barra de título PROPIA (48 px) =====
              La barra nativa mide 32 px fijos —los fija Windows según el DPI— y no hay
@@ -23,10 +85,15 @@
              estándar. Los botones de minimizar/maximizar/cerrar los sigue dibujando
              Windows ENCIMA, más altos y con el glifo centrado (ver SetupCustomTitleBar).
 
-             Mismo color que el navbar para que la ventana sea un solo bloque, y el logo
-             con el nombre a la izquierda (eso lo mostraba la barra nativa). El resto de
-             la barra es la zona de arrastre: doble clic maximiza y clic derecho abre el
-             menú del sistema, como en la barra de Windows. -->
+             La barra es UN solo tono, el de la ventana: en los temas clásicos el color
+             opaco del navbar (navColor) y en los de fondo propio transparente, para que
+             se vea la misma capa que hay detrás del menú (el gradiente de WindowBackdrop).
+             No lleva una franja del color del menú: cualquier color propio se leía como
+             una división entre la barra y el resto de la ventana.
+
+             El logo con el nombre va a la izquierda (eso lo mostraba la barra nativa) y el
+             resto de la barra es la zona de arrastre: doble clic maximiza y clic derecho
+             abre el menú del sistema, como en la barra de Windows. -->
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="48"
               Background="{ThemeResource NavigationViewDefaultPaneBackground}">
             <StackPanel Orientation="Horizontal" Spacing="9" Margin="14,0,0,0"
@@ -38,8 +105,20 @@
                         <BitmapImage UriSource="/logos/WinForge.png" DecodePixelWidth="44"/>
                     </Image.Source>
                 </Image>
-                <TextBlock Text="WinForge" FontSize="13" VerticalAlignment="Center"
-                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                <!-- Nombre + versión en UN solo TextBlock con dos Runs: al vivir en la
+                     misma línea de texto comparten baseline, así la versión queda sentada
+                     en la línea de "WinForge" (con dos TextBlock sueltos, cada uno se
+                     centraba por su cuenta y la versión se leía como un bloque aparte).
+                     Los Runs van PEGADOS en el XAML a propósito: cualquier espacio entre
+                     ellos se convierte en un espacio de más en el texto — el separador lo
+                     pone el code-behind, junto con la versión.
+                     El texto de la versión sale de AppUpdateService.CurrentVersion():
+                     nunca queda un número escrito a mano que se olvide de actualizar. -->
+                <TextBlock VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                    <Run Text="WinForge" FontSize="13"/><Run x:Name="AppVersionRun" FontSize="11"
+                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </TextBlock>
             </StackPanel>
         </Grid>
 
@@ -118,6 +197,13 @@
             </Grid>
         </muxc:NavigationView.PaneHeader>
 
+<!-- ===== Contenido =====
+             El fondo del contenido NO se pinta acá: los temas con fondo propio dejan
+             transparentes el fondo de las páginas y el del contenedor del NavigationView, y
+             lo que se ve detrás es la foto del fondo de la ventana (WindowWallpaper, en la
+             capa de fondo de arriba). Antes vivía una copia de esa foto acá adentro, y el
+             resultado era una foto recortada al área de contenido con el menú y la barra de
+             título aparte; ahora la ventana es UNA sola superficie con la foto detrás. -->
         <muxc:NavigationView.Content>
             <muxc:Frame x:Name="ContentFrame" Margin="0,0,0,0" />
         </muxc:NavigationView.Content>
@@ -138,33 +224,45 @@
                 Visibility="Collapsed"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Center"
-                CornerRadius="12"
-                Padding="12,5"
+                Height="30"
+                MinWidth="0"
+                MinHeight="0"
+                CornerRadius="15"
+                Padding="13,0"
                 Margin="0,0,150,0"
-                Background="{StaticResource UpdateButtonBrush}"
+                HorizontalContentAlignment="Center"
+                VerticalContentAlignment="Center"
+                Background="{ThemeResource UpdateButtonBrush}"
                 BorderThickness="0"
-                BorderBrush="{StaticResource UpdateButtonBrush}">
-            <!-- Modo "Actualizar": verde llamativo FIJO (UpdateButtonBrush) con texto en
-                 verde casi negro, en TODOS los temas (claro/oscuro/sistema/Rosa/Negro-Azul).
-                 Los pinceles viven FUERA de los diccionarios de tema (StaticResource en App.xaml)
-                 para que ninguna paleta los pise. ¡OJO con el hover!: el estilo default del Button
-                 repinta el fondo con el acento del tema al pasar el mouse — por eso se pisan acá
-                 ButtonBackgroundPointerOver/Pressed con verdes fijos (mismos valores que
-                 UpdateButtonPointerOverBrush/PressedBrush en App.xaml; ApplyUpdateIndicator
-                 los re-afirma en código al volver de "Desarrollo").
+                BorderBrush="{ThemeResource UpdateButtonBrush}">
+            <!-- Modo "Actualizar": pastilla del ACENTO del tema (UpdateButtonBrush, que cada
+                 tema define con el color de su imagen de fondo; en los clásicos, el azul de
+                 la app). La geometría es
+                 deliberada: 30 px de alto + radio 15 = pastilla completa (y MinHeight/MinWidth
+                 en 0, porque el MinHeight=32 del estilo default de Button se impone sobre
+                 Height y la dejaba deformada), 13 px SemiBold y el ícono centrado a 14 px.
+                 Es UN solo botón para los dos estados (pastilla de acento "Actualizar" y chip
+                 gris "Desarrollo"): el alto de 30 px es el mismo en ambos por construcción, y
+                 el contenido va centrado horizontal y vertical (ContentAlignment explícito,
+                 más VerticalAlignment=Center en el ícono y el texto, que con el alto fijo y el
+                 Padding simétrico 13,0 queda exacto en el medio).
+                 Los pinceles viven en los diccionarios de tema de App.xaml (ThemeResource, no
+                 StaticResource) para que sigan al tema. ¡OJO con el hover!: el estilo default
+                 del Button repinta el fondo con su acento al pasar el mouse — los overrides
+                 ButtonBackgroundPointerOver/Pressed los escribe ApplyUpdateIndicator en
+                 Button.Resources desde código, con los pinceles live de ThemeBrushes (así
+                 siguen al tema también), y los quita en modo "Desarrollo" para usar el hover
+                 default del tema.
                  Modo "Desarrollo": ApplyUpdateIndicator alterna el glifo al de info,
                  quita estos overrides (hover default del tema) y el fondo pasa a tarjeta
                  (ese modo SÍ sigue al tema). -->
-            <Button.Resources>
-                <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#FF16A34A"/>
-                <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#FF15803D"/>
-            </Button.Resources>
-            <StackPanel x:Name="UpdateTextPanel" Orientation="Horizontal" Spacing="7">
+            <StackPanel x:Name="UpdateTextPanel" Orientation="Horizontal" Spacing="7"
+                        VerticalAlignment="Center">
                 <FontIcon x:Name="UpdateButtonIconGlyph" FontFamily="{StaticResource SymbolThemeFontFamily}"
-                          Glyph="&#xE896;" FontSize="13"
-                          Foreground="{StaticResource UpdateButtonForegroundBrush}"/>
-                <TextBlock x:Name="UpdateButtonText" Text="Actualizar" FontSize="12" FontWeight="SemiBold"
-                           Foreground="{StaticResource UpdateButtonForegroundBrush}"
+                          Glyph="&#xE896;" FontSize="14" VerticalAlignment="Center"
+                          Foreground="{ThemeResource UpdateButtonForegroundBrush}"/>
+                <TextBlock x:Name="UpdateButtonText" Text="Actualizar" FontSize="13" FontWeight="SemiBold"
+                           Foreground="{ThemeResource UpdateButtonForegroundBrush}"
                            VerticalAlignment="Center"/>
             </StackPanel>
         </Button>

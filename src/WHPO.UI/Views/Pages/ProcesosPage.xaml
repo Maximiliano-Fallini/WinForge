@@ -146,9 +146,15 @@
                        Foreground="{ThemeResource SecondaryTextBrush}"/>
         </Grid>
 
-<!-- ====== TABLA (borde + cabecera fija + filas, estilo monitor de sensores) ====== -->
+<!-- ====== TABLA (borde + cabecera fija + filas, estilo monitor de sensores) ======
+             El fondo es el de las CARDS: la tabla entera es una superficie más de la app, así
+             que el alfa del deslizador de transparencia y el vidrio del desenfoque la alcanzan
+             como a cualquier card. Las filas siguen planas (una superficie POR FILA serían
+             cientos de grafos de composición), pero se leen sobre este panel y no contra la foto
+             pelada — el reporte "los procesos casi no se ven". -->
         <Border Grid.Row="2"
                 Margin="24,10,24,16"
+                Background="{ThemeResource CardBackgroundBrush}"
                 BorderBrush="{ThemeResource SensorGridLineBrush}"
                 BorderThickness="1"
                 CornerRadius="6">

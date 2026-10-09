@@ -16,20 +16,25 @@
             <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="8" Margin="0,0,0,8">
                 <StackPanel Spacing="6">
                     <Button x:Name="ExpandAllGroupsButton" Content="Abrir grupos"
-                            Click="ExpandAllGroupsButton_Click" CornerRadius="6" Padding="14,6" FontSize="12" MinWidth="140"/>
+                            Click="ExpandAllGroupsButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
                     <Button x:Name="ExpandAllCategoriesButton" Content="Abrir subgrupos"
-                            Click="ExpandAllCategoriesButton_Click" CornerRadius="6" Padding="14,6" FontSize="12" MinWidth="140"/>
+                            Click="ExpandAllCategoriesButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Spacing="6">
                     <Button x:Name="CollapseAllGroupsButton" Content="Cerrar grupos"
-                            Click="CollapseAllGroupsButton_Click" CornerRadius="6" Padding="14,6" FontSize="12" MinWidth="140"/>
+                            Click="CollapseAllGroupsButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
                     <Button x:Name="CollapseAllCategoriesButton" Content="Cerrar subgrupos"
-                            Click="CollapseAllCategoriesButton_Click" CornerRadius="6" Padding="14,6" FontSize="12" MinWidth="140"/>
+                            Click="CollapseAllCategoriesButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
                 </StackPanel>
             </Grid>
 
-<!-- Grilla con borde: encabezado fijo + filas, mismos anchos de columnas -->
-            <Border BorderBrush="{ThemeResource SensorGridLineBrush}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,8">
+<!-- Grilla con borde: encabezado fijo + filas, mismos anchos de columnas.
+                 El fondo es el de las CARDS y no un color propio: así la grilla entera es una
+                 superficie más de la app —el alfa del deslizador de transparencia y el vidrio del
+                 desenfoque la alcanzan como a cualquier card— y las métricas de los sensores dejan
+                 de leerse contra la foto pelada (el reporte "las métricas casi no se ven"). -->
+            <Border Background="{ThemeResource CardBackgroundBrush}"
+                    BorderBrush="{ThemeResource SensorGridLineBrush}" BorderThickness="1" CornerRadius="6" Margin="0,0,0,8">
                 <StackPanel Spacing="0">
                     <Grid ColumnDefinitions="*,100,100,100,100">
                         <Border BorderBrush="{ThemeResource SensorGridLineBrush}" BorderThickness="0,0,1,1" Padding="8,6"

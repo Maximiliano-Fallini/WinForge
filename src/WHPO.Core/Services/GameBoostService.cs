@@ -1564,9 +1564,6 @@ public sealed class GameBoostService : IGameBoostService
 
     // ===== Utilidades =====
 
-    private bool IsServiceRunning(string serviceName)
-        => GetServicesRunning(new[] { serviceName }).GetValueOrDefault(serviceName);
-
     private void RunServiceCommand(string serviceName, string action)
         => RunServiceArgs($"{action} {serviceName}");
 

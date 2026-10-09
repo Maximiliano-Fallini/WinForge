@@ -102,10 +102,6 @@ public sealed partial class WorkshopPage : Page
             _installed[record.Id] = record;
     }
 
-    /// <summary>True si un integrado de fábrica tiene entrada en el catálogo.</summary>
-    private bool BuiltinHasCatalogEntry(string id)
-        => _registry.IsBuiltin(id) && _catalog?.Components.Any(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)) == true;
-
     // =====================================================================
     // Catálogo
     // =====================================================================
@@ -542,7 +538,7 @@ public sealed partial class WorkshopPage : Page
     /// <summary>
     /// La card representa un componente instalado: descargado con registro de
     /// instalación, o integrado no core sin desinstalar. Es el mismo criterio que
-    /// pinta el texto "Instalado v…" en verde del pie de la card.
+    /// pinta el estado "Instalado" en verde del pie de la card.
     /// </summary>
     private bool IsInstalledCard(CardModel card)
     {
@@ -572,7 +568,7 @@ public sealed partial class WorkshopPage : Page
         var transparentBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
 
         // Reborde verde permanente en lo instalado: feedback de un vistazo, con el
-        // mismo pincel del texto "Instalado v…" del pie. El hover sigue con acento.
+        // mismo pincel del estado "Instalado" del pie. El hover sigue con acento.
         bool installed = IsInstalledCard(card);
         var successBrush = Feedback.SuccessBrush;
 
@@ -583,7 +579,7 @@ public sealed partial class WorkshopPage : Page
             // BorderThickness 1 y pincel transparente para que al pasar el mouse
             // aparezca el borde de acento sin mover el layout. Lo instalado arranca
             // con el reborde verde en lugar de transparente.
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             BorderBrush = installed ? successBrush : transparentBrush,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12),
@@ -713,7 +709,7 @@ public sealed partial class WorkshopPage : Page
                 VerticalAlignment = VerticalAlignment.Center
             });
         }
-        // 2) Descargado e instalado: versión + actualizar + desinstalar.
+        // 2) Descargado e instalado: estado + desinstalar.
         else if (card.Instance != null && card.Installed != null)
         {
             left = new StackPanel
@@ -724,7 +720,7 @@ public sealed partial class WorkshopPage : Page
             };
             ((StackPanel)left).Children.Add(new TextBlock
             {
-                Text = I18n.T("Instalado v{0}", card.Installed.Version),
+                Text = I18n.T("Instalado"),
                 FontSize = FooterFontSize,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = Feedback.SuccessBrush,
@@ -773,7 +769,7 @@ public sealed partial class WorkshopPage : Page
             {
                 left = new TextBlock
                 {
-                    Text = I18n.T("Instalado v{0}", card.Instance.Version),
+                    Text = I18n.T("Instalado"),
                     FontSize = FooterFontSize,
                     Foreground = Feedback.SuccessBrush, // estado OK: en verde
                     VerticalAlignment = VerticalAlignment.Center
@@ -946,6 +942,10 @@ public sealed partial class WorkshopPage : Page
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
         SetBuiltinRemoved(card.Id, removed: true);
+        // Changed + Removed: MainWindow cierra la pestaña abierta (si era la de este
+        // componente) y reconcilia el navbar. Sin esto, la vista seguía funcional
+        // aunque la pestaña ya no exista.
+        _registry.NotifyRemoved(card.Id);
         Feedback.Success(StatusText, I18n.T("Componente desinstalado: {0}", I18n.T(card.Name)));
         RebuildSections();
     }

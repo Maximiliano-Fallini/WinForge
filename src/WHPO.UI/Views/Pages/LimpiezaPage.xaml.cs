@@ -626,13 +626,25 @@ public sealed partial class LimpiezaPage : Page
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
 
-        // Velocímetros de progreso: dial con aguja que muestra el % de
-        // completado durante el análisis/escaneo. El DupRing es más chico
-        // porque comparte fila con el texto de carpeta actual.
-        ChequeoRing.Label = "";
-        CustomRing.Label = "";
+        // El navbar INTERNO se pinta a mano (ver PaintNavBar): su {ThemeResource} no sigue al ajuste
+        // de apariencia —WinUI no lo vuelve a resolver cuando el relleno cambia de TIPO al encender o
+        // apagar el vidrio—, así que la franja se quedaba plana mientras las cards ya tenían vidrio.
+        // La baja va antes del alta: la página puede cargarse más de una vez (caché de navegación).
+        Loaded += (_, _) =>
+        {
+            PanelAppearance.Applied -= PaintNavBar;
+            PanelAppearance.Applied += PaintNavBar;
+            PaintNavBar();
+        };
+        Unloaded += (_, _) => PanelAppearance.Applied -= PaintNavBar;
+
+        // Velocímetros de progreso: el MISMO dial de la pantalla de arranque
+        // (SpeedometerGauge) muestra el % completado durante el análisis/escaneo.
+        // El de duplicados es más chico porque comparte fila con el texto de
+        // carpeta actual, y el de Administración de inicio también: vive dentro
+        // de la card de la lista.
         DupRing.ConfigureSize(120);
-        DupRing.Label = "";
+        StartupRing.ConfigureSize(150);
 
         // Stepper de fases del Chequeo: puntos + línea, estilo onboarding.
         BuildChequeoPhaseDots();
@@ -662,6 +674,26 @@ public sealed partial class LimpiezaPage : Page
     {
         ApplyTabsLanguage();
         RebuildCustomCategories();
+    }
+
+    // ===================== Navbar interno =====================
+
+    /// <summary>Relleno de la barra de pestañas interna (LimpiezaTabs), reusado entre pasadas.</summary>
+    private WinBrush? _navBarFill;
+
+    /// <summary>
+    /// Pinta la barra interna con el color del panel del menú, el alfa de la transparencia vigente y el
+    /// vidrio que esté en juego (ver <see cref="PanelAppearance.PaneBarFill"/>): la misma pieza que el
+    /// menú lateral y que las barras internas de Núcleos y Configuración.
+    /// </summary>
+    private void PaintNavBar()
+    {
+        try
+        {
+            _navBarFill = PanelAppearance.PaneBarFill(_navBarFill);
+            LimpiezaNavBar.Background = _navBarFill;
+        }
+        catch { /* arranque temprano */ }
     }
 
     private void OnLanguageChanged()
@@ -743,9 +775,8 @@ public sealed partial class LimpiezaPage : Page
 
             SetBusy(false);
 
-            // Mostrar anillo de progreso con porcentaje central.
+            // Mostrar el velocímetro de progreso con el porcentaje central.
             ChequeoRing.Progress = 0;
-            ChequeoRing.Value = "0%";
             UpdateChequeoProgress(2, I18n.T("Preparando..."));
             ChequeoProgressPanel.Visibility = Visibility.Visible;
 
@@ -754,7 +785,7 @@ public sealed partial class LimpiezaPage : Page
  // Temp de Windows (C:\Windows\Temp), Temporal del usuario (%TEMP%),
  // volcados, reportes de error y la caché de Windows Update
  // (SoftwareDistribution\Download), como la card original.
-            var sysIds = new[] { "sys_temp", "sys_usertemp", "sys_crashdumps", "sys_wer", "dl_wsus" };
+            var sysIds = new[] { "temp_windows", "temp_user", "sys_crashdumps", "sys_wer", "dl_wsus" };
             var cacheIds = new[] { "mm_thumbs", "mm_iconcache", "mm_wmp" };
             var rbIds = new[] { "sys_recyclebin" };
 
@@ -1633,6 +1664,12 @@ public sealed partial class LimpiezaPage : Page
         _logging.LogInfo($"[Chequeo] Limpieza iniciada: {checkedItems.Count} elemento(s) seleccionado(s).");
         Feedback.Running(ChequeoFeedbackText, "Limpiando...", persistent: true);
         var dq = DispatcherQueue;
+
+        // Mientras se borra, el velocímetro ocupa el lugar de los resultados y
+        // avanza con los elementos ya limpiados (mismo dial del arranque).
+        int cleanTotal = checkedItems.Count;
+        int cleanDone = 0;
+        SetChequeoCleaning(0, cleanTotal);
         long totalFreed = 0;
 
         try
@@ -1647,14 +1684,20 @@ public sealed partial class LimpiezaPage : Page
                 var subItems = group.Where(g => g.SubItem.HasValue).Select(g => g.SubItem!.Value).ToList();
                 if (subItems.Count == 0) continue;
                 var result = await _cleanup.CleanBrowserAsync(group.Key, subItems, closeIfRunning: true);
+                cleanDone += subItems.Count;
+                SetChequeoCleaning(cleanDone, cleanTotal);
                 totalFreed += result.TotalBytes;
             }
 
-            // Limpiar targets personalizados (sistema, caché, papelera).
-            if (customIds.Count > 0)
+            // Limpiar targets personalizados (sistema, caché, papelera) en tandas
+            // cortas, como en Limpieza personalizada: así el velocímetro avanza
+            // mientras se borra en vez de quedarse quieto.
+            foreach (var chunk in customIds.Chunk(6))
             {
-                var result = await _cleanup.CleanCustomAsync(customIds);
+                var result = await _cleanup.CleanCustomAsync(chunk);
                 totalFreed += result.TotalBytes;
+                cleanDone += chunk.Length;
+                SetChequeoCleaning(cleanDone, cleanTotal);
             }
 
             dq.TryEnqueue(() =>
@@ -1682,7 +1725,13 @@ public sealed partial class LimpiezaPage : Page
         }
         finally
         {
-            dq.TryEnqueue(() => SetBusy(true));
+            dq.TryEnqueue(() =>
+            {
+                // Terminó el borrado (éxito o error): el dial se retira y vuelven
+                // los resultados, con el mensaje en la card de total.
+                EndChequeoCleaning();
+                SetBusy(true);
+            });
         }
     }
 
@@ -2010,7 +2059,7 @@ public sealed partial class LimpiezaPage : Page
         {
             var card = new Border
             {
-                Background = ThemeBrushes.Get("CardBackgroundBrush"),
+                Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
                 BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(10),
@@ -2153,6 +2202,7 @@ public sealed partial class LimpiezaPage : Page
     {
         "sistema" => "\uE7C3",    // DesktopLocal: sistema
         "multimedia" => "\uE8B9", // Picture: miniaturas/imágenes
+        "aplicaciones" => "\uE74C", // App: cachés de aplicaciones
         "utilidades" => "\uE81C", // History: recientes/historial
         "descargas" => "\uE896",  // Download: descargas de Windows
         "avanzado" => "\uE72E",   // Lock: bajo nivel, solo usuarios que saben
@@ -2229,7 +2279,7 @@ public sealed partial class LimpiezaPage : Page
     {
         var card = new Border
         {
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12),
@@ -2387,7 +2437,6 @@ public sealed partial class LimpiezaPage : Page
 
         // Velocímetro de progreso: mismo flujo que el Chequeo.
         CustomRing.Progress = 0;
-        CustomRing.Value = "0%";
         UpdateCustomProgress(2, I18n.T("Preparando..."));
         CustomProgressPanel.Visibility = Visibility.Visible;
 
@@ -2519,11 +2568,18 @@ public sealed partial class LimpiezaPage : Page
             long warnings = 0;
             var limpiados = new List<string>();
 
+            // El velocímetro reemplaza a los resultados mientras se borra.
+            int cleanTotal = selected.Count;
+            int cleanDone = 0;
+            SetCustomCleaning(0, cleanTotal);
+
             foreach (var chunk in selected.Chunk(6))
             {
                 var result = await _cleanup.CleanCustomAsync(chunk.Select(c => c.Target.Id).ToList());
                 total += result.TotalBytes;
                 warnings += result.Warnings.Count;
+                cleanDone += chunk.Length;
+                SetCustomCleaning(cleanDone, cleanTotal);
                 foreach (var item in result.Items)
                 {
                     limpiados.Add(item.Id);
@@ -2535,6 +2591,9 @@ public sealed partial class LimpiezaPage : Page
 
             // Los totales por categoría ya no aplican: quedó todo en "—".
             foreach (var tb in _customCategoryTotals.Values) tb.Text = "—";
+
+            // Terminó el borrado: el dial se retira y vuelven los resultados.
+            EndCustomCleaning();
 
             // Resultado al log de desarrollo (se escribe solo si "Logs de desarrollo"
             // está activado en Configuración).
@@ -2555,6 +2614,7 @@ public sealed partial class LimpiezaPage : Page
         catch (Exception ex)
         {
             _logging.LogWarning($"LimpiezaPage: limpiar personalizado: {ex.Message}");
+            EndCustomCleaning();
             Feedback.Error(CustomFeedbackText, I18n.T("No se pudo completar la limpieza: {0}", ex.Message));
         }
         finally
@@ -2805,7 +2865,6 @@ public sealed partial class LimpiezaPage : Page
         ResetDupResults();
         DupProgressPanel.Visibility = Visibility.Visible;
         DupRing.Progress = 0;
-        DupRing.Value = "0%";
         DupProgressText.Text = I18n.T("Enumerando archivos...");
         DupFeedbackText.Visibility = Visibility.Collapsed;
 
@@ -2818,10 +2877,7 @@ public sealed partial class LimpiezaPage : Page
                     if (!string.IsNullOrEmpty(p.Path))
                         DupProgressText.Text = p.Path;
                     if (p.Percent > 0)
-                    {
                         DupRing.Progress = p.Percent;
-                        DupRing.Value = $"{(int)Math.Round(p.Percent * 100)}%";
-                    }
                 });
             });
 
@@ -3051,7 +3107,7 @@ public sealed partial class LimpiezaPage : Page
 
         var card = new Border
         {
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
@@ -3247,17 +3303,23 @@ public sealed partial class LimpiezaPage : Page
     {
         StartupEntriesHost.Children.Clear();
 
-        // Placeholder mientras carga.
-        StartupEntriesHost.Children.Add(new TextBlock
-        {
-            Text = I18n.T("Cargando entradas de inicio..."),
-            FontSize = 12,
-            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
-            Margin = new Thickness(0, 8, 0, 0)
-        });
+        // Mientras carga: el velocímetro del componente, indeterminado (no hay
+        // avance que medir todavía). Se apaga siempre al terminar —incluso si
+        // GetEntries falla— para no dejar el barrido corriendo de por vida.
+        StartupLoadingPanel.Visibility = Visibility.Visible;
+        StartupRing.IsIndeterminate = true;
 
-        // GetEntries puede tardar (schtasks), corre en background.
-        var entries = await Task.Run(() => _startupMgr.GetEntries());
+        IReadOnlyList<StartupEntry> entries;
+        try
+        {
+            // GetEntries puede tardar (schtasks), corre en background.
+            entries = await Task.Run(() => _startupMgr.GetEntries());
+        }
+        finally
+        {
+            StartupRing.IsIndeterminate = false;
+            StartupLoadingPanel.Visibility = Visibility.Collapsed;
+        }
 
         StartupEntriesHost.Children.Clear();
 
@@ -3341,20 +3403,78 @@ public sealed partial class LimpiezaPage : Page
     // Helpers de UI
     // =====================================================================
 
+    /// <summary>
+    /// Progreso del análisis del Chequeo. El velocímetro escribe solo el % del
+    /// centro a partir de <c>Progress</c>; acá solo se le pasa la fracción.
+    /// </summary>
     private void UpdateChequeoProgress(int percentage, string message)
     {
-        int value = Math.Clamp(percentage, 0, 100);
-        ChequeoRing.Value = $"{value}%";
-        ChequeoRing.Progress = value / 100.0;
+        ChequeoRing.Progress = Math.Clamp(percentage, 0, 100) / 100.0;
         ChequeoProgressText.Text = message;
     }
 
+    /// <summary>Progreso del análisis de la Limpieza personalizada.</summary>
     private void UpdateCustomProgress(int percentage, string message)
     {
-        int value = Math.Clamp(percentage, 0, 100);
-        CustomRing.Value = $"{value}%";
-        CustomRing.Progress = value / 100.0;
+        CustomRing.Progress = Math.Clamp(percentage, 0, 100) / 100.0;
         CustomProgressText.Text = message;
+    }
+
+    /// <summary>
+    /// Estado "Limpiando…" del Chequeo: el velocímetro ocupa el lugar de los
+    /// resultados y avanza con los elementos ya limpiados (<paramref name="doneUnits"/>
+    /// sobre <paramref name="totalUnits"/>) usando el mismo dial del arranque.
+    /// No se puede cancelar a mitad del borrado, así que oculta el botón Cancelar.
+    /// </summary>
+    private void SetChequeoCleaning(int doneUnits, int totalUnits)
+    {
+        if (ChequeoProgressPanel.Visibility != Visibility.Visible)
+        {
+            ChequeoHeroCard.Visibility = Visibility.Collapsed;
+            ChequeoResultsPanel.Visibility = Visibility.Collapsed;
+            ChequeoCancelButton.Visibility = Visibility.Collapsed;
+            ChequeoProgressPanel.Visibility = Visibility.Visible;
+        }
+        ChequeoRing.Progress = totalUnits > 0 ? Math.Clamp((double)doneUnits / totalUnits, 0, 1) : 0;
+        ChequeoProgressText.Text = I18n.T("Limpiando...");
+    }
+
+    /// <summary>
+    /// Vuelve de "Limpiando…" a la vista de resultados del Chequeo (mismo estado
+    /// del que salió: no rearma secciones ni totales).
+    /// </summary>
+    private void EndChequeoCleaning()
+    {
+        ChequeoProgressPanel.Visibility = Visibility.Collapsed;
+        ChequeoRing.Progress = 0;
+        ChequeoCancelButton.Visibility = Visibility.Visible;
+        ChequeoHeroCard.Visibility = Visibility.Visible;
+        ChequeoResultsPanel.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Estado "Limpiando…" de la Limpieza personalizada: mismo velocímetro, con
+    /// el avance real sobre los elementos marcados.
+    /// </summary>
+    private void SetCustomCleaning(int doneUnits, int totalUnits)
+    {
+        if (CustomProgressPanel.Visibility != Visibility.Visible)
+        {
+            CustomContentPanel.Visibility = Visibility.Collapsed;
+            CustomCancelButton.Visibility = Visibility.Collapsed;
+            CustomProgressPanel.Visibility = Visibility.Visible;
+        }
+        CustomRing.Progress = totalUnits > 0 ? Math.Clamp((double)doneUnits / totalUnits, 0, 1) : 0;
+        CustomProgressText.Text = I18n.T("Limpiando...");
+    }
+
+    /// <summary>Vuelve de "Limpiando…" a la vista de resultados de Personalizada.</summary>
+    private void EndCustomCleaning()
+    {
+        CustomProgressPanel.Visibility = Visibility.Collapsed;
+        CustomRing.Progress = 0;
+        CustomCancelButton.Visibility = Visibility.Visible;
+        CustomContentPanel.Visibility = Visibility.Visible;
     }
 
     private void UpdateCustomCleanEnabled()
@@ -3385,6 +3505,3 @@ public sealed partial class LimpiezaPage : Page
         return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
     }
 }
-
-
-

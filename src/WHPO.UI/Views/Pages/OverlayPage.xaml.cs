@@ -75,6 +75,11 @@ public sealed partial class OverlayPage : Page
         MetricBadgePanel.PointerReleased += OnGroupCardReleased;
         MetricBadgePanel.PointerCanceled += OnGroupCardCancelled;
         MetricBadgePanel.PointerCaptureLost += OnGroupCardCancelled;
+
+        // Cambio de tema EN CALIENTE (incluidos los de paleta propia: ThemeApplier alterna el
+        // tema efectivo para forzar la re-evaluación): los pinceles que se COPIAN con alfa (ver
+        // ThemedBrush) quedarían con el color del tema viejo, así que se repintan los badges.
+        ActualThemeChanged += (_, _) => UpdateBadgeVisuals();
         FpsColorButton.Click += (_, _) => ShowColorPicker(FpsColorButton, "overlay.colorFps", OverlayWindow.DefaultFamilyColor);
         CpuColorButton.Click += (_, _) => ShowColorPicker(CpuColorButton, "overlay.colorCpu", OverlayWindow.DefaultFamilyColor);
         GpuColorButton.Click += (_, _) => ShowColorPicker(GpuColorButton, "overlay.colorGpu", OverlayWindow.DefaultFamilyColor);
@@ -249,7 +254,9 @@ public sealed partial class OverlayPage : Page
         var recommendedText = new TextBlock
         {
             Text = I18n.T("(Recomendado)"),
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 76, 175, 80)),
+            // Verde estándar de la app (el mismo SuccessBrush de los feedbacks): antes era un
+            // #4CAF50 escrito a mano, que duplicaba el valor sin seguir ninguna clave de la app.
+            Foreground = Feedback.SuccessBrush,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center
         };
@@ -593,6 +600,17 @@ public sealed partial class OverlayPage : Page
         byte g = Convert.ToByte(h.Substring(2, 2), 16);
         byte b = Convert.ToByte(h.Substring(4, 2), 16);
         return Windows.UI.Color.FromArgb(255, r, g, b);
+    }
+
+    /// <summary>
+    /// Pincel NUEVO con el color DEL TEMA de la clave y el alfa pedido: los filetes y los huecos
+    /// del drag llevan el alfa en el color, y el pincel live no se puede mutar (lo comparte toda
+    /// la app). El color sale del pincel live, así que respeta el tema vigente.
+    /// </summary>
+    private static SolidColorBrush ThemedBrush(string key, byte alpha)
+    {
+        var color = ThemeBrushes.Get(key).Color;
+        return new SolidColorBrush(Windows.UI.Color.FromArgb(alpha, color.R, color.G, color.B));
     }
 
     // ===== Métricas como badges (arrastrar = ordenar, switch = mostrar/ocultar) =====
@@ -1101,7 +1119,7 @@ public sealed partial class OverlayPage : Page
             CornerRadius = new CornerRadius(10),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = _horizontalCards ? new Thickness(0) : new Thickness(0, 0, 0, 10),
-            Background = ThemeBrushes.Get("CardBackgroundBrush"),
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
             BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(70, accent.R, accent.G, accent.B)),
             BorderThickness = new Thickness(1),
             Tag = _horizontalCards ? "MetricGroupCardH" : "MetricGroupCard",
@@ -1205,7 +1223,7 @@ public sealed partial class OverlayPage : Page
             {
                 Glyph = "\uE1F6", // Lock icon
                 FontSize = 12,
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 180, 180, 180)),
+                Foreground = ThemeBrushes.Get("MutedBrush"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 4, 0)
             };
@@ -1290,8 +1308,8 @@ public sealed partial class OverlayPage : Page
     private void UpdateBadgeVisuals()
     {
         var disabledBg = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
-        // Acento cálido MUY SUTIL solo en el BORDE de badges core (sin fondo amarillo)
-        var coreAccent = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 245, 195, 110));
+        // Filete del ACENTO del tema, muy sutil, solo en el BORDE de las FIJAS (sin fondo de color)
+        var coreAccent = ThemedBrush("AccentBrush", 120);
 
         foreach (var (id, badge, _) in _metricBadges)
         {
@@ -1304,15 +1322,14 @@ public sealed partial class OverlayPage : Page
 
             if (enabled)
             {
-                // Fondo normal para TODOS; solo el BORDE tiene acento cálido sutil en core
+                // Fondo normal para TODAS; solo el BORDE de las fijas lleva el acento del tema
                 badge.Background = ThemeBrushes.Get("CardHoverBrush");
                 badge.BorderBrush = isCore ? coreAccent : new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
             }
             else
             {
                 badge.Background = disabledBg;
-                var c = ((SolidColorBrush)ThemeBrushes.Get("SecondaryTextBrush")).Color;
-                badge.BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(130, c.R, c.G, c.B));
+                badge.BorderBrush = ThemedBrush("SecondaryTextBrush", 130);
             }
         }
     }
@@ -1409,8 +1426,8 @@ public sealed partial class OverlayPage : Page
         // ancho REAL del badge arrastrado (en modo horizontal los badges son
         // auto-dimensionados y cada uno mide distinto).
             Width = _dragBadge.ActualWidth > 0 ? _dragBadge.ActualWidth : BadgeWidthVertical,
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(36, 140, 140, 140)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(120, 180, 180, 180)),
+            Background = ThemedBrush("SecondaryTextBrush", 36),
+            BorderBrush = ThemedBrush("SecondaryTextBrush", 120),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(14),
             IsHitTestVisible = false,
@@ -1728,7 +1745,8 @@ public sealed partial class OverlayPage : Page
         {
             Height = 3,
             Margin = new Thickness(6, 4, 6, 4),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(220, 120, 220, 140)),
+            Background = ThemeBrushes.Get("AccentBrush"),
+            Opacity = 0.85,
             CornerRadius = new CornerRadius(2),
             IsHitTestVisible = false
         };

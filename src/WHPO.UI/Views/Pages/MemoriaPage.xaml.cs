@@ -23,7 +23,7 @@ public sealed partial class MemoriaPage : Page, IBackgroundPausable
 
     // Cards de log oscuras en ambos temas (paneles oscuros) con texto claro explícito.
     // Pinceles desde los recursos de tema de la app (claro/oscuro).
-    private static Microsoft.UI.Xaml.Media.SolidColorBrush CardBrush => ThemeBrushes.Get("CardBackgroundBrush");
+    private static Microsoft.UI.Xaml.Media.Brush CardBrush => ThemeBrushes.GetSurface("CardBackgroundBrush");
 
     private DateTime? _lastCleanupTime;
 

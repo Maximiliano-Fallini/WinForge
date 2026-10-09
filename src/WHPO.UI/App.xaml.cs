@@ -123,8 +123,8 @@ public partial class App : Application
 
         // Un nodo que no se pudo traducir se aísla (el resto de la página se sigue
         // traduciendo) y se anota acá: al log de desarrollo, si está activado, y a
-        // i18n.log, que se escribe SIEMPRE. Es el dato que faltaba en cada reporte
-        // de "algunos textos quedan en español" llegado de una copia instalada.
+        // i18n.log, que también queda detrás del switch (sin "Logs de desarrollo"
+        // activo no se genera ningún archivo).
         I18n.WalkError = message =>
         {
             logService.LogWarning(message);

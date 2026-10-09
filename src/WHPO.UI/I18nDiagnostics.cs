@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using WHPO.Core;
+using WHPO.Core.Services;
 
 namespace WHPO_UI;
 
@@ -15,8 +16,8 @@ namespace WHPO_UI;
 /// Por qué un archivo aparte y no app.log: app.log depende del ajuste "Logs de
 /// desarrollo", que viene APAGADO en la build instalada. Un reporte de "ciertos
 /// textos quedan en español" llegaba sin un solo dato de la copia que lo mostraba.
-/// Esta bitácora se escribe siempre (una línea por arranque, una por navegación y
-/// una por fallo), con tope de tamaño para no crecer sin control.
+/// Esta bitácora también queda detrás de ese mismo ajuste (sin switch activo no se
+/// genera ningún archivo), con tope de tamaño para no crecer sin control.
 /// </summary>
 internal static class I18nDiagnostics
 {
@@ -76,6 +77,10 @@ internal static class I18nDiagnostics
     {
         try
         {
+            // Detrás del switch "Logs de desarrollo": con el ajuste apagado no se
+            // genera i18n-pagina.log (ver LoggingService).
+            if (!LoggingService.IsDeveloperLoggingEnabled()) return;
+
             var path = Path.Combine(AppPaths.RootDir, "i18n-pagina.log");
             lock (Gate)
             {
@@ -116,6 +121,10 @@ internal static class I18nDiagnostics
     {
         try
         {
+            // Detrás del switch "Logs de desarrollo": con el ajuste apagado no se
+            // genera i18n.log (ver LoggingService).
+            if (!LoggingService.IsDeveloperLoggingEnabled()) return;
+
             lock (Gate)
             {
                 Directory.CreateDirectory(AppPaths.RootDir);

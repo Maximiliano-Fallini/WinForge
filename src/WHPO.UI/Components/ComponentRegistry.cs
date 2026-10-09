@@ -77,6 +77,14 @@ public sealed class ComponentRegistry
     /// <summary>Se dispara al agregar o quitar componentes (el navbar se reconcilia).</summary>
     public event Action? Changed;
 
+    /// <summary>
+    /// Se dispara al QUITAR un componente del registro (desinstalación), con su id.
+    /// Separado de Changed para que el cierre de la pestaña abierta y la purga del
+    /// back stack solo corran en desinstalaciones reales — una instalación también
+    /// dispara Changed y no tiene nada que cerrar.
+    /// </summary>
+    public event Action<string>? Removed;
+
     public ComponentRegistry()
     {
         foreach (var c in CreateBuiltins())
@@ -106,7 +114,23 @@ public sealed class ComponentRegistry
     public void Unregister(string id)
     {
         int removed = _items.RemoveAll(c => string.Equals(c.Id, id, StringComparison.OrdinalIgnoreCase));
-        if (removed > 0) Changed?.Invoke();
+        if (removed > 0)
+        {
+            Changed?.Invoke();
+            Removed?.Invoke(id);
+        }
+    }
+
+    /// <summary>
+    /// Dispara Changed + Removed sin tocar la lista de componentes. Para la
+    /// desinstalación de un integrado de fábrica: sigue registrado (no se borra del
+    /// exe), solo se oculta por settings — pero la UI tiene que reaccionar igual que
+    /// con un descargado: reconciliación del navbar y cierre de la pestaña abierta.
+    /// </summary>
+    public void NotifyRemoved(string id)
+    {
+        Changed?.Invoke();
+        Removed?.Invoke(id);
     }
 
     /// <summary>
