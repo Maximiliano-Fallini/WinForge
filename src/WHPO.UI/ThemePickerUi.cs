@@ -32,7 +32,8 @@ namespace WHPO_UI;
 /// diccionario tiene UNA paleta aplicada a la vez, así que pedirle los colores de los otros temas
 /// devolvería el color del tema activo y las nueve cards se verían iguales. Con la definición,
 /// cada card muestra su tema; los clásicos (sistema/claro/oscuro), que no tienen definición,
-/// caen a la copia de fábrica de su tema base (Light/Dark).
+/// caen a la copia de fábrica de su tema base (Light/Dark). El área de vista previa fija además
+/// su RequestedTheme al tema representado para que sus estilos implícitos no sigan al tema activo.
 ///
 /// El filtro Todos / Oscuro / Claro es por BASE del tema (ver <see cref="ThemePalettes.BaseThemeFor"/>):
 /// filtra por lo LUMINOSO, que es la otra pregunta que se hace al elegir. "Usar sistema" queda
@@ -64,7 +65,10 @@ public static class ThemePickerUi
         AppTheme.Tide,
         AppTheme.Aurora,
         AppTheme.Brasa,
-        AppTheme.Twilight
+        AppTheme.Twilight,
+        AppTheme.Amatista,
+        AppTheme.Metal,
+        AppTheme.CristalAzul
     };
 
     /// <summary>Nombre visible del tema. Los clásicos no tienen definición: sus nombres son las
@@ -223,7 +227,13 @@ public static class ThemePickerUi
             }
         };
 
-        var previewHost = new Grid();
+        var resolvedTheme = Resolve(theme);
+        var previewHost = new Grid
+        {
+            RequestedTheme = ThemePalettes.BaseThemeFor(resolvedTheme) == AppTheme.Light
+                ? ElementTheme.Light
+                : ElementTheme.Dark
+        };
         previewHost.Children.Add(preview);
         previewHost.Children.Add(checkBadge);
 
@@ -245,6 +255,12 @@ public static class ThemePickerUi
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Margin = new Thickness(2, 8, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
+            // El NOMBRE es texto de la APP, no una pieza de la miniatura: va con el color del tema
+            // ACTIVO (pincel live, el mismo de los encabezados de grupo y del resto de la página)
+            // para que los once nombres se lean iguales. Antes usaba el color del tema de la card y
+            // los dos de base clara (Claro y Rosa/Blanco) quedaban con el nombre oscuro al lado de
+            // los blancos de los demás. La miniatura de arriba sí sigue con los colores de SU tema:
+            // eso es lo que muestra.
             Foreground = ThemeBrushes.Get("PrimaryTextBrush")
         });
         outer.Child = content;
@@ -408,8 +424,27 @@ public static class ThemePickerUi
         if (ThemePalettes.TryGetFactoryColor(resolved, key, out color))
             return new SolidColorBrush(color);
 
-        var live = ThemeBrushes.Get(key) as SolidColorBrush;
-        return new SolidColorBrush(live?.Color ?? Microsoft.UI.Colors.Transparent);
+        // No recurrir al pincel live: refleja la apariencia global seleccionada y haría
+        // que una clave ausente en una paleta cambiara las miniaturas de todos los temas.
+        bool light = ThemePalettes.BaseThemeFor(resolved) == AppTheme.Light;
+        var fallback = key switch
+        {
+            "AppBackgroundBrush" => light
+                ? Windows.UI.Color.FromArgb(255, 0xF3, 0xF3, 0xF3)
+                : Windows.UI.Color.FromArgb(255, 0x20, 0x20, 0x20),
+            "CardBackgroundBrush" or "NavigationViewDefaultPaneBackground" => light
+                ? Microsoft.UI.Colors.White
+                : Windows.UI.Color.FromArgb(255, 0x29, 0x29, 0x29),
+            "AccentBrush" => Windows.UI.Color.FromArgb(255, 0x00, 0x78, 0xD4),
+            "SecondaryTextBrush" => light
+                ? Windows.UI.Color.FromArgb(255, 0x66, 0x66, 0x66)
+                : Windows.UI.Color.FromArgb(255, 0xCC, 0xCC, 0xCC),
+            "WindowWallpaperScrimBrush" => Windows.UI.Color.FromArgb(0, 0, 0, 0),
+            _ => light
+                ? Windows.UI.Color.FromArgb(255, 0x1A, 0x1A, 0x1A)
+                : Windows.UI.Color.FromArgb(255, 0xF2, 0xF2, 0xF2)
+        };
+        return new SolidColorBrush(fallback);
     }
 
     /// <summary>"Usar sistema" resuelto a lo que el sistema tiene puesto: la card de Auto muestra

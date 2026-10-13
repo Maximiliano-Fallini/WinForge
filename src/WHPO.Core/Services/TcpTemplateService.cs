@@ -56,7 +56,12 @@ public static class TcpTemplateService
         ("automatic", "Automatic", "Automática"),
     };
 
-    /// <summary>Proveedores que se pueden pedir por netsh (BBR2 es experimental y solo Win11).</summary>
+    /// <summary>
+    /// Proveedores que se pueden pedir (BBR2 es experimental y solo Win11).
+    /// OJO: netsh solo acepta none|ctcp|dctcp|default — BBR2 NO va por netsh,
+    /// se aplica con Set-NetTCPSetting (el cmdlet sí lo acepta). ApplyAsync
+    /// hace ese ruteo solo.
+    /// </summary>
     public static readonly string[] CongestionProviders = { "default", "ctcp", "dctcp", "bbr2" };
 
     public static async Task<List<TcpTemplateState>> GetTemplatesAsync()
@@ -85,23 +90,9 @@ public static class TcpTemplateService
                     if (el.TryGetProperty("N", out var n) && n.GetString() is string name)
                         byCmdlet[name] = el;
 
-            // La plantilla global por defecto: la primera línea de "show supplemental"
-            // la nombra ("...default template is internet") y el nombre va al final;
-            // las etiquetas están localizadas, pero el nombre de la plantilla sale en inglés.
-            string? globalName = null;
+            // La plantilla global por defecto la nombra "show supplemental".
             var supText = root.TryGetProperty("Sup", out var sup) ? sup.GetString() ?? "" : "";
-            foreach (var raw in supText.Split('\n'))
-            {
-                var line = raw.Trim().TrimEnd('.', ':', ' ');
-                if (line.Length == 0) continue;
-                var last = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
-                if (last == null) continue;
-                if (Templates.Any(t => string.Equals(t.Netsh, last, StringComparison.OrdinalIgnoreCase)))
-                {
-                    globalName = last.ToLowerInvariant();
-                    break;
-                }
-            }
+            string? globalName = ParseGlobalTemplateName(supText);
 
             var supValues = ParseSupplementalValues(supText);
 
@@ -142,6 +133,52 @@ public static class TcpTemplateService
         return list;
     }
 
+    /// <summary>Puntuación que la frase localizada puede dejar pegada al nombre de la plantilla.</summary>
+    private static readonly char[] TokenTrimChars =
+    {
+        '.', ',', ':', ';', '!', '?', '"', '\'', '«', '»', '(', ')', '[', ']',
+        '。', '、', '，', '．', '：', '；', '！', '？', '（', '）', '」', '』',
+    };
+
+    /// <summary>
+    /// Plantilla GLOBAL por defecto del stack, leída de "netsh int tcp show supplemental".
+    /// La frase está localizada y la posición del nombre cambia con el idioma: en inglés,
+    /// español y alemán cierra la frase, pero en japonés va en el medio
+    /// ("...テンプレートは internet です。"), así que se busca el nombre entre TODOS los tokens
+    /// de la línea en vez de asumir que es el último. Se comparan tokens completos (sin
+    /// puntuación) para no confundir una palabra que lo contenga.
+    /// Las líneas de la tabla de abajo tienen forma "Etiqueta   : valor" y se saltean: así un
+    /// valor de texto ("... : default") nunca se confunde con un nombre de plantilla. El
+    /// nombre que aparece en esa frase es siempre el que el operador escribió en inglés
+    /// (internet | custom | datacenter | compat | automatic).
+    /// Devuelve el nombre netsh en minúsculas, o null si no se pudo reconocer.
+    /// </summary>
+    public static string? ParseGlobalTemplateName(string supplementalOutput)
+    {
+        foreach (var raw in supplementalOutput.Split('\n'))
+        {
+            if (raw.Contains(" : ")) continue; // fila "Etiqueta : valor"
+            foreach (var rawToken in raw.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var token = rawToken.Trim(TokenTrimChars);
+                if (token.Length == 0) continue;
+                if (Templates.Any(t => string.Equals(t.Netsh, token, StringComparison.OrdinalIgnoreCase)))
+                    return token.ToLowerInvariant();
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Normaliza un nombre de plantilla a uno de los que netsh conoce ("internet" si no se
+    /// pudo leer o no coincide). Además de dar un default, evita que un nombre inesperado
+    /// termine interpolado en el comando de netsh o en el del cmdlet.
+    /// </summary>
+    public static string ResolveNetshName(string? name)
+        => Templates.Any(t => string.Equals(t.Netsh, name, StringComparison.OrdinalIgnoreCase))
+            ? name!.Trim().ToLowerInvariant()
+            : "internet";
+
     /// <summary>Etiqueta visible de una plantilla (para el selector).</summary>
     public static string LabelFor(string netsh)
         => Templates.FirstOrDefault(t => string.Equals(t.Netsh, netsh, StringComparison.OrdinalIgnoreCase)).Label ?? netsh;
@@ -175,7 +212,13 @@ public static class TcpTemplateService
         {
             var ps = new StringBuilder("$e = ''");
             var sup = new StringBuilder($"netsh int tcp set supplemental template={netshTemplate}");
-            if (!string.IsNullOrWhiteSpace(congestionProvider))
+            // BBR2 no existe en "netsh set supplemental" (solo none|ctcp|dctcp|default):
+            // en Win11 va por Set-NetTCPSetting (el cmdlet sí lo acepta). En Win10 ni
+            // se ofrece (la UI lo filtra), pero si llega igual se rechaza arriba.
+            bool wantBbr2 = string.Equals(congestionProvider, "bbr2", StringComparison.OrdinalIgnoreCase);
+            if (wantBbr2 && !WindowsCapabilities.IsWindows11)
+                return (false, "BBR2 requiere Windows 11.");
+            if (!string.IsNullOrWhiteSpace(congestionProvider) && !wantBbr2)
                 sup.Append($" congestionprovider={congestionProvider}");
             if (minRto is int mr) sup.Append($" minrto={mr}");
             if (icw is int i) sup.Append($" icw={i}");
@@ -193,6 +236,7 @@ public static class TcpTemplateService
 
             var cmdlet = CmdletNameFor(netshTemplate);
             var sets = new List<string>();
+            if (wantBbr2) sets.Add("-CongestionProvider BBR2");
             if (ecn is bool ec) sets.Add($"-EcnCapability {(ec ? "Enabled" : "Disabled")}");
             if (timestamps is bool ts) sets.Add($"-Timestamps {(ts ? "Enabled" : "Disabled")}");
             if (!string.IsNullOrWhiteSpace(autoTuningLevel)) sets.Add($"-AutoTuningLevelLocal {autoTuningLevel}");
@@ -204,11 +248,13 @@ public static class TcpTemplateService
                 ps.Append("; if (-not $?) { $e += 'tcpsetting;' }");
             }
 
-            ps.Append("; if ($e) { 'ERRORS: ' + $e } else { 'OK' }");
+            ps.Append("; if ($e) { 'WFERR:' + $e } else { 'WFOK' }");
             var (output, exit) = await PowerShellRunner.RunAsync(ps.ToString());
             if (exit != 0) return (false, output);
-            if (output.StartsWith("ERRORS:", StringComparison.Ordinal)) return (false, output);
-            return (true, "OK");
+            // La marca se busca en TODA la salida (netsh escribe sus errores en stdout y
+            // quedarían delante de ella): un StartsWith daba falso "aplicado".
+            if (PowerShellRunner.TryParseResult(output, out var detail)) return (true, "OK");
+            return (false, detail);
         }
         catch (Exception ex)
         {

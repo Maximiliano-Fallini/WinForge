@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Shapes;
+using WHPO.Core;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Services;
@@ -28,6 +29,14 @@ public sealed partial class TcpPage : Page
 
     private TcpService.TcpState? _tcpCurrent;
 
+    /// <summary>
+    /// True si la última lectura del estado TCP salió bien. Cuando falla, los controles quedan en sus
+    /// valores por DEFECTO: los botones que ESCRIBEN se deshabilitan para que un clic no pise la
+    /// configuración real del equipo con esos defaults. El backup sí se sigue pudiendo restaurar,
+    /// porque viene de una lectura previa buena.
+    /// </summary>
+    private bool _tcpReadOk = true;
+
     // Controles de la card TCP (se reconstruyen en cada carga / cambio de idioma)
     private TextBlock? _tcpStatusText;
     private TextBlock? _tcpApplyResultText;
@@ -47,6 +56,15 @@ public sealed partial class TcpPage : Page
     private Button? _tcpAutoTuningFixButton;
     private TextBlock? _tcpMtuText;
     private Button? _tcpApplyButton;
+    private Button? _gamingProfileButton;
+    private Button? _windowsProfileButton;
+    private Button? _customProfileButton;
+    private Button? _rulesGamingButton;
+    private Button? _rulesWindowsButton;
+    private Button? _rulesCustomButton;
+    /// <summary>Resultado del último ApplyTcpAsync (para el mensaje combinado del preset).</summary>
+    private bool _lastTcpApplyOk;
+    private string _lastTcpApplyMsg = "";
 
     private const string TcpBackupKey = "red.tcp.backup";
 
@@ -160,24 +178,46 @@ public sealed partial class TcpPage : Page
 
         var state = await TcpService.GetStateAsync();
         _tcpCurrent = state ?? new TcpService.TcpState();
-        if (state == null)
-            ResolveStatusWithError(_tcpStatusText, I18n.T("No se pudo leer el estado TCP: {0}", "netsh"));
+        _tcpReadOk = state != null;
+        if (!_tcpReadOk)
+            ResolveStatusWithError(
+                _tcpStatusText,
+                I18n.T("No se pudo leer el estado TCP: {0}", "netsh") + " "
+                    + I18n.T("Sin poder leer el estado real, Aplicar queda deshabilitado para no escribir valores por defecto sobre tu configuración."),
+                BuildTcpAdvancedCardAsync);
 
-        // Presets primero (antes de las opciones): un clic aplica todo el perfil
-        var presetsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-        var gamingBtn = new Button { Content = I18n.T("Óptimo para juegos"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
-        gamingBtn.Click += async (s, e) => ApplyTcpPreset(gaming: true);
-        var defaultBtn = new Button { Content = I18n.T("Valores por defecto (Windows)"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
-        defaultBtn.Click += async (s, e) => ApplyTcpPreset(gaming: false);
+        // Presets primero (antes de las opciones): solo CARGAN en los controles, el
+        // usuario confirma con Aplicar. Los tres botones marcan el perfil REAL
+        // aplicado (TCP + reglas): el seleccionado va con fondo de acento (estilo
+        // pill del ThemePickerUi); "Personalizado" cuando lo aplicado no coincide.
+        var presetsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        var presetStyle = (Style)Resources["PresetButtonStyle"];
+        var gamingBtn = new Button { Content = I18n.T("Óptimo para juegos"), Style = presetStyle, VerticalAlignment = VerticalAlignment.Center };
+        gamingBtn.Click += (s, e) => LoadTcpPreset(gaming: true);
+        var defaultBtn = new Button { Content = I18n.T("Valores por defecto (Windows)"), Style = presetStyle, VerticalAlignment = VerticalAlignment.Center };
+        defaultBtn.Click += (s, e) => LoadTcpPreset(gaming: false);
+        // "Personalizado" no carga nada ni aplica: es solo el marcador de "los controles
+        // no describen ningún preset". Ya existe en el diccionario (ventiladores).
+        var customBtn = new Button { Content = I18n.T("Personalizado"), Style = presetStyle, VerticalAlignment = VerticalAlignment.Center };
+        customBtn.Click += (s, e) => SelectAmong(customBtn, _gamingProfileButton, _windowsProfileButton, _customProfileButton);
         presetsRow.Children.Add(gamingBtn);
         presetsRow.Children.Add(defaultBtn);
+        presetsRow.Children.Add(customBtn);
         panel.Children.Add(presetsRow);
+        _gamingProfileButton = gamingBtn;
+        _windowsProfileButton = defaultBtn;
+        _customProfileButton = customBtn;
 
         // Desactivar Nagle (TCPNoDelay + TcpAckFrequency en la interfaz activa)
         _tcpNagleToggle = NewToggle();
-        _tcpNagleToggle.IsOn = _tcpCurrent.NagleDisabled;
+        // El toggle dice "Nagle está desactivado", y basta con UNO de los dos valores para que lo
+        // esté (TCPNoDelay=1 ya apaga Nagle). Si quedó a medias, el toggle se ve ACTIVADO y aplicar
+        // completa el par en vez de borrarlo: antes quedaba apagado y aplicar revertía el tweak de
+        // otro optimizador sin que el usuario lo pidiera.
+        _tcpNagleToggle.IsOn = _tcpCurrent.NoDelaySet || _tcpCurrent.AckFreqSet;
+        _tcpNagleToggle.Toggled += (s, e) => UpdateProfileIndicator();
         var (nagleRow, nagleActual) = BuildSettingRow(
-            I18n.T("Desactivar Nagle"), I18n.T("TCPNoDelay + TcpAckFrequency"), ActualText(_tcpCurrent.NagleDisabled), _tcpNagleToggle, TtNagle);
+            I18n.T("Desactivar Nagle"), I18n.T("TCPNoDelay + TcpAckFrequency"), NagleActual(_tcpCurrent), _tcpNagleToggle, TtNagle);
         _tcpActualNagle = nagleActual;
         panel.Children.Add(nagleRow);
 
@@ -186,14 +226,21 @@ public sealed partial class TcpPage : Page
         _tcpCongestionCombo.Items.Add(new ComboBoxItem { Content = I18n.T("CUBIC (predeterminado)"), Tag = "cubic" });
         _tcpCongestionCombo.Items.Add(new ComboBoxItem { Content = I18n.T("CTCP (menor latencia)"), Tag = "ctcp" });
         _tcpCongestionCombo.SelectedIndex = _tcpCurrent.CongestionProvider == "ctcp" ? 1 : 0;
+        _tcpCongestionCombo.SelectionChanged += (s, e) => UpdateProfileIndicator();
+        // El proveedor de congestión se escribe sobre la plantilla GLOBAL del stack (la que aplica
+        // sin filtros y la MISMA que edita la sección de plantillas). La fila la nombra: antes
+        // parecía un ajuste "global" sin decir en qué plantilla caía.
         var (congestionRow, congestionActual) = BuildSettingRow(
-            I18n.T("Algoritmo de congestión"), null, CongestionActual(_tcpCurrent.CongestionProvider), _tcpCongestionCombo, TtCongestion);
+            I18n.T("Algoritmo de congestión"),
+            I18n.T("Plantilla: {0}", TcpTemplateService.LabelFor(TcpTemplateService.ResolveNetshName(_tcpCurrent.GlobalTemplate))),
+            CongestionActual(_tcpCurrent.CongestionProvider), _tcpCongestionCombo, TtCongestion);
         _tcpActualCongestion = congestionActual;
         panel.Children.Add(congestionRow);
 
         // ECN
         _tcpEcnToggle = NewToggle();
         _tcpEcnToggle.IsOn = _tcpCurrent.EcnEnabled;
+        _tcpEcnToggle.Toggled += (s, e) => UpdateProfileIndicator();
         var (ecnRow, ecnActual) = BuildSettingRow(
             I18n.T("ECN (Notificación de congestión explícita)"), null, ActualText(_tcpCurrent.EcnEnabled), _tcpEcnToggle, TtEcn);
         _tcpActualEcn = ecnActual;
@@ -202,6 +249,7 @@ public sealed partial class TcpPage : Page
         // Timestamps
         _tcpTimestampsToggle = NewToggle();
         _tcpTimestampsToggle.IsOn = _tcpCurrent.TimestampsEnabled;
+        _tcpTimestampsToggle.Toggled += (s, e) => UpdateProfileIndicator();
         var (timestampsRow, timestampsActual) = BuildSettingRow(
             I18n.T("Timestamps TCP (RFC 1323)"), null, ActualText(_tcpCurrent.TimestampsEnabled), _tcpTimestampsToggle, TtTimestamps);
         _tcpActualTimestamps = timestampsActual;
@@ -210,6 +258,7 @@ public sealed partial class TcpPage : Page
         // RSS
         _tcpRssToggle = NewToggle();
         _tcpRssToggle.IsOn = _tcpCurrent.RssEnabled;
+        _tcpRssToggle.Toggled += (s, e) => UpdateProfileIndicator();
         var (rssRow, rssActual) = BuildSettingRow(
             I18n.T("RSS (Receive Side Scaling)"), null, ActualText(_tcpCurrent.RssEnabled), _tcpRssToggle, TtRss);
         _tcpActualRss = rssActual;
@@ -218,6 +267,7 @@ public sealed partial class TcpPage : Page
         // Fast Open
         _tcpFastOpenToggle = NewToggle();
         _tcpFastOpenToggle.IsOn = _tcpCurrent.FastOpenEnabled;
+        _tcpFastOpenToggle.Toggled += (s, e) => UpdateProfileIndicator();
         var (fastOpenRow, fastOpenActual) = BuildSettingRow(
             I18n.T("TCP Fast Open"), null, ActualText(_tcpCurrent.FastOpenEnabled), _tcpFastOpenToggle, TtFastOpen);
         _tcpActualFastOpen = fastOpenActual;
@@ -231,7 +281,7 @@ public sealed partial class TcpPage : Page
         autotuningPanel.Children.Add(_tcpAutoTuningText);
         if (!_tcpCurrent.AutoTuningLevel.Equals("normal", StringComparison.OrdinalIgnoreCase))
         {
-            _tcpAutoTuningFixButton = new Button { Content = I18n.T("Restaurar a Normal"), Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left };
+            _tcpAutoTuningFixButton = new Button { Content = I18n.T("Restaurar a Normal"), Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(6), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = _tcpReadOk };
             _tcpAutoTuningFixButton.Click += async (s, e) =>
             {
                 var d = ReadTcpDesired();
@@ -252,7 +302,7 @@ public sealed partial class TcpPage : Page
 
         // Acciones (los presets ya están arriba, antes de las opciones)
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-        _tcpApplyButton = new Button { Content = I18n.T("Aplicar"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        _tcpApplyButton = new Button { Content = I18n.T("Aplicar"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6), IsEnabled = _tcpReadOk };
         _tcpApplyButton.Click += async (s, e) => await ApplyTcpAsync(I18n.T("TCP aplicado correctamente."));
         var restoreBtn = new Button { Content = I18n.T("Restaurar todo"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
         restoreBtn.Click += async (s, e) => await RestoreTcpAsync();
@@ -265,7 +315,7 @@ public sealed partial class TcpPage : Page
 
         panel.Children.Add(new TextBlock
         {
-            Text = I18n.T("Solo se incluyen ajustes con efecto real y reversibles. El ajuste automático de ventana TCP se mantiene en Normal para no afectar la descarga."),
+            Text = I18n.T("Solo se incluyen ajustes con efecto real y reversibles. El ajuste automático de la ventana TCP no se toca al aplicar: se muestra y, si no está en Normal, tenés el botón para restaurarlo."),
             FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
         });
 
@@ -328,7 +378,7 @@ public sealed partial class TcpPage : Page
 
     // =====================================================================
     // Reglas de Windows (red): tweaks a nivel SO que aplican TCP Optimizer /
-    // CTTE en la rama "Windows Tweaks". Presets Rendimiento/Ecológico +
+    // CTTE en la rama "Windows Tweaks". Presets Rendimiento / Windows (predeterminado) +
     // restauración a defaults. Todos reversibles (RestoreDefaults borra).
     // =====================================================================
 
@@ -348,19 +398,30 @@ public sealed partial class TcpPage : Page
         return uint.TryParse(s, System.Globalization.NumberStyles.HexNumber, null, out v);
     }
 
+    /// <summary>
+    /// True si el valor leído del registro coincide con el PREDETERMINADO documentado de
+    /// Windows. Reconoce el default por valor, no por ausencia: un ajuste con el valor ya
+    /// escrito e igual al de Windows se lee como "Default de Windows" igual que si faltara.
+    /// </summary>
+    private static bool EqualsWindowsDefault(NetworkTweaksService.TweakDef def, string raw)
+        => TryParseU32(raw, out var cur)
+           && TryParseU32(def.WindowsDefault, out var defValue)
+           && cur == defValue;
+
     private void LoadRulesPreset(bool gaming)
     {
         foreach (var st in _rulesCurrent)
         {
             if (!_rulesCombos.TryGetValue(st.Def.Id, out var combo)) continue;
-            var want = gaming ? st.Def.Gaming : st.Def.Eco;
+            var want = gaming ? st.Def.Gaming : st.Def.Windows;
             var item = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == want);
             if (item != null) combo.SelectedItem = item;
         }
+        UpdateRulesProfileIndicator();
         if (_rulesResultText != null)
         {
             _rulesResultText.Visibility = Visibility.Visible;
-            Feedback.Info(_rulesResultText, I18n.T("Preset cargado: {0} — revisá los valores y toca Aplicar.", gaming ? I18n.T("Rendimiento (juegos)") : I18n.T("Ecológico (Windows)")));
+            Feedback.Info(_rulesResultText, I18n.T("Preset cargado: {0} — revisá los valores y toca Aplicar.", gaming ? I18n.T("Rendimiento (juegos)") : I18n.T("Windows (predeterminado)")));
         }
     }
 
@@ -384,45 +445,72 @@ public sealed partial class TcpPage : Page
         _rulesStatusText = new TextBlock { Text = I18n.T("Consultando reglas de red de Windows..."), FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap };
         rulesPanel.Children.Add(_rulesStatusText);
 
-        // Presets primero (mismo patrón que la card TCP): cargan, no aplican.
+        // Presets primero (mismo patrón que la card TCP): cargan, no aplican. Tres
+        // botones con estilo pill; "Personalizado" se marca cuando los combos no
+        // describen ningún preset.
         var presetsRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
-        var perfBtn = new Button { Content = I18n.T("Rendimiento (juegos)"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
+        var rulesPresetStyle = (Style)Resources["PresetButtonStyle"];
+        var perfBtn = new Button { Content = I18n.T("Rendimiento (juegos)"), Style = rulesPresetStyle };
         perfBtn.Click += (s, e) => LoadRulesPreset(gaming: true);
-        var ecoBtn = new Button { Content = I18n.T("Ecológico (Windows)"), Padding = new Thickness(14, 7, 14, 7), CornerRadius = new CornerRadius(6) };
-        ecoBtn.Click += (s, e) => LoadRulesPreset(gaming: false);
+        var windowsBtn = new Button { Content = I18n.T("Windows (predeterminado)"), Style = rulesPresetStyle };
+        windowsBtn.Click += (s, e) => LoadRulesPreset(gaming: false);
+        var customBtn = new Button { Content = I18n.T("Personalizado"), Style = rulesPresetStyle };
+        customBtn.Click += (s, e) => SelectAmong(customBtn, _rulesGamingButton, _rulesWindowsButton, _rulesCustomButton);
         presetsRow.Children.Add(perfBtn);
-        presetsRow.Children.Add(ecoBtn);
+        presetsRow.Children.Add(windowsBtn);
+        presetsRow.Children.Add(customBtn);
         rulesPanel.Children.Add(presetsRow);
+        _rulesGamingButton = perfBtn;
+        _rulesWindowsButton = windowsBtn;
+        _rulesCustomButton = customBtn;
 
         _rulesCurrent = await NetworkTweaksService.GetStateAsync();
         if (_rulesCurrent.Count == 0)
+        {
             ResolveStatusWithError(_rulesStatusText, I18n.T("No se pudieron leer las reglas de red de Windows."), BuildWindowsRulesCardAsync);
+            // Sin reglas no hay perfil confiable: los tres botones quedan habilitados.
+            UpdateProfileIndicator();
+            return;
+        }
         else if (_rulesStatusText != null)
             _rulesStatusText.Visibility = Visibility.Collapsed;
 
         foreach (var st in _rulesCurrent)
         {
             var combo = new ComboBox { MinWidth = 190, HorizontalAlignment = HorizontalAlignment.Stretch };
-            combo.Items.Add(new ComboBoxItem { Content = I18n.T("Rendimiento"), Tag = st.Def.Gaming });
-            combo.Items.Add(new ComboBoxItem { Content = I18n.T("Ecológico (Windows)"), Tag = st.Def.Eco });
-            // Selección inicial: el valor actual si coincide con un preset; si no,
-            // el valor de Windows (Eco) como punto de partida menos invasivo.
-            if (st.RawValue != null && TryParseU32(st.RawValue, out var cur))
+            combo.SelectionChanged += (s, e) => UpdateRulesProfileIndicator();
+
+            // Un ajuste cuyos dos presets escriben lo mismo no tiene nada que elegir: se ofrece una
+            // sola opción en vez de dos idénticas. Es el caso de MaxUserPort, que en Windows 10/11
+            // no debe escribirse (su default real es el rango dinámico 49152-65535).
+            var presetsEquivalent = string.Equals(
+                st.Def.Gaming?.Trim(), st.Def.Windows?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+            if (presetsEquivalent)
             {
-                if (TryParseU32(st.Def.Gaming, out var g) && cur == g) combo.SelectedIndex = 0;
-                else if (TryParseU32(st.Def.Eco, out var e) && cur == e) combo.SelectedIndex = 1;
-                else combo.SelectedIndex = 1;
+                combo.Items.Add(new ComboBoxItem
+                {
+                    Content = I18n.T("Predeterminado de Windows"),
+                    Tag = st.Def.Gaming ?? ""
+                });
             }
-            else combo.SelectedIndex = 1;
+            else
+            {
+                // El combo ofrece los dos valores del ajuste. Los que tienen nombre propio
+                // (p. ej. SystemResponsiveness: 10 % / 20 %) usan su etiqueta; el resto, la genérica.
+                combo.Items.Add(new ComboBoxItem { Content = I18n.T(st.Def.GamingLabel ?? "Rendimiento"), Tag = st.Def.Gaming });
+                combo.Items.Add(new ComboBoxItem { Content = I18n.T(st.Def.WindowsLabel ?? "Windows (predeterminado)"), Tag = st.Def.Windows });
+            }
+
+            // Selección inicial por el valor actual del registro (helper reutilizable:
+            // también lo usa el refresco "en lugar" tras aplicar/restaurar).
+            SelectComboByValue(combo, st);
             _rulesCombos[st.Def.Id] = combo;
 
-            var actualText = st.RawValue == null
-                ? I18n.T("Default de Windows (sin valor en el registro)")
-                : I18n.T("Actual: {0}", NetworkTweaksService.DisplayValue(st.Def, st.RawValue));
             var (row, actual) = BuildSettingRow(
                 I18n.T(st.Def.Title),
                 null,
-                actualText,
+                RulesActualText(st),
                 combo,
                 RuleTooltip(st.Def.Tooltip));
             _rulesActual[st.Def.Id] = actual;
@@ -446,12 +534,72 @@ public sealed partial class TcpPage : Page
             Text = I18n.T("Estas reglas se leen del registro al arrancar Windows: reiniciá para que el cambio sea total. Todas son reversibles."),
             FontSize = 12, Foreground = MutedTextBrush, TextWrapping = TextWrapping.Wrap
         });
+
+        // Ambas tarjetas quedan con sus botones de perfil: cada una deduce el suyo.
+        UpdateProfileIndicator();
+        UpdateRulesProfileIndicator();
     }
 
-    private async Task ApplyRulesAsync()
+    /// <summary>Texto "Actual:" de una regla, reconociendo el default por valor o por ausencia.</summary>
+    private static string RulesActualText(NetworkTweaksService.TweakState st)
+        => st.RawValue == null
+            ? I18n.T("Default de Windows (sin valor en el registro)")
+            : EqualsWindowsDefault(st.Def, st.RawValue)
+                ? I18n.T("Default de Windows (valor en el registro: {0})", NetworkTweaksService.DisplayValue(st.Def, st.RawValue))
+                : I18n.T("Actual: {0}", NetworkTweaksService.DisplayValue(st.Def, st.RawValue));
+
+    /// <summary>
+    /// Selecciona en el combo el ítem cuyo Tag coincide con el valor actual del registro;
+    /// si no coincide con ninguno, cae en la última opción (Windows, la menos invasiva).
+    /// Se compara contra los Tags cargados, así que un Tag vacío ("borrar el valor")
+    /// nunca rompe la selección por quedar fuera de rango.
+    /// </summary>
+    private static void SelectComboByValue(ComboBox combo, NetworkTweaksService.TweakState st)
+    {
+        combo.SelectedIndex = combo.Items.Count - 1;
+        if (st.RawValue != null && TryParseU32(st.RawValue, out var cur))
+        {
+            for (int i = 0; i < combo.Items.Count; i++)
+            {
+                if (combo.Items[i] is ComboBoxItem { Tag: string tag }
+                    && TryParseU32(tag, out var tv) && tv == cur)
+                {
+                    combo.SelectedIndex = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refresca la tarjeta de reglas EN SU LUGAR tras aplicar o restaurar: re-lee el
+    /// estado y actualiza las etiquetas "Actual:" y las selecciones de cada combo, SIN
+    /// reconstruir la card (reconstruir causaba un flash y perdía el scroll, como pasaba
+    /// con "Restaurar valores"). Si la re-lectura falla, cae a reconstruir como respaldo.
+    /// </summary>
+    private async Task RefreshRulesInPlace()
+    {
+        var fresh = await NetworkTweaksService.GetStateAsync();
+        if (fresh.Count == 0)
+        {
+            await BuildWindowsRulesCardAsync();
+            return;
+        }
+        _rulesCurrent = fresh;
+        foreach (var st in _rulesCurrent)
+        {
+            if (_rulesActual.TryGetValue(st.Def.Id, out var actual))
+                actual.Text = RulesActualText(st);
+            if (_rulesCombos.TryGetValue(st.Def.Id, out var combo))
+                SelectComboByValue(combo, st);
+        }
+        UpdateRulesProfileIndicator();
+    }
+
+    private async Task ApplyRulesAsync(bool quiet = false)
     {
         if (_rulesResultText == null || _rulesCombos.Count == 0) return;
-        _rulesResultText.Visibility = Visibility.Visible;
+        if (!quiet) _rulesResultText.Visibility = Visibility.Visible;
         if (_rulesApplyButton != null) _rulesApplyButton.IsEnabled = false;
         Feedback.Running(_rulesResultText, I18n.T("Aplicando reglas de red..."));
         try
@@ -464,10 +612,21 @@ public sealed partial class TcpPage : Page
             }
             var failed = await NetworkTweaksService.ApplyAsync(values);
             if (failed.Count == 0)
-                Feedback.Success(_rulesResultText, I18n.T("Reglas de red aplicadas. Reiniciá Windows para que el cambio sea total."));
+            {
+                if (!quiet) Feedback.Success(_rulesResultText, I18n.T("Reglas de red aplicadas. Reiniciá Windows para que el cambio sea total."));
+            }
             else
-                Feedback.Error(_rulesResultText, I18n.T("No se pudieron aplicar: {0}", string.Join(", ", failed)));
-            await BuildWindowsRulesCardAsync();
+            {
+                // En modo preset el mensaje vive en la tarjeta TCP: se propaga como error visible.
+                var msg = I18n.T("No se pudieron aplicar: {0}", string.Join(", ", failed));
+                if (quiet && _tcpApplyResultText != null)
+                {
+                    _tcpApplyResultText.Visibility = Visibility.Visible;
+                    Feedback.Error(_tcpApplyResultText, msg);
+                }
+                else Feedback.Error(_rulesResultText, msg);
+            }
+            await RefreshRulesInPlace();
         }
         catch (Exception ex)
         {
@@ -491,7 +650,7 @@ public sealed partial class TcpPage : Page
             var (ok, msg) = await NetworkTweaksService.RestoreDefaultsAsync();
             if (ok) Feedback.Success(_rulesResultText, I18n.T("Valores de Windows restaurados. Reiniciá para aplicar todo."));
             else Feedback.Error(_rulesResultText, I18n.T("Error restaurando: {0}", msg));
-            await BuildWindowsRulesCardAsync();
+            await RefreshRulesInPlace();
         }
         catch (Exception ex)
         {
@@ -516,40 +675,138 @@ public sealed partial class TcpPage : Page
     }
 
     /// <summary>
-    /// Carga un preset en los controles (NO lo aplica): el usuario revisa los valores
-    /// contra el estado actual y decide si toca "Aplicar".
+    /// Marca el botón del perfil que describen LOS CONTROLES (no lo último aplicado),
+    /// igual que TecladoPage.HighlightPresetInEffect: tocar un preset lo marca y
+    /// posiciona ambas tarjetas; editar cualquier control vuelve a deducir y cae a
+    /// "Personalizado" si ya no coincide. La marca nunca puede quedar desactualizada
+    /// porque se deduce de lo que se ve, no de memoria.
     /// </summary>
-    private void ApplyTcpPreset(bool gaming)
+    private void UpdateProfileIndicator()
+    {
+        if (_gamingProfileButton == null || _windowsProfileButton == null || _customProfileButton == null) return;
+        SelectAmong(DetectTcpProfile() switch
+        {
+            "gaming" => _gamingProfileButton,
+            "windows" => _windowsProfileButton,
+            _ => _customProfileButton,
+        }, _gamingProfileButton, _windowsProfileButton, _customProfileButton);
+    }
+
+    /// <summary>
+    /// Igual que UpdateProfileIndicator pero para la tarjeta de Reglas: marca el botón
+    /// del preset que describen LOS COMBOS de reglas. Cada tarjeta deduce su propio
+    /// perfil de forma independiente.
+    /// </summary>
+    private void UpdateRulesProfileIndicator()
+    {
+        if (_rulesGamingButton == null || _rulesWindowsButton == null || _rulesCustomButton == null) return;
+        SelectAmong(DetectRulesProfile() switch
+        {
+            "gaming" => _rulesGamingButton,
+            "windows" => _rulesWindowsButton,
+            _ => _rulesCustomButton,
+        }, _rulesGamingButton, _rulesWindowsButton, _rulesCustomButton);
+    }
+
+    /// <summary>Qué preset describen los TOGGLES TCP. "custom" si no coincide con ninguno.</summary>
+    private string DetectTcpProfile()
+    {
+        if (_tcpNagleToggle == null || _tcpCongestionCombo == null) return "custom";
+        bool gaming = _tcpNagleToggle.IsOn
+            && _tcpCongestionCombo.SelectedIndex == 1   // CTCP
+            && (_tcpEcnToggle?.IsOn ?? false) == false
+            && (_tcpTimestampsToggle?.IsOn ?? true) == false
+            && (_tcpRssToggle?.IsOn ?? false)
+            && (_tcpFastOpenToggle?.IsOn ?? false);
+        bool windows = !_tcpNagleToggle.IsOn
+            && _tcpCongestionCombo.SelectedIndex == 0   // CUBIC
+            && (_tcpEcnToggle?.IsOn ?? true) == false
+            && (_tcpTimestampsToggle?.IsOn ?? false)
+            && (_tcpRssToggle?.IsOn ?? false)
+            && (_tcpFastOpenToggle?.IsOn ?? false);
+        if (gaming) return "gaming";
+        if (windows) return "windows";
+        return "custom";
+    }
+
+    /// <summary>Qué preset describen los COMBOS de reglas. "custom" si no coincide con ninguno.</summary>
+    private string DetectRulesProfile()
+    {
+        if (_rulesCombos.Count == 0 || _rulesCurrent.Count == 0) return "custom";
+        bool Match(bool gaming) => _rulesCurrent.All(st =>
+        {
+            if (!_rulesCombos.TryGetValue(st.Def.Id, out var combo)) return false;
+            if (!(combo.SelectedItem is ComboBoxItem { Tag: string tag })) return false;
+            var want = gaming ? st.Def.Gaming : st.Def.Windows;
+            return string.Equals(tag?.Trim(), want?.Trim(), StringComparison.OrdinalIgnoreCase);
+        });
+        if (Match(gaming: true)) return "gaming";
+        if (Match(gaming: false)) return "windows";
+        return "custom";
+    }
+
+    /// <summary>Resalta el botón dado entre los tres y desmarca el resto (estilo XAML).</summary>
+    private void SelectAmong(Button selected, Button? a, Button? b, Button? c)
+    {
+        if (a == null || b == null || c == null) return;
+        var normal = (Style)Resources["PresetButtonStyle"];
+        var sel = (Style)Resources["PresetButtonSelectedStyle"];
+        a.Style = normal;
+        b.Style = normal;
+        c.Style = normal;
+        selected.Style = sel;
+    }
+
+    /// <summary>
+    /// Carga un preset en los controles de AMBAS tarjetas (TCP + reglas de Windows).
+    /// Solo posiciona: el usuario confirma con Aplicar. La marca se deduce de los
+    /// controles recién posicionados (los eventos ya la refrescan; el llamado final
+    /// la fija por si algún control no disparó cambio).
+    /// </summary>
+    private void LoadTcpPreset(bool gaming)
     {
         if (_tcpNagleToggle == null || _tcpCongestionCombo == null) return;
-        _tcpNagleToggle.IsOn = gaming;                        // off en gaming
+        _tcpNagleToggle.IsOn = gaming;                        // Nagle desactivado en gaming
         _tcpCongestionCombo.SelectedIndex = gaming ? 1 : 0;   // CTCP / CUBIC
         if (_tcpEcnToggle != null) _tcpEcnToggle.IsOn = false;
         if (_tcpTimestampsToggle != null) _tcpTimestampsToggle.IsOn = !gaming;
         if (_tcpRssToggle != null) _tcpRssToggle.IsOn = true;
         if (_tcpFastOpenToggle != null) _tcpFastOpenToggle.IsOn = true;
-        var name = gaming ? I18n.T("Óptimo para juegos") : I18n.T("Valores por defecto (Windows)");
+        // Las reglas de Windows son parte del mismo perfil: se posicionan junto con el TCP.
+        LoadRulesPreset(gaming);
+        UpdateProfileIndicator();
         if (_tcpApplyResultText != null)
         {
             _tcpApplyResultText.Visibility = Visibility.Visible;
-            Feedback.Info(_tcpApplyResultText, I18n.T("Preset cargado: {0} — revisá los valores y toca Aplicar.", name));
+            Feedback.Info(_tcpApplyResultText, I18n.T("Preset cargado: {0} — revisá los valores y toca Aplicar en cada tarjeta.", gaming ? I18n.T("Óptimo para juegos") : I18n.T("Valores por defecto (Windows)")));
         }
     }
 
-    private async Task ApplyTcpAsync(string successMessage, TcpService.TcpState? desiredOverride = null, bool includeAutoTuning = false)
+    private async Task ApplyTcpAsync(string successMessage, TcpService.TcpState? desiredOverride = null, bool includeAutoTuning = false, bool quiet = false)
     {
         if (_tcpApplyResultText == null) return;
         _tcpApplyResultText.Visibility = Visibility.Visible;
         if (_tcpApplyButton != null) _tcpApplyButton.IsEnabled = false;
-        Feedback.Running(_tcpApplyResultText, I18n.T("Aplicando TCP..."));
+        if (!quiet) Feedback.Running(_tcpApplyResultText, I18n.T("Aplicando TCP..."));
         try
         {
             SaveTcpBackup(_tcpCurrent);
             var desired = desiredOverride ?? ReadTcpDesired();
+            // La plantilla GLOBAL la aporta el estado leído: ni el deseado de los controles ni el
+            // backup la llevan, y sin esto ResolveNetshName caería siempre a "internet" — que es
+            // justo el bug que este arreglo cierra (el ajuste terminaría en una plantilla que el
+            // stack quizá no esté usando).
+            desired.GlobalTemplate = _tcpCurrent?.GlobalTemplate ?? "";
             var (ok, msg) = await TcpService.ApplyAsync(desired, includeAutoTuning);
-            if (ok) Feedback.Success(_tcpApplyResultText, successMessage);
-            else Feedback.Error(_tcpApplyResultText, I18n.T("Error aplicando TCP: {0}", msg));
+            _lastTcpApplyOk = ok;
+            _lastTcpApplyMsg = msg;
+            if (!quiet)
+            {
+                if (ok) Feedback.Success(_tcpApplyResultText, successMessage);
+                else Feedback.Error(_tcpApplyResultText, I18n.T("Error aplicando TCP: {0}", msg));
+            }
             await RefreshTcpAsync();
+            UpdateProfileIndicator();
         }
         catch (Exception ex)
         {
@@ -558,7 +815,9 @@ public sealed partial class TcpPage : Page
         }
         finally
         {
-            if (_tcpApplyButton != null) _tcpApplyButton.IsEnabled = true;
+            // Se vuelve a habilitar SOLO si la última lectura fue buena: si el estado no se pudo
+            // leer, los controles son defaults y no deben poder escribirse.
+            if (_tcpApplyButton != null) _tcpApplyButton.IsEnabled = _tcpReadOk;
         }
     }
 
@@ -582,10 +841,13 @@ public sealed partial class TcpPage : Page
         var state = await TcpService.GetStateAsync();
         if (state == null) return;
         _tcpCurrent = state;
+        // Recuperamos el estado real: si la lectura inicial había fallado, Aplicar puede volver
+        // (el finally de ApplyTcpAsync es el que rehabilita el botón).
+        _tcpReadOk = true;
 
         // Actualizar etiquetas "Actual:" en el lugar (no se reconstruye la card,
         // así el mensaje de resultado queda visible).
-        if (_tcpActualNagle != null) _tcpActualNagle.Text = ActualText(state.NagleDisabled);
+        if (_tcpActualNagle != null) _tcpActualNagle.Text = NagleActual(state);
         if (_tcpActualCongestion != null) _tcpActualCongestion.Text = CongestionActual(state.CongestionProvider);
         if (_tcpActualEcn != null) _tcpActualEcn.Text = ActualText(state.EcnEnabled);
         if (_tcpActualTimestamps != null) _tcpActualTimestamps.Text = ActualText(state.TimestampsEnabled);
@@ -598,7 +860,7 @@ public sealed partial class TcpPage : Page
         if (_tcpMtuText != null) _tcpMtuText.Text = MtuActual(state);
 
         // Sincronizar los controles con el estado real aplicado
-        if (_tcpNagleToggle != null) _tcpNagleToggle.IsOn = state.NagleDisabled;
+        if (_tcpNagleToggle != null) _tcpNagleToggle.IsOn = state.NoDelaySet || state.AckFreqSet;
         if (_tcpCongestionCombo != null) _tcpCongestionCombo.SelectedIndex = state.CongestionProvider == "ctcp" ? 1 : 0;
         if (_tcpEcnToggle != null) _tcpEcnToggle.IsOn = state.EcnEnabled;
         if (_tcpTimestampsToggle != null) _tcpTimestampsToggle.IsOn = state.TimestampsEnabled;
@@ -606,20 +868,29 @@ public sealed partial class TcpPage : Page
         if (_tcpFastOpenToggle != null) _tcpFastOpenToggle.IsOn = state.FastOpenEnabled;
     }
 
+    /// <summary>
+    /// Guarda el estado PREVIO a tocar nada. Solo escribe si todavía no hay backup: es la foto del
+    /// estado original de Windows. Si se sobrescribiera en cada aplicación, "Restaurar todo" terminaría
+    /// devolviendo el preset anterior en vez del estado de fábrica — que es justo lo que el botón promete.
+    /// </summary>
     private void SaveTcpBackup(TcpService.TcpState? state)
     {
         if (state == null) return;
-        var dto = new TcpBackupDto
-        {
-            Congestion = state.CongestionProvider,
-            Ecn = state.EcnEnabled,
-            Timestamps = state.TimestampsEnabled,
-            Rss = state.RssEnabled,
-            FastOpen = state.FastOpenEnabled,
-            NagleDisabled = state.NagleDisabled
-        };
         try
         {
+            if (!string.IsNullOrWhiteSpace(_settingsService.Get<string>(TcpBackupKey, ""))) return;
+
+            var dto = new TcpBackupDto
+            {
+                Congestion = state.CongestionProvider,
+                Ecn = state.EcnEnabled,
+                Timestamps = state.TimestampsEnabled,
+                Rss = state.RssEnabled,
+                FastOpen = state.FastOpenEnabled,
+                // "Cualquiera de los dos" = el usuario tenía Nagle desactivado (aunque fuera a
+                // medias): restaurar escribe el par completo en vez de volver a activarle Nagle.
+                NagleDisabled = state.NoDelaySet || state.AckFreqSet
+            };
             _settingsService.Set(TcpBackupKey, JsonSerializer.Serialize(dto));
             _settingsService.Save();
         }
@@ -656,8 +927,39 @@ public sealed partial class TcpPage : Page
     private static string ActualText(bool value)
         => I18n.T("Actual: {0}", value ? I18n.T("Activado") : I18n.T("Desactivado"));
 
+    /// <summary>
+    /// Estado de la fila "Desactivar Nagle". El tweak escribe DOS valores (TCPNoDelay y
+    /// TcpAckFrequency), así que hay un estado intermedio real: con uno solo, Nagle ya está
+    /// desactivado pero falta la otra mitad (el toggle se ve activado). Se nombra en vez de caer a
+    /// "Desactivado", que decía lo contrario de lo que pasaba.
+    /// </summary>
+    private static string NagleActual(TcpService.TcpState state)
+    {
+        if (state.NoDelaySet && state.AckFreqSet)
+            return I18n.T("Actual: {0}", I18n.T("Activado (TCPNoDelay + TcpAckFrequency)"));
+        if (state.NoDelaySet)
+            return I18n.T("Actual: {0}", I18n.T("Activado a medias (solo {0})", "TCPNoDelay"));
+        if (state.AckFreqSet)
+            return I18n.T("Actual: {0}", I18n.T("Activado a medias (solo {0})", "TcpAckFrequency"));
+        return ActualText(false);
+    }
+
     private static string CongestionActual(string provider)
-        => I18n.T("Actual: {0}", provider == "ctcp" ? "CTCP" : I18n.T("CUBIC (predeterminado)"));
+    {
+        // Si el real es dctcp/bbr2/newreno/compound/illinois se dice el nombre: antes caía todo a
+        // "CUBIC (predeterminado)" y mentía en cualquier máquina que no tuviera cubic.
+        string name = provider.ToLowerInvariant() switch
+        {
+            "ctcp" => "CTCP",
+            "dctcp" => "DCTCP",
+            "bbr2" => "BBR2",
+            "newreno" => "NewReno",
+            "compound" => "Compound",
+            "illinois" => "Illinois",
+            _ => I18n.T("CUBIC (predeterminado)")
+        };
+        return I18n.T("Actual: {0}", name);
+    }
 
     private static string AutoTuningActual(string level)
     {
@@ -780,11 +1082,11 @@ public sealed partial class TcpPage : Page
 
     // ===== Tooltips: reglas de Windows (red) — el servicio pasa la clave, acá va el texto =====
     private const string TtNetNti = "Windows reserva ancho de banda para apps multimedia y limita la red a 10 paquetes por milisegundo (ese es el default, valor 10). Desactivarlo (0xFFFFFFFF) quita el tope: bueno para juegos y streaming cuando el PC además reproduce audio o video. → Sin límite para juegos; default de Windows en otros casos.";
-    private const string TtNetSysResp = "Porcentaje de CPU que Windows reserva para tareas de fondo (default 20%). Ponerlo en 0 da a multimedia/juegos la máxima prioridad de planificación. → 0 para juegos; 20 (default) si también usás el PC para trabajar.";
-    private const string TtNetMaxPort = "Cantidad máxima de puertos dinámicos para conexiones salientes (default 5000, de la era XP). Subirlo a 65534 evita el 'agotamiento de puertos' al abrir y cerrar muchas conexiones rápido (torrents, scanners, varios juegos). → 65534 para uso pesado; 5000 si todo funciona bien.";
-    private const string TtNetTimedWait = "Segundos que una conexión cerrada queda reservada antes de liberar el puerto (default 240). Bajarlo a 30 libera puertos mucho más rápido: útil con muchas conexiones cortas (juegos, navegación). → 30 para juegos; 240 (default) en otros casos.";
+    private const string TtNetSysResp = "Porcentaje de CPU que Windows reserva para las tareas de fondo cuando una app multimedia está activa (default 20%). Bajarlo a 10 le da más CPU a esa app: es el valor más bajo que Windows acepta, porque los menores a 10 se vuelven a 20 automáticamente —por eso este ajuste NO trae un «0 %»: no haría nada. Solo nota la diferencia si el juego o el reproductor usan el planificador multimedia de Windows, y la mayoría de los juegos no. → 10 para juegos; 20 (default) en cualquier otro caso.";
+    private const string TtNetMaxPort = "Puerto más alto del rango dinámico que Windows usa para las conexiones salientes. Desde Windows 10 el rango por defecto ya es 49152-65535 (unos 16 mil puertos), así que este ajuste suele estar de más: el agotamiento de puertos aparece con decenas de miles de conexiones simultáneas, no usando varios juegos. El rango completo se cambia con «netsh int ipv4 set dynamicport tcp» desde la terminal. → Dejalo como está salvo que midas un agotamiento real.";
+    private const string TtNetTimedWait = "Segundos que una conexión cerrada sigue ocupando su puerto antes de liberarlo (default 120 s, y Windows no escribe el valor: lo aplica internamente). Bajarlo a 30 libera los puertos antes. Sirve solo si agotás puertos con miles de conexiones cortas; en uso normal no se nota y, si se exagera, un paquete atrasado puede confundir a una conexión nueva. → Dejalo como está salvo que midas un agotamiento real.";
     private const string TtNetLargeCache = "Le dice a Windows que priorice el caché del sistema de archivos en RAM (modo servidor) en vez de la memoria de las apps (default). Puede mejorar el throughput de red con mucha RAM; con poca RAM puede causar tirones. → ON con 16+ GB de RAM y uso intenso de red; OFF (default) en otros casos.";
-    private const string TtNetLso = "Permite al adaptador agrupar envíos grandes en menos paquetes para ahorrar CPU. En algunos drivers agrega picos de latencia. Desactivar el offload (DisableTaskOffload=1) obliga a la CPU a segmentar: más uso de CPU, latencia potencialmente menor. → Depende del driver: probá ON si ves micro-tirones en juegos online.";
+    private const string TtNetLso = "El valor que escribe este ajuste es DisableTaskOffload: 1 APAGA toda la descarga al hardware de la interfaz activa (segmentación LSO, checksum y offload de RSS), no solo LSO — por eso la opción se llama «Desactivar la descarga» y no «activar LSO». Con la descarga apagada ese trabajo lo hace la CPU: sube el uso de CPU y en algunos drivers bajan los picos de latencia. → Dejá «Descarga activada» (el predeterminado) salvo que midas micro-tirones en juegos online.";
 
     // ===== Tooltips: plantillas TCP =====
     private const string TtTemplates = "Las plantillas del stack TCP (internet, personalizada, datacenter…) agrupan las perillas finas de Windows: RTO mínimo, ventana de congestión inicial, delayed ACK, RACK y sondeo de pérdida de cola. Son las que usan los tweakers. → Tocá una por vez y probá el efecto en tus partidas antes de dejarla fija.";
@@ -933,8 +1235,14 @@ public sealed partial class TcpPage : Page
         if (_tplRestoreButton != null) _tplRestoreButton.IsEnabled = !string.IsNullOrWhiteSpace(_settingsService.Get(TemplateBackupKey(t.Name), ""));
 
         _tplCongestion = new ComboBox { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
+        // Win10 no acepta bbr2 en "netsh set supplemental" (solo none|ctcp|dctcp|default, según el
+        // help oficial): se ofrece solo donde funciona. Sin este filtro, elegirlo en Win10 corría un
+        // comando que falla y el mensaje que llegaba era "ERRORS: supplemental;", sin explicación.
         foreach (var p in TcpTemplateService.CongestionProviders)
+        {
+            if (p == "bbr2" && !WindowsCapabilities.IsWindows11) continue;
             _tplCongestion.Items.Add(new ComboBoxItem { Content = I18n.T(CongestionLabel(p)), Tag = p });
+        }
         var currentProvider = t.CongestionProvider.ToLowerInvariant() switch
         {
             "ctcp" => "ctcp",

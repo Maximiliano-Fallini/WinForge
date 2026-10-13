@@ -248,6 +248,11 @@ public partial class App : Application
         SplashWindow? splash = null;
         if (!themeRestart && !startMinimized)
         {
+            // El splash también pinta colores de fábrica (tarjeta, texto y fondos)
+            // antes de que exista MainWindow. Capturarlos acá evita que use el
+            // fallback transparente/blanco; Initialize es idempotente y MainWindow
+            // volverá a llamarlo antes de aplicar el tema.
+            ThemePalettes.Initialize();
             splash = SplashWindow.Start();
             if (splash != null)
             {
@@ -347,9 +352,18 @@ public partial class App : Application
         if (splash != null)
             await splash.ReportAsync(76, I18n.T("Aplicando configuración…"));
 
-        // El 76 % fue el último bloque pesado del hilo de App: desde acá al 100 %
-        // el splash queda fluido (animación y arrastre sin congelamiento) y el
-        // cierre del arranque solo construye la ventana oculta y cede el turno.
+        // El tramo final (new MainWindow + navegación a Sistema) es el más pesado del
+        // arranque y corre en el hilo de UI. En la build publicada lo cubre ReadyToRun;
+        // en Debug no, así que SIN esto el splash se congelaba cerca del 76 % y solo se
+        // liberaba al aparecer la ventana. Acá se pre-compila (JIT) en segundo plano
+        // MIENTRAS el hilo de UI está libre: la aguja barre hasta el 90 % con el
+        // compositor (fluido aunque la UI se ocupe) y la construcción real queda tibia,
+        // de modo que el splash llega al 100 % y abre sin trabarse.
+        if (splash != null)
+            splash.Report(90, I18n.T("Preparando la interfaz…"));
+        await Task.Run(() => { try { UiWarmup.Prepare(); } catch { } });
+        if (splash != null)
+            await splash.ReportAsync(90, I18n.T("Preparando la interfaz…"));
 
         // Marcador de sesión en el log: ayuda a separar corridas en fase de desarrollo.
         Services.GetRequiredService<ILoggingService>().LogInfo("===== WinForge iniciado =====");

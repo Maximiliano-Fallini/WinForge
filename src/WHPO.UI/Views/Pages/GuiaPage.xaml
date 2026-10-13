@@ -1,0 +1,72 @@
+<Page
+    x:Class="WHPO_UI.Views.Pages.GuiaPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:WHPO_UI.Controls">
+
+    <Grid Background="{ThemeResource AppBackgroundBrush}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="28,22,28,36" Spacing="18">
+                <StackPanel Spacing="5">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Glyph="&#xE897;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Guía" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBlock Text="Encontrá una función, aprendé a usarla o resolvé un problema."
+                               FontSize="13"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <Grid MaxWidth="620" HorizontalAlignment="Stretch">
+                    <TextBox x:Name="SearchBox"
+                             PlaceholderText="¿Qué necesitás hacer o resolver?"
+                             TextChanged="SearchBox_TextChanged"
+                             CornerRadius="8"
+                             Padding="36,8,10,8"/>
+                    <FontIcon Glyph="&#xE721;"
+                              FontSize="14"
+                              Foreground="{ThemeResource SecondaryTextBrush}"
+                              HorizontalAlignment="Left"
+                              VerticalAlignment="Center"
+                              Margin="12,0,0,0"
+                              IsHitTestVisible="False"/>
+                </Grid>
+
+                <StackPanel x:Name="LandingHost" Spacing="18"/>
+
+                <Border x:Name="DetailPanel"
+                        Visibility="Collapsed"
+                        Background="{ThemeResource CardBackgroundBrush}"
+                        BorderBrush="{ThemeResource CardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="20">
+                    <StackPanel Spacing="16">
+                        <Button x:Name="BackButton"
+                                Content="Volver a la guía"
+                                Click="BackButton_Click"
+                                HorizontalAlignment="Left"/>
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="DetailTitle" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="DetailSummary"
+                                       FontSize="13"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <StackPanel x:Name="StepsHost" Spacing="10"/>
+                        <controls:WrapPanel x:Name="LinksHost" Spacing="8"/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="EmptyText"
+                           Text="No encontramos guías para esa búsqueda. Probá con otras palabras."
+                           FontSize="13"
+                           Foreground="{ThemeResource SecondaryTextBrush}"
+                           TextWrapping="Wrap"
+                           Visibility="Collapsed"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

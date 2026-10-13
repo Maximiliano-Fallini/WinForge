@@ -18,4 +18,7 @@ internal static class PowerShellRunner
 
     public static Task<(string Output, int ExitCode)> RunAsync(string command, int timeoutMs)
         => WHPO.Core.Services.PowerShellRunner.RunAsync(command, timeoutMs);
+
+    public static bool TryParseResult(string output, out string detail)
+        => WHPO.Core.Services.PowerShellRunner.TryParseResult(output, out detail);
 }

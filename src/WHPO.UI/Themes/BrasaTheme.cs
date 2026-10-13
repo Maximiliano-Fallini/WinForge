@@ -18,9 +18,9 @@ internal static class BrasaTheme
         NameKey = "Brasa",
         Wallpaper = "brasa.jpg",
         WallpaperCredit = "Imagen local del usuario",
-        // Tema de ENTORNO (trae foto): arranca con los paneles casi invisibles (90 %) y un vidrio
+        // Tema de ENTORNO (trae foto): arranca con los paneles al 50 % y un vidrio
         // suave (5 %), que es como la foto se ve de verdad. Los dos números son POR TEMA.
-        PanelTransparency = 90,
+        PanelTransparency = 50,
         PanelBlur = 5,
         Brushes =
         [

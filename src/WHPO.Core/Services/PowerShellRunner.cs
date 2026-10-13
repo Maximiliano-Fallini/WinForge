@@ -24,6 +24,44 @@ public static class PowerShellRunner
     /// <summary>Timeout por defecto de un comando (ms).</summary>
     public const int DefaultTimeoutMs = 25000;
 
+    /// <summary>Marca de éxito de los scripts que acumulan fallos en $e.</summary>
+    public const string OkMarker = "WFOK";
+
+    /// <summary>Marca de fallo, seguida de la lista de pasos que fallaron.</summary>
+    public const string ErrorMarker = "WFERR:";
+
+    /// <summary>
+    /// Interpreta la salida de un script que termina con "WFERR:&lt;pasos&gt;" o "WFOK".
+    ///
+    /// La marca se busca en TODA la salida y NO al principio, a propósito: netsh escribe
+    /// sus errores en STDOUT (verificado: el mensaje de "requiere elevación" sale por
+    /// stdout con stderr vacío), así que cualquier fallo de netsh aparece ANTES de la
+    /// marca. Un StartsWith("ERRORS:") daba falso éxito — la app decía "aplicado" con
+    /// todos los pasos fallados y sin explicar nada.
+    ///
+    /// Devuelve false también cuando la marca de éxito no está (el script no llegó al
+    /// final: murió, se cortó o se pasó del timeout), así que nunca reporta éxito sin
+    /// evidencia. El detalle trae solo la línea de la marca, sin los mensajes de netsh.
+    /// </summary>
+    public static bool TryParseResult(string output, out string detail)
+    {
+        int err = output.IndexOf(ErrorMarker, StringComparison.Ordinal);
+        if (err >= 0)
+        {
+            var rest = output[(err + ErrorMarker.Length)..];
+            int nl = rest.IndexOfAny(new[] { '\r', '\n' });
+            detail = (nl >= 0 ? rest[..nl] : rest).Trim();
+            return false;
+        }
+        if (output.Contains(OkMarker, StringComparison.Ordinal))
+        {
+            detail = "OK";
+            return true;
+        }
+        detail = output.Trim();
+        return false;
+    }
+
     public static Task<(string Output, int ExitCode)> RunAsync(string command)
         => RunAsync(command, DefaultTimeoutMs);
 

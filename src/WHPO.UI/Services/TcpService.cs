@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using WHPO.Core.Services;
 
 namespace WHPO_UI.Services;
 
@@ -24,8 +25,19 @@ public static class TcpService
         public bool EcnEnabled;
         public bool TimestampsEnabled;
         public bool FastOpenEnabled;
-        /// <summary>True = Nagle desactivado (TCPNoDelay + TcpAckFrequency = 1).</summary>
+        /// <summary>True = Nagle desactivado del todo (TCPNoDelay + TcpAckFrequency = 1).</summary>
         public bool NagleDisabled;
+        /// <summary>TCPNoDelay = 1 en la interfaz activa: por sí solo ya desactiva Nagle.</summary>
+        public bool NoDelaySet;
+        /// <summary>TcpAckFrequency = 1 en la interfaz activa (delayed ACK apagado).</summary>
+        public bool AckFreqSet;
+        /// <summary>
+        /// Plantilla TCP global por defecto del stack (netsh: internet | custom | datacenter…):
+        /// la que aplica sin filtros. La congestión se escribe SIEMPRE sobre esta plantilla,
+        /// para que esta card y la sección de plantillas no se pisen entre sí.
+        /// Vacío = no se pudo leer (se cae a "internet").
+        /// </summary>
+        public string GlobalTemplate = "";
         public string AutoTuningLevel = "";
         public string? ActiveInterfaceGuid;
         public List<(string Name, int Mtu)> MtuList = new();
@@ -62,6 +74,10 @@ public static class TcpService
 
             var state = new TcpState();
             var values = ParseGlobalValues(root.TryGetProperty("Global", out var g) ? g.GetString() ?? "" : "");
+            // Si el orden de netsh no es el documentado, se aborta la lectura COMPLETA: es
+            // preferible un "no se pudo leer" visible a mostrar un valor corrido con la
+            // etiqueta equivocada (RSS/ECN/timestamps quedarían mintiendo sin avisar).
+            if (values.Length == 0) return null;
             // Orden fijo de "netsh int tcp show global" (documentado por Microsoft):
             // 0 RSS, 1 Autotuning, 2 Congestión, 3 ECN, 4 Timestamps RFC1323, 5 RTO inicial,
             // 6 RSC, 7 NonSackRtt, 8 MaxSynRetransmisiones, 9 Fast Open, 10 Fast Open Fallback...
@@ -78,10 +94,16 @@ public static class TcpService
             var congestion = ParseCongestionFromSupplemental(sup);
             if (congestion.Length == 0 && values.Length > 2) congestion = values[2].ToLowerInvariant();
             state.CongestionProvider = congestion;
+            state.GlobalTemplate = TcpTemplateService.ParseGlobalTemplateName(sup) ?? "";
 
             if (root.TryGetProperty("Guid", out var guidEl)) state.ActiveInterfaceGuid = guidEl.GetString();
-            state.NagleDisabled = root.TryGetProperty("NoDelay", out var nd) && nd.ValueKind == JsonValueKind.Number && nd.GetInt32() == 1
-                                  && root.TryGetProperty("AckFreq", out var af) && af.ValueKind == JsonValueKind.Number && af.GetInt32() == 1;
+            // Los dos valores se leen por separado: el tweak clásico escribe TCPNoDelay Y
+            // TcpAckFrequency, así que una interfaz con uno solo es un estado PARCIAL que la UI
+            // tiene que poder nombrar (antes se veía como "no aplicado" aunque Nagle ya
+            // estuviera desactivado).
+            state.NoDelaySet = root.TryGetProperty("NoDelay", out var nd) && nd.ValueKind == JsonValueKind.Number && nd.GetInt32() == 1;
+            state.AckFreqSet = root.TryGetProperty("AckFreq", out var af) && af.ValueKind == JsonValueKind.Number && af.GetInt32() == 1;
+            state.NagleDisabled = state.NoDelaySet && state.AckFreqSet;
 
             if (root.TryGetProperty("Mtus", out var mtus) && mtus.ValueKind == JsonValueKind.Array)
             {
@@ -107,13 +129,22 @@ public static class TcpService
     public static async Task<(bool Ok, string Message)> ApplyAsync(TcpState desired, bool includeAutoTuning = false)
     {
         var ps = new StringBuilder("$e = ''");
-        // El provider de congestión vive en los parámetros supplemental (Win10 1709+);
-        // en sistemas viejos se configura con "set global". Se intenta supplemental y
-        // se cae a global si no existe. "cubic" == el default de Windows.
-        var provider = desired.CongestionProvider == "ctcp" ? "ctcp" : "cubic";
-        ps.Append("; netsh int tcp set supplemental template=internet congestionprovider=" + provider);
-        ps.Append("; if ($LASTEXITCODE -ne 0) { netsh int tcp set global congestionprovider=" + provider + " }");
-        ps.Append("; if ($LASTEXITCODE -ne 0) { $e += 'congestion;' }");
+        // El proveedor de congestión vive en los parámetros supplemental (Win10 1709+) y se
+        // escribe SOBRE UNA PLANTILLA. Se usa la plantilla GLOBAL del stack (la que aplica sin
+        // filtros, y la MISMA que edita la sección de plantillas): antes se hardcodeaba
+        // "internet" y el fallback del cmdlet escribía en InternetCustom, que es OTRA plantilla
+        // — si el stack no usaba "internet", el ajuste no hacía nada y el error no lo explicaba.
+        // "netsh set global" NO tiene congestionprovider: esta es la única vía para cambiarlo.
+        var template = TcpTemplateService.ResolveNetshName(desired.GlobalTemplate);
+        // netsh SÍ acepta el literal "cubic" (documentado: none|ctcp|dctcp|cubic|bbr2|default).
+        var netshProvider = desired.CongestionProvider == "ctcp" ? "ctcp" : "cubic";
+        // El cmdlet documenta Default|CTCP|DCTCP, no "cubic": el fallback pide "default", que es
+        // lo que en Windows 10/11 cliente resuelve a CUBIC, y apunta a la MISMA plantilla que
+        // netsh (netsh "internet" → SettingName "Internet").
+        var cmdletProvider = desired.CongestionProvider == "ctcp" ? "CTCP" : "Default";
+        ps.Append("; netsh int tcp set supplemental template=" + template + " congestionprovider=" + netshProvider);
+        ps.Append("; if ($LASTEXITCODE -ne 0) { try { Set-NetTCPSetting -SettingName " + TcpTemplateService.CmdletNameFor(template)
+                  + " -CongestionProvider " + cmdletProvider + " -ErrorAction Stop } catch { $e += 'congestion (plantilla " + template + ");' } }");;
         ps.Append("; ").Append(Netsh("int tcp set global ecncapability=" + (desired.EcnEnabled ? "enabled" : "disabled"), "ecn"));
         ps.Append("; ").Append(Netsh("int tcp set global timestamps=" + (desired.TimestampsEnabled ? "enabled" : "disabled"), "timestamps"));
         ps.Append("; ").Append(Netsh("int tcp set global rss=" + (desired.RssEnabled ? "enabled" : "disabled"), "rss"));
@@ -136,13 +167,14 @@ public static class TcpService
             ps.Append("; Remove-ItemProperty -Path $key -Name TcpAckFrequency -ErrorAction SilentlyContinue");
         }
         ps.Append(" }");
-        ps.Append("; if ($e) { 'ERRORS: ' + $e } else { 'OK' }");
+        ps.Append("; if ($e) { 'WFERR:' + $e } else { 'WFOK' }");
 
         var (output, exit) = await PowerShellRunner.RunAsync(ps.ToString());
         if (exit != 0) return (false, output);
-        if (output.StartsWith("ERRORS:", StringComparison.Ordinal))
-            return (false, output);
-        return (true, "OK");
+        // La marca se busca en TODA la salida: netsh escribe sus errores en stdout, así que
+        // aparecen ANTES de la marca y un StartsWith daba un falso "aplicado".
+        if (PowerShellRunner.TryParseResult(output, out var detail)) return (true, "OK");
+        return (false, detail);
     }
 
     /// <summary>Un comando netsh con captura de fallo en el acumulador $e.</summary>
@@ -166,13 +198,22 @@ public static class TcpService
             int idx = line.IndexOf(':');
             if (idx < 0) continue;
             var value = line[(idx + 1)..].Trim().ToLowerInvariant();
-            if (value is "cubic" or "ctcp" or "newreno" or "compound" or "illinois" or "dctcp")
+            if (value is "cubic" or "ctcp" or "newreno" or "compound" or "illinois" or "dctcp" or "bbr2" or "none" or "default")
                 return value;
         }
         return "";
     }
 
-    /// <summary>Extrae los valores (parte derecha del ":") de cada línea de netsh.</summary>
+    /// <summary>
+    /// Extrae los valores (parte derecha del ":") de cada línea de netsh, en orden, y
+    /// comprueba que la forma sea la documentada en los índices que se usan. Si Windows
+    /// cambia el orden o suma un parámetro delante, devolver vacío es mejor que leer un
+    /// valor corrido y etiquetarlo mal: quien llama lo trata como lectura fallida.
+    ///
+    /// Netsh de Windows 10/11 incluye "none" como proveedor de congestión: en ambos
+    /// SO se parsea por orden, así que "none" ocupa la misma posición que "default"
+    /// (global) o "cubic" (supplemental) sin romper el parseo.
+    /// </summary>
     private static string[] ParseGlobalValues(string output)
     {
         var values = new List<string>();
@@ -184,6 +225,23 @@ public static class TcpService
             var value = line[(idx + 1)..].Trim();
             if (value.Length > 0) values.Add(value);
         }
-        return values.ToArray();
+
+        // Índices que se usan: 0 RSS, 1 Autotuning, 3 ECN, 4 Timestamps RFC1323, 9 Fast Open.
+        bool shapeOk = values.Count > 9
+            && IsBool(values[0]) && IsAutoTuningLevel(values[1])
+            && IsBool(values[3]) && IsBool(values[4]) && IsBool(values[9]);
+        return shapeOk ? values.ToArray() : Array.Empty<string>();
+    }
+
+    private static bool IsBool(string value)
+        => value.Equals("enabled", StringComparison.OrdinalIgnoreCase)
+           || value.Equals("disabled", StringComparison.OrdinalIgnoreCase)
+           || value.Equals("on", StringComparison.OrdinalIgnoreCase)
+           || value.Equals("off", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAutoTuningLevel(string value)
+    {
+        var v = value.ToLowerInvariant();
+        return v is "normal" or "disabled" or "restricted" or "highlyrestricted" or "experimental";
     }
 }

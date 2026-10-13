@@ -50,6 +50,9 @@ public class ThemeApplier : IThemeApplier
             AppTheme.Aurora => ElementTheme.Dark,       // base oscura con fondo propio
             AppTheme.Brasa => ElementTheme.Dark,        // base oscura con fondo propio
             AppTheme.Twilight => ElementTheme.Dark,     // base oscura con gradiente propio
+            AppTheme.Amatista => ElementTheme.Dark,      // base oscura con fondo propio
+            AppTheme.Metal => ElementTheme.Dark,         // base oscura con fondo propio
+            AppTheme.CristalAzul => ElementTheme.Dark,   // base oscura con fondo propio
             _ => ElementTheme.Default
         };
 

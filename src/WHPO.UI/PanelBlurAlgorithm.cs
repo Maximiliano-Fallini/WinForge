@@ -44,7 +44,14 @@ internal static class PanelBlurAlgorithm
     {
         if (!double.IsFinite(percent)) percent = 0.0;
         double fraction = Math.Clamp(percent, 0.0, 100.0) / 100.0;
-        return Math.Max(1, (int)Math.Round(fraction * MaxBlurRadius));
+        // EL PISO ES 2 Y NO 1: un radio de 1 px DE LA COPIA no se ve. La copia mide 320 px de ancho y se
+        // estira al ancho de la ventana, así que 1 px de acá son ~4 px en pantalla —indistinguibles de
+        // la foto nítida—. Con el piso en 1, el desenfoque de fábrica de los temas de entorno (5 %)
+        // daba justo eso y el reporte era "no se ve aplicada el blur", aunque el vidrio estuviera puesto
+        // en todas las superficies con el mismo radio (el censo imprime el radio por clave: ver
+        // PanelAppearance). Con el piso en 2, ese mismo 5 % ya es un vidrio esmerilado de verdad y el
+        // deslizador sigue graduando parejo hasta 16.
+        return Math.Clamp((int)Math.Round(fraction * MaxBlurRadius), 2, MaxBlurRadius);
     }
 
     /// <summary>Desenfoca el búfer con la intensidad pedida (la copia se pinta tal cual detrás de los paneles, sin teñir).</summary>

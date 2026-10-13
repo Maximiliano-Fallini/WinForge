@@ -607,7 +607,11 @@ public sealed partial class SplashWindow : Window
 
             var accent = ThemeColor("AccentBrush", theme);
             var track = ThemeColor("MutedBrush", theme);
-            var tick = ThemeColor("ChartGridBrush", theme);
+            // Las MARCAS del dial son la ESCALA del velocímetro, no una grilla de gráfico: los temas
+            // definen ChartGridBrush con alfa 0x33 (20 %) porque está pensado para no verse debajo
+            // de las series, y encima acá se le aplicaba Opacity 0,6 — o sea un 12 % de gris, la
+            // escala apagada en todos los temas. Va con el tono "muted" del tema, el mismo del arco.
+            var tick = ThemeColor("MutedBrush", theme);
 
             TrackArc.Stroke = track;
             TrackArc.Opacity = 0.35;

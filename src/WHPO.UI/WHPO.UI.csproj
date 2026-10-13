@@ -8,8 +8,8 @@
          por delante de la última release publicada. Al publicar se lleva también el
          instalador local (installer\, que vive
          en el disco del desarrollador: no se versiona). -->
-    <Version>0.4.0</Version>
-    <InformationalVersion>0.4.0-beta</InformationalVersion>
+    <Version>0.4.3</Version>
+    <InformationalVersion>0.4.1-beta</InformationalVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>WHPO_UI</RootNamespace>
     <!-- El ejecutable se llama WinForge.exe (no WHPO.UI.exe) -->
@@ -47,8 +47,8 @@
     <Content Include="Assets\AppIcon.ico" />
     <Content Include="Assets\WinForge.ico" />
     <Content Include="Assets\Wide310x150Logo.scale-200.png" />
-    <!-- Imagenes de fondo de los temas con fondo propio (Nebulosa, Marea, Aurora y
-         Brasa). Viajan al output dentro de Themes\Backgrounds porque los ImageBrush las
+    <!-- Imagenes de fondo de los temas con fondo propio (Marea, Aurora, Brasa,
+         Amatista y Metal). Viajan al output dentro de Themes\Backgrounds porque los ImageBrush las
          referencian por ruta (AppContext.BaseDirectory + Themes\Backgrounds), no por
          ms-appx:///: la app no esta empaquetada (WindowsPackageType=None).
          Para sumar un fondo nuevo: dejar el .jpg en esa carpeta y nombrarlo en el

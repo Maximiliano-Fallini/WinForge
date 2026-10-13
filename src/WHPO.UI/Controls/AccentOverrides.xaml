@@ -69,6 +69,37 @@
             <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FF202022"/>
             <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FF151517"/>
 
+<!-- Claves que los CONTROLES de WinUI piden por su cuenta y que la app no declaraba, así que
+                 las pintaba el SISTEMA con rellenos translúcidos: el desplegable CERRADO, el Expander
+                 (los desplegables de la Guía) y el botón COMPLETO sin fondo propio (reposo,
+                 deshabilitado y hover/pressed: los "Abrir grupos" del Monitor de sensores, los
+                 "Actualizar" de las cards). Al pasar el mouse ese relleno reemplaza el del control, y
+                 sobre la foto se leía como "se volvió transparente"; lo mismo pasaba con el de
+                 reposo, que dejaba al botón opaco y sin vidrio. Acá van con el MISMO tono de la
+                 superficie hermana —el desplegable y el botón copian el del cuadro de texto, y el
+                 Expander el de la card— y los temas con paleta propia las derivan igual en runtime
+                 (ver ThemePalettes.InheritedKeys). Estar en este diccionario es lo que además las
+                 mete en el censo de superficies: siguen la transparencia y el vidrio (ver
+                 PanelAppearance.SurfaceKeys). -->
+            <SolidColorBrush x:Key="ComboBoxBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#FF1A1A1C"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#FF202022"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#FF202022"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="#FF151517"/>
+            <SolidColorBrush x:Key="ExpanderHeaderBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="ExpanderContentBackground" Color="#FF151517"/>
+<!-- Y el BOTÓN sin fondo propio: una CAPA NEUTRA, no una superficie. Darle el tono del cuadro de
+                 texto —opaco— lo convertía en una cajita oscura (el reporte "los botones de abrir grupos son
+                 negros"): el tono de una superficie grande no es el de un control chico. El alfa es más alto
+                 que el de WinUI (6 % en reposo) a propósito: con una película del 3 % el vidrio está puesto
+                 pero no hay material que se lea como vidrio, y era el reporte "no se ve aplicada el blur".
+                 El ajuste ESCALA estas capas en vez de fijarles el alfa absoluto (ver
+                 PanelAppearance.SurfaceColorFor y ThemePalettes.OverlayKeys). -->
+            <SolidColorBrush x:Key="ButtonBackground" Color="#26FFFFFF"/>
+            <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#26FFFFFF"/>
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#33FFFFFF"/>
+            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#1AFFFFFF"/>
+
 <!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
                  XamlControlsResources (si se define solo en el raíz de App.xaml,
                  WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
@@ -110,6 +141,20 @@
             <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFF7F8FA"/>
             <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FFEDEFF2"/>
             <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FFFFFFFF"/>
+
+<!-- Claves heredadas de los controles de WinUI: ver el comentario del diccionario Dark. -->
+            <SolidColorBrush x:Key="ComboBoxBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#FFF7F8FA"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#FFEDEFF2"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#FFEDEFF2"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="ExpanderHeaderBackground" Color="#FFFFFFFF"/>
+            <SolidColorBrush x:Key="ExpanderContentBackground" Color="#FFFFFFFF"/>
+<!-- Botón sin fondo propio: capa neutra, ver el comentario del diccionario Dark. -->
+            <SolidColorBrush x:Key="ButtonBackground" Color="#B3FFFFFF"/>
+            <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#4DFFFFFF"/>
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#CCFFFFFF"/>
+            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#80FFFFFF"/>
 
             <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FFFFFFFF"/>
             <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FFE8EAEE"/>

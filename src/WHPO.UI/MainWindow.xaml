@@ -135,7 +135,7 @@
         Background="{ThemeResource NavigationViewDefaultPaneBackground}">
 
 <!-- ====== SET CORE: pestañas "si o si" con la app ====== -->
-<!-- Estas 5 + Configuración (footer) NUNCA se ocultan: el resto del navbar se
+<!-- Estas 5 + Guía y Configuración (footer) NUNCA se ocultan: el resto del navbar se
              genera en código desde ComponentRegistry (navbar dinámico del Workshop). -->
         <muxc:NavigationView.MenuItems>
             <muxc:NavigationViewItem Content="Sistema" Tag="sistema">
@@ -166,6 +166,11 @@
         </muxc:NavigationView.MenuItems>
 
         <muxc:NavigationView.FooterMenuItems>
+            <muxc:NavigationViewItem Content="Guía" Tag="guia">
+                <muxc:NavigationViewItem.Icon>
+                    <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE897;" FontSize="16"/>
+                </muxc:NavigationViewItem.Icon>
+            </muxc:NavigationViewItem>
             <muxc:NavigationViewItem Content="Configuración" Tag="configuracion">
                 <muxc:NavigationViewItem.Icon>
                     <muxc:SymbolIcon Symbol="Setting" />

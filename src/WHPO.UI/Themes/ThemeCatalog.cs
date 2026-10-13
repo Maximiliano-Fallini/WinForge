@@ -36,7 +36,10 @@ public static class ThemeCatalog
                 MareaTheme.Create(),
                 AuroraTheme.Create(),
                 BrasaTheme.Create(),
-                CrepusculoTheme.Create()
+                CrepusculoTheme.Create(),
+                AmatistaTheme.Create(),
+                MetalTheme.Create(),
+                CristalAzulTheme.Create()
             };
             return _all;
         }
@@ -53,7 +56,7 @@ public static class ThemeCatalog
     /// <summary>
     /// Cómo pinta el tema su fondo. Es lo que agrupa el selector de temas (Entorno / Degradado /
     /// Planos) y lo que decide con qué ajustes de apariencia arranca cada uno: los de entorno traen
-    /// foto (90 % de transparencia y 5 % de blur de fábrica) y los planos o de degradado, no
+    /// foto (50 % de transparencia y 5 % de blur de fábrica) y los planos o de degradado, no
     /// (0 % y 0 %).
     /// </summary>
     public enum ThemeKind
@@ -101,7 +104,7 @@ public static class ThemeCatalog
 
     /// <summary>
     /// Transparencia de paneles con la que el tema se ve como fue diseñado, en puntos porcentuales:
-    /// 90 % en los de entorno (deja ver la foto), 0 % en los planos y de degradado.
+    /// 50 % en los de entorno (deja ver la foto), 0 % en los planos y de degradado.
     /// </summary>
     public static double DefaultPanelTransparency(AppTheme theme)
         => Find(theme)?.PanelTransparency ?? 0.0;

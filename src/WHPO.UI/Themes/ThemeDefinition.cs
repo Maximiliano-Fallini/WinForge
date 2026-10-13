@@ -58,10 +58,10 @@ public sealed class ThemeDefinition
 
     /// <summary>
     /// Transparencia de los paneles con la que el tema se ve como fue diseñado, en puntos
-    /// porcentuales (0 = paneles opacos, 90 = casi invisibles; ver la escala en PanelAppearance).
+    /// porcentuales (0 = paneles opacos, 50 = semitransparentes; ver la escala en PanelAppearance).
     /// Es el valor con el que el tema arranca MIENTRAS el usuario no lo haya movido, y cada tema
-    /// guarda el suyo (ver PanelAppearance y ThemeCatalog.KindOf): los de ENTORNO declaran 90
-    /// —la foto se ve por todos lados— y los PLANOS y de DEGRADADO, 0.
+    /// guarda el suyo (ver PanelAppearance y ThemeCatalog.KindOf): los de ENTORNO declaran 50
+    /// —la foto se ve a través de los paneles— y los PLANOS y de DEGRADADO, 0.
     /// </summary>
     public double PanelTransparency { get; init; }
 

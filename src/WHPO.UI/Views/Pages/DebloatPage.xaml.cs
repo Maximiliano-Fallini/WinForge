@@ -306,15 +306,18 @@ public sealed partial class DebloatPage : Page
         headerRow.Children.Add(chevron);
         headerRow.Children.Add(headerStack);
 
+        // Mismo criterio que en Optimizaciones: el encabezado plegable es una superficie como
+        // cualquier card (tono del encabezado del Expander + alfa del ajuste + vidrio), no un botón
+        // transparente ajeno a la apariencia.
         var header = new Button
         {
             Content = headerRow,
-            Background = TransparentBrush,
+            Background = ThemeBrushes.GetSurface("ExpanderHeaderBackground"),
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(4),
+            Padding = new Thickness(10, 6, 14, 6),
             HorizontalAlignment = HorizontalAlignment.Left,
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            CornerRadius = new CornerRadius(4)
+            CornerRadius = new CornerRadius(8)
         };
 
         var cardsPanel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };

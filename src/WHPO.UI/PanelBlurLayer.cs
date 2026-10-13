@@ -1478,6 +1478,18 @@ internal static class PanelBlurLayer
         return null;
     }
 
+    /// <summary>
+    /// Cómo quedó el relleno de una clave, con el RADIO del vidrio: es lo que hace falta para contestar
+    /// "esta superficie no tiene desenfoque" leyendo el log, sin abrir la app —un vidrio con radio 0 es
+    /// un relleno plano, y con radio 1 px el desenfoque existe pero no se ve—. Lo usa el censo de
+    /// superficies al aplicar la transparencia (ver PanelAppearance.SetTransparencyPercent).
+    /// </summary>
+    internal static string DescribeFill(Brush? fill) => fill switch
+    {
+        GlassBlurBrush glass => $"vidrio, radio {glass.Radius:0.#} px",
+        _ => FillKind(fill)
+    };
+
     /// <summary>QuÃ© es el relleno de una superficie, en una palabra (lo que el usuario ve o no ve).</summary>
     private static string FillKind(Brush? fill) => fill switch
     {

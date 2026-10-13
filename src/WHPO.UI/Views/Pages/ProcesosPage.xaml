@@ -77,11 +77,6 @@
                 <FontIcon Glyph="&#xE21D;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Gestión de procesos" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
             </StackPanel>
-            <TextBlock
-                Text="Lista en vivo de procesos del sistema. Clic derecho: reglas por proceso. Clic en la cabecera ordena; arrastrá el borde para ajustar columnas."
-                FontSize="12"
-                Foreground="{ThemeResource SecondaryTextBrush}"
-                TextWrapping="Wrap"/>
             <TextBlock x:Name="StatusText"
                        Text=""
                        FontSize="12"

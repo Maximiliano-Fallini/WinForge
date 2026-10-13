@@ -53,6 +53,98 @@ public static class ThemePalettes
     public static bool HasOwnPalette(AppTheme theme) => Palettes.ContainsKey(theme);
 
     /// <summary>
+    /// Claves que los CONTROLES de WinUI piden por su cuenta —el desplegable cerrado, el Expander y
+    /// el hover/pressed de un botón— y que la app no declara en ninguna paleta, así que las pintaba
+    /// el sistema: rellenos TRANSLÚCIDOS que ni son del tema ni responden a la transparencia (no
+    /// están en <see cref="PanelAppearance.SurfaceKeys"/>). Como ese relleno REEMPLAZA el del
+    /// control al pasar el mouse, sobre la foto se leía como "se volvió transparente" y el texto se
+    /// perdía.
+    ///
+    /// Cada una copia el COLOR de su clave hermana, que es el tono que la paleta ya eligió para esa
+    /// superficie (no se inventa ningún color): el desplegable cerrado es la misma superficie que un
+    /// cuadro de texto, así que toma sus cuatro tonos, y el Expander toma el de la card.
+    ///
+    /// Se resuelven por definición en <see cref="ApplyPalette"/> (y, para los temas clásicos, con los
+    /// valores escritos en AccentOverrides.xaml), y <see cref="TryGetFactoryColor"/> las resuelve
+    /// también, que es lo que hace que el ajuste de transparencia las alcance.
+    /// </summary>
+    private static readonly (string Key, string SourceKey)[] InheritedKeys =
+    {
+        // Desplegable CERRADO (el popup ya lo pinta cada tema con ComboBoxDropDown*).
+        ("ComboBoxBackground", "TextControlBackground"),
+        ("ComboBoxBackgroundPointerOver", "TextControlBackgroundPointerOver"),
+        ("ComboBoxBackgroundPressed", "TextControlBackgroundFocused"),
+        ("ComboBoxBackgroundFocused", "TextControlBackgroundFocused"),
+        ("ComboBoxBackgroundDisabled", "TextControlBackgroundDisabled"),
+
+        // Expander (los "desplegables" de la Guía): el encabezado es una card y el contenido vive
+        // sobre el mismo tono. El Expander NO tiene claves de hover propias: su estado PointerOver
+        // solo cambia el filete y el chevron.
+        ("ExpanderHeaderBackground", "CardBackgroundBrush"),
+        ("ExpanderContentBackground", "CardBackgroundBrush"),
+
+        // Los BOTONES sin fondo propio ("Abrir grupos" del Monitor de sensores, "Actualizar" de las
+        // cards, "Cancelar"…) NO van acá: no heredan el tono de una superficie grande porque el
+        // resultado es una cajita oscura en vez de un botón. Son capas neutras sutiles: ver OverlayKeys.
+    };
+
+    /// <summary>
+    /// RELLENO SUTIL de los botones sin fondo propio —el estilo por defecto de WinUI: "Abrir grupos" y
+    /// "Cerrar grupos" del Monitor de sensores, los "Actualizar" de las cards, "Cancelar"…—.
+    ///
+    /// POR QUÉ NO SON PANELES: los paneles se pintan con el color OPACO del tema (navy oscuro), y con
+    /// ese tono un botón deja de leerse como botón y se lee como una cajita: es el reporte "los botones
+    /// de abrir grupos son negros". El tono de una card no es el tono de un control chico: el botón por
+    /// defecto de WinUI es una CAPA NEUTRA encima de lo que tenga detrás.
+    ///
+    /// EL ALFA NO ES EL QUE USA WinUI, ES MÁS ALTO: WinUI pinta esa capa con blanco al 6 % en reposo, y
+    /// con ese alfa —y el deslizador escalándola— el botón quedaba con una película de blanco del 3 %
+    /// que no se ve: el vidrio estaba puesto (mismo pincel y mismo radio que las cards, ver el censo)
+    /// pero no había material que se leyera como vidrio. Ahora son blanco al 15 % de reposo —el mismo
+    /// neutro que los temas de entorno usan para la capa de hover de una card (CardHoverBrush
+    /// #26FFFFFF)—, 20 % con el mouse encima y 10 % apretado: el botón se lee como un chip esmerilado,
+    /// no es una caja oscura y sigue respondiendo a los dos deslizadores. En los claros el relleno ya
+    /// era fuerte (blanco al 70 % de reposo) y se queda como estaba.
+    ///
+    /// POR QUÉ SU ALFA ES SU PROPIO ALFA: el ajuste ESCALA estas capas en vez de fijarles el alfa
+    /// absoluto de los paneles (ver PanelAppearance.SurfaceColorFor). Con la regla de los paneles, en
+    /// 0 % de transparencia el botón quedaba BLANCO OPACO en los temas oscuros —una capa sutil con el
+    /// alfa reemplazado por 1,00—; escalada, en 0 % queda igual que el botón del sistema y en 100 %
+    /// desaparece. Es una capa, no un panel.
+    /// </summary>
+    private static readonly (string Key, string Dark, string Light)[] OverlayKeys =
+    {
+        ("ButtonBackground", "#26FFFFFF", "#B3FFFFFF"),
+        ("ButtonBackgroundPointerOver", "#33FFFFFF", "#CCFFFFFF"),
+        ("ButtonBackgroundPressed", "#1AFFFFFF", "#80FFFFFF"),
+        ("ButtonBackgroundDisabled", "#26FFFFFF", "#4DFFFFFF")
+    };
+
+    /// <summary>Color de la capa neutra de un botón para un diccionario base (Light/Dark).</summary>
+    private static Windows.UI.Color OverlayColor(string key, AppTheme baseTheme)
+    {
+        foreach (var (overlayKey, dark, light) in OverlayKeys)
+            if (overlayKey == key) return ThemePaint.Color(baseTheme == AppTheme.Light ? light : dark);
+        return default;
+    }
+
+    /// <summary>La clave es una capa neutra de botón (ver <see cref="OverlayKeys"/>).</summary>
+    internal static bool IsOverlayKey(string key)
+    {
+        foreach (var (overlayKey, _, _) in OverlayKeys)
+            if (overlayKey == key) return true;
+        return false;
+    }
+
+    /// <summary>La clave de la que copia el color una clave heredada, o null si no lo es.</summary>
+    private static string? SourceOf(string key)
+    {
+        foreach (var (inherited, source) in InheritedKeys)
+            if (inherited == key) return source;
+        return null;
+    }
+
+    /// <summary>
     /// Pincel DE LA DEFINICIÓN de un tema (un gradiente, un resplandor o la imagen del fondo): lo que
     /// no se puede reconstruir desde los colores de fábrica, que son colores sueltos. Devuelve null
     /// si el tema no tiene paleta propia o no define esa clave. Lo usa el splash, que pinta el fondo
@@ -109,6 +201,13 @@ public static class ThemePalettes
             if (entry.Brush is Microsoft.UI.Xaml.Media.SolidColorBrush brush) map[entry.Key] = brush.Color;
         foreach (var (key, hex) in definition.OverrideBrushes) map[key] = ThemePaint.Color(hex);
         foreach (var (key, hex) in definition.AccentColors) map[key] = ThemePaint.Color(hex);
+
+        // Las CAPAS NEUTRAS de los botones (ver OverlayKeys) no son de la definición del tema —no
+        // llevan color propio— pero sí tienen que estar en el mapa: es de donde el ajuste saca el
+        // color de fábrica de las claves del censo, y sin entrada quedaban fuera de los deslizadores.
+        foreach (var (key, _, _) in OverlayKeys)
+            map[key] = OverlayColor(key, definition.Base);
+
         FactoryColors[definition.Theme] = map;
         FactoryPristine[definition.Theme] = new Dictionary<string, Windows.UI.Color>(map, StringComparer.Ordinal);
     }
@@ -145,19 +244,34 @@ public static class ThemePalettes
         color = default;
         try
         {
-            if (FactoryColors.TryGetValue(theme, out var map) && map.TryGetValue(key, out color))
-                return true;
+            // HEREDADA: su color es SIEMPRE el de la clave que copia (ver InheritedKeys), resuelto
+            // para el tema elegido y, si el tema no la declara, para su tema base. Sin esto quedaría
+            // fuera del ajuste de transparencia, que solo alcanza a las claves con color de fábrica.
+            //
+            // Va ANTES de buscarla por su propio nombre a propósito: el snapshot del tema base
+            // también tiene entrada para la heredada —AccentOverrides la declara para los temas
+            // clásicos— y esa entrada, en un tema con paleta propia, devolvía el tono del CLÁSICO
+            // (#151517 en Amatista) en vez del tono del tema elegido. La tabla es de un solo nivel:
+            // nunca encadena una heredada con otra.
+            if (SourceOf(key) is { } sourceKey) return TryGetOwnFactoryColor(theme, sourceKey, out color);
 
-            var baseTheme = BaseThemeFor(theme) == AppTheme.Light ? AppTheme.Light : AppTheme.Dark;
-            if (baseTheme != theme
-                && FactoryColors.TryGetValue(baseTheme, out var baseMap)
-                && baseMap.TryGetValue(key, out color))
-            {
-                return true;
-            }
+            if (TryGetOwnFactoryColor(theme, key, out color)) return true;
         }
         catch { }
         return false;
+    }
+
+    /// <summary>Color de fábrica DE LA CLAVE (definición del tema y, si no está ahí, el de su tema base).</summary>
+    private static bool TryGetOwnFactoryColor(AppTheme theme, string key, out Windows.UI.Color color)
+    {
+        color = default;
+        if (FactoryColors.TryGetValue(theme, out var map) && map.TryGetValue(key, out color))
+            return true;
+
+        var baseTheme = BaseThemeFor(theme) == AppTheme.Light ? AppTheme.Light : AppTheme.Dark;
+        return baseTheme != theme
+            && FactoryColors.TryGetValue(baseTheme, out var baseMap)
+            && baseMap.TryGetValue(key, out color);
     }
 
     // =====================================================================
@@ -237,6 +351,22 @@ public static class ThemePalettes
                 overrides[key] = ThemePaint.Brush(hex);
             foreach (var (key, hex) in definition.AccentColors)
                 overrides[key] = ThemePaint.Color(hex);
+
+            // Claves que piden los controles de WinUI y que el tema no declara: se escriben con el
+            // color de su clave hermana (ver InheritedKeys). Instancia NUEVA, no la del pincel
+            // hermano: el ajuste de transparencia muta cada clave por separado (ver
+            // PanelAppearance.WriteSurfaceBrush).
+            foreach (var (key, sourceKey) in InheritedKeys)
+            {
+                if (!TryGetFactoryColor(theme, sourceKey, out var inherited)) continue;
+                overrides[key] = new Microsoft.UI.Xaml.Media.SolidColorBrush(inherited);
+            }
+
+            // Y las CAPAS NEUTRAS de los botones por defecto, con el alfa del diccionario base del
+            // tema (ver OverlayKeys): el valor escrito en AccentOverrides es el de los temas clásicos,
+            // así que un tema con paleta propia tiene que traer el suyo.
+            foreach (var (key, _, _) in OverlayKeys)
+                overrides[key] = new Microsoft.UI.Xaml.Media.SolidColorBrush(OverlayColor(key, definition.Base));
         }
         catch
         {
@@ -300,6 +430,13 @@ public static class ThemePalettes
             foreach (var (_, key) in definition.OverrideBrushes) yield return key;
             foreach (var (key, _) in definition.AccentColors) yield return key;
         }
+
+        // Las heredadas entran al snapshot para que RestoreBase las devuelva a los valores de
+        // AccentOverrides al salir de un tema con paleta propia: si no, el color del tema anterior
+        // quedaba pegado en los controles de WinUI de los temas clásicos. Las CAPAS NEUTRAS de los
+        // botones también: son las que el tema con paleta propia pisa en ApplyPalette.
+        foreach (var (key, _) in InheritedKeys) yield return key;
+        foreach (var (key, _, _) in OverlayKeys) yield return key;
     }
 
     // =====================================================================

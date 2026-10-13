@@ -191,7 +191,7 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="4" VerticalAlignment="Center">
                                     <TextBlock Text="Tema de la aplicación" FontSize="16" FontWeight="SemiBold"/>
-                                    <TextBlock Text="Elige entre el tema del sistema, oscuro, claro, rosa/blanco, negro/azul, marea, aurora o brasa."
+                                    <TextBlock Text="Elige entre el tema del sistema y los temas propios de WinForge: planos, degradados y con imagen de fondo."
                                                FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 </StackPanel>
 <!-- Filtro Todos / Oscuro / Claro: las pastillas las arma ThemePickerUi (usan los

@@ -197,14 +197,36 @@ public sealed partial class ConfiguracionPage : Page
     }
 
     /// <summary>
-    /// Elige un tema desde la grilla: la misma elección que hacía el desplegable. Si el tema ya
-    /// está aplicado es un no-op (es el caso de entrar a la página: la card vigente viene marcada);
-    /// si es otro, se persiste y la app se reinicia para arrancar COMPLETA con la apariencia nueva
-    /// (sin repintados parciales página por página).
+    /// Elige un tema desde la grilla: cada selección explícita de un tema de entorno restablece
+    /// transparencia y blur a los valores de diseño, aunque ya sea el tema vigente. Si es otro,
+    /// se persiste y la app se reinicia para arrancar COMPLETA con la apariencia nueva.
     /// </summary>
     private void ApplyThemeSelection(AppTheme theme)
     {
-        if (_isLoading || theme == _themeService.CurrentTheme) return;
+        if (_isLoading) return;
+
+        bool isCurrentTheme = theme == _themeService.CurrentTheme;
+        bool resetEnvironmentAppearance = WHPO_UI.PanelAppearance.ResetEnvironmentDefaultsOnSelection(theme);
+
+        if (isCurrentTheme)
+        {
+            if (resetEnvironmentAppearance)
+            {
+                _isLoading = true;
+                try
+                {
+                    PanelTransparencySlider.Value = WHPO_UI.ThemeCatalog.DefaultPanelTransparency(theme);
+                    PanelBlurSlider.Value = WHPO_UI.ThemeCatalog.DefaultPanelBlur(theme);
+                    UpdatePanelTransparencyText();
+                    UpdatePanelBlurText();
+                }
+                finally
+                {
+                    _isLoading = false;
+                }
+            }
+            return;
+        }
 
         ThemePickerUi.MarkSelected(theme);
         _themeService.SetTheme(theme);

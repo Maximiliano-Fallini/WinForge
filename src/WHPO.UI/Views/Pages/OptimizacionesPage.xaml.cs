@@ -337,15 +337,20 @@ public sealed partial class OptimizacionesPage : Page
         }
         headerRow.Children.Add(headerStack);
 
+        // El encabezado plegable es una SUPERFICIE como cualquier card: el tono del encabezado
+        // del Expander (ExpanderHeaderBackground, que copia el de la card: ver
+        // ThemePalettes.InheritedKeys) con el alfa del deslizador de transparencia y el vidrio del
+        // desenfoque. Antes iba transparente, así que el plegable era la única pieza de la página
+        // que no seguía el ajuste de apariencia.
         var header = new Button
         {
             Content = headerRow,
-            Background = TransparentBrush,
+            Background = ThemeBrushes.GetSurface("ExpanderHeaderBackground"),
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(4),
+            Padding = new Thickness(10, 6, 14, 6),
             HorizontalAlignment = HorizontalAlignment.Left,
             HorizontalContentAlignment = HorizontalAlignment.Left,
-            CornerRadius = new CornerRadius(4)
+            CornerRadius = new CornerRadius(8)
         };
 
         var cardsPanel = new StackPanel { Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };

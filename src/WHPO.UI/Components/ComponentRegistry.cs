@@ -53,7 +53,7 @@ public sealed class ComponentRegistry
 {
     /// <summary>Tags del set "si o si": nunca ocultables ni desinstalables.</summary>
     public static readonly HashSet<string> CoreTags = new(StringComparer.OrdinalIgnoreCase)
-    { "sistema", "red", "nucleos", "procesos", "workshop", "configuracion" };
+    { "sistema", "red", "nucleos", "procesos", "workshop", "guia", "configuracion" };
 
     private readonly List<IWinForgeComponent> _items = new();
 

@@ -15,7 +15,7 @@ public interface IThemeService
 ///
 /// Light/Dark/SystemDefault son los clásicos. El resto son temas con paleta propia:
 /// heredan la estructura de un diccionario base (Light o Dark) y pisan sus pinceles de
-/// identidad (acento, fondos, cards, navbar) y, los cuatro últimos, también la imagen de
+/// identidad (acento, fondos, cards, navbar) y, los de entorno, además la imagen de
 /// fondo. Cada uno tiene su configuración completa en un archivo de la carpeta
 /// <c>Themes\</c> de la UI (ver ThemeCatalog).
 ///
@@ -55,5 +55,17 @@ public enum AppTheme
 
     /// <summary>"Crepúsculo": base oscura con un gradiente de atardecer propio (violeta → coral)
     /// y SIN foto de fondo: el primer tema del grupo "Degradado" del selector.</summary>
-    Twilight = 9
+    Twilight = 9,
+
+    /// <summary>"Amatista": base oscura con foto de amatista (cristal violeta) detrás de toda la
+    /// ventana y superficies translúcidas, del grupo "Entorno".</summary>
+    Amatista = 10,
+
+    /// <summary>"Metal": base oscura con foto de una superficie metálica (acero pulido) detrás de
+    /// toda la ventana, la paleta más neutra del set, del grupo "Entorno".</summary>
+    Metal = 11,
+
+    /// <summary>"Cristal Azul": base oscura con foto de cristales azules (zafiro facetado) detrás
+    /// de toda la ventana y superficies translúcidas, del grupo "Entorno".</summary>
+    CristalAzul = 12
 }

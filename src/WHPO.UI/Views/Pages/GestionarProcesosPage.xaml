@@ -86,11 +86,21 @@
                          botones de filtro que estaba debajo del feedback. La selección
                          inicial se hace en el constructor (no acá) para que el
                          SelectionChanged no dispare antes de que los servicios estén
-                         inyectados. -->
+                         inyectados.
+
+                         La VISTA CERRADA del desplegable (no su popup, que ya lo pintan
+                         las claves ComboBoxDropDown* de cada tema) lleva el MISMO
+                         relleno que el buscador de al lado: TextControlBackground, la
+                         superficie del cuadro de texto (ver PanelAppearance.SurfaceKeys),
+                         así que también responde al ajuste de transparencia y al vidrio.
+                         Sin esto el control se quedaba con el relleno por defecto de
+                         WinUI (ControlFillColorDefaultBrush), un gris translúcido ajeno
+                         a la paleta del tema. -->
                     <ComboBox x:Name="FilterComboBox"
                               Width="185"
                               FontSize="13"
                               VerticalAlignment="Center"
+                              Background="{ThemeResource TextControlBackground}"
                               SelectionChanged="FilterComboBox_SelectionChanged">
                         <ComboBoxItem x:Name="FilterAllItem" Content="Todos"/>
                         <ComboBoxItem x:Name="FilterGamesItem" Content="Videojuegos"/>

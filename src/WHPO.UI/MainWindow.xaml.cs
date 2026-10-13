@@ -189,6 +189,7 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("reparacion", typeof(ReparacionPage));
             ns.RegisterPage("actualizaciones", typeof(ActualizacionesPage));
             ns.RegisterPage("limpieza", typeof(LimpiezaPage));
+            ns.RegisterPage("guia", typeof(GuiaPage));
             ns.RegisterPage("configuracion", typeof(ConfiguracionPage));
             ns.RegisterPage("workshop", typeof(WorkshopPage));
             ns.RegisterPage("macros", typeof(MacrosPage));
@@ -222,7 +223,10 @@ public sealed partial class MainWindow : Window
         AttachNavItemMenus();
         MarkStartup("menus de pestaña adjuntos");
 
-        // Navegar directamente a la página de Sistema (sin título de cabecera)
+        // Navegar directamente a la página de Sistema (sin título de cabecera).
+        // Debe ser sincrónico, dentro del constructor: así la ventana se abre CON
+        // contenido. Difiriendo esto al dispatcher, la ventana se activaba con el
+        // ContentFrame vacío y se veía en negro hasta que cargaba la página.
         _navigationService.NavigateTo("sistema");
         NavigationViewControl.SelectedItem = NavigationViewControl.MenuItems[0];
         MarkStartup("pagina Sistema navegada");
@@ -1994,6 +1998,9 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    internal void HighlightNavigationPage(string pageKey)
+        => HighlightNavItemForPage(pageKey);
+
     /// <summary>Índice del primer hueco después del ítem Workshop (fin del set core).</summary>
     private int IndexAfterWorkshopItem(IList<object> menu)
     {
@@ -3698,6 +3705,9 @@ public sealed partial class MainWindow : Window
             AppTheme.Aurora => true,      // identidad oscura (fondo con imagen)
             AppTheme.Brasa => true,       // identidad oscura (fondo con imagen)
             AppTheme.Twilight => true,    // identidad oscura (fondo con gradiente propio)
+            AppTheme.Amatista => true,    // identidad oscura (fondo con imagen)
+            AppTheme.Metal => true,       // identidad oscura (fondo con imagen)
+            AppTheme.CristalAzul => true, // identidad oscura (fondo con imagen)
             _ => App.Services.GetRequiredService<IThemeApplier>().GetSystemTheme() == AppTheme.Dark
         };
 

@@ -9,20 +9,19 @@
 
 <!-- ====== CABECERA ====== -->
         <!-- Título suelto sobre el fondo de la página: sin barra ni descripción, solo el
-             título con su emoji (como el resto de las páginas). -->
+             título con su emoji (como el resto de las páginas).
+
+             Acá estaba el botón "Actualizar", que rehacía el censo de instalados y volvía a
+             bajar el catálogo. Se fue porque eso ya pasa solo al entrar a la página
+             (OnNavigatedTo: RefreshInstalledRecords + FetchCatalogAsync, esta con su caché):
+             el botón no agregaba nada que no hiciera navegar al Workshop. Con el botón
+             fuera, la cabecera es el StackPanel del título y nada más —el Grid de dos
+             columnas que lo alineaba a la derecha sobraba. -->
         <Border Grid.Row="0" Background="Transparent" Padding="24,14,24,12">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <FontIcon Glyph="&#xE719;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                    <TextBlock Text="Workshop" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                </StackPanel>
-                <Button x:Name="RefreshButton" Grid.Column="1" Click="RefreshButton_Click" CornerRadius="6" Padding="12,8" VerticalAlignment="Center">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <FontIcon Glyph="&#xE72C;" FontSize="14"/>
-                        <TextBlock Text="Actualizar" FontSize="12"/>
-                    </StackPanel>
-                </Button>
-            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE719;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                <TextBlock Text="Workshop" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </StackPanel>
         </Border>
 
 <!-- ====== CONTENIDO ====== -->

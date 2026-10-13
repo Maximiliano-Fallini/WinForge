@@ -24,11 +24,11 @@ namespace WHPO_UI;
 /// transparentes—. Ahora 0 % significa paneles OPACOS con el color del tema y 100 % los deja
 /// casi invisibles: el número de la card coincide con lo que se ve en todos los temas.
 /// LOS DOS NÚMEROS SON POR TEMA (esto es lo que cambió en 0.3.2): cada tema declara con qué
-/// transparencia y con qué desenfoque se ve como fue diseñado —90 % y 5 % los de ENTORNO, que traen
+/// transparencia y con qué desenfoque se ve como fue diseñado —50 % y 5 % los de ENTORNO, que traen
 /// foto; 0 % y 0 % los PLANOS y los de DEGRADADO, ver <see cref="ThemeCatalog.KindOf"/>— y arranca
 /// con esos valores mientras el usuario no los mueva con ese tema puesto. Lo que el usuario mueve se
-/// guarda para ESE tema (ver <see cref="Resolve"/>), así cambiar de tema devuelve el punto de partida
-/// del tema nuevo en vez de arrastrar el del anterior.
+/// guarda para ESE tema (ver <see cref="Resolve"/>). Al volver a seleccionar un tema de entorno,
+/// su transparencia y blur se restablecen siempre a los valores predeterminados (50 % y 5 %).
 ///
 /// CLAVE DEL CÁLCULO: el color de cada superficie NO se lee del diccionario vivo (que puede
 /// tener el color ya pisado por una aplicación anterior y dejaba el ajuste pegado a un valor
@@ -81,7 +81,7 @@ public static class PanelAppearance
 
     /// <summary>
     /// Los dos números con los que arranca un tema: lo que el usuario guardó PARA ESE TEMA o, si
-    /// nunca los movió con ese tema puesto, los de diseño (90 % y 5 % en los de entorno; 0 % y 0 %
+    /// nunca los movió con ese tema puesto, los de diseño (50 % y 5 % en los de entorno; 0 % y 0 %
     /// en los planos y de degradado, ver <see cref="ThemeCatalog.KindOf"/>).
     ///
     /// Mientras la migración a los ajustes por tema no haya corrido, el ajuste GLOBAL viejo sigue
@@ -143,7 +143,31 @@ public static class PanelAppearance
         "TextControlBackground",
         "TextControlBackgroundPointerOver",
         "TextControlBackgroundFocused",
-        "TextControlBackgroundDisabled"
+        "TextControlBackgroundDisabled",
+
+        // Y las claves que piden los CONTROLES de WinUI y que la app no declaraba en ninguna
+        // paleta: el desplegable CERRADO (su popup ya estaba), el Expander de la Guía y el
+        // hover/pressed de un botón. Son las HEREDADAS de ThemePalettes.InheritedKeys —toman el
+        // tono de la card o del cuadro de texto— y el censo las resuelve por el color de su clave
+        // hermana. Sin esto el control quedaba con el relleno del sistema: ni del tema ni del
+        // ajuste (el reporte "el desplegable no sigue la transparencia").
+        "ComboBoxBackground",
+        "ComboBoxBackgroundPointerOver",
+        "ComboBoxBackgroundPressed",
+        "ComboBoxBackgroundFocused",
+        "ComboBoxBackgroundDisabled",
+        "ExpanderHeaderBackground",
+        "ExpanderContentBackground",
+        // Botones SIN fondo propio (los "Abrir grupos" / "Cerrar grupos" del Monitor de sensores,
+        // los "Actualizar" de las cards y todo botón del estilo por defecto de WinUI). Su relleno
+        // de reposo es ButtonBackground —que la app no declaraba, así que lo pintaba el sistema— y
+        // el de deshabilitado su variante Disabled: sin las dos, el botón quedaba opaco y ajeno al
+        // ajuste mientras su hover/pressed (ya heredados) sí respondía: el reporte "los botones no
+        // se ven afectados por la transparencia ni el blur".
+        "ButtonBackground",
+        "ButtonBackgroundDisabled",
+        "ButtonBackgroundPointerOver",
+        "ButtonBackgroundPressed"
 
         // El BORDE de las cards NO va en la lista (estuvo un tiempo): esta fórmula es de los
         // RELLENOS —con el desenfoque encendido el alfa va al tope del vidrio (MaxFrostedAlpha)—
@@ -185,7 +209,8 @@ public static class PanelAppearance
     private static double PanelAlpha => AlphaFor(TransparencyPercent);
 
     /// <summary>
-    /// Tope de opacidad de un panel con el desenfoque encendido. Un panel completamente opaco taparía
+    /// Tope de opacidad de un panel con el desenfoque al MÁXIMO (el tope baja con el blur: ver
+    /// <see cref="FrostedCeiling"/>). Un panel completamente opaco taparía
     /// lo que tiene DETRÁS —el parche desenfocado en el camino de respaldo (ver <see cref="PanelBlurLayer"/>)
     /// y, con el vidrio de la plataforma, el propio fondo desenfocado por el acrílico— así que el
     /// deslizador de blur parecería no hacer nada: un vidrio esmerilado necesita dejar pasar algo de luz
@@ -193,6 +218,27 @@ public static class PanelAppearance
     /// <see cref="SurfaceFill"/>).
     /// </summary>
     private const double MaxFrostedAlpha = 0.62;
+
+    /// <summary>
+    /// Tope de opacidad que le toca a un desenfoque dado: <see cref="MaxFrostedAlpha"/> con el blur al
+    /// tope y 1 (sin tope) sin blur.
+    ///
+    /// POR QUÉ NO ES FIJO: con el tope fijo, TODO el tramo del deslizador de transparencia de 38 % para
+    /// abajo daba el mismo alfa (0,62) —mover el control no cambiaba un píxel— mientras la ayuda del
+    /// control promete "en 0 % los paneles quedan opacos, con el color del tema". Y el tope solo tiene
+    /// sentido donde hay vidrio que dejar ver: con el blur de fábrica de los temas de entorno (5 %) no
+    /// hay casi nada que tapar, así que la escala entera vuelve a responder y en 0 % las superficies
+    /// quedan opacas; el vidrio pleno conserva su 0,62, que es lo que lo mantiene siendo vidrio.
+    /// </summary>
+    private static double FrostedCeiling(double blurPercent)
+    {
+        // El blur pesa al CUADRADO: el vidrio de verdad —blur alto— es el que exige que el panel no
+        // se vuelva opaco, y ahí rige el tope pleno (MaxFrostedAlpha); con el blur suave de fábrica
+        // de los temas de entorno (5 %) el tope queda en 1, así que el 0 % del deslizador deja las
+        // superficies opacas DE VERDAD, que es lo que promete la ayuda del control.
+        double glass = Math.Clamp(blurPercent, 0.0, 100.0) / 100.0;
+        return 1.0 - (1.0 - MaxFrostedAlpha) * glass * glass;
+    }
 
     /// <summary>
     /// Alfa de las superficies para un valor de transparencia dado. Es LA regla del ajuste: la usan
@@ -217,7 +263,8 @@ public static class PanelAppearance
         // (WindowWallpaperScrimBrush) más el desenfoque, y las cards siguen delimitadas por su
         // borde, que no es una superficie de este ajuste (ver SurfaceKeys).
         double alpha = Math.Clamp(1.0 - transparencyPercent / 100.0, 0.0, 1.0);
-        return blurPercent > 0.0 ? Math.Min(alpha, MaxFrostedAlpha) : alpha;
+        // El tope solo existe si hay vidrio, y su altura depende de cuánto blur haya: ver FrostedCeiling.
+        return blurPercent > 0.0 ? Math.Min(alpha, FrostedCeiling(blurPercent)) : alpha;
     }
 
     /// <summary>
@@ -291,7 +338,7 @@ public static class PanelAppearance
                 MigratePerThemeSettings(settings, theme);
 
                 // Cada tema arranca con SUS números: lo que el usuario guardó para este tema o, si
-                // nunca los movió con él puesto, los de diseño (entorno 90 % y 5 %; planos y
+                // nunca los movió con él puesto, los de diseño (entorno 50 % y 5 %; planos y
                 // degradado 0 % y 0 %). Es lo que hace que elegir un tema de entorno ya deje ver la
                 // foto sin tocar nada, y que uno plano arranque opaco y sin vidrio.
                 var (transparency, blur) = Resolve(settings, theme);
@@ -341,6 +388,43 @@ public static class PanelAppearance
 #endif
     }
 
+    /// <summary>
+    /// Cada selección explícita de un tema de entorno restablece sus controles al diseño actual
+    /// (50 % de transparencia y 5 % de blur), reemplazando valores personalizados guardados.
+    /// Si ya es el tema efectivo, aplica los cambios ahora; si no, OnThemeApplied los recoge
+    /// después de que se aplique el tema nuevo.
+    /// </summary>
+    internal static bool ResetEnvironmentDefaultsOnSelection(AppTheme theme)
+    {
+        if (ThemeCatalog.KindOf(theme) != ThemeCatalog.ThemeKind.Environment)
+            return false;
+
+        foreach (var environmentTheme in ThemeCatalog.All)
+        {
+            if (ThemeCatalog.KindOf(environmentTheme.Theme) != ThemeCatalog.ThemeKind.Environment)
+                continue;
+
+            Save(TransparencyKeyFor(environmentTheme.Theme),
+                ThemeCatalog.DefaultPanelTransparency(environmentTheme.Theme));
+            Save(BlurKeyFor(environmentTheme.Theme),
+                ThemeCatalog.DefaultPanelBlur(environmentTheme.Theme));
+        }
+
+        double transparency = ThemeCatalog.DefaultPanelTransparency(theme);
+        double blur = ThemeCatalog.DefaultPanelBlur(theme);
+
+        if (_loaded && EffectiveTheme() == theme)
+        {
+            SetTransparencyPercent(transparency, persist: false);
+            SetBlurPercent(blur, persist: false);
+        }
+
+        Diag($"selección explícita del tema de entorno {theme}: los ajustes guardados de todos " +
+             $"los temas de entorno se restablecieron a los valores de diseño; transparencia " +
+             $"{transparency:0} % y desenfoque {blur:0} %");
+        return true;
+    }
+
     /// <summary>Los ajustes ya se leyeron y aplicaron al menos una vez en este proceso.</summary>
     private static bool _loaded;
 
@@ -377,7 +461,7 @@ public static class PanelAppearance
     ///
     /// Qué se muda: solo si el usuario los había elegido a mano, y solo al tema que tenía puesto
     /// —es el único del que se puede decir que ese valor era "el suyo"—. Los demás temas arrancan
-    /// con los de diseño (entorno 90 % y 5 %; planos y degradado 0 % y 0 %). Después las claves
+    /// con los de diseño (entorno 50 % y 5 %; planos y degradado 0 % y 0 %). Después las claves
     /// globales se borran, para que no quede un valor viejo esperando a que alguien lo lea.
     /// </summary>
     private static void MigratePerThemeSettings(ISettingsService settings, AppTheme theme)
@@ -396,7 +480,7 @@ public static class PanelAppearance
             }
             else
             {
-                Diag("migración a ajustes por tema: no había valores elegidos a mano — cada tema arranca con los suyos (entorno 90 % y 5 %; planos y degradado 0 % y 0 %)");
+                Diag("migración a ajustes por tema: no había valores elegidos a mano — cada tema arranca con los suyos (entorno 50 % y 5 %; planos y degradado 0 % y 0 %)");
             }
 
             settings.Remove(TransparencySettingKey);
@@ -466,9 +550,9 @@ public static class PanelAppearance
                     continue;
                 }
 
-                var color = WithPanelAlpha(factory);
+                var color = SurfaceColorFor(key, factory, value);
 
-                bool written = WriteSurfaceBrush(key, themeKey, color);
+                bool written = WriteSurfaceBrush(key, themeKey, color, out var fill);
                 if (written)
                 {
                     applied++;
@@ -479,7 +563,11 @@ public static class PanelAppearance
                     ThemeBrushes.Resync(key, themeKey);
                 }
 
-                Diag($"    {key}: {ThemePaint.Hex(factory)} -> {ThemePaint.Hex(color)}{(written ? "" : " (no se pudo escribir)")}");
+                // El TIPO de relleno y el radio del vidrio van en la misma línea: es la diferencia entre
+                // "el ajuste no llegó a esta superficie" y "llegó pero el vidrio quedó con radio 0/1 px"
+                // (que se ve igual que un relleno plano). Ver PanelBlurLayer.DescribeFill.
+                Diag($"    {key}: {ThemePaint.Hex(factory)} -> {ThemePaint.Hex(color)}" +
+                     $" {(written ? PanelBlurLayer.DescribeFill(fill) : "(no se pudo escribir)")}");
             }
 
             // El relleno de cada superficie ya quedó escrito con lo que toca —vidrio del compositor,
@@ -653,9 +741,29 @@ public static class PanelAppearance
     /// ajuste: el alfa lo fija el deslizador (absoluto), nunca el color que hay hoy en el
     /// diccionario; del tema se conserva el color.
     /// </summary>
-    private static Windows.UI.Color WithPanelAlpha(Windows.UI.Color factory)
-        => Windows.UI.Color.FromArgb(
-            (byte)Math.Clamp((int)Math.Round(255 * AlphaFor(TransparencyPercent)), 0, 255), factory.R, factory.G, factory.B);
+    /// <summary>
+    /// EL COLOR DE UNA SUPERFICIE del censo para una transparencia dada, con la regla que le toca a su
+    /// tipo de relleno. Es la única fuente de la verdad: la usan el ajuste y la autocomprobación de
+    /// desarrollo, así que no pueden separarse (la comprobación comprueba exactamente lo que se pinta).
+    ///
+    /// DOS REGLAS, y la diferencia no es cosmética:
+    /// - PANEL (cards, grillas, menú, cuadros de texto, desplegables): el alfa lo FIJA el deslizador.
+    ///   Su color de fábrica es opaco, así que en 0 % el panel queda opaco con el color del tema, que
+    ///   es lo que promete el control.
+    /// - CAPA NEUTRA del botón por defecto (ver ThemePalettes.OverlayKeys): el deslizador ESCALA su
+    ///   alfa de fábrica en vez de reemplazarla. Es un relleno sutil por diseño —blanco al 6 % en los
+    ///   temas oscuros—, y con la regla de los paneles en 0 % pasaba a BLANCO OPACO: el mismo error en
+    ///   espejo del reporte "los botones son negros", que venía de darle a un control chico el tono
+    ///   opaco de una superficie grande. Escalado, en 0 % el botón se ve como el del sistema y en 100 %
+    ///   desaparece.
+    /// </summary>
+    private static Windows.UI.Color SurfaceColorFor(string key, Windows.UI.Color factory, double transparencyPercent)
+    {
+        double alpha = AlphaFor(transparencyPercent);
+        if (ThemePalettes.IsOverlayKey(key)) alpha *= factory.A / 255.0;
+        return Windows.UI.Color.FromArgb(
+            (byte)Math.Clamp((int)Math.Round(255 * alpha), 0, 255), factory.R, factory.G, factory.B);
+    }
 
     /// <summary>
     /// Devuelve el color con el alfa de los paneles aplicado. Lo usan los colores que MainWindow
@@ -1015,8 +1123,9 @@ public static class PanelAppearance
     /// elementos repintan al instante, sin depender de que WinUI vuelva a resolver el {ThemeResource}.
     /// Solo al cambiar el TIPO de relleno (encender o apagar el vidrio) se escribe una instancia nueva.
     /// </summary>
-    private static bool WriteSurfaceBrush(string key, string themeKey, Windows.UI.Color color)
+    private static bool WriteSurfaceBrush(string key, string themeKey, Windows.UI.Color color, out Brush? written)
     {
+        written = null;
         try
         {
             var dict = FindThemeDictionary(key, themeKey);
@@ -1024,6 +1133,7 @@ public static class PanelAppearance
 
             dict.TryGetValue(key, out var current);
             var fill = SurfaceFill(current as Brush, color);
+            written = fill;
             if (!ReferenceEquals(fill, current))
             {
                 dict[key] = fill;
@@ -1161,6 +1271,8 @@ public static class PanelAppearance
             var theme = EffectiveTheme();
             var themeKey = ThemeKeyFor(theme);
             int failures = 0, checkedSurfaces = 0, opaqueSurfaces = 0;
+            // Superficies distintas que llegaron a medirse (el conteo de comprobaciones es por paso).
+            var measured = new HashSet<string>(StringComparer.Ordinal);
 
             var steps = new[]
             {
@@ -1182,9 +1294,8 @@ public static class PanelAppearance
                         if (actual == null) continue;
 
                         checkedSurfaces++;
-                        var expected = Windows.UI.Color.FromArgb(
-                            (byte)Math.Round(255 * AlphaFor(value)),
-                            factory.R, factory.G, factory.B);
+                        measured.Add(key);
+                        var expected = SurfaceColorFor(key, factory, value);
                         if (actual.Value != expected)
                         {
                             failures++;
@@ -1210,8 +1321,8 @@ public static class PanelAppearance
             }
 
             Diag(failures == 0
-                ? $"verificación de ida y vuelta de la transparencia: OK ({checkedSurfaces} superficies; en 0 % quedaron opacas {opaqueSurfaces} del total)"
-                : $"verificación de ida y vuelta de la transparencia: {failures} de {checkedSurfaces} superficies no quedaron con el alfa esperado");
+                ? $"verificación de ida y vuelta de la transparencia: OK ({measured.Count} superficies × {steps.Length} pasos = {checkedSurfaces} comprobaciones; en 0 % quedaron opacas {opaqueSurfaces})"
+                : $"verificación de ida y vuelta de la transparencia: {failures} de {checkedSurfaces} comprobaciones ({measured.Count} superficies) no quedaron con el alfa esperado");
         }
         catch (Exception ex)
         {
@@ -1221,8 +1332,17 @@ public static class PanelAppearance
 
     /// <summary>
     /// Color que tiene HOY una superficie en el diccionario del tema. Devuelve null cuando la
-    /// superficie no está pintada con un color (el pincel de la foto desenfocada): en ese caso la
-    /// comprobación de ida y vuelta no tiene alfa que medir.
+    /// superficie no está pintada con un color: en ese caso la comprobación de ida y vuelta no
+    /// tiene alfa que medir.
+    ///
+    /// EL VIDRIO TAMBIÉN TIENE ALFA QUE MEDIR, y por eso se lee su TINTE: con el desenfoque
+    /// encendido —el ajuste de fábrica de los temas de entorno— las superficies del censo NO son
+    /// sólidos sino el pincel de vidrio (ver <see cref="SurfaceFill"/>), así que leer solo
+    /// <see cref="SolidColorBrush"/> dejaba la comprobación en "OK (0 superficies)": un autotest
+    /// que no medía nada y aun así se reportaba como aprobado. El tinte es exactamente el color
+    /// que se le pasó a la superficie —el de fábrica con el alfa del ajuste (ver
+    /// <see cref="SurfaceColorFor"/>)—, así que mide lo mismo que el sólido; el acrílico lo esconde
+    /// en dos mitades (color opaco + <see cref="AcrylicBrush.TintOpacity"/>) y se recomponen.
     /// </summary>
     private static Windows.UI.Color? ReadSurfaceColor(string key, string themeKey)
     {
@@ -1231,6 +1351,10 @@ public static class PanelAppearance
         return value switch
         {
             SolidColorBrush brush => brush.Color,
+            GlassBlurBrush glass => glass.Tint,
+            AcrylicBrush acrylic => Windows.UI.Color.FromArgb(
+                (byte)Math.Clamp((int)Math.Round(255 * acrylic.TintOpacity), 0, 255),
+                acrylic.TintColor.R, acrylic.TintColor.G, acrylic.TintColor.B),
             _ => null
         };
     }

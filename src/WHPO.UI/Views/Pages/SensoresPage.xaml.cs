@@ -110,6 +110,19 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
     {
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Disabled;
+
+        // Los cuatro botones de la grilla (Abrir/Cerrar grupos y subgrupos) son del estilo por
+        // defecto de WinUI, y ese estilo saca el fondo del {ThemeResource ButtonBackground}: la
+        // clave llega al control con el valor ESTÁTICO del diccionario de tema, no con el relleno
+        // que el ajuste de apariencia mantiene para las superficies (el vidrio del compositor,
+        // ver PanelAppearance.SurfaceBrush), así que el botón quedaba plano y el deslizador de
+        // desenfoque no lo tocaba. Acá se les pone ESE relleno —el mismo que la app usa para el
+        // resto de las superficies, y el mismo mecanismo que los rellenos de la grilla de abajo
+        // (GroupFillBrush / CategoryFillBrush)—: vidrio con el radio del deslizador y el tinte del
+        // tema. La instancia es estable y la repinta ThemeBrushes en cada cambio de tema; el radio
+        // lo actualiza GlassBlurBrush.SetRadiusForAll.
+        foreach (var button in new[] { ExpandAllGroupsButton, ExpandAllCategoriesButton, CollapseAllGroupsButton, CollapseAllCategoriesButton })
+            button.Background = ThemeBrushes.GetSurface("ButtonBackground");
         _sensorService = App.Services.GetRequiredService<ISensorService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         Unloaded += (s, e) => StopPolling();
@@ -419,93 +432,12 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
 
     // ---- Ventilador de PC (PathIcon con geometría generada) ----
 
-    private static PathIcon CreateFanIcon() => new()
-    {
-        Data = CreateFanGeometry(),
-        Width = 14,
-        Height = 14,
-        Foreground = Feedback.MutedBrush
-    };
-
-    // Fan de PC en un viewbox de 24x24: aro exterior, 4 aspas curvadas y buje central.
-    private static Geometry CreateFanGeometry()
-    {
-        const double cx = 12, cy = 12;
-        const double hubR = 2.6;    // radio del buje central
-        const double rimR = 10.4;   // radio del aro exterior
-        const double half = 13;     // media apertura angular de cada aspa
-        const double sweep = 24;    // barrido de la pala (dirección de giro)
-        const double rIn = hubR + 0.2;
-        const double rOut = rimR - 0.45;
-
-        var geo = new PathGeometry();
-
-        // Aro exterior.
-        geo.Figures.Add(CircleFigure(cx, cy, rimR));
-
-        // Aspas.
-        for (int k = 0; k < 4; k++)
-            geo.Figures.Add(FanBladeFigure(cx, cy, rIn, rOut, k * 90.0 + 45.0, half, sweep));
-
-        // Buje central (va al final para cubrir las raíces de las aspas).
-        geo.Figures.Add(CircleFigure(cx, cy, hubR));
-        return geo;
-    }
-
-    private static PathFigure CircleFigure(double cx, double cy, double r) => new()
-    {
-        StartPoint = new Point(cx + r, cy),
-        IsClosed = true,
-        IsFilled = true,
-        Segments =
-        {
-            new ArcSegment { Point = new Point(cx - r, cy), Size = new Size(r, r), SweepDirection = SweepDirection.Clockwise },
-            new ArcSegment { Point = new Point(cx + r, cy), Size = new Size(r, r), SweepDirection = SweepDirection.Clockwise }
-        }
-    };
-
-    private static PathFigure FanBladeFigure(double cx, double cy,
-        double rIn, double rOut, double centerDeg, double half, double sweep)
-    {
-        var p1 = Polar(cx, cy, rIn, centerDeg - half);      // raíz, lado trasero
-        var p2 = Polar(cx, cy, rIn, centerDeg + half);      // raíz, lado delantero
-        var p3 = Polar(cx, cy, rOut, centerDeg + half + sweep);  // punta delantera
-        var p4 = Polar(cx, cy, rOut, centerDeg - half + sweep);  // punta trasera
-        var midR = (rIn + rOut) / 2;
-
-        var figure = new PathFigure
-        {
-            StartPoint = p1,
-            IsClosed = true,
-            IsFilled = true
-        };
-
-        // Borde interno junto al buje.
-        figure.Segments.Add(new ArcSegment { Point = p2, Size = new Size(rIn, rIn), SweepDirection = SweepDirection.Clockwise });
-        // Borde delantero barrido (curva hacia el sentido de giro).
-        figure.Segments.Add(new BezierSegment
-        {
-            Point1 = Polar(cx, cy, midR, centerDeg + half + sweep * 0.35),
-            Point2 = Polar(cx, cy, midR, centerDeg + half + sweep * 0.75),
-            Point3 = p3
-        });
-        // Borde exterior.
-        figure.Segments.Add(new ArcSegment { Point = p4, Size = new Size(rOut, rOut), SweepDirection = SweepDirection.Clockwise });
-        // Borde trasero (curva de vuelta al buje).
-        figure.Segments.Add(new BezierSegment
-        {
-            Point1 = Polar(cx, cy, midR, centerDeg - half + sweep * 0.75),
-            Point2 = Polar(cx, cy, midR, centerDeg - half + sweep * 0.35),
-            Point3 = p1
-        });
-        return figure;
-    }
-
-    private static Point Polar(double cx, double cy, double r, double deg)
-    {
-        var rad = deg * Math.PI / 180.0;
-        return new Point(cx + r * Math.Cos(rad), cy + r * Math.Sin(rad));
-    }
+    // Reutiliza el FanIcon de la app —el mismo del navbar y de las cards del Workshop—.
+    // Antes había un SEGUNDO ventilador dibujado acá, de estilo relleno macizo (aspas
+    // sólidas y aro fino), y no coincidía con el de línea que usa el resto de la app:
+    // en una pantalla se veían dos fans distintos. Ahora ambos salen de FanIcon.CreateIcon.
+    private static PathIcon CreateFanIcon() =>
+        WHPO_UI.Controls.FanIcon.CreateIcon(14, Feedback.MutedBrush);
 
     private Border CreateCell(TextBlock content, bool rightLine, int column = 0, double leftPad = 8)
     {

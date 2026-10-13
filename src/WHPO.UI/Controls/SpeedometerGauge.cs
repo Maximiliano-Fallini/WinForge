@@ -399,15 +399,17 @@ public sealed class SpeedometerGauge : Grid
         {
             var accent = ThemeBrushes.Get("AccentBrush");
 
-            _trackArc.Stroke = ThemeBrushes.Get("MutedBrush");
-            _trackArc.Opacity = 0.35;
-            _progressArc.Stroke = accent;
-            _needle.Fill = accent;
-            _hubOuter.Fill = accent;
-            _hubInner.Fill = ThemeBrushes.Get("CardBackgroundBrush");
-            _percentText.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
-
-            var tick = ThemeBrushes.Get("ChartGridBrush");
+            // LAS MARCAS VAN PRIMERO, y el orden importa: son la ESCALA del velocímetro —lo que
+            // hace legible el dial— y hasta acá se pintaban al final, después de las búsquedas de
+            // tema del arco, la aguja y el %. Cualquier cosa que fallara en el medio se llevaba la
+            // excepción al catch de abajo con las marcas sin pintar: un dial con arco, aguja y %
+            // pero SIN escala (el reporte "acá no se ven las velocidades como en el otro").
+            // Pintarlas antes las deja fuera del alcance de todo lo que puede fallar después.
+            //
+            // Escala del velocímetro, no grilla de gráfico: ChartGridBrush está al 20 % de alfa
+            // (pensado para no verse debajo de las series) y con el 0,6 de abajo la escala quedaba
+            // apagada en todos los temas. Mismo tono que el arco del dial. Ver SplashWindow.
+            var tick = ThemeBrushes.Get("MutedBrush");
             foreach (var child in _tickLayer.Children)
             {
                 if (child is Shape shape)
@@ -416,6 +418,14 @@ public sealed class SpeedometerGauge : Grid
                     shape.Opacity = 0.6;
                 }
             }
+
+            _trackArc.Stroke = ThemeBrushes.Get("MutedBrush");
+            _trackArc.Opacity = 0.35;
+            _progressArc.Stroke = accent;
+            _needle.Fill = accent;
+            _hubOuter.Fill = accent;
+            _hubInner.Fill = ThemeBrushes.Get("CardBackgroundBrush");
+            _percentText.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
         }
         catch
         {

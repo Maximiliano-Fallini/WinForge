@@ -142,12 +142,6 @@ public sealed partial class WorkshopPage : Page
         if (result.Catalog != null) I18n.Reapply();
     }
 
-    private void RefreshButton_Click(object sender, RoutedEventArgs e)
-    {
-        RefreshInstalledRecords();
-        _ = FetchCatalogAsync();
-    }
-
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => RebuildSections();
 
     private void SetStatus(string? text, bool warning)
@@ -260,9 +254,15 @@ public sealed partial class WorkshopPage : Page
         bool active = _categoryFilter == category;
         var accent = ThemeBrushes.Get("AccentBrush");
 
-        var badge = new Border
+        // La etiqueta es un CHIP de la app: el cuerpo es la superficie del tema —la misma clave
+        // que los chips de Núcleos y Overclock USB— y el tinte del acento va encima, en una capa
+        // propia. Así el ajuste de apariencia la alcanza como a cualquier card (alfa del
+        // deslizador de transparencia y vidrio del desenfoque: ver PanelAppearance.SurfaceKeys)
+        // y el tinte de acento queda como el detalle de color de siempre (0,14 normal / 0,28
+        // hover; la activa, sólida con el texto sobre acento).
+        var tint = new Border
         {
-            Background = active ? accent : new SolidColorBrush(accent.Color) { Opacity = 0.14 },
+            Background = new SolidColorBrush(accent.Color) { Opacity = active ? 1.0 : 0.14 },
             CornerRadius = new CornerRadius(BadgeCornerRadius),
             Padding = new Thickness(BadgeHPadding + 2, BadgeVPadding + 2, BadgeHPadding + 2, BadgeVPadding + 3),
             Child = new TextBlock
@@ -276,18 +276,25 @@ public sealed partial class WorkshopPage : Page
             }
         };
 
+        var badge = new Border
+        {
+            Background = ThemeBrushes.GetSurface("ChipBackgroundBrush"),
+            CornerRadius = new CornerRadius(BadgeCornerRadius),
+            Child = tint
+        };
+
         // Hacerla clicable: el Border no es botón, así que se le da feedback
         // de hover y el Tapped cambia el filtro. El cursor de mano no se toca:
         // WinUI no expone ProtectedCursor en Border sin hacks de interop.
         badge.PointerEntered += (s, e) =>
         {
             if (_categoryFilter != category)
-                badge.Background = new SolidColorBrush(accent.Color) { Opacity = 0.28 };
+                tint.Background = new SolidColorBrush(accent.Color) { Opacity = 0.28 };
         };
         badge.PointerExited += (s, e) =>
         {
             if (_categoryFilter != category)
-                badge.Background = new SolidColorBrush(accent.Color) { Opacity = 0.14 };
+                tint.Background = new SolidColorBrush(accent.Color) { Opacity = 0.14 };
         };
         badge.Tapped += (s, e) =>
         {
@@ -346,25 +353,35 @@ public sealed partial class WorkshopPage : Page
 
     // Componentes marcados como "En desarrollo": la card muestra un badge amarillo
     // adicional junto al de categoría hasta que el componente salga de esa etapa.
+    // TCP / Red avanzado salió de desarrollo: ya es instalable por todos en build
+    // estable, así que la lista quedó vacía a propósito. Los componentes descargables
+    // no usan esta lista: se marcan con "inDevelopment": true en components.json y los
+    // detecta IsInDevelopment vía card.Entry.
     private static readonly HashSet<string> InDevelopmentIds = new(StringComparer.OrdinalIgnoreCase)
     {
-        "tcp"
     };
 
-    // Fábrica de badges de la card: mismo formato para estado y categoría.
+    // Fábrica de badges de la card: mismo formato para estado y categoría. El cuerpo es el chip
+    // de superficie de la app (sigue la transparencia y el vidrio, ver BuildFilterBadges_Add) y
+    // el tinte va en una capa encima.
     private static Border MakeBadge(string text, SolidColorBrush tint, SolidColorBrush textColor) => new()
     {
-        Background = new SolidColorBrush(tint.Color) { Opacity = 0.14 },
+        Background = ThemeBrushes.GetSurface("ChipBackgroundBrush"),
         CornerRadius = new CornerRadius(BadgeCornerRadius),
-        Padding = new Thickness(BadgeHPadding, BadgeVPadding, BadgeHPadding, BadgeVPadding + 1),
         VerticalAlignment = VerticalAlignment.Top,
         HorizontalAlignment = HorizontalAlignment.Right,
-        Child = new TextBlock
+        Child = new Border
         {
-            Text = text,
-            FontSize = BadgeFontSize,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = textColor
+            Background = new SolidColorBrush(tint.Color) { Opacity = 0.14 },
+            CornerRadius = new CornerRadius(BadgeCornerRadius),
+            Padding = new Thickness(BadgeHPadding, BadgeVPadding, BadgeHPadding, BadgeVPadding + 1),
+            Child = new TextBlock
+            {
+                Text = text,
+                FontSize = BadgeFontSize,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = textColor
+            }
         }
     };
 

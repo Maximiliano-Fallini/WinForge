@@ -640,10 +640,11 @@ public sealed partial class LimpiezaPage : Page
 
         // Velocímetros de progreso: el MISMO dial de la pantalla de arranque
         // (SpeedometerGauge) muestra el % completado durante el análisis/escaneo.
-        // El de duplicados es más chico porque comparte fila con el texto de
-        // carpeta actual, y el de Administración de inicio también: vive dentro
-        // de la card de la lista.
-        DupRing.ConfigureSize(120);
+        // Los tres quedan al tamaño por defecto del control —el del arranque, 300—: el de
+        // duplicados es el mismo dial que el del Chequeo y el de Personalizada (antes iba
+        // más chico y al lado de las cards de análisis se leía como otro control).
+        // El de Administración de inicio sigue más chico: vive DENTRO de la card de la
+        // lista, donde un dial de 300 desbordaría la fila.
         StartupRing.ConfigureSize(150);
 
         // Stepper de fases del Chequeo: puntos + línea, estilo onboarding.

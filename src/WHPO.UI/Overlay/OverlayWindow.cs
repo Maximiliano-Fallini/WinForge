@@ -332,7 +332,7 @@ public sealed class OverlayWindow : Form
     /// Alfa (0..1) que el TEMA le da a sus paneles con el ajuste de transparencia vigente: es el
     /// mismo cálculo que pinta las cards, el menú y la barra de título de la app
     /// (<see cref="PanelAppearance.ApplyToColor(Windows.UI.Color)"/>), así que el overlay se ve tan
-    /// de vidrio como los paneles del tema activo — 10 % en los temas de entorno (90 % de
+    /// de vidrio como los paneles del tema activo — 50 % en los temas de entorno (50 % de
     /// transparencia), 100 % en los planos y de degradado — y sigue EN VIVO el deslizador de la
     /// pestaña Apariencia. Se lee en cada render: es una cuenta, no un estado.
     ///
