@@ -43,11 +43,11 @@ WinForge reúne en una sola app lo que normalmente está repartido entre media d
 ## 📦 Instalación
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.4.3/WinForge-0.4.3.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.4.3_|_93.1_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge v0.4.3 (93.1 MB)"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.5.5/WinForge-0.5.5.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Descargar_WinForge-v0.5.5_|_93.8_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Descargar WinForge v0.5.5 (93.8 MB)"/>
   </a>
   <br/>
-  <sub>13/10/2026 - UTC-3</sub>
+  <sub>24/10/2026 - UTC-3</sub>
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
