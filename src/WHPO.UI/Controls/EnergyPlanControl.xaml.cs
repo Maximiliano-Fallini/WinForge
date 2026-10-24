@@ -36,8 +36,24 @@ public sealed partial class EnergyPlanControl : UserControl
     private bool _manageLoaded;
     private bool _compareLoaded;
 
+    /// <summary>Pestaña interna activa (0 = Energía, 1 = Gestionar, 2 = Comparar).</summary>
+    public int SelectedTabIndex => _selectedTabIndex;
+
+    /// <summary>
+    /// Avisa a quien monta el control que cambió la pestaña interna: la página de
+    /// Optimizaciones lo usa para ocultar las optimizaciones en las pestañas de
+    /// gestión y comparación, donde no tienen nada que ver.
+    /// </summary>
+    public event Action<int>? TabChanged;
+
     /// <summary>Relleno de la barra de pestañas interna (PlanTabs), reusado entre pasadas.</summary>
     private Brush? _navBarFill;
+
+    /// <summary>Corta las reentradas del repaso de idioma (ver ApplyLanguageToControl).</summary>
+    private bool _applyingLanguage;
+
+    /// <summary>Ya hay una segunda pasada de idioma en cola.</summary>
+    private bool _languagePassScheduled;
 
     public EnergyPlanControl()
     {
@@ -53,6 +69,7 @@ public sealed partial class EnergyPlanControl : UserControl
             PanelAppearance.Applied -= PaintNavBar;
             PanelAppearance.Applied += PaintNavBar;
             PaintNavBar();
+            EnsureInitialSelection();
             Refresh();
         };
         Unloaded += (s, e) =>
@@ -140,6 +157,12 @@ public sealed partial class EnergyPlanControl : UserControl
     private void ApplyLanguageAfterLayout()
     {
         ApplyLanguageToControl();
+
+        // Una sola segunda pasada en cola: antes cada llamada encolaba DOS más, y
+        // con todas las cargas de la pestaña (planes, presets, comparación) se
+        // apilaban pasadas de más sobre el mismo control.
+        if (_languagePassScheduled) return;
+        _languagePassScheduled = true;
         DispatcherQueue.TryEnqueue(() =>
         {
             try
@@ -151,27 +174,71 @@ public sealed partial class EnergyPlanControl : UserControl
             catch { }
 
             ApplyLanguageToControl();
-            DispatcherQueue.TryEnqueue(ApplyLanguageToControl);
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _languagePassScheduled = false;
+                ApplyLanguageToControl();
+            });
         });
     }
 
     private void ApplyLanguageToControl()
     {
-        I18n.ApplyToVisualTree(this);
+        // Reentrancia: el repaso de idioma toca textos y mide el control, y eso
+        // puede volver a entrar por una carga en curso. Sin este corte, una
+        // pestaña que se traduce a sí misma se llamaba sin fin (pila desbordada).
+        if (_applyingLanguage) return;
+        _applyingLanguage = true;
 
-        // Estos controles pueden no tener template visual realizado todavía.
-        PowerPlanCombo.PlaceholderText = I18n.T("Cargando planes...");
-        ComparePlanACombo.PlaceholderText = I18n.T("Seleccioná un plan");
-        ComparePlanBCombo.PlaceholderText = I18n.T("Seleccioná un plan");
-
-        if (PlanTabs != null)
+        try
         {
-            foreach (var item in PlanTabs.Items.OfType<SelectorBarItem>())
+            I18n.ApplyToVisualTree(this);
+
+            // Estos controles pueden no tener template visual realizado todavía.
+            PowerPlanCombo.PlaceholderText = I18n.T("Cargando planes...");
+            ComparePlanACombo.PlaceholderText = I18n.T("Seleccioná un plan");
+            ComparePlanBCombo.PlaceholderText = I18n.T("Seleccioná un plan");
+
+            if (PlanTabs != null)
             {
-                if (item.Text is string s && Translations.TryGetSource(s, I18n.Current, out var source))
-                    item.Text = I18n.T(source);
+                foreach (var item in PlanTabs.Items.OfType<SelectorBarItem>())
+                {
+                    if (item.Text is string s && Translations.TryGetSource(s, I18n.Current, out var source))
+                        item.Text = I18n.T(source);
+                }
+
+                // Al cambiar el texto de los ítems hay que re-medir la barra: si no,
+                // el indicador de selección conserva el ancho anterior y se ve corrido.
+                // (No se reasienta la selección: eso re-entraba en ApplyTabVisibility
+                // → TranslateCompareTab → repaso de idioma → pila desbordada.)
+                PlanTabs.UpdateLayout();
             }
         }
+        finally
+        {
+            _applyingLanguage = false;
+        }
+    }
+
+    /// <summary>
+    /// Deja seleccionada la primera pestaña y avisa al host. Se hace acá y no en
+    /// XAML porque el SelectorBar calcula mal su indicador cuando la selección
+    /// viene declarativa y el control se monta tarde (el bloque se crea al abrir
+    /// la categoría "Energía").
+    /// </summary>
+    private void EnsureInitialSelection()
+    {
+        if (PlanTabs == null || PlanTabs.Items.Count == 0) return;
+
+        if (PlanTabs.SelectedItem is null)
+        {
+            // El handler de SelectionChanged ya hace el resto (alto + aviso).
+            PlanTabs.SelectedItem = PlanTabs.Items[0];
+            return;
+        }
+
+        _selectedTabIndex = Math.Max(0, PlanTabs.Items.IndexOf(PlanTabs.SelectedItem));
+        TabChanged?.Invoke(_selectedTabIndex);
     }
 
     // ===================== Pestañas internas =====================
@@ -179,11 +246,20 @@ public sealed partial class EnergyPlanControl : UserControl
     private void PlanTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
         if (PlanTabs == null || PlanTabs.Items.Count == 0) return;
-        int idx = PlanTabs.SelectedItem != null ? PlanTabs.Items.IndexOf(PlanTabs.SelectedItem) : 0;
+
+        // El SelectorBar también avisa cuando la selección queda vacía: no hay
+        // pestaña que mostrar ni contenido que cargar en ese caso.
+        if (PlanTabs.SelectedItem is null) return;
+
+        int idx = PlanTabs.Items.IndexOf(PlanTabs.SelectedItem);
         _selectedTabIndex = idx < 0 ? 0 : idx;
+        _loggingService.LogInfo($"Energía: pestaña {_selectedTabIndex}");
 
         ApplyTabVisibility();
         LazyLoadTab(_selectedTabIndex);
+
+        // El host decide con esto si muestra u oculta los ajustes de la categoría.
+        TabChanged?.Invoke(_selectedTabIndex);
     }
 
     private void ApplyTabVisibility()
@@ -312,6 +388,25 @@ public sealed partial class EnergyPlanControl : UserControl
         }
     }
 
+    // ===================== Encabezados plegables =====================
+
+    private void ManageHeaderButton_Click(object sender, RoutedEventArgs e)
+        => ToggleSection(ManageBody, ManageChevron);
+
+    private void InstallHeaderButton_Click(object sender, RoutedEventArgs e)
+        => ToggleSection(InstallBody, InstallChevron);
+
+    /// <summary>
+    /// Pliega o despliega el cuerpo de una card sin tocar su estilo: solo cambia
+    /// la visibilidad del bloque y el glifo del chevron (abajo = abierto).
+    /// </summary>
+    private static void ToggleSection(FrameworkElement body, FontIcon chevron)
+    {
+        bool expand = body.Visibility != Visibility.Visible;
+        body.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+        chevron.Glyph = expand ? "\uE70D" : "\uE76C";
+    }
+
     // ===================== Gestionar planes de energía =====================
 
     private sealed class PlanListItem
@@ -334,6 +429,7 @@ public sealed partial class EnergyPlanControl : UserControl
     {
         try
         {
+            _loggingService.LogInfo("Energía: cargando gestión de planes");
             var plans = await Task.Run(() => _cpuPowerService.GetPowerPlans());
 
             var items = new List<PlanListItem>();
@@ -352,6 +448,8 @@ public sealed partial class EnergyPlanControl : UserControl
                 ManagePlanStatusText.Visibility = Visibility.Visible;
                 Feedback.Warning(ManagePlanStatusText, "No se detectaron planes de energía.");
             }
+
+            _loggingService.LogInfo($"Energía: gestión de planes lista ({items.Count} planes)");
 
             // Traducir el contenido recién creado cuando sus templates ya existen.
             ApplyLanguageAfterLayout();

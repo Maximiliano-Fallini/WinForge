@@ -656,24 +656,56 @@ public sealed partial class OptimizacionesPage : Page
         HeaderIcon.Glyph = string.IsNullOrWhiteSpace(feature.Icon) ? "\uE713" : feature.Icon;
         HeaderTitleText.Text = _catalogText.FeatureName(feature, I18n.Current);
         UpdateHeaderSubtitleForCategory(feature);
+        UpdateFeatureBulkActions(feature);
 
         // El bloque de energía (plan + gestión de planes) vive en la categoría
-        // "Energía": va con alto fijo porque el control trae sus propios
-        // ScrollViewer y sin alto se estiraría al contenido.
+        // "Energía". El control decide su propio alto según la pestaña interna:
+        // la del plan se mide por contenido, las de listas se acotan para que
+        // su ScrollViewer siga funcionando.
         EnergyHost.Children.Clear();
         EnergyHost.Visibility = Visibility.Collapsed;
+        _settingsSuppressed = false;
         if (string.Equals(feature.Id, "power", StringComparison.OrdinalIgnoreCase))
         {
-            var energy = new EnergyPlanControl { Height = 560 };
+            // Sin alto fijo: el control se mide por contenido. Con el alto fijo de
+            // antes quedaba un hueco vacío entre la card del plan y las optimizaciones.
+            // El scroll lo maneja DetailScroll, como en el resto de las categorías.
+            var energy = new EnergyPlanControl();
+            energy.TabChanged += OnEnergyTabChanged;
             EnergyHost.Children.Add(energy);
             EnergyHost.Visibility = Visibility.Visible;
+            _settingsSuppressed = energy.SelectedTabIndex != 0;
         }
 
         RebuildSettings();
+        ApplySettingsVisibility();
 
         // Los estados de la categoría se leen en segundo plano si todavía no
         // se leyeron: las filas se refrescan solas cuando llegan.
         _ = LoadFeatureStatesAsync(feature);
+    }
+
+    /// <summary>
+    /// True cuando la pestaña interna de Energía no es la del plan (Gestionar o
+    /// Comparar): ahí los ajustes de la categoría no tienen nada que ver y se
+    /// ocultan junto con los atajos de cabecera.
+    /// </summary>
+    private bool _settingsSuppressed;
+
+    private void OnEnergyTabChanged(int tabIndex)
+    {
+        bool suppressed = tabIndex != 0;
+        if (suppressed == _settingsSuppressed) return;
+        _settingsSuppressed = suppressed;
+        ApplySettingsVisibility();
+    }
+
+    /// <summary>Aplica el ocultamiento de ajustes/atajos según la pestaña de Energía.</summary>
+    private void ApplySettingsVisibility()
+    {
+        if (SettingsHost is not null)
+            SettingsHost.Visibility = _settingsSuppressed ? Visibility.Collapsed : Visibility.Visible;
+        UpdateFeatureBulkActions();
     }
 
     private void OpenUtility(string utilityId)
@@ -681,6 +713,7 @@ public sealed partial class OptimizacionesPage : Page
         if (!UtilityPageTypes.Map.TryGetValue(utilityId, out var pageType)) return;
         var comp = _registry.Find(utilityId);
 
+        _settingsSuppressed = false;
         _mode = HubMode.Utility;
         _openId = utilityId;
 
@@ -692,6 +725,7 @@ public sealed partial class OptimizacionesPage : Page
         HeaderIcon.Glyph = comp?.IconGlyph ?? "\uE713";
         HeaderTitleText.Text = comp?.Name ?? utilityId;
         HeaderSubtitleText.Text = comp?.Description ?? "";
+        UpdateFeatureBulkActions();
 
         try
         {
@@ -725,6 +759,7 @@ public sealed partial class OptimizacionesPage : Page
 
         _mode = HubMode.Hub;
         _openId = null;
+        _settingsSuppressed = false;
 
         HubScroll.Visibility = Visibility.Visible;
         DetailScroll.Visibility = Visibility.Collapsed;
@@ -744,6 +779,7 @@ public sealed partial class OptimizacionesPage : Page
             "{0} ajustes en {1} categorías, más las herramientas del sistema.",
             _catalog.Features.Sum(f => f.Settings.Count(HasMechanism)),
             _catalog.Features.Count);
+        UpdateFeatureBulkActions();
     }
 
     private void UpdateHeaderSubtitleForCategory(OptimizationFeature feature)
@@ -1947,6 +1983,8 @@ public sealed partial class OptimizacionesPage : Page
     /// </summary>
     private async void ApplyRecommendedButton_Click(object sender, RoutedEventArgs e)
     {
+        // Un lote en curso usa el mismo applier: no se puede intercalar otro ajuste.
+        if (_busy) return;
         if (sender is not FrameworkElement element) return;
         var id = element.Tag as string;
         if (id is null || !_settings.TryGetValue(id, out var setting)) return;
@@ -2052,6 +2090,8 @@ public sealed partial class OptimizacionesPage : Page
 
     private async void RestoreDefaultButton_Click(object sender, RoutedEventArgs e)
     {
+        // Un lote en curso usa el mismo applier: no se puede intercalar otro ajuste.
+        if (_busy) return;
         if (sender is not FrameworkElement element) return;
         var id = element.Tag as string;
         if (id is null || !_settings.TryGetValue(id, out var setting)) return;
@@ -2081,6 +2121,213 @@ public sealed partial class OptimizacionesPage : Page
         // ajustes de apariencia de Windows, la app vuelve a elegir cómo pinta sus paneles.)
         RefreshAppearanceAfterSystemChange(new[] { id });
         await ReloadSettingStateAsync(id);
+    }
+
+    // =====================================================================
+    // ATAJOS DE COMPONENTE (todo el componente de una vez)
+    // =====================================================================
+
+    private async void FeatureRecommendedButton_Click(object sender, RoutedEventArgs e)
+        => await RunFeatureBulkAsync(recommended: true);
+
+    private async void FeatureDefaultButton_Click(object sender, RoutedEventArgs e)
+        => await RunFeatureBulkAsync(recommended: false);
+
+    /// <summary>
+    /// Muestra los atajos de la cabecera solo con una categoría abierta y solo si el
+    /// catálogo define ese valor para al menos un ajuste aplicable en este equipo: en
+    /// el hub y en las herramientas no hay nada que aplicar en bloque.
+    /// </summary>
+    private void UpdateFeatureBulkActions(OptimizationFeature? feature = null)
+    {
+        if (FeatureBulkActions == null) return;
+
+        // Con los ajustes ocultos (pestañas Gestionar/Comparar de Energía) los
+        // atajos de componente tampoco se muestran.
+        if (_settingsSuppressed)
+        {
+            FeatureBulkActions.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (feature is null && _mode == HubMode.Category && _openId is not null)
+            feature = _catalog.Features.FirstOrDefault(f =>
+                string.Equals(f.Id, _openId, StringComparison.OrdinalIgnoreCase));
+
+        if (feature is null)
+        {
+            FeatureBulkActions.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        bool canRecommend = feature.Settings.Any(s =>
+            HasMechanism(s) && HasRecommendedValue(s)
+            && OptimizationStateService.GetUnsupportedReason(s) is null);
+        bool canDefault = feature.Settings.Any(s =>
+            HasMechanism(s) && HasDefaultValue(s)
+            && OptimizationStateService.GetUnsupportedReason(s) is null);
+
+        FeatureBulkActions.Visibility = canRecommend || canDefault
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        FeatureRecommendedButton.Visibility = canRecommend ? Visibility.Visible : Visibility.Collapsed;
+        FeatureDefaultButton.Visibility = canDefault ? Visibility.Visible : Visibility.Collapsed;
+        FeatureRecommendedButton.IsEnabled = canRecommend && !_busy;
+        FeatureDefaultButton.IsEnabled = canDefault && !_busy;
+
+        FeatureRecommendedText.Text = I18n.T("Recomendado");
+        FeatureDefaultText.Text = I18n.T("Restaurar valor de fábrica");
+        ToolTipService.SetToolTip(FeatureRecommendedButton,
+            I18n.T("Aplicar todo lo recomendado del componente"));
+        ToolTipService.SetToolTip(FeatureDefaultButton,
+            I18n.T("Restaurar todo el componente a los valores de fábrica"));
+    }
+
+    /// <summary>
+    /// Aplica el valor recomendado (o el de fábrica) a TODOS los ajustes de la
+    /// categoría abierta, uno detrás del otro y con el mismo lote visible que
+    /// "Aplicar cambios" (progreso, cronómetro y consola).
+    /// </summary>
+    private async Task RunFeatureBulkAsync(bool recommended)
+    {
+        if (_busy || _mode != HubMode.Category || _openId is null) return;
+        var feature = _catalog.Features.FirstOrDefault(f =>
+            string.Equals(f.Id, _openId, StringComparison.OrdinalIgnoreCase));
+        if (feature is null) return;
+
+        var targets = feature.Settings
+            .Where(HasMechanism)
+            .Where(s => recommended ? HasRecommendedValue(s) : HasDefaultValue(s))
+            .ToList();
+        if (targets.Count == 0) return;
+
+        // Tomar el candado ANTES de esperar la lectura de estado: si se espera
+        // primero, un segundo clic alcanza a entrar y lanza otro lote en paralelo.
+        _busy = true;
+        SetBatchBusy(true);
+
+        // Si la categoría todavía está leyendo su estado, esperar esa lectura: si
+        // no, el pase viejo podría terminar después y pisar los estados aplicados.
+        if (_featureLoads.TryGetValue(feature.Id, out var pendingRead))
+        {
+            try { await pendingRead; } catch { }
+            _featureLoads.Remove(feature.Id);
+        }
+
+        // Los atajos escriben el valor real ahora: lo pendiente de estas filas ya
+        // no tiene sentido y se re-aplicaría en el próximo "Aplicar cambios".
+        foreach (var setting in targets) ClearPendingFor(setting.Id);
+        UpdatePendingUi();
+
+        var featureName = _catalogText.FeatureName(feature, I18n.Current);
+        BeginBatchUi(targets.Count);
+
+        AppendConsole(recommended
+            ? I18n.T("Aplicando recomendados de {0}...", featureName)
+            : I18n.T("Restaurando valores de fábrica de {0}...", featureName),
+            ConsoleStatus.Running);
+
+        int ok = 0, skipped = 0, failed = 0;
+        var failures = new List<string>();
+        var progress = new Progress<string>(line => AppendConsole(line, ConsoleStatus.Command));
+
+        try
+        {
+            int index = 0;
+            foreach (var setting in targets)
+            {
+                index++;
+                var name = _catalogText.SettingName(setting, I18n.Current);
+                var unsupported = OptimizationStateService.GetUnsupportedReason(setting);
+                if (unsupported is not null)
+                {
+                    skipped++;
+                    AppendConsole(I18n.T("{0} de {1}: {2} omitida ({3})",
+                        index, targets.Count, name, unsupported), ConsoleStatus.Skipped);
+                    UpdateBatchUi(index, name);
+                    continue;
+                }
+
+                if (setting.RequiresConfirmation)
+                {
+                    bool confirmed = await ConfirmSettingAsync(setting, name);
+                    if (!confirmed)
+                    {
+                        skipped++;
+                        AppendConsole(I18n.T("{0} de {1}: {2} cancelada",
+                            index, targets.Count, name), ConsoleStatus.Skipped);
+                        UpdateBatchUi(index, name);
+                        continue;
+                    }
+                }
+
+                AppendConsole(I18n.T("Ejecutando {0} de {1}: {2}...",
+                    index, targets.Count, name), ConsoleStatus.Running);
+                var timer = Stopwatch.StartNew();
+                var result = await Task.Run(() => recommended
+                    ? _applier.ApplyRecommended(setting, progress)
+                    : _applier.ApplyDefault(setting, progress));
+                timer.Stop();
+
+                if (result.Success)
+                {
+                    ok++;
+                    AppendConsole(I18n.T("{0} de {1}: {2} terminada en {3}",
+                        index, targets.Count, name, FormatDuration(timer.Elapsed)), ConsoleStatus.Applied);
+                }
+                else
+                {
+                    failed++;
+                    failures.Add($"{name}: {result.Message}");
+                    AppendConsole(I18n.T("{0} de {1}: {2} falló en {3}",
+                        index, targets.Count, name, FormatDuration(timer.Elapsed)), ConsoleStatus.Error);
+                }
+
+                UpdateBatchUi(index, name);
+            }
+        }
+        catch (Exception ex)
+        {
+            failed++;
+            failures.Add(ex.Message);
+            AppendConsole(I18n.T("ERROR de lote: {0}", ex.Message), ConsoleStatus.Error);
+            _loggingService.LogError("Error aplicando un componente de optimizaciones", ex);
+        }
+        finally
+        {
+            // La apariencia del propio Windows (transparencia / modo claro-oscuro)
+            // se re-aplica antes de releer, como en el lote normal.
+            try { RefreshAppearanceAfterSystemChange(targets.Select(s => s.Id)); } catch { }
+
+            // Releer la categoría entera: los badges, los contadores y la cabecera
+            // tienen que reflejar lo que quedó en el sistema.
+            _featureLoads.Remove(feature.Id);
+            try { await LoadFeatureStatesAsync(feature); }
+            catch (Exception ex) { try { _loggingService.LogWarning($"Optimizaciones: no se pudo releer {feature.Id}: {ex.Message}"); } catch { } }
+
+            var summary = I18n.T("{0} aplicadas, {1} omitidas, {2} con error.", ok, skipped, failed);
+            AppendConsole(I18n.T("Lote completado en {0}: {1}.",
+                FormatDuration(_batchStopwatch.Elapsed), summary),
+                failed > 0 ? ConsoleStatus.Error : ConsoleStatus.Applied);
+            EndBatchUi(failed > 0);
+
+            _busy = false;
+            SetBatchBusy(false);
+            UpdateFeatureBulkActions(feature);
+
+            if (failures.Count > 0)
+            {
+                try
+                {
+                    _loggingService.LogWarning($"Optimizaciones: {failures.Count} ajustes de {feature.Id} fallaron: {string.Join("; ", failures)}");
+                }
+                catch { }
+            }
+
+            ShowNotification(
+                I18n.T("Lote {0}: {1}", I18n.T(recommended ? "aplicado" : "restaurado"), summary),
+                failed > 0 ? "error" : "success");
+        }
     }
 
     private string? FindFeatureId(string settingId)
@@ -2289,6 +2536,10 @@ public sealed partial class OptimizacionesPage : Page
             ApplyButton.Content = busy ? I18n.T("Aplicando...") : I18n.T("Aplicar cambios");
         }
         if (DiscardButton != null) DiscardButton.IsEnabled = !busy;
+
+        // Los atajos de componente comparten el mismo lote: mientras corre uno,
+        // no pueden disparar otro encima.
+        UpdateFeatureBulkActions();
     }
 
     // =====================================================================

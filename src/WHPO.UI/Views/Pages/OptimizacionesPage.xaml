@@ -43,6 +43,7 @@
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
             <!-- Botón de volver: solo en el drill-down (en el hub queda colapsado
@@ -79,6 +80,48 @@
                            FontSize="13.5"
                            Foreground="{ThemeResource SecondaryTextBrush}"
                            TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- Atajos de COMPONENTE (solo con una categoría abierta): aplican el
+                 valor recomendado o el de fábrica a TODOS los ajustes de la categoría.
+                 Se arman en code-behind según lo que el catálogo defina para cada una. -->
+            <StackPanel x:Name="FeatureBulkActions"
+                        Grid.Column="3"
+                        Orientation="Horizontal"
+                        Spacing="8"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                <Button x:Name="FeatureRecommendedButton"
+                        Click="FeatureRecommendedButton_Click"
+                        CornerRadius="6"
+                        Padding="12,7"
+                        FontWeight="SemiBold"
+                        IsEnabled="False"
+                        ToolTipService.ToolTip="Aplicar todo lo recomendado del componente">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE735;" FontSize="12"
+                                  Foreground="{StaticResource SuccessBrush}"
+                                  VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FeatureRecommendedText"
+                                   Text="Recomendado" FontSize="12"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                <Button x:Name="FeatureDefaultButton"
+                        Click="FeatureDefaultButton_Click"
+                        CornerRadius="6"
+                        Padding="12,7"
+                        FontWeight="SemiBold"
+                        IsEnabled="False"
+                        ToolTipService.ToolTip="Restaurar todo el componente a los valores de fábrica">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <FontIcon Glyph="&#xE7A7;" FontSize="12"
+                                  VerticalAlignment="Center"/>
+                        <TextBlock x:Name="FeatureDefaultText"
+                                   Text="Restaurar valor de fábrica" FontSize="12"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
             </StackPanel>
             </Grid>
         </Border>

@@ -13,7 +13,10 @@
                          Margin="20,10,20,4"
                          Background="Transparent"
                          SelectionChanged="PlanTabs_SelectionChanged">
-                <SelectorBarItem Text="Energía" IsSelected="True"/>
+                <!-- La selección inicial se arma en code-behind (EnsureInitialSelection):
+                     con IsSelected declarativo el indicador del SelectorBar queda mal
+                     medido y se dibuja corrido sobre el primer ítem. -->
+                <SelectorBarItem Text="Energía"/>
                 <SelectorBarItem Text="Gestionar planes de energía"/>
                 <SelectorBarItem Text="Comparar planes de energía"/>
             </SelectorBar>
@@ -69,10 +72,31 @@
                             CornerRadius="12"
                             Padding="16">
                         <StackPanel Spacing="10">
-                            <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Gestionar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            </StackPanel>
+<!-- Encabezado plegable: la card mantiene su estilo, solo suma el chevron. -->
+                            <Button x:Name="ManageHeaderButton"
+                                    Click="ManageHeaderButton_Click"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="0,2,0,2"
+                                    CornerRadius="6"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                    <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="Gestionar planes de energía"
+                                               FontSize="16" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="Wrap"/>
+                                    <FontIcon x:Name="ManageChevron"
+                                              Grid.Column="2"
+                                              Glyph="&#xE70D;"
+                                              FontSize="12"
+                                              Foreground="{ThemeResource SecondaryTextBrush}"
+                                              VerticalAlignment="Center"/>
+                                </Grid>
+                            </Button>
+                            <StackPanel x:Name="ManageBody" Spacing="10">
                             <TextBlock Text="Seleccioná un plan para renombrarlo, activarlo o borrarlo."
                                        FontSize="12"
                                        Foreground="{ThemeResource SecondaryTextBrush}"
@@ -114,6 +138,7 @@
                             <TextBlock x:Name="ManagePlanStatusText" Text="" FontSize="12"
                                        Visibility="Collapsed"
                                        Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
@@ -122,10 +147,31 @@
                             CornerRadius="12"
                             Padding="16">
                         <StackPanel Spacing="10">
-                            <StackPanel Orientation="Horizontal" Spacing="10">
-                                <FontIcon Glyph="&#xE896;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                                <TextBlock Text="Instalar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            </StackPanel>
+<!-- Encabezado plegable (mismo patrón que la card de arriba). -->
+                            <Button x:Name="InstallHeaderButton"
+                                    Click="InstallHeaderButton_Click"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="0,2,0,2"
+                                    CornerRadius="6"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Stretch">
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                                    <FontIcon Glyph="&#xE896;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="Instalar planes de energía"
+                                               FontSize="16" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="Wrap"/>
+                                    <FontIcon x:Name="InstallChevron"
+                                              Grid.Column="2"
+                                              Glyph="&#xE70D;"
+                                              FontSize="12"
+                                              Foreground="{ThemeResource SecondaryTextBrush}"
+                                              VerticalAlignment="Center"/>
+                                </Grid>
+                            </Button>
+                            <StackPanel x:Name="InstallBody" Spacing="10">
                             <TextBlock Text="Planes oficiales de Windows y presets reconocidos por la comunidad (Ryzen, Bitsum…). Se instalan duplicando un plan base; podés borrarlos después desde la lista de arriba."
                                        FontSize="12"
                                        Foreground="{ThemeResource SecondaryTextBrush}"
@@ -154,6 +200,7 @@
                             <TextBlock x:Name="InstallPlanStatusText" Text="" FontSize="12"
                                        Visibility="Collapsed"
                                        Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </StackPanel>

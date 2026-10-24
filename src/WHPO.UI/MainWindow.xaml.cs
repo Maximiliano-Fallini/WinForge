@@ -1436,41 +1436,81 @@ public sealed partial class MainWindow : Window
     /// guardada (primer uso) o quedó fuera de pantalla (cambió el monitor), la
     /// centra en el área de trabajo con el tamaño por defecto (1400x800).
     /// Se llama al arrancar y en cada apertura desde la bandeja.
+    ///
+    /// <paramref name="unmaximize"/>: lo usa "Restablecer posición". Con false, una
+    /// ventana maximizada se deja como está (no hay geometría que reponer y moverla
+    /// con el presenter maximizado le rompe el marco). Con true se vuelve al estado
+    /// normal y recién ahí se aplica la geometría.
     /// </summary>
-    private void RestoreOrCenterWindow()
+    private void RestoreOrCenterWindow(bool unmaximize = false)
     {
         try
         {
             var appWindow = GetAppWindow();
             if (appWindow == null) return;
 
-            var area = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest);
-            var wa = area.WorkArea;
+            // En pantalla completa (F11) la geometría la manda el presenter FullScreen:
+            // moverla acá la dejaría en un estado a medias.
+            if (_isFullScreen) return;
 
-            int w = _settingsService.Get("window.width", 1400);
-            int h = _settingsService.Get("window.height", 800);
-            int x = _settingsService.Get("window.x", int.MinValue);
-            int y = _settingsService.Get("window.y", int.MinValue);
-
-            // Limitar el tamaño al área de trabajo (monitores chicos).
-            w = Math.Clamp(w, 800, Math.Max(800, wa.Width));
-            h = Math.Clamp(h, 500, Math.Max(500, wa.Height));
-
-            // La posición guardada solo se usa si una parte razonable de la ventana
-            // sigue dentro del área visible; si no, se vuelve a centrar.
-            bool visible = x != int.MinValue && y != int.MinValue &&
-                x + 80 <= wa.X + wa.Width && x + w - 80 >= wa.X &&
-                y + 40 <= wa.Y + wa.Height && y + h - 40 >= wa.Y;
-
-            if (visible)
+            // MoveAndResize sobre una ventana MAXIMIZADA no la reposiciona: Windows
+            // mantiene el marco maximizado (sin esquinas redondeadas) y el contenido
+            // queda corrido, con una franja clara arriba. Primero se vuelve al estado
+            // normal y la geometría se aplica cuando el marco terminó de restaurarse.
+            bool wasMaximized = false;
+            if (appWindow.Presenter is OverlappedPresenter presenter &&
+                presenter.State == OverlappedPresenterState.Maximized)
             {
-                appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, w, h));
+                if (!unmaximize) return;
+                wasMaximized = true;
+                presenter.Restore();
+            }
+
+            void ApplyGeometry()
+            {
+                var area = DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest);
+                var wa = area.WorkArea;
+
+                int w = _settingsService.Get("window.width", 1400);
+                int h = _settingsService.Get("window.height", 800);
+                int x = _settingsService.Get("window.x", int.MinValue);
+                int y = _settingsService.Get("window.y", int.MinValue);
+
+                // Limitar el tamaño al área de trabajo (monitores chicos).
+                w = Math.Clamp(w, 800, Math.Max(800, wa.Width));
+                h = Math.Clamp(h, 500, Math.Max(500, wa.Height));
+
+                // La posición guardada solo se usa si una parte razonable de la ventana
+                // sigue dentro del área visible; si no, se vuelve a centrar.
+                bool visible = x != int.MinValue && y != int.MinValue &&
+                    x + 80 <= wa.X + wa.Width && x + w - 80 >= wa.X &&
+                    y + 40 <= wa.Y + wa.Height && y + h - 40 >= wa.Y;
+
+                if (visible)
+                {
+                    appWindow.MoveAndResize(new Windows.Graphics.RectInt32(x, y, w, h));
+                }
+                else
+                {
+                    int cx = wa.X + Math.Max(0, (wa.Width - w) / 2);
+                    int cy = wa.Y + Math.Max(0, (wa.Height - h) / 2);
+                    appWindow.MoveAndResize(new Windows.Graphics.RectInt32(cx, cy, w, h));
+                }
+            }
+
+            if (wasMaximized)
+            {
+                // Prioridad baja: deja que el presenter aplique el cambio de estado y
+                // que DWM redibuje el marco con sus esquinas antes de mover la ventana.
+                DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+                {
+                    ApplyGeometry();
+                    ApplyWindowFrameTreatment();
+                });
             }
             else
             {
-                int cx = wa.X + Math.Max(0, (wa.Width - w) / 2);
-                int cy = wa.Y + Math.Max(0, (wa.Height - h) / 2);
-                appWindow.MoveAndResize(new Windows.Graphics.RectInt32(cx, cy, w, h));
+                ApplyGeometry();
             }
         }
         catch (Exception ex)
@@ -1527,8 +1567,16 @@ public sealed partial class MainWindow : Window
         {
             var appWindow = GetAppWindow();
             if (appWindow == null) return;
+            // Un guardado pendiente no debe capturar la geometría de pantalla completa.
+            if (_isFullScreen) return;
             var pos = appWindow.Position;
             var size = appWindow.Size;
+
+            // Maximizada (o minimizada), AppWindow informa la geometría del estado en
+            // curso: guardarla haría que la próxima apertura use ese tamaño sin estar
+            // maximizada. La geometría que interesa es la del estado normal.
+            if (appWindow.Presenter is OverlappedPresenter presenter &&
+                presenter.State != OverlappedPresenterState.Restored) return;
 
             // No guardar estados transitorios inválidos: tamaños espurios (ventana aún
             // sin dimensionar en el arranque) o la posición de una ventana minimizada
@@ -1558,13 +1606,18 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            // Desde pantalla completa (F11) primero hay que salir: la geometría de
+            // ese presenter no se puede mover y el reset quedaría sin efecto.
+            if (_isFullScreen) ToggleFullScreen();
+
             _settingsService.Remove("window.x");
             _settingsService.Remove("window.y");
             _settingsService.Remove("window.width");
             _settingsService.Remove("window.height");
             _settingsService.Save();
-            // Sin posición guardada, RestoreOrCenterWindow la centra sola.
-            RestoreOrCenterWindow();
+            // Sin posición guardada, RestoreOrCenterWindow la centra sola (y antes
+            // vuelve del estado maximizado, si estaba así).
+            RestoreOrCenterWindow(unmaximize: true);
             _loggingService.LogInfo("Posición de la ventana restablecida (re-centrada)");
         }
         catch (Exception ex)
