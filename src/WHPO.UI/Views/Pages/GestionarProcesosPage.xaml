@@ -226,10 +226,10 @@
             </Border>
 
 <!-- ====== GRILLA DE JUEGOS (3 o 5 columnas según la vista; favoritos separados con barra) ====== -->
-<!-- ZIndex 10: la grilla pasa POR ENCIMA del dock (ZIndex 0) y POR DEBAJO de la
-                 banda (30) y la barra de regla (20). El cartucho montado asoma hasta
-                 ~125 DIP sobre la consola de 66: sin esto tapaba la barra de regla y
-                 la última fila; ahora esas cards lo rebanan limpio al chocar. -->
+<!-- ZIndex 10: la grilla pasa POR DEBAJO del dock (25, que muestra el cartucho
+                 montado asomando de la ranura), de la banda (30) y de la barra de regla
+                 (20). El viewport termina en el borde superior del chasis, así que la
+                 consola no tapa nada del contenido en reposo. -->
 <!-- Viewport PEGADO a la banda (arriba) y al dock/regla (abajo): las cards se
                  rebanan justo al chocar con esos bordes, no flotando en el fondo.
                  El aire en reposo vive DENTRO (LibraryContentGrid), así que quieto
@@ -317,16 +317,20 @@
 <!-- Base anclada al pie de la ventana cuando el modo 3D está activo:
      recibe los cartuchos arrastrados para insertarlos y lanzar el juego, y muestra
      los cartuchos en ejecución clavados en su ranura. -->
-<!-- ZIndex 0: el dock es la capa más baja (solo el drag flota encima, 60). Lo que
-                 asoma del cartucho montado se rebana detrás de la grilla (10), la
-                 barra de regla (20) y la banda (30) en vez de taparlas. -->
+<!-- ZIndex 25: el dock va POR ENCIMA de la grilla (10) y de la barra de regla
+                 (20, oculta en 3D), y por debajo de la banda (30) y del drag (60).
+                 El cartucho montado asoma por encima de la consola: con el dock en 0,
+                 la última fila de cards le rebanaba la cabeza (se veía "por debajo"
+                 de la biblioteca). Ahora el cartucho entra en la ranura ADELANTE del
+                 contenido, como en la consola real; el viewport del scroll termina
+                 justo en el borde superior del chasis, así que nada más queda tapado. -->
             <Grid x:Name="CartridgeDockHost"
                   Grid.Row="3"
                   HorizontalAlignment="Stretch"
                   VerticalAlignment="Bottom"
                   Margin="0"
                   Visibility="Collapsed"
-                  Canvas.ZIndex="0"/>
+                  Canvas.ZIndex="25"/>
         </Grid>
 
 <!-- ====== CAPA DE ARRASTRE FLOTANTE (proxy del cartucho llevado con el mouse) ====== -->
