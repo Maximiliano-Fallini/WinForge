@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Windows.ApplicationModel.DataTransfer;
 using WHPO.Core;
@@ -17,7 +18,12 @@ namespace WHPO_UI.Views.Pages;
 /// <summary>
 /// Debloat: eliminación de aplicaciones preinstaladas (bloatware) y optimización
 /// de las aplicaciones que se conservan. Los tweaks viven en TweakService con la
-/// categoría "Debloat" (basados en Win11Debloat / ).
+/// categoría "Debloat".
+///
+/// La misma página se usa como «Ajustes del sistema» en el hub de Optimizaciones
+/// (ver <see cref="PendingSystemTweaks"/>): en ese modo muestra solo los ajustes
+/// que no son apps (telemetría, servicios, energía, IPv6…), que antes aparecían
+/// al final de Debloat sin tener nada que ver con desinstalar.
 /// </summary>
 public sealed partial class DebloatPage : Page
 {
@@ -25,6 +31,14 @@ public sealed partial class DebloatPage : Page
     private readonly ITweakService _tweakService;
     private bool _dataLoaded;
     private bool _contentShown;
+    private bool _systemTweaks;
+
+    /// <summary>
+    /// Modo de la próxima navegación: true muestra solo los ajustes del sistema
+    /// (card «Ajustes del sistema» del hub). Se fija justo antes de navegar, igual
+    /// que el id de componente en ComponentHostPage.
+    /// </summary>
+    internal static bool PendingSystemTweaks { get; set; }
 
     // Pinceles desde los recursos de tema de la app (claro/oscuro): las cards creadas en
     // código acompañan al tema igual que las del XAML.
@@ -67,6 +81,10 @@ public sealed partial class DebloatPage : Page
             _tweakService = App.Services.GetRequiredService<ITweakService>();
             Loaded += OnLoaded;
 
+            // La página está cacheada: sin esto la consola volvía a aparecer ABIERTA
+            // (con la salida del lote anterior) en la próxima visita.
+            Unloaded += (_, _) => HideConsole();
+
             // Al cambiar el idioma, reconstruir las cards (títulos, descripciones
             // y badges se crean en código con I18n.T; el recorrido del árbol visual
             // no los alcanza).
@@ -90,14 +108,44 @@ public sealed partial class DebloatPage : Page
         }
     }
 
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        ApplyMode(PendingSystemTweaks);
+    }
+
+    /// <summary>
+    /// Pinta la página en modo Debloat (apps) o en modo «Ajustes del sistema» (los
+    /// tweaks que no son aplicaciones). La página está cacheada: al cambiar de
+    /// card se reconstruye la lista, porque el contenido es distinto.
+    /// </summary>
+    internal void ApplyMode(bool systemTweaks)
+    {
+        var changed = _systemTweaks != systemTweaks;
+        _systemTweaks = systemTweaks;
+
+        HeaderIcon.Glyph = systemTweaks ? "\uE713" : "\uE74D";
+        HeaderTitleText.Text = systemTweaks ? I18n.T("Ajustes del sistema") : "Debloat";
+        HeaderSubtitleText.Text = systemTweaks
+            ? I18n.T("Telemetría, servicios, energía y otras optimizaciones de Windows que no son aplicaciones.")
+            : string.Empty;
+
+        if (!_dataLoaded || !changed) return;
+        LoadTweaks();
+        ShowContent();
+        _ = RefreshBadgesAsync();
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (_dataLoaded) return;
         try
         {
             // Skeleton visible mientras corre la detección de instalado/no instalado.
-            ShowSkeleton();
+            // En «Ajustes del sistema» no hay apps que detectar: se muestra directo.
+            if (!_systemTweaks) ShowSkeleton();
             LoadTweaks();
+            if (_systemTweaks) ShowContent();
             _dataLoaded = true;
 
             _tweakService.TweakStateChanged += OnTweakStateChanged;
@@ -251,24 +299,48 @@ public sealed partial class DebloatPage : Page
         var removeApps = GetRemoveApps();
         var optimizeApps = GetOptimizeApps();
 
-        // Dos columnas: apps a desinstalar a la izquierda, optimizaciones a la derecha.
-        var grid = new Grid { ColumnSpacing = 16 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        // Los tweaks que NO son apps (telemetría, servicios, hibernación, WPBT,
+        // IPv6…) ya no se muestran acá: son la card «Ajustes del sistema» del hub
+        // de Optimizaciones. La lista se sigue calculando para excluirlos de las
+        // dos columnas de apps.
+        var listed = new HashSet<string>(
+            removeApps.Concat(optimizeApps).Select(t => t.Name),
+            StringComparer.OrdinalIgnoreCase);
 
-        var removeSection = BuildSection(I18n.T("Desinstalar apps"), I18n.T("Elimina las aplicaciones preinstaladas (bloatware). Se pueden reinstalar desde Microsoft Store."), removeApps);
-        var optimizeSection = BuildSection(I18n.T("Optimizaciones de aplicaciones"), I18n.T("Limpia y configura las aplicaciones que decidís conservar."), optimizeApps);
+        var systemTweaks = _allTweaks
+            .Where(d => !listed.Contains(d.Name) && WindowsCapabilities.Supports(d.Support))
+            .OrderBy(d => d.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(d => new TweakInfo(d.Name, d.Description, d.Compatibility, d.IsReversible, I18n.T("Sistema")))
+            .ToList();
 
-        Grid.SetColumn(removeSection, 0);
-        Grid.SetColumn(optimizeSection, 1);
-        grid.Children.Add(removeSection);
-        grid.Children.Add(optimizeSection);
-        TweaksPanel.Children.Add(grid);
+        if (_systemTweaks)
+        {
+            // Una sola lista a todo el ancho: la página ya se llama «Ajustes del
+            // sistema», así que no hace falta un encabezado que lo repita.
+            foreach (var tweak in systemTweaks)
+                TweaksPanel.Children.Add(BuildTweakCard(tweak));
+        }
+        else
+        {
+            // Dos columnas: apps a desinstalar a la izquierda, optimizaciones a la derecha.
+            var grid = new Grid { ColumnSpacing = 16 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var removeSection = BuildSection(I18n.T("Desinstalar apps"), I18n.T("Elimina las aplicaciones preinstaladas (bloatware). Se pueden reinstalar desde Microsoft Store."), removeApps);
+            var optimizeSection = BuildSection(I18n.T("Optimizaciones de aplicaciones"), I18n.T("Limpia y configura las aplicaciones que decidís conservar."), optimizeApps);
+
+            Grid.SetColumn(removeSection, 0);
+            Grid.SetColumn(optimizeSection, 1);
+            grid.Children.Add(removeSection);
+            grid.Children.Add(optimizeSection);
+            TweaksPanel.Children.Add(grid);
+        }
 
         // Verificar estados aplicados en segundo plano para no bloquear la UI.
         _ = RefreshBadgesAsync();
 
-        _loggingService.LogInfo($"DebloatPage: {removeApps.Count + optimizeApps.Count} tweaks cargados");
+        _loggingService.LogInfo($"DebloatPage: {removeApps.Count + optimizeApps.Count + systemTweaks.Count} tweaks cargados");
     }
 
     // ====== SECCIONES Y TARJETAS ======
@@ -639,6 +711,17 @@ public sealed partial class DebloatPage : Page
 
     private static SolidColorBrush WarningBrush() =>
         (SolidColorBrush)App.Current.Resources["WarningBrush"];
+
+    /// <summary>
+    /// Cierra la consola sin borrar su contenido: la próxima línea de salida la
+    /// vuelve a abrir sola (ver <c>AppendConsole</c>).
+    /// </summary>
+    private void CloseConsoleButton_Click(object sender, RoutedEventArgs e) => HideConsole();
+
+    private void HideConsole()
+    {
+        if (ConsolePanel != null) ConsolePanel.Visibility = Visibility.Collapsed;
+    }
 
     private void ClearConsoleButton_Click(object sender, RoutedEventArgs e)
     {

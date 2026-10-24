@@ -8,6 +8,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using WHPO.Core;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
@@ -33,29 +34,25 @@ public sealed partial class ConfiguracionPage : Page
     private OnboardingSimulatorWindow? _onboardingSimulator;
 
     // ---- Menú de navegación: pestañas del menú lateral y su clave de configuración ----
+    // TCP, Debloat, Herramientas, Panel de Windows, Reparación, Windows Update y
+    // Limpieza ya no son pestañas: son cards DENTRO del hub de Optimizaciones, así
+    // que acá no se listan (no hay nada que ocultar en el menú).
     private static readonly (string Tag, string Label)[] NavTabs =
     {
         ("sistema", "Sistema"),
         ("red", "Red"),
         ("memoria", "Memoria"),
         ("temporizador", "Resolución del Temporizador"),
-        ("nucleos", "Núcleos y Plan de energía"),
+        ("nucleos", "Núcleos"),
         ("overlay", "Overlay de métricas"),
         ("procesos", "Biblioteca de juegos"),
         ("procesosvivos", "Gestión de procesos"),
         ("overclockusb", "Overclock USB"),
-        ("tcp", "TCP / Red avanzado"),
         ("teclado", "Teclado y Macros"),
         ("autoclicker", "Autoclicker"),
         ("estabilidad", "Test de estabilidad"),
         ("sensores", "Monitor de sensores"),
-        ("optimizaciones", "Optimizaciones"),
-        ("debloat", "Debloat"),
-        ("herramientas", "Herramientas y funciones"),
-        ("panelwindows", "Panel de Windows"),
-        ("reparacion", "Reparación"),
-        ("actualizaciones", "Windows Update"),
-        ("limpieza", "Limpieza del dispositivo")
+        ("optimizaciones", "Optimizaciones")
     };
 
     private readonly Dictionary<string, CheckBox> _navCheckBoxes = new();
@@ -106,6 +103,10 @@ public sealed partial class ConfiguracionPage : Page
         DeveloperLogsToggle.Toggled += OnDeveloperLogsToggled;
         LaunchAtStartupToggle.Toggled += OnLaunchAtStartupToggled;
         StartMinimizedToggle.Toggled += OnStartMinimizedToggled;
+        // Selector 2D / 3D de las cards: toda la tarjeta es un RadioButton lookless
+        // (ver LibraryStyleTile), así que el cambio llega por Checked.
+        AttachPickerTileHover(LibraryStyle2DTile);
+        AttachPickerTileHover(LibraryStyle3DTile);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -119,6 +120,13 @@ public sealed partial class ConfiguracionPage : Page
             DeveloperLogsToggle.IsOn = _settingsService.Get("logging.developerLogs", false);
             LaunchAtStartupToggle.IsOn = _startupService.IsEnabled();
             StartMinimizedToggle.IsOn = _settingsService.Get("window.startMinimized", false);
+            // Estilo de las cards de la biblioteca de juegos: 2D (tarjetas planas) ↔ 3D
+            // (cartuchos con profundidad). Por defecto, 3D: es el estilo con el que la
+            // biblioteca arranca si el usuario nunca eligió. El ajuste lo relee la
+            // biblioteca en OnNavigatedTo, así que se aplica al volver.
+            if (_settingsService.Get("biblioteca.cards3D", true)) LibraryStyle3DTile.IsChecked = true;
+            else LibraryStyle2DTile.IsChecked = true;
+            PaintLibraryStylePreviews();
 
             // Pestaña Apariencia: los controles reflejan el ajuste VIGENTE (el que tienen
             // puesto las superficies ahora mismo), no el guardado en disco: ese se escribe
@@ -325,6 +333,85 @@ public sealed partial class ConfiguracionPage : Page
         _settingsService.Save();
     }
 
+    /// <summary>
+    /// Selector de estilo de las cards de la biblioteca: 2D (tarjetas planas con el banner)
+    /// ↔ 3D (cartuchos con profundidad, arrastrables a la consola del pie). Persiste la
+    /// preferencia "biblioteca.cards3D", la misma que la biblioteca relee en OnNavigatedTo
+    /// para reconstruir la grilla: el cambio se ve al volver, sin reiniciar la app.
+    /// El guard de carga evita que reflejar el valor guardado lo vuelva a escribir.
+    /// </summary>
+    private void LibraryStyleTile_Checked(object sender, RoutedEventArgs e)
+    {
+        bool threeD = ReferenceEquals(sender, LibraryStyle3DTile);
+        if (LibraryStyleCheck2D != null)
+            LibraryStyleCheck2D.Visibility = threeD ? Visibility.Collapsed : Visibility.Visible;
+        if (LibraryStyleCheck3D != null)
+            LibraryStyleCheck3D.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
+        if (_isLoading) return;
+        _settingsService.Set("biblioteca.cards3D", threeD);
+        _settingsService.Save();
+    }
+
+    /// <summary>Hover de las tarjetas del selector: levante de 1,5 % como en el selector de temas.</summary>
+    private static void AttachPickerTileHover(RadioButton tile)
+    {
+        var scale = new ScaleTransform { ScaleX = 1, ScaleY = 1 };
+        tile.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+        tile.RenderTransform = scale;
+        tile.PointerEntered += (_, _) => { scale.ScaleX = 1.015; scale.ScaleY = 1.015; };
+        tile.PointerExited += (_, _) => { scale.ScaleX = 1; scale.ScaleY = 1; };
+    }
+
+    /// <summary>
+    /// Miniaturas del selector de estilo:
+    /// - 2D: carátula de MUESTRA derivada del acento del tema (no hay un banner de juego
+    ///   empaquetado, y una foto fija no acompañaría al resto de las paletas).
+    /// - 3D: la cara REAL del cartucho que pinta la biblioteca (CartridgeModel), en PNG con
+    ///   transparencia; se decodifica una sola vez y se comparte entre visitas a la página.
+    /// </summary>
+    private void PaintLibraryStylePreviews()
+    {
+        try
+        {
+            if (ThemeBrushes.Get("AccentBrush") is SolidColorBrush accent)
+            {
+                var c = accent.Color;
+                static byte Up(byte v, int add) => (byte)Math.Clamp(v + add, 0, 255);
+                static byte Down(byte v) => (byte)(v * 0.5);
+                LibraryStyle2DBanner.Background = new LinearGradientBrush
+                {
+                    StartPoint = new Windows.Foundation.Point(0, 0),
+                    EndPoint = new Windows.Foundation.Point(1, 1),
+                    GradientStops =
+                    {
+                        new GradientStop { Color = Windows.UI.Color.FromArgb(255, Up(c.R, 18), Up(c.G, 22), Up(c.B, 30)), Offset = 0 },
+                        new GradientStop { Color = Windows.UI.Color.FromArgb(255, Down(c.R), Down(c.G), Down(c.B)), Offset = 0.55 },
+                        new GradientStop { Color = Windows.UI.Color.FromArgb(255, 0x0E, 0x11, 0x16), Offset = 1 }
+                    }
+                };
+            }
+
+            if (_sampleCartridge == null)
+            {
+                byte[] png = WHPO_UI.Controls.CartridgeModel.PaintSampleFacePng(192, 281);
+                using var stream = new MemoryStream(png);
+                stream.Position = 0;
+                using var ras = stream.AsRandomAccessStream();
+                var image = new BitmapImage();
+                image.SetSource(ras);
+                _sampleCartridge = image;
+            }
+            LibraryStyle3DPreview.Source = _sampleCartridge;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Configuración: miniaturas del estilo de cards: {ex.Message}");
+        }
+    }
+
+    /// <summary>Cara de muestra del cartucho (PNG ya decodificado), compartida entre visitas.</summary>
+    private static BitmapImage? _sampleCartridge;
+
     private void OnDeveloperLogsToggled(object sender, RoutedEventArgs e)
     {
         if (_isLoading) return;
@@ -407,11 +494,13 @@ public sealed partial class ConfiguracionPage : Page
             var bannerDir = GestionarProcesosPage.BannerCacheDir;
             if (Directory.Exists(bannerDir))
                 total += Directory.EnumerateFiles(bannerDir, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
-            var gamesCache = Path.Combine(WhpoCacheDir, "gamescache.json");
-            var fi = new FileInfo(gamesCache);
-            if (fi.Exists) total += fi.Length;
-            var tmp = new FileInfo(gamesCache + ".tmp");
-            if (tmp.Exists) total += tmp.Length;
+            // La biblioteca cacheada lleva la versión en el nombre (gamescache.v8.json):
+            // se cuentan todas las variantes para no dejar cachés viejas sin medir.
+            foreach (var file in Directory.EnumerateFiles(WhpoCacheDir, "gamescache*.json*"))
+            {
+                try { total += new FileInfo(file).Length; }
+                catch { }
+            }
 
  // Componente descargado de Overclock USB (el binario del filtro cacheado).
             var compDir = _usbOverclockService.ComponentCachePath;
@@ -717,7 +806,7 @@ public sealed partial class ConfiguracionPage : Page
                     Text = I18n.T(cat),
                     FontSize = 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = ThemeBrushes.Get("TextFillColorSecondaryBrush"),
+                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
                     Margin = new Thickness(0, NavItemsPanel.Children.Count == 0 ? 0 : 6, 0, 2)
                 });
             }
@@ -752,14 +841,11 @@ public sealed partial class ConfiguracionPage : Page
         switch (tag)
         {
             case "sistema": case "red": case "memoria": case "temporizador":
-            case "nucleos": case "sensores": case "tcp": case "optimizaciones":
+            case "nucleos": case "sensores": case "optimizaciones":
                 return "Sistema y rendimiento";
             case "overlay": case "procesos": case "procesosvivos": case "overclockusb": case "teclado":
             case "autoclicker": case "estabilidad":
                 return "Juegos y automatización";
-            case "debloat": case "herramientas": case "panelwindows": case "reparacion":
-            case "actualizaciones": case "limpieza":
-                return "Mantenimiento";
             default:
                 return "Otras";
         }

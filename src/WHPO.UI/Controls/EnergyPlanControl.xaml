@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="WHPO_UI.Controls.EnergyPlanControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
+
+<!-- ====== NAVBAR INTERNO: Energía / Gestionar / Comparar ====== -->
+<!-- La franja conecta con el panel izquierdo y el borde superior sin quedar recortada. -->
+        <Border x:Name="PlanNavBar" Grid.Row="0" Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+            <SelectorBar x:Name="PlanTabs"
+                         Margin="20,10,20,4"
+                         Background="Transparent"
+                         SelectionChanged="PlanTabs_SelectionChanged">
+                <SelectorBarItem Text="Energía" IsSelected="True"/>
+                <SelectorBarItem Text="Gestionar planes de energía"/>
+                <SelectorBarItem Text="Comparar planes de energía"/>
+            </SelectorBar>
+        </Border>
+
+        <Grid Grid.Row="1">
+
+<!-- ==================== PESTAÑA 1: ENERGÍA (plan) ==================== -->
+            <ScrollViewer x:Name="EnergiaTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="16" Margin="24,12,24,24">
+
+<!-- ============ PLAN DE ENERGÍA (selector, se mantiene) ============ -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16">
+                        <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                            <TextBlock Text="Plan de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                            <TextBlock Text="Elegí el plan de energía activo de Windows. No requiere permisos de administrador."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <ComboBox x:Name="PowerPlanCombo"
+                                          HorizontalAlignment="Stretch"
+                                          PlaceholderText="Cargando planes..."
+                                          DropDownOpened="PowerPlanCombo_DropDownOpened"/>
+                                <Button x:Name="ApplyPowerPlanButton"
+                                        Grid.Column="1"
+                                        Content="Aplicar plan"
+                                        Click="ApplyPowerPlanButton_Click"
+                                        CornerRadius="6"
+                                        Padding="16,8"
+                                        FontWeight="SemiBold"
+                                        MinWidth="120"
+                                        IsEnabled="False"/>
+                            </Grid>
+                            <TextBlock x:Name="PowerPlanStatusText" Text="" FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                                       Visibility="Collapsed"/>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+<!-- ==================== PESTAÑA 2: GESTIONAR PLANES DE ENERGÍA ==================== -->
+            <ScrollViewer x:Name="GestionarTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="16" Margin="24,12,24,24">
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16">
+                        <StackPanel Spacing="10">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Gestionar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Seleccioná un plan para renombrarlo, activarlo o borrarlo."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+
+<!-- Cabecera de columnas -->
+                            <Grid ColumnDefinitions="2*,1.1*,3*,0.7*" ColumnSpacing="12" Padding="4,0,4,4">
+                                <TextBlock Text="Nombre" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="1" Text="ID" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="2" Text="Descripción" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="3" Text="Activo" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                            </Grid>
+
+                            <ListView x:Name="PlansList"
+                                      MaxHeight="320"
+                                      SelectionMode="Single"
+                                      SelectionChanged="PlansList_SelectionChanged"/>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button x:Name="RenamePlanButton" Content="Renombrar" IsEnabled="False"
+                                            Click="RenamePlanButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+                                    <Button x:Name="ActivatePlanButton" Content="Activar" IsEnabled="False"
+                                            Click="ActivatePlanButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+                                    <Button x:Name="DeletePlanButton" Content="Borrar" IsEnabled="False"
+                                            Click="DeletePlanButton_Click" CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+                                </StackPanel>
+                                <Button Grid.Column="1" x:Name="OpenPowerOptionsButton"
+                                        Click="OpenPowerOptionsButton_Click"
+                                        CornerRadius="6"
+                                        Padding="14,8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE83E;" FontSize="14" VerticalAlignment="Center"/>
+                                        <TextBlock Text="Abrir planes de energía de Windows" FontSize="13" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <TextBlock x:Name="ManagePlanStatusText" Text="" FontSize="12"
+                                       Visibility="Collapsed"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+<!-- ===== INSTALAR PLANES DE ENERGÍA ===== -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16">
+                        <StackPanel Spacing="10">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE896;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Instalar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Planes oficiales de Windows y presets reconocidos por la comunidad (Ryzen, Bitsum…). Se instalan duplicando un plan base; podés borrarlos después desde la lista de arriba."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+
+<!-- Cabecera de columnas -->
+                            <Grid ColumnDefinitions="1.6*,2.4*,0.9*,0.9*" ColumnSpacing="12" Padding="4,0,4,4">
+                                <TextBlock Text="Plan" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="1" Text="Descripción" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="2" Text="Tipo" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                <TextBlock Grid.Column="3" Text="Estado" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource SecondaryTextBrush}"/>
+                            </Grid>
+
+                            <ListView x:Name="InstallPlansList"
+                                      MaxHeight="280"
+                                      SelectionMode="Single"
+                                      SelectionChanged="InstallPlansList_SelectionChanged"/>
+
+                            <Button x:Name="InstallPlanButton"
+                                    Content="Instalar"
+                                    IsEnabled="False"
+                                    Click="InstallPlanButton_Click"
+                                    HorizontalAlignment="Left"
+                                    CornerRadius="6" Padding="16,8" FontWeight="SemiBold" MinWidth="110"/>
+
+                            <TextBlock x:Name="InstallPlanStatusText" Text="" FontSize="12"
+                                       Visibility="Collapsed"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+
+<!-- ==================== PESTAÑA 3: COMPARAR PLANES DE ENERGÍA ==================== -->
+            <ScrollViewer x:Name="CompararTab" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Visibility="Collapsed">
+                <StackPanel Spacing="16" Margin="24,12,24,24">
+
+<!-- Configuración de la comparación -->
+                    <Border Background="{ThemeResource CardBackgroundBrush}"
+                            CornerRadius="12"
+                            Padding="16">
+                        <StackPanel Spacing="12">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE83E;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                                <TextBlock Text="Comparar planes de energía" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Elegí dos planes distintos y el color con el que se van a marcar las diferencias en cada cuadrícula. Se muestran todos los ajustes de energía: los que el plan define muestran su valor, y los que no, el valor predeterminado de Windows para ese tipo de plan."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"/>
+
+                            <Grid ColumnDefinitions="*,Auto,*,Auto" ColumnSpacing="12" RowSpacing="8">
+                                <StackPanel Grid.Column="0" Spacing="4">
+                                    <TextBlock Text="Plan A" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <ComboBox x:Name="ComparePlanACombo"
+                                              PlaceholderText="Seleccioná un plan"
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                </StackPanel>
+                                <Button x:Name="ColorAButton"
+                                        Grid.Column="1"
+                                        VerticalAlignment="Bottom"
+                                        CornerRadius="6"
+                                        Padding="12,8"
+                                        MinWidth="104"
+                                        Click="ColorAButton_Click"/>
+                                <StackPanel Grid.Column="2" Spacing="4">
+                                    <TextBlock Text="Plan B" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <ComboBox x:Name="ComparePlanBCombo"
+                                              PlaceholderText="Seleccioná un plan"
+                                              HorizontalAlignment="Stretch"
+                                              SelectionChanged="ComparePlanCombo_SelectionChanged"/>
+                                </StackPanel>
+                                <Button x:Name="ColorBButton"
+                                        Grid.Column="3"
+                                        VerticalAlignment="Bottom"
+                                        CornerRadius="6"
+                                        Padding="12,8"
+                                        MinWidth="104"
+                                        Click="ColorBButton_Click"/>
+                            </Grid>
+
+                            <Button x:Name="CompareButton"
+                                    Content="Comparar"
+                                    IsEnabled="False"
+                                    Click="CompareButton_Click"
+                                    CornerRadius="6"
+                                    Padding="20,9"
+                                    FontWeight="SemiBold"
+                                    HorizontalAlignment="Left"
+                                    MinWidth="130"/>
+
+                            <TextBlock x:Name="CompareStatusText" Text="" FontSize="12"
+                                       Visibility="Collapsed"
+                                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+<!-- Resultado: dos cuadrículas lado a lado dentro del MISMO scroll.
+                         OJO: el scroll queda deshabilitado en el interno a propósito:
+                         si está activo, se traga la rueda del mouse sobre las cuadrículas
+                         y la página no scrollea. El vertical lo maneja el ScrollViewer de
+                         la pestaña (mismo scroll para ambas) y NO hay scroll lateral:
+                         las columnas se adaptan al ancho disponible (app responsiva). -->
+                    <ScrollViewer x:Name="CompareScroll"
+                                  Visibility="Collapsed"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  VerticalScrollMode="Disabled"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  HorizontalScrollMode="Disabled"
+                                  ZoomMode="Disabled">
+                        <StackPanel Spacing="10">
+<!-- Botones para expandir/cerrar todos los subgrupos: aparecen
+                                 después de comparar, junto con la cuadrícula de resultados. -->
+                            <StackPanel x:Name="CompareActionsPanel"
+                                        Orientation="Horizontal"
+                                        Spacing="8"
+                                        Visibility="Collapsed">
+                                <Button x:Name="ExpandAllButton"
+                                        Content="Expandir subgrupos"
+                                        Click="ExpandAllButton_Click"
+                                        CornerRadius="6"
+                                        Padding="12,7"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"/>
+                                <Button x:Name="CollapseAllButton"
+                                        Content="Cerrar subgrupos"
+                                        Click="CollapseAllButton_Click"
+                                        CornerRadius="6"
+                                        Padding="12,7"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"/>
+                            </StackPanel>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+                                <StackPanel x:Name="ComparePlanAContainer" Spacing="0"/>
+                                <StackPanel Grid.Column="1" x:Name="ComparePlanBContainer" Spacing="0"/>
+                            </Grid>
+                        </StackPanel>
+                    </ScrollViewer>
+                </StackPanel>
+            </ScrollViewer>
+
+        </Grid>
+    </Grid>
+</UserControl>

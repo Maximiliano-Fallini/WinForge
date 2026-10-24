@@ -7,11 +7,19 @@
     <!-- Versión de la app: en sincronía con WHPO.UI.csproj (el chequeo de actualizaciones
          lee el ensamblado de entrada, y el instalador local toma esta versión al
          publicar; installer\ vive en el disco del desarrollador: no se versiona) -->
-    <Version>0.4.3</Version>
-    <InformationalVersion>0.4.1-beta</InformationalVersion>
+    <Version>0.5.5</Version>
+    <InformationalVersion>0.5.5-beta</InformationalVersion>
     <!-- Habilitar COM para System.Management (WMI) -->
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>
+
+  <!-- Catálogo de optimizaciones: los 418 ajustes de Windows con sus textos en 5
+       idiomas. Va embebido (el LogicalName es el que busca OptimizationCatalogProvider)
+       para que la pantalla de Optimizaciones no dependa de un archivo suelto. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Optimizations\optimization-catalog.json"
+                      LogicalName="WHPO.Core.Optimizations.optimization-catalog.json" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />

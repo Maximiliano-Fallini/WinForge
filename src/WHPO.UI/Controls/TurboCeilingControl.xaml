@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="WHPO_UI.Controls.TurboCeilingControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <UserControl.Resources>
+<!-- Botón de ayuda ("qué hace") que acompaña a cada nombre de ajuste en la card del
+             techo de turbo. Mismo aspecto que los que se arman en código con
+             TooltipStyles.CreateInfoButton: chico, sin fondo, con el ícono de información. -->
+        <Style x:Key="InfoIconButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="MinWidth" Value="20"/>
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+    </UserControl.Resources>
+
+<!-- ============ TECHO DE TURBO ============ -->
+    <Border Background="{ThemeResource CardBackgroundBrush}"
+            CornerRadius="12"
+            Padding="16">
+        <StackPanel Spacing="14">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE945;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Techo de turbo" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <Border Grid.Column="1"
+                        Background="{ThemeResource ChipBackgroundBrush}"
+                        CornerRadius="6"
+                        Padding="10,4"
+                        VerticalAlignment="Center">
+                    <TextBlock x:Name="TurboPlanChipText" FontSize="11"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               VerticalAlignment="Center"/>
+                </Border>
+            </Grid>
+
+            <TextBlock Text="Movés el techo de frecuencia del procesador dentro del plan de energía activo. Bajar el límite no acelera nada: cambia calor y ruido por rendimiento. No es overclock ni supera el turbo que el procesador ya admite."
+                       FontSize="12"
+                       Foreground="{ThemeResource SecondaryTextBrush}"
+                       TextWrapping="Wrap"/>
+
+<!-- Dos columnas: cada ajuste es "nombre + botón de ayuda", con su valor y la barra
+                 debajo. El detalle de qué hace cada uno vive en el tooltip del botón ⓘ,
+                 así no se apilan líneas de texto: la fila se lee de un vistazo. -->
+            <Grid x:Name="TurboControlsPanel" ColumnDefinitions="*,*" ColumnSpacing="28" RowSpacing="16">
+<!-- Modo boost -->
+                <StackPanel x:Name="TurboBoostRow" Spacing="6" VerticalAlignment="Top">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="Modo boost" FontSize="13" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" VerticalAlignment="Center"/>
+                        <Button x:Name="TurboBoostInfoButton"
+                                Style="{StaticResource InfoIconButtonStyle}">
+                            <FontIcon Glyph="&#xE946;" FontSize="12"
+                                      Foreground="{ThemeResource MutedBrush}"/>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock x:Name="TurboBoostValueText"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Right"
+                               TextWrapping="Wrap"/>
+                    <Slider x:Name="TurboBoostSlider"
+                            Minimum="0"
+                            Maximum="1"
+                            StepFrequency="1"
+                            TickFrequency="1"
+                            TickPlacement="Inline"
+                            VerticalAlignment="Center"
+                            ValueChanged="TurboBoostSlider_ValueChanged"/>
+                </StackPanel>
+
+<!-- Límite de rendimiento -->
+                <StackPanel x:Name="TurboLimitRow" Grid.Column="1" Spacing="6" VerticalAlignment="Top">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="Límite de rendimiento" FontSize="13" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" VerticalAlignment="Center"/>
+                        <Button x:Name="TurboLimitInfoButton"
+                                Style="{StaticResource InfoIconButtonStyle}">
+                            <FontIcon Glyph="&#xE946;" FontSize="12"
+                                      Foreground="{ThemeResource MutedBrush}"/>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock x:Name="TurboLimitValueText"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Right"
+                               TextWrapping="Wrap"/>
+                    <Slider x:Name="TurboLimitSlider"
+                            Minimum="0"
+                            Maximum="100"
+                            StepFrequency="1"
+                            VerticalAlignment="Center"
+                            ValueChanged="TurboLimitSlider_ValueChanged"/>
+                </StackPanel>
+            </Grid>
+
+<!-- Estado vacío: el equipo no expone el ajuste (se dice por qué, no se esconde) -->
+            <Border x:Name="TurboUnavailableBorder"
+                    Background="{ThemeResource ChipBackgroundBrush}"
+                    CornerRadius="8"
+                    Padding="12,10"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <FontIcon Glyph="&#xE72E;" FontSize="14"
+                              Foreground="{ThemeResource SecondaryTextBrush}"
+                              VerticalAlignment="Top" Margin="0,2,0,0"/>
+                    <TextBlock x:Name="TurboUnavailableText"
+                               FontSize="12"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+<!-- ===== Ajustes avanzados del procesador (plegable) ===== -->
+            <Expander x:Name="TurboAdvancedExpander"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Stretch"
+                      IsExpanded="False"
+                      Visibility="Collapsed">
+                <Expander.Header>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE713;" FontSize="14"
+                                  Foreground="{ThemeResource SecondaryTextBrush}"
+                                  VerticalAlignment="Center"/>
+                        <TextBlock Text="Ajustes avanzados del procesador"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Expander.Header>
+                <StackPanel Spacing="12" Margin="0,8,0,0">
+                    <TextBlock Text="Políticas de energía de Windows para el procesador. No es overclock: no sube nada por encima de lo que el equipo ya permite, y se aplican al plan activo."
+                               FontSize="11"
+                               Foreground="{ThemeResource SecondaryTextBrush}"
+                               TextWrapping="Wrap"/>
+
+<!-- Las filas se arman desde código con los ajustes que expone este equipo.
+                         Van de a dos por fila (nombre + botón de ayuda, valor y barra). -->
+                    <StackPanel x:Name="TurboAdvancedPanel" Spacing="16"/>
+
+                </StackPanel>
+            </Expander>
+
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock x:Name="TurboScopeText"
+                           FontSize="11"
+                           Foreground="{ThemeResource SecondaryTextBrush}"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center"/>
+ <!-- Los dos atajos de perfil (Predeterminado / Recomendado) siguen la misma idea que
+                     los de cada ajuste en Optimizaciones: aplican en el momento y confirman con el
+                     estado que el equipo reporta después. Aplicar queda para los cambios manuales
+                     de las barras. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="TurboDefaultsButton"
+                            Click="TurboDefaultsButton_Click"
+                            CornerRadius="6"
+                            Padding="14,8"
+                            FontWeight="SemiBold"
+                            MinWidth="120"
+                            IsEnabled="False">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE7A7;" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="Predeterminado" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="TurboRecommendedButton"
+                            Click="TurboRecommendedButton_Click"
+                            CornerRadius="6"
+                            Padding="14,8"
+                            FontWeight="SemiBold"
+                            MinWidth="120"
+                            IsEnabled="False">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE735;" FontSize="12"
+                                      Foreground="{StaticResource SuccessBrush}"
+                                      VerticalAlignment="Center"/>
+                            <TextBlock Text="Recomendado" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="TurboApplyButton"
+                            Content="Aplicar"
+                            Click="TurboApplyButton_Click"
+                            Style="{StaticResource AccentButtonStyle}"
+                            CornerRadius="6"
+                            Padding="16,8"
+                            FontWeight="SemiBold"
+                            MinWidth="110"
+                            IsEnabled="False"/>
+                </StackPanel>
+            </Grid>
+
+            <TextBlock x:Name="TurboStatusText" Text="" FontSize="12"
+                       Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
+                       Visibility="Collapsed"/>
+        </StackPanel>
+    </Border>
+</UserControl>

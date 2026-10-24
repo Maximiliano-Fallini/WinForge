@@ -7,19 +7,38 @@
     <Grid Background="{ThemeResource AppBackgroundBrush}">
         <ScrollViewer VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Margin="28,22,28,36" Spacing="18">
-                <StackPanel Spacing="5">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <FontIcon Glyph="&#xE897;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                        <TextBlock Text="Guía" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <StackPanel MaxWidth="760"
+                        HorizontalAlignment="Center"
+                        Margin="24,20,24,36"
+                        Spacing="20">
+
+                <!-- Encabezado: ícono en un tile tenue, título y bajada. -->
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Border Width="38" Height="38"
+                            CornerRadius="10"
+                            Background="{ThemeResource CoreTrackBackgroundBrush}"
+                            VerticalAlignment="Center">
+                        <FontIcon Glyph="&#xE897;"
+                                  FontSize="18"
+                                  Foreground="{ThemeResource AccentBrush}"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                        <TextBlock x:Name="PageTitle"
+                                   Text="Guía"
+                                   FontSize="22"
+                                   FontWeight="SemiBold"/>
+                        <TextBlock x:Name="PageSubtitle"
+                                   Text="Aprendé a usar cada componente y resolvé las dudas más comunes."
+                                   FontSize="12.5"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"
+                                   TextWrapping="Wrap"/>
                     </StackPanel>
-                    <TextBlock Text="Encontrá una función, aprendé a usarla o resolvé un problema."
-                               FontSize="13"
-                               Foreground="{ThemeResource SecondaryTextBrush}"
-                               TextWrapping="Wrap"/>
                 </StackPanel>
 
-                <Grid MaxWidth="620" HorizontalAlignment="Stretch">
+                <!-- Buscador -->
+                <Grid MaxWidth="520" HorizontalAlignment="Stretch">
                     <TextBox x:Name="SearchBox"
                              PlaceholderText="¿Qué necesitás hacer o resolver?"
                              TextChanged="SearchBox_TextChanged"
@@ -34,31 +53,32 @@
                               IsHitTestVisible="False"/>
                 </Grid>
 
-                <StackPanel x:Name="LandingHost" Spacing="18"/>
+                <!-- Portada (FAQ + componentes), la llena Render(). -->
+                <StackPanel x:Name="LandingHost" Spacing="24"/>
 
-                <Border x:Name="DetailPanel"
-                        Visibility="Collapsed"
-                        Background="{ThemeResource CardBackgroundBrush}"
-                        BorderBrush="{ThemeResource CardBorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="12"
-                        Padding="20">
-                    <StackPanel Spacing="16">
-                        <Button x:Name="BackButton"
-                                Content="Volver a la guía"
-                                Click="BackButton_Click"
-                                HorizontalAlignment="Left"/>
-                        <StackPanel Spacing="6">
-                            <TextBlock x:Name="DetailTitle" FontSize="20" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="DetailSummary"
-                                       FontSize="13"
+                <!-- Detalle de una pregunta o de un componente. -->
+                <StackPanel x:Name="DetailPanel" Visibility="Collapsed" Spacing="12">
+                    <Button x:Name="BackButton"
+                            Click="BackButton_Click"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="8,4"
+                            CornerRadius="6"
+                            HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE72B;"
+                                      FontSize="11"
+                                      Foreground="{ThemeResource SecondaryTextBrush}"
+                                      VerticalAlignment="Center"/>
+                            <TextBlock x:Name="BackText"
+                                       Text="Volver a la guía"
+                                       FontSize="12"
                                        Foreground="{ThemeResource SecondaryTextBrush}"
-                                       TextWrapping="Wrap"/>
+                                       VerticalAlignment="Center"/>
                         </StackPanel>
-                        <StackPanel x:Name="StepsHost" Spacing="10"/>
-                        <controls:WrapPanel x:Name="LinksHost" Spacing="8"/>
-                    </StackPanel>
-                </Border>
+                    </Button>
+                    <StackPanel x:Name="DetailHost" Spacing="14"/>
+                </StackPanel>
 
                 <TextBlock x:Name="EmptyText"
                            Text="No encontramos guías para esa búsqueda. Probá con otras palabras."

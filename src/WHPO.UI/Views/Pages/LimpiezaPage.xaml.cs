@@ -58,7 +58,6 @@ public sealed partial class LimpiezaPage : Page
     private readonly List<ChequeoUi> _chequeoApps = new();  // fase 2: procesos con ventana
     private readonly List<ChequeoUi> _chequeoStartup = new(); // fase 3: apps de inicio
     private int _chequeoPhase;         // 0=limpieza, 1=apps, 2=inicio
-    private long _chequeoTotalBytes;   // total de fase 1, para habilitar botón Limpiar
     /// <summary>Timer que refresca en vivo la RAM de las apps en segundo plano (fase 2).</summary>
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _chequeoAppsTimer;
     /// <summary>Nombres de cada fase del Chequeo (claves de traducción).</summary>
@@ -77,11 +76,12 @@ public sealed partial class LimpiezaPage : Page
     /// <summary>Opciones agrupadas del panel de inicio: categoría.Id → CheckBox.</summary>
     private readonly Dictionary<string, CheckBox> _customGroupChecks = new();
 
+    private const string BrowsersGroupId = "navegadores";
+
     /// <summary>Grupos (categorías) que están activos tras el último análisis.</summary>
     private HashSet<string> _customSelection = new(StringComparer.Ordinal);
 
     private CancellationTokenSource? _chequeoCts;
-    private CancellationTokenSource? _customScanCts;
 
     // ---- Íconos reales de navegadores: extraídos de sus .exe con IconExtractor ----
     private static readonly string BrowserIconDir = Path.Combine(
@@ -95,14 +95,6 @@ public sealed partial class LimpiezaPage : Page
     // cacheados por ruta del ejecutable (varias apps comparten exe) ----
     private static readonly Dictionary<string, BitmapImage> AppIconReady = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> AppIconFailed = new(StringComparer.OrdinalIgnoreCase);
-
-    // ---- Íconos reales de entradas de inicio: extraídos de sus .exe con IconExtractor ----
-    private static readonly string StartupIconDir = Path.Combine(
-        WHPO.Core.AppPaths.RootDir, "startupicons");
-    /// <summary>PNG ya extraído y listo (BitmapImage). La clave es el Id de la entrada.</summary>
-    private static readonly Dictionary<string, BitmapImage> StartupIconReady = new(StringComparer.OrdinalIgnoreCase);
-    /// <summary>"true" = ya se intentó extraer y falló: no reintentar.</summary>
-    private static readonly HashSet<string> StartupIconFailed = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Pone en el Border indicado el ícono del navegador. Primero muestra un
@@ -211,391 +203,6 @@ public sealed partial class LimpiezaPage : Page
         });
     }
 
-    /// <summary>
-    /// Nombre de archivo de caché SEGURO para un Id de entrada: los Ids
-    /// contienen caracteres inválidos para rutas de Windows ("reg|HKCU\...|OneDrive"),
-    /// que rompían el guardado/lectura del PNG y el ícono nunca aparecía.
-    /// Se reemplazan por '_' y se limita el largo (255 es el tope de Windows).
-    /// </summary>
-    private static string StartupIconCacheKey(string id)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new System.Text.StringBuilder(id.Length);
-        foreach (var c in id)
-            sb.Append(c is '\\' or '/' or ':' or '|' || Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-        var s = sb.ToString();
-        if (s.Length > 200)
-        {
-            // Hash determinista del Id completo para no perder unicidad.
-            using var sha = System.Security.Cryptography.SHA256.Create();
-            var hash = Convert.ToHexString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(id)));
-            s = s[..150] + "_" + hash[..10];
-        }
-        return s;
-    }
-
-    /// <summary>
-    /// Pone en el Border indicado el ícono de la entrada de inicio.
-    /// Primero muestra un FontIcon de respaldo (siempre visible); después
-    /// extrae el ícono REAL del .exe/acceso directo en background y lo
-    /// reemplaza vía DispatcherQueue.
-    /// </summary>
-    /// <summary>
-    /// Las apps empaquetadas (MSIX/UWP) no tienen .ex que extraer: su ícono es el
-    /// logo del paquete (Assets\Square44x44Logo*.png en su carpeta de instalación).
-    ///
-    /// Mismo pipeline que los íconos de registro (que sí funcionan): en background
-    /// se COPIA el logo a la caché local y el BitmapImage se crea DENTRO del
-    /// DispatcherQueue (hilo UI) desde la copia — no desde la ruta de WindowsApps,
-    /// que fallaba silenciosamente al crear el BitmapImage en un hilo de fondo.
-    /// </summary>
-    private void EnsurePackagedAppIcon(StartupEntry entry, Border badgeHost)
-    {
-        string cacheKey = entry.Id;
-
-        // ¿Ya lo tenemos en memoria?
-        lock (StartupIconReady)
-        {
-            if (StartupIconReady.TryGetValue(cacheKey, out var bi))
-            {
-                badgeHost.Child = new WinImage
-                {
-                    Source = bi, Width = 24, Height = 24,
-                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-                };
-                return;
-            }
-        }
-
-        // ¿Ya está cacheado en disco?
-        var pngPath = Path.Combine(StartupIconDir, StartupIconCacheKey(cacheKey) + ".png");
-        if (File.Exists(pngPath))
-        {
-            try
-            {
-                var bi = new BitmapImage(new Uri(pngPath, UriKind.Absolute));
-                lock (StartupIconReady) StartupIconReady[cacheKey] = bi;
-                badgeHost.Child = new WinImage
-                {
-                    Source = bi, Width = 24, Height = 24,
-                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-                };
-                return;
-            }
-            catch { }
-        }
-
-        // Fallback inmediato (mismo FontIcon que el resto).
-        badgeHost.Child = new FontIcon
-        {
-            Glyph = "\uE7B5", FontSize = 18,
-            Foreground = ThemeBrushes.Get("AccentBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-        };
-
-        lock (StartupIconFailed) { if (StartupIconFailed.Contains(cacheKey)) return; }
-
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var logo = FindPackageLogo(entry.Command);
-                if (logo == null)
-                {
-                    _logging.LogWarning($"[StartupIcon] Paquete {entry.Name}: no se encontró logo en {entry.Command}");
-                    lock (StartupIconFailed) { StartupIconFailed.Add(cacheKey); }
-                    return;
-                }
-
-                // Copiar a la caché local (misma carpeta que los íconos de registro).
-                Directory.CreateDirectory(StartupIconDir);
-                var tmp = pngPath + ".tmp";
-                File.Copy(logo, tmp, overwrite: true);
-                File.Move(tmp, pngPath, overwrite: true);
-                _logging.LogDebug($"[StartupIcon] Paquete {entry.Name}: logo {logo} cacheado en {pngPath}");
-
-                // Crear el BitmapImage EN EL HILO UI (patrón que sí funciona).
-                _ = badgeHost.DispatcherQueue.TryEnqueue(() =>
-                {
-                    try
-                    {
-                        var bi = new BitmapImage(new Uri(pngPath, UriKind.Absolute));
-                        lock (StartupIconReady) StartupIconReady[cacheKey] = bi;
-                        badgeHost.Child = new WinImage
-                        {
-                            Source = bi, Width = 24, Height = 24,
-                            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-                        };
-                        _logging.LogDebug($"[StartupIcon] Paquete {entry.Name}: UI actualizada");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logging.LogError($"[StartupIcon] Paquete {entry.Name}: error al mostrar: {ex.Message}");
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logging.LogError($"[StartupIcon] Paquete {entry.Name}: {ex.Message}");
-                lock (StartupIconFailed) { StartupIconFailed.Add(cacheKey); }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Busca el logo del paquete (Square44x44Logo en distintas escalas/dirs).
-    /// </summary>
-    private static string? FindPackageLogo(string packageDir)
-    {
-        if (string.IsNullOrWhiteSpace(packageDir) || !Directory.Exists(packageDir)) return null;
-        string[] subDirs = { "Assets", "Images", "" };
-        string[] names =
-        {
-            "Square44x44Logo.scale-400.png", "Square44x44Logo.scale-200.png",
-            "Square44x44Logo.scale-100.png", "Square44x44Logo.png",
-            "StoreLogo.scale-400.png", "StoreLogo.scale-100.png", "StoreLogo.png"
-        };
-        foreach (var sub in subDirs)
-        {
-            var basePath = sub.Length == 0 ? packageDir : Path.Combine(packageDir, sub);
-            if (!Directory.Exists(basePath)) continue;
-            foreach (var n in names)
-            {
-                var f = Path.Combine(basePath, n);
-                if (File.Exists(f)) return f;
-            }
-        }
-        return null;
-    }
-
-    private void EnsureStartupIcon(StartupEntry entry, Border badgeHost)
-    {
-        string cacheKey = entry.Id;
-
-        // Las empaquetadas usan el logo del paquete, no extracción de exe.
-        if (entry.Source == StartupSource.PackagedApp)
-        {
-            EnsurePackagedAppIcon(entry, badgeHost);
-            return;
-        }
-
-        // ¿Ya tenemos el PNG?
-        lock (StartupIconReady)
-        {
-            if (StartupIconReady.TryGetValue(cacheKey, out var bi))
-            {
-                badgeHost.Child = new WinImage
-                {
-                    Source = bi,
-                    Width = 24, Height = 24,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                return;
-            }
-        }
-
-        var pngPath = Path.Combine(StartupIconDir, StartupIconCacheKey(cacheKey) + ".png");
-        if (File.Exists(pngPath))
-        {
-            try
-            {
-                var bi = new BitmapImage(new Uri(pngPath, UriKind.Absolute));
-                lock (StartupIconReady) StartupIconReady[cacheKey] = bi;
-                badgeHost.Child = new WinImage
-                {
-                    Source = bi,
-                    Width = 24, Height = 24,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                return;
-            }
-            catch { File.Delete(pngPath); }
-        }
-
-        // Fallback inmediato: FontIcon de "app" con el acento de la app, para que
-        // el badge NUNCA quede vacío (mismo patrón que EnsureBrowserIcon).
-        badgeHost.Child = new FontIcon
-        {
-            Glyph = "\uE7B5", // AppIconDefault
-            FontSize = 18,
-            Foreground = ThemeBrushes.Get("AccentBrush"),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        // Mejor fallback si se puede: ícono genérico de .exe del SISTEMA (el mismo
-        // que usa el Explorador para ejecutables sin recurso de ícono propio).
-        try
-        {
-            var fallbackBmp = IconExtractor.ExtractDefaultExeIcon();
-            if (fallbackBmp != null)
-            {
-                badgeHost.Child = new WinImage { Source = ToBitmapImageSync(fallbackBmp), Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-                fallbackBmp.Dispose();
-            }
-        }
-        catch { }
-
-        // ¿Ya probamos y falló?
-        lock (StartupIconFailed) { if (StartupIconFailed.Contains(cacheKey)) return; }
-
-        // Extraer en background con logging detallado para diagnóstico.
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                _logging.LogDebug($"[StartupIcon] Iniciando extracción para: {entry.Name} (Source={entry.Source}, Command={entry.Command})");
-                
-                string? exePath = null;
-
-                // Resolver el exe según la fuente de la entrada.
-                if (entry.Source == StartupSource.StartupFolder)
-                {
-                    // Es un .lnk: resolver el destino.
-                    _logging.LogDebug($"[StartupIcon] Resolviendo shortcut: {entry.Command}");
-                    try { exePath = ResolveShortcutTarget(entry.Command); } catch (Exception ex) { _logging.LogWarning($"[StartupIcon] Error resolviendo shortcut: {ex.Message}"); }
-                    _logging.LogDebug($"[StartupIcon] Shortcut resuelto a: {exePath}");
-                }
-                else
-                {
-                    // Registry: Command suele ser la ruta del exe (a veces con args).
-                    _logging.LogDebug($"[StartupIcon] Extrayendo exe path de comando: {entry.Command}");
-                    exePath = ExtractExePath(entry.Command);
-                    if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
-                    {
-                        var expanded = Environment.ExpandEnvironmentVariables(exePath ?? string.Empty);
-                        if (!string.IsNullOrEmpty(expanded) && File.Exists(expanded)) exePath = expanded;
-                    }
-                    _logging.LogDebug($"[StartupIcon] Exe path extraído: {exePath}");
-                }
-
-                if (string.IsNullOrEmpty(exePath) || !File.Exists(exePath))
-                {
-                    _logging.LogWarning($"[StartupIcon] Exe no encontrado o ruta vacía: '{exePath}' para {entry.Name}");
-                    lock (StartupIconFailed) { StartupIconFailed.Add(cacheKey); }
-                    return;
-                }
-
-                _logging.LogDebug($"[StartupIcon] Extrayendo ícono de alta resolución: {exePath}");
-                using var big = IconExtractor.ExtractHighResIcon(exePath);
-                if (big == null)
-                {
-                    _logging.LogWarning($"[StartupIcon] ExtractHighResIcon devolvió null para: {exePath}");
-                    lock (StartupIconFailed) { StartupIconFailed.Add(cacheKey); }
-                    return;
-                }
-
-                _logging.LogDebug($"[StartupIcon] Ícono extraído OK ({big.Width}x{big.Height}), escalando a 28x28");
-                using var small = new Bitmap(28, 28);
-                using (var g = Graphics.FromImage(small))
-                {
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                    g.DrawImage(big, 0, 0, 28, 28);
-                }
-                Directory.CreateDirectory(StartupIconDir);
-                var tmp = pngPath + ".tmp";
-                small.Save(tmp, System.Drawing.Imaging.ImageFormat.Png);
-                File.Move(tmp, pngPath, overwrite: true);
-
-                _logging.LogDebug($"[StartupIcon] PNG guardado en: {pngPath}");
-
-                // Reemplazar en la UI.
-                _ = badgeHost.DispatcherQueue.TryEnqueue(() =>
-                {
-                    try
-                    {
-                        var bi = new BitmapImage(new Uri(pngPath, UriKind.Absolute));
-                        lock (StartupIconReady) StartupIconReady[cacheKey] = bi;
-                        badgeHost.Child = new WinImage
-                        {
-                            Source = bi,
-                            Width = 24, Height = 24,
-                            HorizontalAlignment = HorizontalAlignment.Center,
-                            VerticalAlignment = VerticalAlignment.Center
-                        };
-                        _logging.LogDebug($"[StartupIcon] UI actualizada para: {entry.Name}");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logging.LogError($"[StartupIcon] Error actualizando UI: {ex.Message}");
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logging.LogError($"[StartupIcon] Excepción general para {entry.Name}: {ex.Message}");
-                lock (StartupIconFailed) { StartupIconFailed.Add(cacheKey); }
-            }
-        });
-    }
-
-    /// <summary>
-    /// Extrae la ruta del ejecutable de una línea de comandos.
-    /// Muchas entradas del registro NO ponen comillas aunque la ruta tenga espacios
-    /// (ej: `C:\Program Files (x86)\...\Lightshot.exe /silent`): cortar en el primer
-    /// espacio dejaba la ruta a medias. Se prueban prefijos crecientes y se queda con
-    /// el más largo que exista como archivo; si ninguno existe, con el primer token
-    /// (para que el error de archivo se reporte igual).
-    /// </summary>
-    private static string? ExtractExePath(string commandLine)
-    {
-        if (string.IsNullOrWhiteSpace(commandLine)) return null;
-        var trimmed = commandLine.Trim();
-
-        // Entre comillas: hasta la comilla de cierre.
-        if (trimmed.StartsWith("\"", StringComparison.Ordinal))
-        {
-            int end = trimmed.IndexOf("\"", 1, StringComparison.Ordinal);
-            if (end > 0) return trimmed.Substring(1, end - 1);
-            return trimmed.Trim('\"');
-        }
-
-        // Sin comillas: probar prefijos cada vez más largos y quedarse con el que existe.
-        string? best = null;
-        int idx = 0;
-        while (idx < trimmed.Length)
-        {
-            int nextSpace = trimmed.IndexOf(' ', idx);
-            if (nextSpace < 0) break;
-            var candidate = trimmed[..nextSpace];
-            try
-            {
-                if (File.Exists(candidate)) best = candidate;
-            }
-            catch { }
-            idx = nextSpace + 1;
-        }
-        if (best != null) return best;
-
-        // La ruta completa también puede ser el archivo (cuando no quedan espacios
-        // y el último candidato era una carpeta, ej: "C:\Program Files\...\Lightshot.exe").
-        try { if (File.Exists(trimmed)) return trimmed; } catch { }
-
-        // Nada existe: primer token (la ruta probablemente no existe, ya se verá).
-        int space = trimmed.IndexOf(' ');
-        return space > 0 ? trimmed[..space] : trimmed;
-    }
-
-    /// <summary>
-    /// Resuelve el destino de un acceso directo .lnk usando ShellLink COM.
-    /// </summary>
-    private static string? ResolveShortcutTarget(string lnkPath)
-    {
-        try
-        {
-            Type? shellType = Type.GetTypeFromProgID("Shell.Application");
-            if (shellType == null) return null;
-            dynamic shell = Activator.CreateInstance(shellType)!;
-            dynamic folder = shell.NameSpace(Path.GetDirectoryName(lnkPath));
-            dynamic item = folder.ParseName(Path.GetFileName(lnkPath));
-            dynamic link = item.GetLink;
-            return link.Path;
-        }
-        catch { return null; }
-    }
-
     /// <summary>Convierte Bitmap a BitmapImage de forma sÃ­ncrona (UI thread).</summary>
     private static BitmapImage ToBitmapImageSync(System.Drawing.Bitmap bmp)
     {
@@ -640,12 +247,8 @@ public sealed partial class LimpiezaPage : Page
 
         // Velocímetros de progreso: el MISMO dial de la pantalla de arranque
         // (SpeedometerGauge) muestra el % completado durante el análisis/escaneo.
-        // Los tres quedan al tamaño por defecto del control —el del arranque, 300—: el de
-        // duplicados es el mismo dial que el del Chequeo y el de Personalizada (antes iba
-        // más chico y al lado de las cards de análisis se leía como otro control).
-        // El de Administración de inicio sigue más chico: vive DENTRO de la card de la
-        // lista, donde un dial de 300 desbordaría la fila.
-        StartupRing.ConfigureSize(150);
+        // Los dos quedan al tamaño por defecto del control (el del arranque, 300),
+        // así el analisis y el buscador de duplicados se leen igual.
 
         // Stepper de fases del Chequeo: puntos + línea, estilo onboarding.
         BuildChequeoPhaseDots();
@@ -707,28 +310,24 @@ public sealed partial class LimpiezaPage : Page
 
     private void ApplyTabsLanguage()
     {
-        if (LimpiezaTabs.Items.Count >= 4)
+        if (LimpiezaTabs.Items.Count >= 2)
         {
-            ((SelectorBarItem)LimpiezaTabs.Items[0]).Text = I18n.T("Chequeo");
-            ((SelectorBarItem)LimpiezaTabs.Items[1]).Text = I18n.T("Limpieza personalizada");
-            ((SelectorBarItem)LimpiezaTabs.Items[2]).Text = I18n.T("Buscador de duplicados");
-            ((SelectorBarItem)LimpiezaTabs.Items[3]).Text = I18n.T("Administración de inicio");
+            // "Limpieza" es UNA pantalla: chequeo y limpieza personalizada juntos.
+            // La administración de inicio es un componente aparte.
+            ((SelectorBarItem)LimpiezaTabs.Items[0]).Text = I18n.T("Limpieza");
+            ((SelectorBarItem)LimpiezaTabs.Items[1]).Text = I18n.T("Buscador de duplicados");
         }
     }
 
     private void LimpiezaTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
         int idx = sender.Items.IndexOf(sender.SelectedItem);
-        ChequeoTab.Visibility   = idx == 0 ? Visibility.Visible : Visibility.Collapsed;
-        CustomTab.Visibility    = idx == 1 ? Visibility.Visible : Visibility.Collapsed;
-        DupTab.Visibility       = idx == 2 ? Visibility.Visible : Visibility.Collapsed;
-        StartupTab.Visibility   = idx == 3 ? Visibility.Visible : Visibility.Collapsed;
+        LimpiezaTab.Visibility  = idx == 0 ? Visibility.Visible : Visibility.Collapsed;
+        DupTab.Visibility       = idx == 1 ? Visibility.Visible : Visibility.Collapsed;
 
         // Carga perezosa: construir el contenido al abrir la pestaña por primera vez.
-        if (idx == 2 && DupGroupsHost.Children.Count == 0 && DupDrivePicker.Items.Count == 0)
+        if (idx == 1 && DupGroupsHost.Children.Count == 0 && DupDrivePicker.Items.Count == 0)
             PopulateDrivePicker();
-        if (idx == 3 && StartupEntriesHost.Children.Count == 0)
-            _ = LoadStartupEntriesAsync();
 
         // Cancelar scans de otras pestañas al cambiar y detener el refresco de RAM.
         if (idx != 0)
@@ -741,26 +340,31 @@ public sealed partial class LimpiezaPage : Page
         {
             StartChequeoAppsTimer();
         }
-        if (idx != 1) { _customScanCts?.Cancel(); _customScanCts = null; }
     }
 
     // =====================================================================
-    // Chequeo (estilo CCleaner: analizar → resultados en secciones)
+    // Limpieza unificada (Chequeo + Limpieza personalizada en un solo flujo)
     // =====================================================================
 
     /// <summary>
-    /// Botón central "Analizar": escanea navegadores, sistema, caché de apps
-    /// y papelera, y muestra los resultados agrupados en secciones.
-    /// </summary>
-    /// <summary>
-    /// Botón "Analizar". Usa EXACTAMENTE el mismo patrón que el auto-scan de
-    /// Limpieza personalizada (que funciona): awaits directos a los métodos async
-    /// del servicio (que ya corren en thread pool internamente), y después de cada
-    /// await se toca la UI directo porque se retoma en el hilo UI. Cero TryEnqueue,
-    /// cero GetAwaiter, cero Task.Run manual.
+    /// Botón único "Analizar": escanea los grupos elegidos (Navegadores y/o las
+    /// categorías de Limpieza personalizada), más aplicaciones en segundo plano
+    /// (Fase 2) y aplicaciones de inicio (Fase 3), presentando todo en el flujo
+    /// por fases.
     /// </summary>
     private async void ChequeoAnalyzeButton_Click(object sender, RoutedEventArgs e)
     {
+        CustomStartFeedback.Visibility = Visibility.Collapsed;
+        var selectedGroups = _customGroupChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
+        if (selectedGroups.Count == 0)
+        {
+            Feedback.Warning(CustomStartFeedback, I18n.T("Elegí al menos un grupo de carpetas para analizar."));
+            return;
+        }
+
+        _customSelection = selectedGroups.ToHashSet(StringComparer.Ordinal);
+        bool scanBrowsers = _customSelection.Contains(BrowsersGroupId);
+
         _chequeoCts?.Cancel();
         _chequeoCts = new CancellationTokenSource();
         var ct = _chequeoCts.Token;
@@ -769,8 +373,6 @@ public sealed partial class LimpiezaPage : Page
         try
         {
             // ---- Resetear UI ----
-            // Vuelve al estado inicial (el análisis arranca mostrando el progreso,
-            // así que se oculta el panel de Analizar que deja visible el reset).
             ResetChequeoToStart();
             ChequeoStartPanel.Visibility = Visibility.Collapsed;
 
@@ -781,127 +383,144 @@ public sealed partial class LimpiezaPage : Page
             UpdateChequeoProgress(2, I18n.T("Preparando..."));
             ChequeoProgressPanel.Visibility = Visibility.Visible;
 
-            IReadOnlyCollection<BrowserSubItem> allItems = [BrowserSubItem.Cache, BrowserSubItem.Cookies, BrowserSubItem.History];
- // Reemplaza a la vieja card "Limpieza de disco" (Herramientas): cubre
- // Temp de Windows (C:\Windows\Temp), Temporal del usuario (%TEMP%),
- // volcados, reportes de error y la caché de Windows Update
- // (SoftwareDistribution\Download), como la card original.
-            var sysIds = new[] { "temp_windows", "temp_user", "sys_crashdumps", "sys_wer", "dl_wsus" };
-            var cacheIds = new[] { "mm_thumbs", "mm_iconcache", "mm_wmp" };
-            var rbIds = new[] { "sys_recyclebin" };
-
             long totalBytes = 0;
             long browserBytes = 0;
             int totalApps = 0;
             int totalStartup = 0;
+            var detalles = new List<string>();
+            int warnings = 0;
 
             // =====================================================================
-            // FASE 1/3 · Limpieza de archivos (navegadores + sistema + caché + papelera)
+            // FASE 1/3 · Limpieza de archivos (navegadores + categorías elegidas)
             // =====================================================================
             UpdateChequeoProgress(4, I18n.T("Fase {0} de {1}: {2}...", 1, 3, I18n.T("Limpieza de archivos")));
 
-            // Detectar navegadores instalados y procesos abiertos por separado.
-            // Un navegador abierto puede no tener aún un perfil detectable (por
-            // ejemplo, primera ejecución), pero igualmente debe disparar el aviso.
-            var browsers = await Task.Run(() => _cleanup.GetBrowsers().ToList(), ct);
-            var runningByProcess = await Task.Run(GetRunningBrowserProcesses, ct);
-            browsers = browsers
-                .Where(b => b.IsInstalled || runningByProcess.Contains(b.ProcessName, StringComparer.OrdinalIgnoreCase))
-                .Select(b => b with { IsRunning = IsBrowserRunning(b, runningByProcess) })
-                .ToList();
-
-            // Si hay un proceso compatible abierto sin entrada instalada, crear una
-            // ficha mínima para que el diálogo también pueda identificarlo.
-            foreach (var processName in runningByProcess)
+            if (scanBrowsers)
             {
-                if (browsers.Any(b => b.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))) continue;
-                var fallback = _cleanup.GetBrowsers().FirstOrDefault(b => b.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
-                if (fallback != null) browsers.Add(fallback with { IsInstalled = true, IsRunning = true });
-            }
+                IReadOnlyCollection<BrowserSubItem> allItems = [BrowserSubItem.Cache, BrowserSubItem.Cookies, BrowserSubItem.History];
 
-            // ---- Popup: si hay navegadores abiertos, avisar para cerrarlos antes
-            // de seguir (o continuar sin cerrar / cancelar el análisis). ----
-            var stillOpen = await PromptCloseRunningBrowsersAsync(browsers, ct);
-            _logging.LogDebug($"[Chequeo] Navegadores instalados={browsers.Count}, abiertos={browsers.Count(b => b.IsRunning)}");
-            if (stillOpen == null)
-            {
-                ChequeoProgressPanel.Visibility = Visibility.Collapsed;
-                ChequeoStartPanel.Visibility = Visibility.Visible;
-                return;
-            }
-            var openBrowserIds = new HashSet<string>(stillOpen.Select(b => b.Id), StringComparer.Ordinal);
+                var browsers = await Task.Run(() => _cleanup.GetBrowsers().ToList(), ct);
+                var runningByProcess = await Task.Run(GetRunningBrowserProcesses, ct);
+                browsers = browsers
+                    .Where(b => b.IsInstalled || runningByProcess.Contains(b.ProcessName, StringComparer.OrdinalIgnoreCase))
+                    .Select(b => b with { IsRunning = IsBrowserRunning(b, runningByProcess) })
+                    .ToList();
 
-            // Construir cards vacías en la UI (rápido, sin I/O). Los navegadores que
-            // siguen abiertos no muestran contenido: solo el aviso amarillo.
-            foreach (var info in browsers)
-                ChequeoBrowsersHost?.Children.Add(BuildChequeoBrowserCard(info, isOpen: openBrowserIds.Contains(info.Id)));
-
-            // ---- Paso 1/4: Navegadores (5-25%) ----
-            int totalBrowsers = browsers.Count;
-            for (int i = 0; i < totalBrowsers; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                var info = browsers[i];
-                // Sigue abierto (se omitió cerrarlo): no se mide su contenido.
-                if (openBrowserIds.Contains(info.Id)) continue;
-                UpdateChequeoProgress(5 + (int)(20.0 * i / totalBrowsers), I18n.T("Escaneando {0}...", info.DisplayName));
-
-                try
+                foreach (var processName in runningByProcess)
                 {
-                    var r = await _cleanup.ScanBrowserAsync(info.Id, allItems, ct);
-                    totalBytes += r.TotalBytes;
-                    browserBytes += r.TotalBytes;
+                    if (browsers.Any(b => b.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))) continue;
+                    var fallback = _cleanup.GetBrowsers().FirstOrDefault(b => b.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+                    if (fallback != null) browsers.Add(fallback with { IsInstalled = true, IsRunning = true });
+                }
 
-                    // Actualizar pesos de este navegador (retomamos en UI thread).
-                    foreach (var item in r.Items)
+                var stillOpen = await PromptCloseRunningBrowsersAsync(browsers, ct);
+                _logging.LogDebug($"[Chequeo] Navegadores instalados={browsers.Count}, abiertos={browsers.Count(b => b.IsRunning)}");
+                if (stillOpen == null)
+                {
+                    ChequeoProgressPanel.Visibility = Visibility.Collapsed;
+                    ChequeoStartPanel.Visibility = Visibility.Visible;
+                    return;
+                }
+                var openBrowserIds = new HashSet<string>(stillOpen.Select(b => b.Id), StringComparer.Ordinal);
+
+                foreach (var info in browsers)
+                    ChequeoBrowsersHost?.Children.Add(BuildChequeoBrowserCard(info, isOpen: openBrowserIds.Contains(info.Id)));
+
+                int totalBrowsers = browsers.Count;
+                for (int i = 0; i < totalBrowsers; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var info = browsers[i];
+                    if (openBrowserIds.Contains(info.Id)) continue;
+                    UpdateChequeoProgress(5 + (int)(20.0 * i / Math.Max(1, totalBrowsers)), I18n.T("Escaneando {0}...", info.DisplayName));
+
+                    try
                     {
-                        int idx = (int)Enum.Parse<BrowserSubItem>(item.Id.Split('.').Last());
-                        SetChequeoSize(info.Id, idx, item.Bytes);
+                        var r = await _cleanup.ScanBrowserAsync(info.Id, allItems, ct);
+                        totalBytes += r.TotalBytes;
+                        browserBytes += r.TotalBytes;
+
+                        foreach (var item in r.Items)
+                        {
+                            int idx = (int)Enum.Parse<BrowserSubItem>(item.Id.Split('.').Last());
+                            SetChequeoSize(info.Id, idx, item.Bytes);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logging.LogWarning($"Chequeo: falló {info.Id}: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
+                if (browsers.Count > 0)
                 {
-                    _logging.LogWarning($"Chequeo: falló {info.Id}: {ex.Message}");
+                    ChequeoBrowserSection.Visibility = Visibility.Visible;
+                    SetChequeoSectionTotal(ChequeoBrowserTotal, browserBytes);
                 }
             }
-            if (browsers.Count > 0)
+
+            // ---- Categorías personalizadas seleccionadas (25-60%) ----
+            BuildCustomCategoryCards(_customSelection);
+            if (_custom.Count > 0)
             {
-                ChequeoBrowserSection.Visibility = Visibility.Visible;
-                SetChequeoSectionTotal(ChequeoBrowserTotal, browserBytes);
+                foreach (var c in _custom) c.Size.Text = "…";
+                foreach (var t in _customCategoryTotals.Values) t.Text = "…";
+
+                var chunks = _custom.Chunk(4).ToArray();
+                var catBytes = new Dictionary<string, long>();
+                var catEntries = new Dictionary<string, long>();
+
+                for (int i = 0; i < chunks.Length; i++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    UpdateChequeoProgress(
+                        25 + (int)(35.0 * (i + 1) / chunks.Length),
+                        I18n.T("Analizando {0}...", I18n.T(chunks[i][0].Target.Name)));
+
+                    var cb = await _cleanup.ScanCustomAsync(chunks[i].Select(c => c.Target.Id).ToList(), null, ct);
+                    totalBytes += cb.TotalBytes;
+                    warnings += cb.Warnings.Count;
+
+                    foreach (var item in cb.Items)
+                    {
+                        detalles.Add($"{item.Id}={(item.FileCount > 0 && item.Bytes == 0 ? $"{item.FileCount} entradas" : FormatBytes(item.Bytes))}");
+
+                        var ci = _custom.FirstOrDefault(s => s.Target.Id == item.Id);
+                        if (ci == null) continue;
+                        ci.Size.Text = item.FileCount > 0 && item.Bytes == 0
+                            ? I18n.T("{0} entradas", item.FileCount)
+                            : FormatBytes(item.Bytes);
+
+                        if (_customTargetCategory.TryGetValue(item.Id, out var catId))
+                        {
+                            catBytes.TryGetValue(catId, out var bytes);
+                            catBytes[catId] = bytes + item.Bytes;
+                            catEntries.TryGetValue(catId, out var entries);
+                            catEntries[catId] = entries + item.FileCount;
+                        }
+                    }
+                }
+
+                foreach (var (catId, tb) in _customCategoryTotals)
+                {
+                    if (!catBytes.TryGetValue(catId, out var bytes))
+                    {
+                        tb.Text = "—";
+                        continue;
+                    }
+                    if (bytes > 0)
+                        SetChequeoSectionTotal(tb, bytes);
+                    else if (catEntries.TryGetValue(catId, out var entries) && entries > 0)
+                        tb.Text = I18n.T("{0} entradas", entries);
+                    else
+                        tb.Text = "—";
+                }
             }
-
-            // ---- Paso 2/4: Sistema (25-35%) ----
-            UpdateChequeoProgress(25, "Archivos temporales del sistema...");
-            var sysResult = await _cleanup.ScanCustomAsync(sysIds, null, ct);
-            totalBytes += sysResult.TotalBytes;
-            foreach (var item in sysResult.Items)
-                AddChequeoRow(ChequeoSystemHost!, item.Id, item.Name, item.Bytes, item.FileCount, item.AnalysisOnly);
-            ChequeoSystemSection.Visibility = Visibility.Visible;
-            SetChequeoSectionTotal(ChequeoSystemTotal, sysResult.TotalBytes);
-
-            // ---- Paso 3/4: Caché de aplicaciones (35-45%) ----
-            UpdateChequeoProgress(35, I18n.T("Escaneando {0}...", I18n.T("Memoria caché de aplicaciones")));
-            var cacheResult = await _cleanup.ScanCustomAsync(cacheIds, null, ct);
-            totalBytes += cacheResult.TotalBytes;
-            foreach (var item in cacheResult.Items)
-                AddChequeoRow(ChequeoAppCacheHost!, item.Id, item.Name, item.Bytes, item.FileCount, item.AnalysisOnly);
-            ChequeoAppCacheSection.Visibility = Visibility.Visible;
-            SetChequeoSectionTotal(ChequeoAppCacheTotal, cacheResult.TotalBytes);
-
-            // ---- Paso 4/4: Papelera (45-52%) ----
-            UpdateChequeoProgress(45, I18n.T("Escaneando {0}...", I18n.T("Papelera de reciclaje")));
-            var rbResult = await _cleanup.ScanCustomAsync(rbIds, null, ct);
-            totalBytes += rbResult.TotalBytes;
-            foreach (var item in rbResult.Items)
-                AddChequeoRow(ChequeoRecycleHost!, item.Id, item.Name, item.Bytes, item.FileCount, item.AnalysisOnly);
-            ChequeoRecycleSection.Visibility = Visibility.Visible;
-            SetChequeoSectionTotal(ChequeoRecycleTotal, rbResult.TotalBytes);
-            UpdateChequeoProgress(52, I18n.T("Limpieza de archivos") + " ✓");
+            UpdateChequeoProgress(60, I18n.T("Limpieza de archivos") + " ✓");
 
             // =====================================================================
             // FASE 2/3 · Aplicaciones en segundo plano (procesos con ventana)
             // =====================================================================
-            UpdateChequeoProgress(55, I18n.T("Fase {0} de {1}: {2}...", 2, 3, I18n.T("Aplicaciones en segundo plano")));
+            UpdateChequeoProgress(64, I18n.T("Fase {0} de {1}: {2}...", 2, 3, I18n.T("Aplicaciones en segundo plano")));
             var runningApps = await Task.Run(EnumerateBackgroundApps, ct);
             foreach (var app in runningApps)
             {
@@ -916,7 +535,6 @@ public sealed partial class LimpiezaPage : Page
                     },
                     ColumnSpacing = 10
                 };
-                // Badge con el ícono REAL del proceso (extraído de su .exe).
                 var badge = new Border
                 {
                     Width = 28, Height = 28,
@@ -962,12 +580,12 @@ public sealed partial class LimpiezaPage : Page
                     ChequeoAppsTotal.Visibility = Visibility.Visible;
                 }
             }
-            UpdateChequeoProgress(72, I18n.T("Aplicaciones en segundo plano") + " ✓");
+            UpdateChequeoProgress(78, I18n.T("Aplicaciones en segundo plano") + " ✓");
 
             // =====================================================================
             // FASE 3/3 · Aplicaciones de inicio
             // =====================================================================
-            UpdateChequeoProgress(75, I18n.T("Fase {0} de {1}: {2}...", 3, 3, I18n.T("Aplicaciones de inicio")));
+            UpdateChequeoProgress(82, I18n.T("Fase {0} de {1}: {2}...", 3, 3, I18n.T("Aplicaciones de inicio")));
             IReadOnlyList<StartupEntry> startupEntries;
             try { startupEntries = _startupMgr.GetEntries(); }
             catch { startupEntries = []; }
@@ -1015,22 +633,20 @@ public sealed partial class LimpiezaPage : Page
             UpdateChequeoProgress(95, I18n.T("Aplicaciones de inicio") + " ✓");
 
             // ---- Terminado ----
-            // Volcar el resultado del análisis al log de desarrollo para debugueo
-            // (app.log solo se escribe si "Logs de desarrollo" está activado).
             _logging.LogDebug(
-                "[Chequeo] Análisis completado | navegadores=" + FormatBytes(browserBytes) +
-                ", sistema=" + FormatBytes(sysResult.TotalBytes) +
-                ", caché de aplicaciones=" + FormatBytes(cacheResult.TotalBytes) +
-                ", papelera=" + FormatBytes(rbResult.TotalBytes) +
+                "[Limpieza] Análisis completado | navegadores=" + FormatBytes(browserBytes) +
+                $", elementos personalizados={detalles.Count}" +
                 ", apps en segundo plano=" + totalApps +
                 ", apps de inicio=" + totalStartup +
                 " | total=" + FormatBytes(totalBytes) +
-                $" | duración={sw.Elapsed.TotalSeconds:F1} s");
+                $" | advertencias={warnings} | duración={sw.Elapsed.TotalSeconds:F1} s");
+            if (detalles.Count > 0)
+                _logging.LogDebug("[Limpieza] Detalle: " + string.Join(", ", detalles));
+
             UpdateChequeoProgress(100, I18n.T("¡Análisis completado!"));
             await Task.Delay(300, ct);
 
             // Guardar estado y mostrar resultados en vistas por fase (fase 1 activa).
-            _chequeoTotalBytes = totalBytes;
             _chequeoPhase = 0;
             ChequeoProgressPanel.Visibility = Visibility.Collapsed;
             ChequeoResultsPanel.Visibility = Visibility.Visible;
@@ -1039,11 +655,9 @@ public sealed partial class LimpiezaPage : Page
                 ChequeoTotalsText.Text = I18n.T("Total: {0}", FormatBytes(totalBytes));
                 ChequeoTotalsText.Visibility = Visibility.Visible;
             }
-            // Recién acá aparece la card de total, fija arriba (fuera del scroll).
             if (ChequeoHeroCard != null) ChequeoHeroCard.Visibility = Visibility.Visible;
             if (ChequeoHeroDetails != null) ChequeoHeroDetails.Visibility = Visibility.Visible;
             UpdateChequeoPhaseView();
-            // Refresco en vivo de la RAM de las apps en segundo plano (fase 2).
             StartChequeoAppsTimer();
             if (ChequeoFeedbackText != null)
             {
@@ -1135,7 +749,7 @@ public sealed partial class LimpiezaPage : Page
     private static void EnsureAppIcon(int pid, string processName, Border badgeHost)
     {
         // Fallback inmediato: ícono de app con el acento, para que el badge
-        // NUNCA quede vacío (mismo patrón que EnsureBrowserIcon/EnsureStartupIcon).
+        // NUNCA quede vacío (mismo patrón que EnsureBrowserIcon).
         badgeHost.Child = new FontIcon
         {
             Glyph = "\uE7B5", FontSize = 16,
@@ -1361,6 +975,19 @@ public sealed partial class LimpiezaPage : Page
     }
 
     /// <summary>
+    /// Actualiza el botón de la Fase 1 ("Limpiar") con la cantidad de elementos
+    /// tildados entre navegadores y carpetas, igual que en las fases 2 y 3.
+    /// </summary>
+    private void UpdateChequeoCleanButton()
+    {
+        int selected = _chequeoItems.Count(c => c.Check.IsChecked == true);
+        ChequeoPhaseActionButton.Content = selected > 0
+            ? I18n.T("Limpiar ({0})", selected)
+            : I18n.T("Limpiar");
+        ChequeoPhaseActionButton.IsEnabled = selected > 0;
+    }
+
+    /// <summary>
     /// Muestra la vista de la fase activa y configura el botón de acción y la
     /// navegación (Anterior/Siguiente) según la fase.
     /// </summary>
@@ -1374,8 +1001,7 @@ public sealed partial class LimpiezaPage : Page
         {
             if (_chequeoPhase == 0)
             {
-                ChequeoPhaseActionButton.Content = I18n.T("Limpiar");
-                ChequeoPhaseActionButton.IsEnabled = _chequeoTotalBytes > 0;
+                UpdateChequeoCleanButton();
             }
             else if (_chequeoPhase == 1)
                 UpdateChequeoAppsButton();
@@ -1514,7 +1140,9 @@ public sealed partial class LimpiezaPage : Page
         _chequeoApps.Clear();
         _chequeoStartup.Clear();
         _chequeoPhase = 0;
-        _chequeoTotalBytes = 0;
+        _custom.Clear();
+        _customCategoryTotals.Clear();
+        _customTargetCategory.Clear();
 
         ChequeoStartPanel.Visibility = Visibility.Visible;
         ChequeoResultsPanel.Visibility = Visibility.Collapsed;
@@ -1522,16 +1150,11 @@ public sealed partial class LimpiezaPage : Page
         if (ChequeoHeroCard != null) ChequeoHeroCard.Visibility = Visibility.Collapsed;
         if (ChequeoHeroDetails != null) ChequeoHeroDetails.Visibility = Visibility.Collapsed;
         ChequeoBrowserSection.Visibility = Visibility.Collapsed;
-        ChequeoSystemSection.Visibility = Visibility.Collapsed;
-        ChequeoAppCacheSection.Visibility = Visibility.Collapsed;
-        ChequeoRecycleSection.Visibility = Visibility.Collapsed;
         ChequeoAppsSection.Visibility = Visibility.Collapsed;
         ChequeoStartupSection.Visibility = Visibility.Collapsed;
         ChequeoBrowsersHost?.Children.Clear();
-        ChequeoSystemHost?.Children.Clear();
-        ChequeoAppCacheHost?.Children.Clear();
-        ChequeoRecycleHost?.Children.Clear();
         ChequeoAppsHost?.Children.Clear();
+        CategoriesHost?.Children.Clear();
         ChequeoStartupHost?.Children.Clear();
         if (ChequeoTotalsText != null)
         {
@@ -1540,9 +1163,6 @@ public sealed partial class LimpiezaPage : Page
         }
         if (ChequeoFeedbackText != null) ChequeoFeedbackText.Visibility = Visibility.Collapsed;
         if (ChequeoBrowserTotal != null) ChequeoBrowserTotal.Visibility = Visibility.Collapsed;
-        if (ChequeoSystemTotal != null) ChequeoSystemTotal.Visibility = Visibility.Collapsed;
-        if (ChequeoAppCacheTotal != null) ChequeoAppCacheTotal.Visibility = Visibility.Collapsed;
-        if (ChequeoRecycleTotal != null) ChequeoRecycleTotal.Visibility = Visibility.Collapsed;
         if (ChequeoAppsTotal != null) ChequeoAppsTotal.Visibility = Visibility.Collapsed;
         if (ChequeoStartupTotal != null) ChequeoStartupTotal.Visibility = Visibility.Collapsed;
         if (ChequeoPhaseActionButton != null)
@@ -1704,14 +1324,13 @@ public sealed partial class LimpiezaPage : Page
             dq.TryEnqueue(() =>
             {
                 foreach (var c in checkedItems)
+                {
                     c.Size.Text = "—";
+                    c.Check.IsChecked = false;
+                }
                 ChequeoBrowserTotal.Visibility = Visibility.Collapsed;
-                ChequeoSystemTotal.Visibility = Visibility.Collapsed;
-                ChequeoAppCacheTotal.Visibility = Visibility.Collapsed;
-                ChequeoRecycleTotal.Visibility = Visibility.Collapsed;
                 ChequeoTotalsText.Text = I18n.T("Limpieza completada: {0} liberados.", FormatBytes(totalFreed));
                 ChequeoTotalsText.Visibility = Visibility.Visible;
-                _chequeoTotalBytes = 0;
                 UpdateChequeoPhaseView();
                 Feedback.Success(ChequeoFeedbackText, I18n.T("Limpieza completada: {0} liberados.", FormatBytes(totalFreed)));
                 _logging.LogInfo($"[Chequeo] Limpieza completada: {FormatBytes(totalFreed)} liberados.");
@@ -1734,42 +1353,6 @@ public sealed partial class LimpiezaPage : Page
                 SetBusy(true);
             });
         }
-    }
-
-    /// <summary>
-    /// Agrega una fila (checkbox + tamaño) a un host de sección.
-    /// </summary>
-    private void AddChequeoRow(StackPanel host, string id, string name, long bytes, int fileCount, bool analysisOnly)
-    {
-        var row = new Grid
-        {
-            ColumnDefinitions =
-            {
-                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
-                new ColumnDefinition { Width = GridLength.Auto }
-            },
-            ColumnSpacing = 12
-        };
-        var label = analysisOnly && fileCount > 0
-            ? I18n.T(name) + $" ({I18n.T("{0} entradas", fileCount)})"
-            : I18n.T(name);
-        var cb = new CheckBox { Content = label, MinHeight = 26, IsChecked = bytes > 0 };
-        var size = new TextBlock
-        {
-            Text = bytes > 0 ? FormatBytes(bytes) : (analysisOnly ? "—" : "0 B"),
-            FontSize = 12,
-            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            MinWidth = 64,
-            TextAlignment = TextAlignment.Right
-        };
-        row.Children.Add(cb);
-        Grid.SetColumn(size, 1);
-        row.Children.Add(size);
-        host.Children.Add(row);
-
-        _chequeoItems.Add(new ChequeoUi { Id = id, Check = cb, Size = size });
     }
 
     /// <summary>
@@ -1901,6 +1484,8 @@ public sealed partial class LimpiezaPage : Page
                 {
                     cb = new CheckBox { Content = I18n.T(BrowserItemLabels[i]), MinHeight = 26, IsChecked = true };
                 }
+                cb.Checked += OnChequeoItemCheckChanged;
+                cb.Unchecked += OnChequeoItemCheckChanged;
                 var size = new TextBlock
                 {
                     Text = "…",
@@ -2212,49 +1797,66 @@ public sealed partial class LimpiezaPage : Page
     };
 
     /// <summary>
-    /// Reconstruye las opciones agrupadas del panel de inicio y el contenido
-    /// (si ya hubo un análisis) según la selección actual de grupos.
+    /// Reconstruye los grupos del panel de inicio (al cargar la página y al
+    /// cambiar de idioma). Los resultados de un análisis en curso se conservan
+    /// tal cual: no se vuelven a armar las cards.
     /// </summary>
-    private void RebuildCustomCategories()
-    {
-        RebuildCustomGroupChecks();
+    private void RebuildCustomCategories() => RebuildCustomGroupChecks();
 
-        if (_customSelection.Count > 0)
-        {
-            // Ya se analizó: volver a mostrar el contenido con los mismos grupos
-            // (p. ej. al cambiar de idioma).
-            CustomStartPanel.Visibility = Visibility.Collapsed;
-            BuildCustomCategoryCards(_customSelection);
-            CustomContentPanel.Visibility = Visibility.Visible;
-            CustomProgressPanel.Visibility = Visibility.Collapsed;
-            UpdateCustomCleanEnabled();
-            return;
-        }
-
-        // Primer estado: panel de inicio con opciones agrupadas (estilo CCleaner).
-        CustomStartPanel.Visibility = Visibility.Visible;
-        CustomContentPanel.Visibility = Visibility.Collapsed;
-        CustomProgressPanel.Visibility = Visibility.Collapsed;
-        UpdateCustomCleanEnabled();
-    }
-
-    /// <summary>Construye los checkboxes de grupos del panel de inicio (categoría.Id → CheckBox).</summary>
+    /// <summary>
+    /// Construye los checkboxes de grupos del panel de inicio (grupo.Id → CheckBox)
+    /// en dos columnas, así el panel no se estira de más en vertical:
+    /// Navegadores + cada categoría de Limpieza personalizada.
+    /// </summary>
     private void RebuildCustomGroupChecks()
     {
         CustomGroupChecksHost.Children.Clear();
         _customGroupChecks.Clear();
-        foreach (var category in _cleanup.GetCustomCategories())
+
+        var checks = new List<CheckBox>
         {
-            var cb = new CheckBox
+            BuildGroupCheck(
+                BrowsersGroupId,
+                "Navegadores",
+                "Archivos temporales de internet, cookies e historial de los navegadores instalados.")
+        };
+        foreach (var category in _cleanup.GetCustomCategories())
+            checks.Add(BuildGroupCheck(category.Id, category.Name, category.Description));
+
+        for (int i = 0; i < checks.Count; i += 2)
+        {
+            var row = new Grid
             {
-                Content = I18n.T(category.Name),
-                MinHeight = 28,
-                IsChecked = true
+                ColumnDefinitions =
+                {
+                    new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                    new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }
+                },
+                ColumnSpacing = 12
             };
-            ToolTipService.SetToolTip(cb, I18n.T(category.Description));
-            CustomGroupChecksHost.Children.Add(cb);
-            _customGroupChecks[category.Id] = cb;
+            row.Children.Add(checks[i]);
+            if (i + 1 < checks.Count)
+            {
+                Grid.SetColumn(checks[i + 1], 1);
+                row.Children.Add(checks[i + 1]);
+            }
+            CustomGroupChecksHost.Children.Add(row);
         }
+    }
+
+    /// <summary>Arma un checkbox de grupo con su tooltip y lo registra para poder leerlo al analizar.</summary>
+    private CheckBox BuildGroupCheck(string id, string name, string description)
+    {
+        var cb = new CheckBox
+        {
+            Content = I18n.T(name),
+            MinHeight = 30,
+            IsChecked = true,
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        ToolTipService.SetToolTip(cb, I18n.T(description));
+        _customGroupChecks[id] = cb;
+        return cb;
     }
 
     /// <summary>
@@ -2365,8 +1967,8 @@ public sealed partial class LimpiezaPage : Page
                 MinHeight = 28,
                 IsChecked = target.DefaultChecked
             };
-            cb.Checked += OnCustomCheckChanged;
-            cb.Unchecked += OnCustomCheckChanged;
+            cb.Checked += OnChequeoItemCheckChanged;
+            cb.Unchecked += OnChequeoItemCheckChanged;
             ToolTipService.SetToolTip(cb, I18n.T(target.Description));
             var size = new TextBlock
             {
@@ -2389,239 +1991,13 @@ public sealed partial class LimpiezaPage : Page
         CategoriesHost.Children.Add(card);
     }
 
-    private void OnCustomCheckChanged(object sender, RoutedEventArgs e) => UpdateCustomCleanEnabled();
-
-    private List<CustomUi> SelectedCustom() => _custom.Where(c => c.Check.IsChecked == true).ToList();
-
     /// <summary>
-    /// Botón "Analizar" del panel de inicio: arma el contenido con los grupos
-    /// marcados en las opciones y escanea. Mide todo lo del grupo; los checks
-    /// individuales deciden qué se limpia.
+    /// Un ítem (navegador o carpeta) se tildó o destildó: el botón "Limpiar"
+    /// de la Fase 1 refleja cuántos elementos se van a borrar.
     /// </summary>
-    private async void CustomStartButton_Click(object sender, RoutedEventArgs e)
+    private void OnChequeoItemCheckChanged(object sender, RoutedEventArgs e)
     {
-        CustomStartFeedback.Visibility = Visibility.Collapsed;
-        var selected = _customGroupChecks.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
-        if (selected.Count == 0)
-        {
-            Feedback.Warning(CustomStartFeedback, "Elegí al menos un grupo de carpetas para analizar.");
-            return;
-        }
-
-        _customSelection = selected.ToHashSet(StringComparer.Ordinal);
-        CustomStartPanel.Visibility = Visibility.Collapsed;
-        BuildCustomCategoryCards(selected);
-        await RunCustomAnalysisAsync(_custom);
-    }
-
-    /// <summary>
-    /// Escanea los targets indicados con velocímetro de progreso y muestra los
-    /// resultados en las filas (aunque el checkbox esté desmarcado, como en el
-    /// Chequeo: tildar solo decide qué se limpia).
-    /// </summary>
-    private async Task RunCustomAnalysisAsync(IReadOnlyCollection<CustomUi> toScan)
-    {
-        _customScanCts?.Cancel();
-        _customScanCts = new CancellationTokenSource();
-        var ct = _customScanCts.Token;
-
-        SetBusy(false);
-        CustomFeedbackText.Visibility = Visibility.Collapsed;
-        CustomContentPanel.Visibility = Visibility.Collapsed;
-
-        var chunks = toScan.Chunk(4).ToArray();
-        int steps = chunks.Length;
-        int step = 0;
-
-        foreach (var c in toScan) c.Size.Text = "…";
-        foreach (var t in _customCategoryTotals.Values) t.Text = "…";
-
-        // Velocímetro de progreso: mismo flujo que el Chequeo.
-        CustomRing.Progress = 0;
-        UpdateCustomProgress(2, I18n.T("Preparando..."));
-        CustomProgressPanel.Visibility = Visibility.Visible;
-
-        try
-        {
-            var sw = Stopwatch.StartNew();
-            var detalles = new List<string>();
-            long total = 0;
-            int warnings = 0;
-            var catBytes = new Dictionary<string, long>();
-            var catEntries = new Dictionary<string, long>();
-
-            for (int i = 0; i < chunks.Length; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                step++;
-                UpdateCustomProgress(
-                    5 + (int)(90.0 * step / steps),
-                    I18n.T("Analizando {0}...", I18n.T(chunks[i][0].Target.Name)));
-
-                var cb = await _cleanup.ScanCustomAsync(chunks[i].Select(c => c.Target.Id).ToList(), null, ct);
-                total += cb.TotalBytes;
-                warnings += cb.Warnings.Count;
-                foreach (var item in cb.Items)
-                {
-                    detalles.Add($"{item.Id}={(item.FileCount > 0 && item.Bytes == 0 ? $"{item.FileCount} entradas" : FormatBytes(item.Bytes))}");
-
-                    // Actualizar el tamaño aunque el checkbox esté desmarcado:
-                    // el análisis mide todo, el check solo decide qué se limpia.
-                    var ci = _custom.FirstOrDefault(s => s.Target.Id == item.Id);
-                    if (ci == null) continue;
-                    ci.Size.Text = item.FileCount > 0 && item.Bytes == 0
-                        ? I18n.T("{0} entradas", item.FileCount)
-                        : FormatBytes(item.Bytes);
-
-                    // Acumular el total de la categoría que contiene este ítem.
-                    if (_customTargetCategory.TryGetValue(item.Id, out var catId))
-                    {
-                        catBytes.TryGetValue(catId, out var bytes);
-                        catBytes[catId] = bytes + item.Bytes;
-                        catEntries.TryGetValue(catId, out var entries);
-                        catEntries[catId] = entries + item.FileCount;
-                    }
-                }
-            }
-
-            // Resultado al log de desarrollo para debugueo (se escribe solo si
-            // "Logs de desarrollo" está activado en Configuración).
-            _logging.LogDebug(
-                $"[Personalizada] Análisis manual completado | elementos={detalles.Count} | total={FormatBytes(total)}" +
-                $" | advertencias={warnings} | duración={sw.Elapsed.TotalSeconds:F1} s");
-            if (detalles.Count > 0)
-                _logging.LogDebug("[Personalizada] Detalle: " + string.Join(", ", detalles));
-
-            CustomTotals.Text = I18n.T("Total: {0}", FormatBytes(total));
-            CustomTotals.Visibility = Visibility.Visible;
-
-            // Totales por categoría: tamaño si hay bytes; si no, cantidad de entradas (registro/análisis).
-            foreach (var (catId, tb) in _customCategoryTotals)
-            {
-                if (!catBytes.TryGetValue(catId, out var bytes))
-                {
-                    tb.Text = "—";
-                    continue;
-                }
-                if (bytes > 0)
-                    tb.Text = FormatBytes(bytes);
-                else if (catEntries.TryGetValue(catId, out var entries) && entries > 0)
-                    tb.Text = I18n.T("{0} entradas", entries);
-                else
-                    tb.Text = "—";
-            }
-
-            UpdateCustomProgress(100, I18n.T("¡Análisis completado!"));
-            await Task.Delay(300, ct);
-
-            CustomProgressPanel.Visibility = Visibility.Collapsed;
-            CustomContentPanel.Visibility = Visibility.Visible;
-            UpdateCustomCleanEnabled();
-            if (warnings > 0)
-                Feedback.Warning(CustomFeedbackText, "Algunas carpetas no se pudieron leer (están en uso o sin permisos).");
-            else
-                Feedback.Success(CustomFeedbackText, I18n.T("Análisis completado: {0} encontrados.", FormatBytes(total)));
-        }
-        catch (OperationCanceledException)
-        {
-            CustomProgressPanel.Visibility = Visibility.Collapsed;
-            CustomContentPanel.Visibility = Visibility.Visible;
-            CustomTotals.Visibility = Visibility.Collapsed;
-            CustomFeedbackText.Visibility = Visibility.Collapsed;
-        }
-        catch (Exception ex)
-        {
-            _logging.LogWarning($"LimpiezaPage: analizar personalizado: {ex.Message}");
-            CustomProgressPanel.Visibility = Visibility.Collapsed;
-            CustomContentPanel.Visibility = Visibility.Visible;
-            CustomFeedbackText.Visibility = Visibility.Visible;
-            Feedback.Error(CustomFeedbackText, I18n.T("No se pudo completar el análisis: {0}", ex.Message));
-        }
-        finally
-        {
-            SetBusy(true);
-        }
-    }
-
-    private async void CleanCustomButton_Click(object sender, RoutedEventArgs e)
-    {
-        var selected = SelectedCustom();
-        if (selected.Count == 0) return;
-
-        if (XamlRoot == null) return;
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = I18n.T("Limpiar elementos"),
-            Content = I18n.T("Se borrará lo marcado ({0} elementos seleccionados). Esta acción no se puede deshacer.", selected.Count),
-            PrimaryButtonText = I18n.T("Limpiar"),
-            CloseButtonText = I18n.T("Cancelar"),
-            DefaultButton = ContentDialogButton.Close
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-        SetBusy(false);
-        Feedback.Running(CustomFeedbackText, "Limpiando...", persistent: true);
-        try
-        {
-            var sw = Stopwatch.StartNew();
-            long total = 0;
-            long warnings = 0;
-            var limpiados = new List<string>();
-
-            // El velocímetro reemplaza a los resultados mientras se borra.
-            int cleanTotal = selected.Count;
-            int cleanDone = 0;
-            SetCustomCleaning(0, cleanTotal);
-
-            foreach (var chunk in selected.Chunk(6))
-            {
-                var result = await _cleanup.CleanCustomAsync(chunk.Select(c => c.Target.Id).ToList());
-                total += result.TotalBytes;
-                warnings += result.Warnings.Count;
-                cleanDone += chunk.Length;
-                SetCustomCleaning(cleanDone, cleanTotal);
-                foreach (var item in result.Items)
-                {
-                    limpiados.Add(item.Id);
-                    var ui = selected.FirstOrDefault(s => s.Target.Id == item.Id);
-                    if (ui == null) continue;
-                    ui.Size.Text = item.AnalysisOnly ? I18n.T("solo análisis") : "—";
-                }
-            }
-
-            // Los totales por categoría ya no aplican: quedó todo en "—".
-            foreach (var tb in _customCategoryTotals.Values) tb.Text = "—";
-
-            // Terminó el borrado: el dial se retira y vuelven los resultados.
-            EndCustomCleaning();
-
-            // Resultado al log de desarrollo (se escribe solo si "Logs de desarrollo"
-            // está activado en Configuración).
-            _logging.LogDebug(
-                $"[Personalizada] Limpieza completada | elementos={limpiados.Count} | liberado={FormatBytes(total)}" +
-                $" | advertencias={warnings} | duración={sw.Elapsed.TotalSeconds:F1} s");
-            if (limpiados.Count > 0)
-                _logging.LogDebug("[Personalizada] Limpieza detalle: " + string.Join(", ", limpiados));
-
-            CustomTotals.Text = I18n.T("Limpieza completada: {0} liberados.", FormatBytes(total));
-            CustomTotals.Visibility = Visibility.Visible;
-            UpdateCustomCleanEnabled();
-            if (warnings > 0)
-                Feedback.Warning(CustomFeedbackText, I18n.T("Limpieza completada: {0} liberados. Hay archivos en uso que no se borraron.", FormatBytes(total)));
-            else
-                Feedback.Success(CustomFeedbackText, I18n.T("Limpieza completada: {0} liberados.", FormatBytes(total)));
-        }
-        catch (Exception ex)
-        {
-            _logging.LogWarning($"LimpiezaPage: limpiar personalizado: {ex.Message}");
-            EndCustomCleaning();
-            Feedback.Error(CustomFeedbackText, I18n.T("No se pudo completar la limpieza: {0}", ex.Message));
-        }
-        finally
-        {
-            SetBusy(true);
-        }
+        if (_chequeoPhase == 0) UpdateChequeoCleanButton();
     }
 
     // =====================================================================
@@ -2838,10 +2214,6 @@ public sealed partial class LimpiezaPage : Page
     /// <summary>Cancela el análisis del Chequeo en curso.</summary>
     private void ChequeoCancelButton_Click(object sender, RoutedEventArgs e)
         => _chequeoCts?.Cancel();
-
-    /// <summary>Cancela el análisis de Limpieza personalizada en curso.</summary>
-    private void CustomCancelButton_Click(object sender, RoutedEventArgs e)
-        => _customScanCts?.Cancel();
 
     /// <summary>Cancela el escaneo de duplicados en curso.</summary>
     private void DupCancelButton_Click(object sender, RoutedEventArgs e)
@@ -3295,111 +2667,6 @@ public sealed partial class LimpiezaPage : Page
             Feedback.Error(DupFeedbackText, I18n.T("No se pudo completar el borrado: {0}", ex.Message));
         }
     }
-
-    // =====================================================================
-    // Administración de inicio
-    // =====================================================================
-
-    private async Task LoadStartupEntriesAsync()
-    {
-        StartupEntriesHost.Children.Clear();
-
-        // Mientras carga: el velocímetro del componente, indeterminado (no hay
-        // avance que medir todavía). Se apaga siempre al terminar —incluso si
-        // GetEntries falla— para no dejar el barrido corriendo de por vida.
-        StartupLoadingPanel.Visibility = Visibility.Visible;
-        StartupRing.IsIndeterminate = true;
-
-        IReadOnlyList<StartupEntry> entries;
-        try
-        {
-            // GetEntries puede tardar (schtasks), corre en background.
-            entries = await Task.Run(() => _startupMgr.GetEntries());
-        }
-        finally
-        {
-            StartupRing.IsIndeterminate = false;
-            StartupLoadingPanel.Visibility = Visibility.Collapsed;
-        }
-
-        StartupEntriesHost.Children.Clear();
-
-        if (entries.Count == 0)
-        {
-            StartupEntriesHost.Children.Add(new TextBlock
-            {
-                Text = I18n.T("No se encontraron entradas de inicio."),
-                FontSize = 12,
-                Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
-                Margin = new Thickness(0, 8, 0, 0)
-            });
-            return;
-        }
-
-        foreach (var entry in entries)
-        {
-            var row = BuildStartupRow(entry);
-            StartupEntriesHost.Children.Add(row);
-        }
-    }
-
-    private Grid BuildStartupRow(StartupEntry entry)
-    {
-        var row = new Grid
-        {
-            ColumnDefinitions =
-            {
-                new ColumnDefinition { Width = GridLength.Auto },        // Col 0: ícono
-                new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) }, // Col 1: nombre + comando
-                new ColumnDefinition { Width = new GridLength(0.6, GridUnitType.Star) }  // Col 2: toggle
-            },
-            ColumnSpacing = 8,
-            Margin = new Thickness(0, 2, 0, 2),
-            Tag = entry.Id
-        };
-
-        // Col 0: ícono de la aplicación
-        var iconBadge = new Border
-        {
-            Width = 28, Height = 28,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center
-        };
-        EnsureStartupIcon(entry, iconBadge);
-        row.Children.Add(iconBadge);
-
-        // Col 1: nombre + comando (nombre en negrita, comando abajo)
-        var nameStack = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
-        var nameTb = new TextBlock { Text = entry.Name, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
-        var cmdShow = entry.Source == StartupSource.PackagedApp
-            ? Path.GetFileName(entry.Command.TrimEnd('\\'))
-            : entry.Command;
-        var cmdTb = new TextBlock { Text = cmdShow, FontSize = 11, Foreground = ThemeBrushes.Get("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis };
-        nameStack.Children.Add(nameTb);
-        nameStack.Children.Add(cmdTb);
-        Grid.SetColumn(nameStack, 1);
-        row.Children.Add(nameStack);
-
-        // Col 2: toggle
-        var toggle = new ToggleSwitch { IsOn = entry.IsEnabled, MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Center };
-        toggle.Toggled += (_, _) => OnStartupToggled(entry.Id, toggle.IsOn);
-        Grid.SetColumn(toggle, 2);
-        row.Children.Add(toggle);
-
-        return row;
-    }
-
-    private void OnStartupToggled(string id, bool enable)
-    {
-        bool ok = _startupMgr.Toggle(id, enable);
-        if (!ok)
-            Feedback.Warning(StartupFeedbackText, I18n.T("No se pudo cambiar el estado. Probablemente necesitás permisos de administrador."));
-        else
-            Feedback.Success(StartupFeedbackText, enable ? "Entrada activada." : "Entrada desactivada.", persistent: false);
-    }
-
-    private void StartupRefreshButton_Click(object sender, RoutedEventArgs e) => _ = LoadStartupEntriesAsync();
-
     // =====================================================================
     // Helpers de UI
     // =====================================================================
@@ -3412,13 +2679,6 @@ public sealed partial class LimpiezaPage : Page
     {
         ChequeoRing.Progress = Math.Clamp(percentage, 0, 100) / 100.0;
         ChequeoProgressText.Text = message;
-    }
-
-    /// <summary>Progreso del análisis de la Limpieza personalizada.</summary>
-    private void UpdateCustomProgress(int percentage, string message)
-    {
-        CustomRing.Progress = Math.Clamp(percentage, 0, 100) / 100.0;
-        CustomProgressText.Text = message;
     }
 
     /// <summary>
@@ -3454,40 +2714,6 @@ public sealed partial class LimpiezaPage : Page
     }
 
     /// <summary>
-    /// Estado "Limpiando…" de la Limpieza personalizada: mismo velocímetro, con
-    /// el avance real sobre los elementos marcados.
-    /// </summary>
-    private void SetCustomCleaning(int doneUnits, int totalUnits)
-    {
-        if (CustomProgressPanel.Visibility != Visibility.Visible)
-        {
-            CustomContentPanel.Visibility = Visibility.Collapsed;
-            CustomCancelButton.Visibility = Visibility.Collapsed;
-            CustomProgressPanel.Visibility = Visibility.Visible;
-        }
-        CustomRing.Progress = totalUnits > 0 ? Math.Clamp((double)doneUnits / totalUnits, 0, 1) : 0;
-        CustomProgressText.Text = I18n.T("Limpiando...");
-    }
-
-    /// <summary>Vuelve de "Limpiando…" a la vista de resultados de Personalizada.</summary>
-    private void EndCustomCleaning()
-    {
-        CustomProgressPanel.Visibility = Visibility.Collapsed;
-        CustomRing.Progress = 0;
-        CustomCancelButton.Visibility = Visibility.Visible;
-        CustomContentPanel.Visibility = Visibility.Visible;
-    }
-
-    private void UpdateCustomCleanEnabled()
-    {
-        int selected = SelectedCustom().Count;
-        CleanCustomButton.Content = selected > 0
-            ? I18n.T("Limpiar ({0})", selected)
-            : I18n.T("Limpiar");
-        CleanCustomButton.IsEnabled = selected > 0;
-    }
-
-    /// <summary>
     /// Deshabilita/habilita los botones de acción durante una operación.
     /// restore=false (operación en curso) → deshabilitados;
     /// restore=true (operación terminada) → habilitados de nuevo.
@@ -3495,7 +2721,6 @@ public sealed partial class LimpiezaPage : Page
     private void SetBusy(bool restore)
     {
         ChequeoAnalyzeButton.IsEnabled = restore;
-        CleanCustomButton.IsEnabled = restore && SelectedCustom().Count > 0;
     }
 
     private static string FormatBytes(long bytes)

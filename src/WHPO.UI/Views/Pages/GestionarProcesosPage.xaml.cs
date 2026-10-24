@@ -4,13 +4,16 @@ using System.IO;
 using System.Linq;
 using System.Diagnostics;
 using System.Net.Http;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -18,6 +21,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using WHPO.Core.Services;
+using WHPO_UI.Controls;
 using WHPO.Core.Services.Interfaces;
 using WHPO_UI.Services;
 
@@ -29,7 +33,7 @@ namespace WHPO_UI.Views.Pages;
 /// cambiable en la cabecera) con el
 /// banner del juego, favoritos con estrella y reglas por juego (prioridad de CPU,
 /// afinidad, prioridad de GPU y plan de energía). Cada ajuste admite dos alcances:
-/// "Actual" (solo la apertura actual del juego, sin guardar) y "Siempre" (permanente,
+/// "Actual" (se recuerda y aplica al lanzar desde WinForge) y "Siempre" (permanente,
 /// se guarda en el registro). No muestra procesos del sistema: solo juegos.
 /// </summary>
 public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
@@ -39,16 +43,35 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private readonly ICpuPowerService _cpuPowerService;
     private readonly ILoggingService _loggingService;
     private readonly IGameBoostService _gameBoostService;
+    private readonly ISettingsService _settings;
     // Evita que el Toggled se dispare al cargar el estado inicial del switch.
     private bool _boostSwitchInitialized;
+    // Estilo de las cards de la biblioteca: false = vanilla (banners planos, lo de
+    // siempre), true = 3D (cartuchos con profundidad, estilo Carthage). Persistido.
+    private bool _cards3D;
+    // ===== Modo 3D (modelo de cartucho) =====
+    // Alto del cartucho por unidad de ancho (relación 1,4 del propio modelo): la card
+    // 3D es vertical y el objeto entra completo, sin deformarse.
+    // Alto/ancho del cartucho 3D: sale del propio modelo (cara 600x878), así la grilla
+    // no lo deforma.
+    private static readonly double CartridgeHeightRatio = CartridgeModel.Aspect;
+
+    // Columnas base de la grilla (en ventana estándar ~1400 px): 5 en modo 3D (el
+    // cartucho es vertical) y 3 en modo clásico. Cuando la ventana se agranda o pasa a
+    // pantalla completa, GetEffectiveColumns suma columnas automáticamente para que las
+    // cards no se estiren de más.
+    private const int GridColumns3D = 5;
     // Amarillo del badge "(BETA)" (color fijo deliberado: no depende del tema).
     // Se guarda el Color (struct, seguro en un campo estático) y el SolidColorBrush se
     // crea al usarlo, en el hilo de la UI: instanciar un objeto XAML en un campo
     // estático corre en el .cctor y lanza RPC_E_WRONG_THREAD (0x8001010E).
     private static readonly Windows.UI.Color BetaColor = Windows.UI.Color.FromArgb(255, 255, 212, 0);
-    // Cantidad de columnas de la grilla de juegos (fija en 3: la vista de 5 ya no
-    // existe desde que se quitaron los botones de cambio de vista).
     private const int GridColumns = 3;
+    private const double MaxCardWidth3D = 205;
+    private const double MaxCardWidthVanilla = 360;
+    private const double MinCardWidth3D = 140;
+    private const double MinCardWidthVanilla = 230;
+    private const double GridCardSpacing = 16;
     // Búsqueda por nombre (filtro de la grilla); vacío = mostrar todo.
     private string _searchQuery = "";
  // Filtro de categoría: "all", "games", "console_emu", "mobile_emu".
@@ -64,7 +87,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private bool _detectedSectionExpanded = true;
     private bool _hiddenSectionExpanded;
     private HashSet<string> _runningExes = new(StringComparer.OrdinalIgnoreCase);
-    private readonly List<(Border card, Border banner)> _cards = new();
+    private readonly List<(Border Card, FrameworkElement Body)> _cards = new();
+    private readonly List<(StackPanel Host, List<Border> Cards)> _wrapSectionGroups = new();
+    private int _currentGridCols;
     // Contenedor del skeleton (filas de cards placeholder): se agrega/remueve del
     // LibraryPanel. El render de la biblioteca usa filas de StackPanel puros (3 por
     // fila), no ItemsWrapGrid, para garantizar el layout en cualquier contexto.
@@ -75,6 +100,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // lanzar (exe o launcher encontrado); si el juego está corriendo, el botón
     // muestra "En ejecución" y queda deshabilitado (no se puede relanzar).
     private readonly List<(string Exe, Button Btn, bool CanLaunch)> _gameLaunchButtons = new();
+    // Detalle 3D (Opción 1): cartucho real (Cartridge3D, D3D) montado sobre RootGrid.
+    private Grid? _detail3DPanel;
+    private bool _detail3DCloseHooked;
+    private Action<int>? _navigateDetail3D;
+    // Lista ordenada de los juegos visibles en la biblioteca actual (para navegar con
+    // las flechas laterales / teclas Izquierda y Derecha en la vista de detalle).
+    private readonly List<(InstalledGame? Game, string Exe, string Name, bool IsManual, string? InstallPath)> _orderedLibraryGames = new();
     private bool _counterStatusVisible;
     // Skeleton de carga: cards placeholder que se agregan al MISMO panel de la
     // biblioteca (como los juegos reales) mientras se escanea. El pulso replica el
@@ -114,6 +146,62 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // Sombra compartida de las cards de la biblioteca (ThemeShadow, receptor
     // configurado en el constructor sobre CardShadowReceiver).
     private readonly Microsoft.UI.Xaml.Media.ThemeShadow _cardShadow = new();
+    // Último estado de regla recibido: la página está cacheada y, al volver, hay
+    // que releerlo del servicio para no mostrar una partida que ya terminó.
+    private GameRuleStatus? _lastGameRuleStatus;
+    // Texto del footer que reacciona al estado de la regla. Se recrea en cada
+    // rebuild del dock; lo pinta UpdateDockStatusText.
+    private TextBlock? _dockStatusLine;
+    private string? _dockDefaultStatus;
+    // Host del LED del dock 3D: permite que la luz siga a la regla sin reconstruir
+    // la consola (el rebuild parpadea). Se recrea en cada rebuild del dock.
+    private ContentControl? _dockLedHost;
+    // Estado de consola con el que se armó el LED (para restaurarlo al terminar la regla).
+    private bool _dockLedConnected;
+    private bool _dockLedRunning;
+    // Cuenta regresiva de la espera launcher→juego (1 s): pinta el tiempo restante
+    // real de la ventana del servicio en el footer, el header y la barra 2D.
+    private DispatcherQueueTimer? _ruleCountdownTimer;
+
+    // Posición original de la card "Modo juego de WinForge" dentro del header
+    // (HeaderPanel): en modo 3D la card se MUEVE al ala derecha del dock inferior
+    // y al volver a Vanilla se restaura acá, en este índice.
+    private int _gameBoostCardHomeIndex = -1;
+    // Coalescing del rebuild del dock: al volver a la pestaña se encadenan
+    // OnNavigatedTo → UpdateCartridgeDock + dispatcher diferido + RefreshAsync
+    // (async) → RebuildCards → UpdateCartridgeDock, más eventos WMI. Cada rebuild
+    // hace Clear()+Add del host (la card parpadea: aparece y desaparece). Con el
+    // flag se colapsa todo en UN solo rebuild por tick del dispatcher.
+    private bool _dockUpdatePending;
+    // Generación de navegación: invalida el dispatcher diferido de una visita
+    // anterior (OnNavigatedFrom la incrementa). Sin esto, el callback diferido
+    // de la visita N podía reconstruir el dock durante la visita N+1 y pisar el
+    // estado recién armado.
+    private int _navGeneration;
+
+    /// <summary>
+    /// Relleno de la banda de cabecera, reusado entre pasadas: con el vidrio encendido es
+    /// el ACRÍLICO de la plataforma (ver <see cref="WHPO_UI.PanelAppearance.SurfaceFill"/>)
+    /// y con el desenfoque apagado el sólido de siempre.
+    /// </summary>
+    private Brush? _headerFill;
+
+    /// <summary>
+    /// Pinta la banda de cabecera (HeaderCard) con el relleno del panel del menú, ya con la
+    /// transparencia vigente y el vidrio que esté en juego (ver
+    /// <see cref="WHPO_UI.PanelAppearance.PaneBarFill"/>): la misma pieza que el navbar de
+    /// la izquierda y que la cabecera del Workshop, así que la franja de botones se lee
+    /// como continuación del panel y no como un bloque aparte cortado sobre el fondo.
+    /// </summary>
+    private void RepaintHeaderCard()
+    {
+        try
+        {
+            _headerFill = WHPO_UI.PanelAppearance.PaneBarFill(_headerFill);
+            HeaderCard.Background = _headerFill;
+        }
+        catch { /* arranque temprano */ }
+    }
 
     public GestionarProcesosPage()
     {
@@ -124,6 +212,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _cpuPowerService = App.Services.GetRequiredService<ICpuPowerService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _gameBoostService = App.Services.GetRequiredService<IGameBoostService>();
+        _settings = App.Services.GetRequiredService<ISettingsService>();
         CleanupLegacyIconCacheDirs();
 
         // Sombra de las cards de la biblioteca: una sola ThemeShadow compartida
@@ -135,23 +224,72 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         FilterComboBox.SelectedIndex = 0;
         ApplyLibraryFilterLanguage();
         UpdateInstalledCount();
+        // Casa de la card del Modo juego: su índice dentro del header. Se registra
+        // una sola vez (la página está cacheada y el constructor corre una vez).
+        _gameBoostCardHomeIndex = HeaderPanel.Children.IndexOf(GameBoostCard);
 
         // Simetría de la fila: el botón "?" debe medir lo mismo de alto que el de
         // "Configuración" (que gana su altura del padding + contenido). Se sincroniza
         // con el tamaño real y con cada cambio (escalado de texto, idioma, etc.).
         GameBoostSettingsButton.SizeChanged += (s, e) =>
-            GameBoostInfoButton.Height = Math.Max(1, e.NewSize.Height);
+        {
+            if (!_cards3D || GameBoostCard.Parent == HeaderPanel)
+                GameBoostInfoButton.Height = Math.Max(1, e.NewSize.Height);
+        };
+        RootGrid.SizeChanged += (_, _) => UpdateCartridgeDockWidth();
+
+        // La banda de la cabecera (HeaderCard) se pinta a mano, IGUAL que la del Workshop y
+        // el navbar del menú (ver RepaintHeaderCard): WinUI cachea el {ThemeResource} del
+        // Border y no lo vuelve a resolver cuando el ajuste REEMPLAZA la instancia del
+        // diccionario, así que con el XAML solo la banda quedaba opaca y sin seguir el
+        // vidrio/transparencia del tema. La página usa caché de navegación, así que la
+        // suscripción y la baja se atan a Loaded/Unloaded para no dejar el handler colgado.
+        Loaded += (_, _) =>
+        {
+            // Baja antes del alta: la página se carga más de una vez (caché de navegación)
+            // y no puede quedar suscrita dos veces.
+            WHPO_UI.PanelAppearance.Applied -= RepaintHeaderCard;
+            WHPO_UI.PanelAppearance.Applied += RepaintHeaderCard;
+            RepaintHeaderCard();
+        };
+        Unloaded += (_, _) => WHPO_UI.PanelAppearance.Applied -= RepaintHeaderCard;
+        Loaded += (_, _) =>
+        {
+            // El early-out vive en RequestCartridgeDockUpdate
+            // (GameBoostCardSettledInDock): si la card ya está en el dock, no
+            // se reconstruye.
+            if (_cards3D) RequestCartridgeDockUpdate();
+        };
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
 
-        // Estado del switch "Modo juego de WinForge (BETA)".
+        // Estado del switch "Modo rendimiento".
         _boostSwitchInitialized = false;
-        GameBoostSwitch.IsOn = _gameBoostService.IsEnabled;
+        GameBoostSwitch.IsChecked = _gameBoostService.IsEnabled;
         _boostSwitchInitialized = true;
         UpdateGameBoostLabel();
+
+        // Estilo de las cards (2D / 3D), persistido. Se elige en Configuración →
+        // Apariencia (el header de la biblioteca ya no tiene switch) y se relee acá en
+        // cada visita: por defecto, cartuchos 3D.
+        _cards3D = _settings.Get("biblioteca.cards3D", true);
+        // UN solo rebuild coalescado por visita: RequestCartridgeDockUpdate hace
+        // early-out solo si la card ya vive en el dock armado
+        // (GameBoostCardSettledInDock). La generación invalida el callback
+        // diferido de una visita anterior (ver OnNavigatedFrom).
+        int gen = ++_navGeneration;
+        RequestCartridgeDockUpdate();
+        if (_cards3D)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (gen != _navGeneration) return;
+                RequestCartridgeDockUpdate();
+            });
+        }
 
         // La biblioteca viene cacheada (InstalledGamesService): la primera vez se
         // escanea y se guarda, y las siguientes aperturas la leen sin re-escannear.
@@ -161,6 +299,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // Estado en vivo de los juegos (badge "En ejecución"): los eventos WMI
         // publican un snapshot sin polling; acá solo se refleja en las cards.
         _processService.RunningGamesChanged += OnRunningGamesChanged;
+        // Estado de la regla (esperando el proceso real / aplicada / no se pudo
+        // identificar): con launcher de por medio, el juego no nace con el exe de la
+        // biblioteca y el usuario necesita ver qué pasó, sin avisos por cada arranque.
+        _processService.GameRuleStatusChanged += OnGameRuleStatusChanged;
+        // La página está cacheada: al volver, el último estado pudo quedar viejo si
+        // el juego cerró mientras estaba en otra pestaña. Se relee del servicio.
+        RestoreGameRuleStatus();
 
         // Estado del launcher (botón "Iniciar"): chequeo único al abrir + eventos
         // WMI en adelante. Cero polling mientras la página esté visible.
@@ -188,8 +333,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        // Invalidar el callback diferido pendiente de esta visita (ver
+        // OnNavigatedTo): si corre después de salir, pisaría el dock de la
+        // visita siguiente. También se descarta el coalescing pendiente.
+        _navGeneration++;
+        StopRuleCountdown();
+        _dockUpdatePending = false;
         I18n.LanguageChanged -= OnLanguageChanged;
         _processService.RunningGamesChanged -= OnRunningGamesChanged;
+        _processService.GameRuleStatusChanged -= OnGameRuleStatusChanged;
         _processService.LauncherStateChanged -= OnLauncherStateChanged;
         _gameBoostService.BoostApplying -= OnBoostApplying;
         _gameBoostService.BoostApplied -= OnBoostApplied;
@@ -198,6 +350,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // volver al estado base para que el próximo ingreso muestre la biblioteca.
         if (BoostConfigView.Visibility == Visibility.Visible)
             CloseBoostConfigView(saveChanges: false);
+        CancelCartridgeDragImmediate();
+        // NO estacionar la card en el header al salir: la página está cacheada y
+        // la card vive en el dock armado. Mudarla al header acá y de vuelta al
+        // dock al volver eran dos mudanzas visibles = la card "aparecía y
+        // desaparecía" al cambiar de pestaña. Con la página cacheada, al volver
+        // el dock ya está armado con la card adentro y RequestCartridgeDockUpdate
+        // lo detecta (GameBoostCardSettledInDock) sin reconstruir.
+        CloseGame3DDetail();
         StopSkeletonPulse();
     }
 
@@ -254,7 +414,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private void GameBoostSwitch_Toggled(object sender, RoutedEventArgs e)
     {
         if (!_boostSwitchInitialized) return;
-        _gameBoostService.SetEnabled(GameBoostSwitch.IsOn);
+        bool on = GameBoostSwitch.IsChecked == true;
+        _gameBoostService.SetEnabled(on);
+        // Forzar el estado visual del template (Checked/Unchecked): si el VSM
+        // automático no enganchó (la perilla quedaba clavada), esto la gira.
+        VisualStateManager.GoToState(GameBoostSwitch, on ? "Checked" : "Unchecked", true);
     }
 
     /// <summary>
@@ -271,7 +435,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         if (IsWithin(source, GameBoostInfoButton)
             || IsWithin(source, GameBoostSettingsButton)
             || IsWithin(source, GameBoostSwitch)) return;
-        GameBoostSwitch.IsOn = !GameBoostSwitch.IsOn;
+        GameBoostSwitch.IsChecked = GameBoostSwitch.IsChecked != true;
     }
 
     private static bool IsWithin(DependencyObject node, DependencyObject root)
@@ -281,15 +445,26 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         return false;
     }
 
-    /// <summary>Etiqueta del switch con el badge "(BETA)" en amarillo, y tooltip con todos los cambios que aplica.</summary>
+    /// <summary>Etiqueta del switch ("Modo rendimiento"), indicador OFF/ON de la
+    /// perilla y tooltip informativo.</summary>
     private void UpdateGameBoostLabel()
     {
+        bool inDock = _cards3D && GameBoostCard.Parent != null && GameBoostCard.Parent != HeaderPanel;
         GameBoostLabel.Inlines.Clear();
-        GameBoostLabel.Inlines.Add(new Run { Text = I18n.T("Modo juego de WinForge") + " " });
-        GameBoostLabel.Inlines.Add(new Run { Text = I18n.T("(BETA)"), Foreground = new SolidColorBrush(BetaColor) });
+        GameBoostLabel.Text = I18n.T("Modo rendimiento");
+        // El switch ya no es un ToggleSwitch con On/OffContent: nombrarlo para los
+        // lectores de pantalla (el estilo del mock lleva el Off/On en el template).
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(GameBoostSwitch, I18n.T("Modo rendimiento"));
+        if (inDock)
+        {
+            GameBoostLabel.Foreground = CartridgeDock.TextBrush();
+        }
+        else
+            GameBoostLabel.ClearValue(TextBlock.ForegroundProperty);
+
         // Tooltip con el mismo estilo que los botones "?" informativos del resto de
         // la app: título (semi-negrita) + descripción con salto de línea, Placement
-        // Bottom y ancho máximo 420. El "(BETA)" amarillo queda solo en la etiqueta.
+        // Bottom y ancho máximo 420.
         ToolTip BuildGameBoostToolTip()
         {
             TextBlock Line(string key, bool bullet = false) => new()
@@ -304,7 +479,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             var content = new StackPanel { Spacing = 6, MaxWidth = 430 };
             content.Children.Add(new TextBlock
             {
-                Text = I18n.T("Modo juego de WinForge"),
+                Text = I18n.T("Modo rendimiento"),
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap
@@ -333,11 +508,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
             return new ToolTip
             {
-                Placement = PlacementMode.Bottom,
+                Placement = inDock ? PlacementMode.Top : PlacementMode.Bottom,
                 Content = content
             };
         }
         ToolTipService.SetToolTip(GameBoostInfoButton, BuildGameBoostToolTip());
+        ToolTipService.SetToolTip(GameBoostLabel, BuildGameBoostToolTip());
     }
     /// <summary>
     /// Feedback del Modo juego de WinForge al aplicarse (juego iniciado): muestra
@@ -756,7 +932,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// Al volver se reanuda si la vista de configuración sigue abierta; si se
     /// cerró, CloseBoostConfigView ya detuvo el timer.
     /// </summary>
-    public void PauseBackgroundTimers() => _boostPickerTimer?.Stop();
+    public void PauseBackgroundTimers()
+    {
+        _boostPickerTimer?.Stop();
+        CancelCartridgeDragImmediate();
+    }
 
     public void ResumeBackgroundTimers()
     {
@@ -799,7 +979,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         MainView.Visibility = Visibility.Visible;
         if (saveChanges)
         {
-            StatusText.Text = I18n.T("WinForge Modo juego configuración guardada.");
+            StatusText.Text = I18n.T("Configuración del Modo juego guardada.");
             StatusText.Foreground = Feedback.SuccessBrush;
             StatusText.Visibility = Visibility.Visible;
         }
@@ -1023,6 +1203,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var muted = Feedback.MutedBrush;
         var borderBrush = ThemeBrushes.Get("CardBorderBrush");
         var secondaryFill = ThemeBrushes.Get("CardBackgroundFillColorSecondaryBrush");
+ // Relleno de las pestañas inactivas del selector: la card de la app, un tono
+ // por encima/detrás del contenedor, para que cada pestaña se lea como un
+ // botón y no como texto suelto sobre el fondo.
+        var tabFill = ThemeBrushes.GetSurface("CardBackgroundBrush");
         var transparent = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
         var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1159,12 +1343,47 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // mantenimiento + agregadas por el usuario).
         FrameworkElement tasksTabCard = (FrameworkElement)BuildScheduledTasksTab();
 
-        var targetGrid = MakeRowsGrid(3, 2, 8);
-        targetGrid.Children.Add(modeTitle);
-        targetGrid.Children.Add(modeDescription);
+ // Cabecera de la card: ícono del modo + título y descripción ordenados en un
+ // bloque propio (mismo lenguaje que la cabecera de "Procesos en ejecución").
+ // Antes el título y la descripción colgaban sueltos arriba de la lista y
+ // competían con los encabezados de sección; con el bloque tintado la jerarquía
+ // queda clara y la lista arranca después.
+        var modeIcon = new FontIcon
+        {
+            FontSize = 15,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var modeIconBadge = new Border
+        {
+            Width = 30,
+            Height = 30,
+            CornerRadius = new CornerRadius(6),
+            Background = accent,
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = modeIcon
+        };
+        var modeHeaderTexts = new StackPanel { Spacing = 2, Children = { modeTitle, modeDescription } };
+        var modeHeaderGrid = new Grid { ColumnSpacing = 10 };
+        modeHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        modeHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        modeHeaderGrid.Children.Add(modeIconBadge);
+        modeHeaderGrid.Children.Add(modeHeaderTexts);
+        Grid.SetColumn(modeHeaderTexts, 1);
+        var modeHeader = new Border
+        {
+            Background = secondaryFill,
+            BorderBrush = borderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 10, 12, 10),
+            Child = modeHeaderGrid
+        };
+
+        var targetGrid = MakeRowsGrid(2, 1, 10);
+        targetGrid.Children.Add(modeHeader);
         targetGrid.Children.Add(targetHost);
-        Grid.SetRow(modeDescription, 1);
-        Grid.SetRow(targetHost, 2);
+        Grid.SetRow(targetHost, 1);
         var targetCard = MakeSettingsCard(targetGrid);
 
         var pickerGrid = MakeRowsGrid(3, 2, 10);
@@ -1510,13 +1729,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // de la píldora (radio 6 con padding 2). Con radio 6 las esquinas quedaban
  // "cortadas" contra el borde de la píldora. Cuatro modos: eficiencia / cerrar /
  // servicios / salud del Modo Juego de Windows.
-        var efficiencyButton = new Button { Content = I18n.T("Eficiencia"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4, 0, 0, 4), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        var killButton = new Button { Content = I18n.T("Cerrar"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        var servicesButton = new Button { Content = I18n.T("Servicios"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        var healthButton = new Button { Content = I18n.T("Salud"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        // La pestaña nueva cierra la píldora (radio derecho). Etiqueta corta a
-        // propósito: el título completo vive en el encabezado de la card.
-        var tasksButton = new Button { Content = I18n.T("Tareas"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(0, 4, 4, 0), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+ // Cada pestaña es una pastilla propia (radio 5, con 4 px de aire entre una y
+ // otra): al llevar fondo, las inactivas dejaban de leerse como un bloque
+ // continuo y hacía falta separarlas. Etiqueta corta a propósito: el título
+ // completo vive en el encabezado de la card.
+        var efficiencyButton = new Button { Content = I18n.T("Eficiencia"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var killButton = new Button { Content = I18n.T("Cerrar"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var servicesButton = new Button { Content = I18n.T("Servicios"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var healthButton = new Button { Content = I18n.T("Salud"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var tasksButton = new Button { Content = I18n.T("Tareas"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
 
  // Columna derecha: card destino estirando (ocupa todo el sobrante). Se crea
  // ANTES de declarar UpdateMode y suscribir los clicks: la local function
@@ -1533,16 +1754,27 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             var services = selectedTarget == "services";
             var health = selectedTarget == "health";
             var tasks = selectedTarget == "tasks";
-            efficiencyButton.Background = efficiency ? accent : transparent;
-            efficiencyButton.Foreground = efficiency ? accentForeground : muted;
-            killButton.Background = selectedTarget == "kill" ? accent : transparent;
-            killButton.Foreground = selectedTarget == "kill" ? accentForeground : muted;
-            servicesButton.Background = services ? accent : transparent;
-            servicesButton.Foreground = services ? accentForeground : muted;
-            healthButton.Background = health ? accent : transparent;
-            healthButton.Foreground = health ? accentForeground : muted;
-            tasksButton.Background = tasks ? accent : transparent;
-            tasksButton.Foreground = tasks ? accentForeground : muted;
+ // Cada pestaña lleva SU fondo (la activa en acento y las demás con el relleno
+ // de card): así el selector se lee como una barra de pestañas y no como
+ // etiquetas flotando sobre el contenedor.
+            void PaintTab(Button button, bool active)
+            {
+                button.Background = active ? accent : tabFill;
+                button.Foreground = active ? accentForeground : muted;
+            }
+            PaintTab(efficiencyButton, efficiency);
+            PaintTab(killButton, selectedTarget == "kill");
+            PaintTab(servicesButton, services);
+            PaintTab(healthButton, health);
+            PaintTab(tasksButton, tasks);
+
+            // Ícono del bloque de título: cambia con la pestaña activa.
+            modeIcon.Glyph = efficiency ? "\uE950"
+                : selectedTarget == "kill" ? "\uE711"
+                : selectedTarget == "health" ? "\uE9CE"
+                : tasks ? "\uE787"
+                : "\uE713";
+            modeIcon.Foreground = accentForeground;
             modeTitle.Text = I18n.T(efficiency ? "Modo eficiencia" : selectedTarget == "kill" ? "Cerrar al iniciar" : selectedTarget == "health" ? "Salud del Modo Juego" : tasks ? "Tareas programadas" : "Servicios");
             modeDescription.Text = efficiency
                 ? I18n.T("Se baja la prioridad y se activa el modo ahorro de energía de estos procesos mientras jugás.")
@@ -1570,7 +1802,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         healthButton.Click += (_, _) => { selectedTarget = "health"; UpdateMode(); };
         tasksButton.Click += (_, _) => { selectedTarget = "tasks"; UpdateMode(); };
 
-        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(6), Padding = new Thickness(2), Child = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton, healthButton, tasksButton } } };
+        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(8), Padding = new Thickness(3), Child = new Grid { ColumnSpacing = 4, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton, healthButton, tasksButton } } };
         Grid.SetColumn(killButton, 1);
         Grid.SetColumn(servicesButton, 2);
         Grid.SetColumn(healthButton, 3);
@@ -1620,13 +1852,25 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // switch (con sus handlers) y acá solo se lo coloca junto al otro.
  // Apilados en vertical y no en horizontal: los dos textos juntos (~530 px) no entran
  // en media card en una ventana chica y el segundo switch se recortaba.
+ // Cada switch en su propia píldora con fondo y borde: son dos ajustes del
+ // boost que viven en la cabecera del selector y, sueltos sobre el fondo de la
+ // página, se perdían. La píldora los separa del selector y entre sí.
+        Border MakeSwitchCard(UIElement row) => new()
+        {
+            Background = secondaryFill,
+            BorderBrush = borderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 4, 10, 4),
+            Child = row
+        };
         var headerSwitches = new StackPanel
         {
             Orientation = Orientation.Vertical,
-            Spacing = 2,
+            Spacing = 6,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Center,
-            Children = { _servicesAutoOptRow!, _tasksAutoPauseRow! }
+            Children = { MakeSwitchCard(_servicesAutoOptRow!), MakeSwitchCard(_tasksAutoPauseRow!) }
         };
         Grid.SetColumn(headerSwitches, 0);
         Grid.SetRow(headerSwitches, 0);
@@ -2798,7 +3042,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             try
             {
-                _runningExes = new HashSet<string>(_processService.RunningGameExes, StringComparer.OrdinalIgnoreCase);
+                // RunningRuleExes cubre los juegos con launcher: el proceso real
+                // puede llamarse distinto del exe de la biblioteca y, aun así, la
+                // card tiene que mostrar "En ejecución" (no dejar relanzar).
+                _runningExes = new HashSet<string>(
+                    _processService.RunningGameExes.Concat(_processService.RunningRuleExes),
+                    StringComparer.OrdinalIgnoreCase);
                 foreach (var (exe, btn, canLaunch) in _gameLaunchButtons)
                 {
                     if (_runningExes.Contains(exe))
@@ -2828,6 +3077,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                         }
                     }
                 }
+                if (_cards3D) RequestCartridgeDockUpdate();
                 if (_counterStatusVisible)
                 {
                     UpdateInstalledCount();
@@ -2835,6 +3085,231 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             }
             catch { }
         });
+    }
+
+    /// <summary>
+    /// Estado de la regla que publica ProcessService. Se usa la barra de estado de la
+    /// biblioteca (no un diálogo): Waiting cuando el juego se lanzó y todavía no
+    /// apareció su proceso real (launcher de por medio), Applied con el proceso al que
+    /// se aplicó, y Failed solo si venció la ventana de espera. Nunca se pregunta por
+    /// el launcher en cada arranque.
+    /// </summary>
+    private void OnGameRuleStatusChanged(GameRuleStatus status)
+    {
+        _lastGameRuleStatus = status;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try { ApplyGameRuleStatus(status); }
+            catch { }
+        });
+    }
+
+    /// <summary>
+    /// Pinta el estado de la regla en la barra del header (la de siempre) y en la
+    /// barra inferior con luz propia. Debe correr en el hilo de UI.
+    /// </summary>
+    private void ApplyGameRuleStatus(GameRuleStatus status)
+    {
+        _lastGameRuleStatus = status;
+        string message = GameRuleStatusMessage(status);
+
+        StatusText.Text = message;
+        StatusText.Foreground = status.State switch
+        {
+            GameRuleState.Applied when !status.Limited => Feedback.SuccessBrush,
+            GameRuleState.Waiting => Feedback.WarningBrush,
+            GameRuleState.Applied or GameRuleState.Failed => Feedback.WarningBrush,
+            _ => Feedback.MutedBrush
+        };
+        // El juego cerró (o la regla dejó de existir): no dejar colgado un
+        // "Regla aplicada a…" de una partida que ya terminó.
+        StatusText.Visibility = status.State == GameRuleState.None
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+        // Barra de regla: SOLO en 2D. En 3D el estado lo lleva el texto del propio dock
+        // (UpdateDockStatusText) y la torre del cartucho montado pasaría por detrás del
+        // vidrio de la barra, mezclando el texto con el arte. En su fila nada pasa por
+        // detrás: corte limpio siempre.
+        if (status.State == GameRuleState.None)
+        {
+            GameRuleStatusBar.Visibility = Visibility.Collapsed;
+            GameRuleStatusLedHost.Content = null;
+        }
+        else
+        {
+            GameRuleStatusText.Text = message;
+            GameRuleStatusLedHost.Content = CartridgeDock.CreateRuleLed(status.State, status.Limited);
+            // En 3D la barra queda colapsada (el dock ya muestra este mismo mensaje en
+            // su texto reactivo): así la torre nunca se ve a través del vidrio.
+            GameRuleStatusBar.Visibility = _cards3D ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        UpdateDockStatusText();
+        string launcherLabel = string.IsNullOrWhiteSpace(status.Launcher) ? "-" : status.Launcher;
+        string processLabel = string.IsNullOrWhiteSpace(status.ProcessName) ? "-" : status.ProcessName;
+        _loggingService.LogDebug($" Biblioteca: regla de {status.Exe} = {status.State} (launcher={launcherLabel}, proceso={processLabel}, limited={status.Limited}, strong={status.Strong})");
+        // En 3D la única luz es la de la consola: sigue a la regla (amarilla en
+        // espera, verde solo cuando se aplicó). Sin regla activa vuelve a la de siempre.
+        if (_cards3D && _dockLedHost != null)
+            _dockLedHost.Content = BuildDockLed();
+        // La espera lleva cuenta regresiva real; cualquier otro estado la detiene.
+        if (status.State == GameRuleState.Waiting)
+            StartRuleCountdown();
+        else
+            StopRuleCountdown();
+    }
+
+    /// <summary>Texto del estado de la regla (header, barra y segunda luz del dock).
+    /// En espera puede llevar el tiempo restante delante: el footer 3D trunca por
+    /// la derecha (MaxLines=1), así la cuenta se sigue viendo aunque se corte el texto.</summary>
+    private string GameRuleStatusMessage(GameRuleStatus status, TimeSpan? remaining = null, bool compact = false)
+    {
+        string name = FindGameDisplayName(status.Exe);
+        string waitPrefix = remaining.HasValue ? "(" + remaining.Value.ToString(@"m\:ss") + ") " : "";
+        // En el footer 3D (una sola línea que se trunca) el nombre largo del juego
+        // tapaba lo importante: ahí va el texto compacto genérico con la cuenta real.
+        if (compact && status.State == GameRuleState.Waiting)
+        {
+            string left = remaining.HasValue ? remaining.Value.ToString(@"m\:ss") : "…";
+            return string.IsNullOrWhiteSpace(status.Launcher)
+                ? I18n.T("Esperando el proceso del juego… quedan {0}", left)
+                : I18n.T("Escuchando el launcher ({0})… quedan {1}", status.Launcher, left);
+        }
+        return status.State switch
+        {
+            GameRuleState.Waiting => waitPrefix + (string.IsNullOrWhiteSpace(status.Launcher)
+                ? I18n.T("Regla de {0}: esperando el proceso del juego…", name)
+                : I18n.T("Regla de {0}: esperando el proceso del juego (launcher: {1})…", name, status.Launcher)),
+            GameRuleState.Applied when status.Limited => I18n.T(
+                "Regla de {0} aplicada a {1} con limitaciones (proceso protegido o anti-cheat).",
+                name, status.ProcessName ?? status.Exe),
+            GameRuleState.Applied => I18n.T(
+                "Regla de {0} aplicada a {1}.", name, status.ProcessName ?? status.Exe),
+            GameRuleState.Failed => string.IsNullOrWhiteSpace(status.Launcher)
+                ? I18n.T("No se pudo identificar el proceso de {0} después de esperarlo. La regla no se aplicó.", name)
+                : I18n.T("No se pudo identificar el proceso de {0} (launcher: {1}) después de esperarlo. La regla no se aplicó.", name, status.Launcher),
+            _ => ""
+        };
+    }
+
+    /// <summary>
+    /// Pinta el estado de la regla en la segunda luz del footer. Se llama desde
+    /// ApplyGameRuleStatus (cambios en vivo) y al armar el dock (estado vigente).
+    /// Debe correr en el hilo de UI.
+    /// </summary>
+    private void UpdateDockStatusText()
+    {
+        if (_dockStatusLine == null) return;
+
+        var status = _lastGameRuleStatus;
+        bool hasStatus = status != null && status.State != GameRuleState.None;
+        _dockStatusLine.Text = hasStatus ? GameRuleStatusMessage(status!) : _dockDefaultStatus ?? "";
+        // Un renglón cuando manda el estado de la regla: así no se estira sobre la
+        // costura del chasis (el footer mide 66 DIP y la costura está a 49).
+        _dockStatusLine.MaxLines = hasStatus ? 1 : 2;
+    }
+
+    /// <summary>Luz del dock 3D: con regla activa muestra EL ESTADO DE LA REGLA
+    /// (amarilla esperando, verde solo aplicada, roja fallida); sin regla, la de la consola.</summary>
+    private Grid BuildDockLed()
+    {
+        var st = _lastGameRuleStatus;
+        if (st != null && st.State != GameRuleState.None)
+            return CartridgeDock.CreateRuleLed(st.State, st.Limited);
+        return CartridgeDock.CreateLed(_dockLedConnected, _dockLedRunning, _dockLaunchFailed);
+    }
+
+    /// <summary>Arranca la cuenta regresiva de la espera (1 s, hilo de UI).</summary>
+    private void StartRuleCountdown()
+    {
+        StopRuleCountdown();
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(1);
+        timer.Tick += RuleCountdownTick;
+        timer.Start();
+        _ruleCountdownTimer = timer;
+        RefreshRuleCountdown();
+    }
+
+    /// <summary>Detiene la cuenta regresiva (regla aplicada, fallida o sin estado).</summary>
+    private void StopRuleCountdown()
+    {
+        var timer = _ruleCountdownTimer;
+        _ruleCountdownTimer = null;
+        if (timer == null) return;
+        try
+        {
+            timer.Tick -= RuleCountdownTick;
+            timer.Stop();
+        }
+        catch { }
+    }
+
+    private void RuleCountdownTick(DispatcherQueueTimer? timer, object? e) => RefreshRuleCountdown();
+
+    /// <summary>Refresca el tiempo restante de la espera con el valor real del servicio.</summary>
+    private void RefreshRuleCountdown()
+    {
+        var st = _lastGameRuleStatus;
+        if (st == null || st.State != GameRuleState.Waiting) { StopRuleCountdown(); return; }
+        // Sin sesión activa ya no hay nada que contar: el evento Failed/None actualiza el texto.
+        var remaining = _processService.GetLaunchSessionRemaining(st.Exe);
+        if (remaining == null) { StopRuleCountdown(); return; }
+        string message = GameRuleStatusMessage(st, remaining.Value);
+        StatusText.Text = message;
+        GameRuleStatusText.Text = message;
+        // El footer lleva el texto compacto (sin el nombre del juego): con el nombre
+        // largo se truncaba y no se llegaba a ver la cuenta.
+        if (_dockStatusLine != null) _dockStatusLine.Text = GameRuleStatusMessage(st, remaining.Value, compact: true);
+    }
+
+    /// <summary>Al volver a la pestaña, relee el estado del servicio: si el juego cerró
+    /// mientras la página estaba en segundo plano, el evento None no se recibió y
+    /// la barra quedaría mostrando una partida terminada.
+    /// </summary>
+    private void RestoreGameRuleStatus()
+    {
+        GameRuleStatus? current = _lastGameRuleStatus != null
+            ? _processService.GetGameRuleStatus(_lastGameRuleStatus.Exe)
+            : null;
+
+        // Sin estado previo en esta página (primer ingreso, o la app se abrió con
+        // un juego ya en ejecución): preguntar al servicio por las reglas que
+        // tiene enganchadas en vivo. Antes se salía temprano y la segunda luz
+        // nunca aparecía hasta el próximo cambio de estado.
+        if (current == null || current.State == GameRuleState.None)
+        {
+            foreach (var exe in _processService.RunningRuleExes)
+            {
+                var candidate = _processService.GetGameRuleStatus(exe);
+                if (candidate is { State: GameRuleState.Applied or GameRuleState.Waiting })
+                {
+                    current = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (current != null)
+        {
+            ApplyGameRuleStatus(current);
+            return;
+        }
+
+        // Nada en vivo: limpiar lo que haya quedado de la visita anterior.
+        if (_lastGameRuleStatus != null)
+            ApplyGameRuleStatus(new GameRuleStatus(
+                _lastGameRuleStatus.Exe, GameRuleState.None, _lastGameRuleStatus.Launcher));
+    }
+
+    /// <summary>Nombre visible del juego a partir del exe de la regla (biblioteca o manual).</summary>
+    private string FindGameDisplayName(string exe)
+    {
+        var game = _installed.FirstOrDefault(g => string.Equals(g.ExeFileName, exe, StringComparison.OrdinalIgnoreCase));
+        if (game != null && !string.IsNullOrWhiteSpace(game.Name)) return game.Name;
+        var manual = _manual.FirstOrDefault(m => string.Equals(m.Exe, exe, StringComparison.OrdinalIgnoreCase));
+        return string.IsNullOrWhiteSpace(manual.Name) ? exe : manual.Name!;
     }
 
     // ===== Detección =====
@@ -2856,6 +3331,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             var knownExes = new HashSet<string>(
                 _installed.Where(g => !string.IsNullOrEmpty(g.ExeFileName)).Select(g => g.ExeFileName!),
                 StringComparer.OrdinalIgnoreCase);
+            // Los juegos manuales también tienen card: incluirlos para que el estado
+            // "En ejecución" (RunningRuleExes) se aplique al reabrir la página.
+            knownExes.UnionWith(_manual.Select(m => m.Exe));
 
             // Registrar exe → carpeta de instalación: el monitor de Core matchea por
             // ruta los procesos cuyo nombre difiere del exe detectado (ej. launchers
@@ -2866,7 +3344,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // re-enumeran procesos ni se mide CPU en cada apertura (antes la página
             // pagaba ~250 ms de GetRunningAppsAsync para saber qué juegos corren).
             _runningExes = new HashSet<string>(
-                _processService.RunningGameExes.Where(e => knownExes.Contains(e)),
+                _processService.RunningGameExes.Concat(_processService.RunningRuleExes)
+                    .Where(e => knownExes.Contains(e)),
                 StringComparer.OrdinalIgnoreCase);
 
             // Garantizar un mínimo de tiempo visible del skeleton (como en SistemaPage)
@@ -2884,7 +3363,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         catch (Exception ex)
         {
-            _loggingService.LogWarning($"GestionarProcesosPage: no se pudo escanear juegos: {ex.Message}");
+            _loggingService.LogWarning($"GestionarProcesosPage: no se pudo escanear juegos: {ex.GetType().Name}: {ex.Message} | {ex.StackTrace}");
             StatusText.Text = I18n.T("No se pudieron escanear los juegos: {0}", ex.Message);
             StatusText.Foreground = Feedback.ErrorBrush;
             StatusText.Visibility = Visibility.Visible;
@@ -3424,10 +3903,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     private void RebuildCards()
     {
+        CancelCartridgeDragImmediate();
+        _cartridgeVisuals.Clear();
         LibraryPanel.Children.Clear();
         _cards.Clear();
+        _wrapSectionGroups.Clear();
         _launcherButtons.Clear();
         _gameLaunchButtons.Clear();
+        _orderedLibraryGames.Clear();
         _skeletonPanel = null; // el skeleton (si estaba) se fue con el clear del panel
 
         var hidden = _processService.GetHiddenExes();
@@ -3472,6 +3955,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         if (favorites.Count > 0)
         {
+            foreach (var it in favorites)
+                _orderedLibraryGames.Add((it.game, it.exe, it.name ?? it.exe, it.isManual, it.installPath));
             LibraryPanel.Children.Add(BuildLibrarySection(
                 glyph: "\uE735", // estrella llena (favorito)
                 text: I18n.T("Favoritos ({0})", favorites.Count),
@@ -3481,6 +3966,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         if (others.Count > 0)
         {
+            foreach (var it in others)
+                _orderedLibraryGames.Add((it.game, it.exe, it.name ?? it.exe, it.isManual, it.installPath));
             LibraryPanel.Children.Add(BuildLibrarySection(
                 glyph: "\uE7FC", // joystick (juego detectado)
                 text: I18n.T("Detectados ({0})", others.Count),
@@ -3513,6 +4000,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         if (hiddenItems.Count > 0)
         {
+            foreach (var it in hiddenItems)
+                _orderedLibraryGames.Add((it.game, it.exe, it.name ?? it.exe, it.isManual, it.installPath));
             LibraryPanel.Children.Add(BuildLibrarySection(
                 glyph: "\uED1A", // ojo tachado (oculto)
                 text: I18n.T("Ocultos ({0})", hiddenItems.Count),
@@ -3548,6 +4037,26 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             EmptyStatePanel.Visibility = Visibility.Collapsed;
         }
         UpdateCardWidth();
+        // En modo 3D mostramos la consola/dock inferior y pintamos las caras visibles.
+        // Coalescado: RebuildCards llega al final del RefreshAsync (async, tarde),
+        // cuando el dock de OnNavigatedTo ya se pintó; un rebuild directo acá era
+        // el segundo Clear()+Add que parpadeaba la card al volver.
+        RequestCartridgeDockUpdate();
+        // Viewport pegado a la banda y al dock/regla: el corte al scrollear pasa justo
+        // en esos bordes (el aire en reposo lo pone LibraryContentGrid, así que quieto
+        // la grilla queda en el mismo lugar que antes en ambos modos).
+        if (_cards3D)
+        {
+            LibraryScroll.Margin = new Thickness(24, 0, 24, 0);
+            LibraryContentGrid.Margin = new Thickness(0, 24, 0, 8);
+            HookPaintOnScroll();
+            SchedulePaintVisible3D();
+        }
+        else
+        {
+            LibraryScroll.Margin = new Thickness(24, 0, 24, 0);
+            LibraryContentGrid.Margin = new Thickness(0, 24, 0, 32);
+        }
     }
 
     /// <summary>Filtra la grilla por el texto del buscador (sin re-escannear).</summary>
@@ -3583,7 +4092,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // traen Launcher="Emulador".
     private static readonly HashSet<string> MobileEmulatorNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        "BlueStacks 5", "LDPlayer", "NoxPlayer", "MEmu", "Genymotion", "MSI App Player"
+        "BlueStacks 5", "LDPlayer", "NoxPlayer", "MEmu", "Genymotion", "MSI App Player",
+        "MuMu Player", "GameLoop", "Google Play Games"
     };
 
     /// <summary>
@@ -3650,39 +4160,126 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// texto, sin fondo ni borde) y el contenido suelto debajo, con margen
     /// interno para que la elevación y la sombra nunca se recorten.
     /// </summary>
+    // ===== Pintado diferido y escalonado de la grilla 3D =====
+    // La grilla 3D pinta solo las cards VISIBLES y de a pocas por vez:
+    // - el scroll se congela si N cartuchos pintan (GDI+) y suben (GPU) a la vez;
+    // - las secciones colapsadas (Ocultos) nunca pintan hasta expandirse.
+    // _paintScheduled evita encolar el pase dos veces.
+    // _exeCache evita re-escanear el disco por cada card: FindMainExePath recorre
+    // la carpeta del juego (hasta 800 exes) y, con N juegos, eso solo ya tarda
+    // una eternidad. La caché vive mientras la página esté abierta.
+    private bool _paintScheduled;
+    private bool _paintHooked;
+    private readonly Dictionary<string, (string? ExePath, string? IconPath)> _exeCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Pinta las cards 3D visibles que todavía estén pendientes, de a
+    /// <see cref="Cartridge3D.MaxConcurrentPaints"/> por vez. Se llama al terminar el
+    /// rebuild, al asentarse el scroll y al expandir una sección.
+    /// </summary>
+    private void SchedulePaintVisible3D()
+    {
+        if (!_cards3D || _paintScheduled) return;
+        _paintScheduled = true;
+        _ = DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            _paintScheduled = false;
+            PaintVisible3D();
+        });
+    }
+
+    /// <summary>
+    /// Recorre las cards 3D y pinta las que estén en el viewport del scroll (con un
+    /// margen de una altura de pantalla arriba/abajo). Las colapsadas
+    /// (Visibility.Collapsed por una sección cerrada) se saltan solas: su rectángulo
+    /// en pantalla no intersecta el viewport.
+    /// </summary>
+    private void PaintVisible3D()
+    {
+        if (!_cards3D) return;
+        try
+        {
+            var scroll = LibraryScroll;
+            if (scroll == null) return;
+            double viewTop = 0, viewBottom = scroll.ViewportHeight;
+            if (viewBottom <= 0) viewBottom = scroll.ActualHeight;
+            if (viewBottom <= 0) return;
+            const double margen = 1.0; // una pantalla de margen arriba y abajo
+            double top = viewTop - viewBottom * margen;
+            double bottom = viewBottom + viewBottom * margen;
+            foreach (var (cardEl, body) in _cards)
+            {
+                if (body is not Controls.Cartridge3D cartucho) continue;
+                if (!cartucho.IsPaintPending) continue;
+                GeneralTransform? t = null;
+                try { t = cardEl.TransformToVisual(scroll); } catch { continue; }
+                Windows.Foundation.Point p;
+                try { p = t.TransformPoint(new Windows.Foundation.Point(0, 0)); } catch { continue; }
+                double cardTop = p.Y, cardBottom = p.Y + cardEl.ActualHeight;
+                if (cardBottom < top || cardTop > bottom) continue; // fuera de vista
+                cartucho.EnsurePainted();
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Engancha el scroll para pintar las cards 3D a medida que entran en vista
+    /// (una sola vez). El scroll dispara ViewChanged muy seguido: solo se reacciona
+    /// cuando deja de moverse (IsIntermediate == false).
+    /// </summary>
+    private void HookPaintOnScroll()
+    {
+        if (_paintHooked) return;
+        _paintHooked = true;
+        try
+        {
+            LibraryScroll.ViewChanged += (s, e) =>
+            {
+                if (e.IsIntermediate) return;
+                SchedulePaintVisible3D();
+            };
+        }
+        catch { }
+    }
+
     private UIElement BuildLibrarySection(
         string glyph, string text, FrameworkElement content,
         bool expanded, Action<bool> onToggled)
     {
         var section = new StackPanel { Spacing = 8 };
 
+        // El header es el TÍTULO de la sección, no una fila más de texto gris: el
+        // chevron queda apagado (es solo el affordance), el icono va con el acento del
+        // tema y el nombre en el color primario, 15 px seminegrita. Antes todo iba en
+        // SecondaryTextBrush tamaño 14 y "Favoritos (7)" se leía como texto plano.
         var chevron = new FontIcon
         {
             Glyph = expanded ? "\uE70D" : "\uE76C", // abajo / derecha
             FontSize = 12,
-            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            Foreground = ThemeBrushes.Get("MutedBrush"),
             VerticalAlignment = VerticalAlignment.Center
         };
         var headerContent = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 10,
             VerticalAlignment = VerticalAlignment.Center
         };
         headerContent.Children.Add(chevron);
         headerContent.Children.Add(new FontIcon
         {
             Glyph = glyph,
-            FontSize = 14,
-            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            FontSize = 16,
+            Foreground = ThemeBrushes.Get("AccentBrush"),
             VerticalAlignment = VerticalAlignment.Center
         });
         headerContent.Children.Add(new TextBlock
         {
             Text = text,
-            FontSize = 14,
+            FontSize = 15,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            Foreground = ThemeBrushes.Get("PrimaryTextBrush"),
             VerticalAlignment = VerticalAlignment.Center
         });
 
@@ -3712,19 +4309,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             content.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
             chevron.Glyph = isOpen ? "\uE70D" : "\uE76C";
             onToggled(isOpen);
+            // Al expandir una sección en modo 3D, sus cards entran en vista: se
+            // pintan ahora (antes quedaban en plástico gris hasta el próximo scroll).
+            if (isOpen) SchedulePaintVisible3D();
         };
         section.Children.Add(toggle);
 
-        // Margen interno (6 arriba / 10 abajo + 14 derecha por el scrollbar
-        // overlay): la elevación al hover (-6 px) y la ThemeShadow de las cards
-        // nunca quedan recortadas por el borde del contenedor.
+        // Margen interno generoso abajo (36 px en modo 3D): la torre del dock (hasta
+        // ~43 DIP) respira debajo sin que se la vea recortada entre las cards. En 2D
+        // (sin torre) bastan 10 px.
         var body = new Border
         {
             Child = content,
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
-            Margin = new Thickness(0, 6, 0, 10),
+            Margin = new Thickness(0, 6, 0, _cards3D ? 36 : 10),
             Clip = null
         };
         section.Children.Add(body);
@@ -3732,30 +4332,54 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// Grilla de un grupo de juegos en filas de N columnas (3 default o 5 chicas;
-    /// StackPanels puros, sin ItemsWrapGrid): render garantizado en cualquier
-    /// contenedor.
+    /// Grilla de un grupo de juegos en filas de N columnas adaptables (StackPanels
+    /// puros, sin ItemsWrapGrid): render garantizado en cualquier contenedor y
+    /// reflujo instantáneo al redimensionar o pasar a pantalla completa.
     /// </summary>
     private FrameworkElement BuildWrapPanel(List<(InstalledGame? game, string exe, string? name, bool isManual, string? installPath)> items)
     {
-        var panel = new StackPanel { Spacing = 16 };
-        int perRow = GridColumns;
-        for (int i = 0; i < items.Count; i += perRow)
+        var panel = new StackPanel { Spacing = GridCardSpacing };
+        var sectionCards = new List<Border>(items.Count);
+        foreach (var item in items)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
-            for (int j = i; j < Math.Min(i + perRow, items.Count); j++)
+            var card = BuildGameCard(item.game, item.exe, item.name ?? item.exe, item.installPath, item.isManual);
+            sectionCards.Add(card);
+        }
+        int perRow = GetEffectiveColumns();
+        _currentGridCols = perRow;
+        ReflowWrapSection(panel, sectionCards, perRow);
+        _wrapSectionGroups.Add((panel, sectionCards));
+        return panel;
+    }
+
+    private static void ReflowWrapSection(StackPanel panel, List<Border> cards, int perRow)
+    {
+        foreach (var child in panel.Children)
+        {
+            if (child is Panel oldRow)
+                oldRow.Children.Clear();
+        }
+        panel.Children.Clear();
+        for (int i = 0; i < cards.Count; i += perRow)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = GridCardSpacing };
+            for (int j = i; j < Math.Min(i + perRow, cards.Count); j++)
             {
-                var item = items[j];
-                var card = BuildGameCard(item.game, item.exe, item.name ?? item.exe, item.installPath, item.isManual);
+                var card = cards[j];
+                if (card.Parent is Panel prev)
+                    prev.Children.Remove(card);
                 row.Children.Add(card);
             }
             panel.Children.Add(row);
         }
-        return panel;
     }
 
     private Border BuildGameCard(InstalledGame? game, string exe, string name, string? installPath, bool isManual)
     {
+        // Modo 3D: la card es un MODELO (cartucho D3D) arrastrable, SIN el HUD de la
+        // card vanilla (título, logo del launcher y botones de acciones).
+        if (_cards3D) return BuildGameCard3D(game, exe, name, installPath, isManual);
+
         bool fav = _processService.IsFavorite(exe);
         string? exePath = GameLauncher.FindExePath(installPath ?? "", exe);
         // Si el registro/launcher no entregó una ruta válida, resolver el exe desde
@@ -3979,8 +4603,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // Los juegos de Epic se lanzan por la URI del launcher (como steam://):
             // así el launcher autentica el juego con Epic Online Services. El exe
             // directo abre el juego pero lo online no funciona ("requiere iniciar
-            // Epic Games"). LaunchGameAsync asegura que el launcher esté corriendo.
-            launchFile = $"com.epicgames.launcher://apps/{game.EpicAppName}?action=launch&silent=true";
+            // Epic Games"). La URI lleva namespace + catalogItemId + AppName: la
+            // forma corta (solo AppName) quedó obsoleta y el juego no abría.
+            // LaunchGameAsync asegura que el launcher esté corriendo.
+            launchFile = GameLauncher.BuildEpicLaunchUri(game.ArtNamespace, game.AppId, game.EpicAppName);
             launchArgs = "";
         }
         else if (game?.Launcher == "Xbox" && !string.IsNullOrEmpty(game.AppId))
@@ -3989,6 +4615,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // shell:AppsFolder (como el acceso directo del menú Inicio), que activa
             // el paquete con la sesión del app de Xbox. El exe directo no funciona.
             launchFile = $"shell:AppsFolder\\{game.AppId}";
+            launchArgs = "";
+        }
+        else if (game?.Launcher == "Ubisoft" && !string.IsNullOrEmpty(game.AppId))
+        {
+            // Ubisoft Connect: el AppId es el gameId numérico del registro
+            // (HKLM\Ubisoft\Launcher\Installs\<id>); los accesos directos del
+            // propio Connect usan uplay://launch/<id>/0, que abre el launcher
+            // si hace falta y arranca el juego con su sesión. Sin AppId se cae
+            // al exe directo (rama else).
+            launchFile = $"uplay://launch/{game.AppId}/0";
             launchArgs = "";
         }
         else if (riotLaunch)
@@ -4035,7 +4671,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         else if (epicLaunch)
         {
             launcherProc = "EpicGamesLauncher";
-            launcherFound = GameLauncher.FindEpicLauncher() != null;
+            // Epic no depende de encontrar el exe del launcher: la URI del juego la
+            // abre el protocolo registrado del launcher (y GameLauncher la entrega
+            // al shell del usuario, porque la app corre elevada).
+            launcherFound = true;
         }
         else if (gogLaunch)
         {
@@ -4159,14 +4798,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // maneja todo el espaciado para que sea uniforme (12 px) en ambas
             // direcciones, entre cards de la misma fila y entre filas.
             Margin = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Child = banner
+            HorizontalAlignment = HorizontalAlignment.Stretch
+            // El contenido (el banner a sangre) se asigna más abajo, junto con el
+            // transform de hover.
         };
-        // Elevación al hover: la card se levanta 6 px con una animación suave
-        // (TranslateTransform + Storyboard, mismo patrón que FadeOverlay) y la
-        // sombra (ThemeShadow compartida) aparece con la elevación z. Al salir,
-        // vuelve a su lugar y la sombra desaparece (z=0).
-        var lift = new TranslateTransform();
+        // La card vanilla: el banner a sangre de siempre. El modo 3D no pasa por acá
+        // (construye un modelo de cartucho en BuildGameCard3D).
+        var lift = new TranslateTransform();   // elevación al hover
+        card.Child = banner;
         card.RenderTransform = lift;
         card.Shadow = _cardShadow;
         card.PointerEntered += (s, e) =>
@@ -4181,6 +4820,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             card.Translation = System.Numerics.Vector3.Zero;
             FadeOverlay(overlay, false);
         };
+
+        // Doble clic en la card → abre el cartucho 3D arrastrable + panel de parámetros.
+        card.DoubleTapped += (s, e) => ShowGame3DDetail(game, exe, name, installPath, isManual);
+        ToolTipService.SetToolTip(card, I18n.T("Doble clic para ver el cartucho 3D"));
 
         _cards.Add((card, banner));
         if (!string.IsNullOrEmpty(game?.BannerUrl))
@@ -4254,6 +4897,269 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
+    /// Card del modo 3D estilo Carthage:
+    /// - Hueco moldeado ("recess") en la bandeja, con el título grabado abajo cuando el
+    ///   cartucho se levanta y se arrastra fuera del hueco.
+    /// - Imagen de cartucho completo (carcasa con muescas laterales, pestaña superior,
+    ///   etiqueta con logo del launcher, carátula, franja inferior de código y flecha).
+    /// - Al mover el mouse encima, el cartucho se levanta, se inclina hasta ±10° hacia el
+    ///   puntero con PlaneProjection y muestra un reflejo radial suave.
+    /// - Al arrastrar (> 8 px), se levanta el cartucho flotando con balanceo por velocidad:
+    ///   soltarlo en el Dock inferior lo inserta e inicia el juego; soltarlo afuera lo
+    ///   devuelve con resorte a su hueco.
+    /// - Un clic abre la vista de inspección centrada con el cartucho 3D real a la
+    ///   izquierda y todos los parámetros de optimización (CPU/GPU/Afinidad/Plan/etc.) a la derecha.
+    /// </summary>
+    private Border BuildGameCard3D(InstalledGame? game, string exe, string name, string? installPath, bool isManual)
+    {
+        string cacheKey = (installPath ?? "") + "|" + exe;
+        if (!_exeCache.TryGetValue(cacheKey, out var cached))
+        {
+            string? exePath = GameLauncher.FindExePath(installPath ?? "", exe);
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+                exePath = GameExeResolver.FindMainExePath(installPath ?? "");
+            string? iconPath = GameExeResolver.IsStubExe(exePath ?? "") && !string.IsNullOrEmpty(installPath)
+                ? GameExeResolver.FindBestGameExePath(installPath)
+                : exePath;
+            cached = (exePath, iconPath);
+            _exeCache[cacheKey] = cached;
+        }
+        string? exePath2 = cached.ExePath;
+        string? iconPath2 = cached.IconPath;
+
+        string launcher = string.IsNullOrWhiteSpace(game?.Launcher) ? "Manual" : game!.Launcher!;
+        string code = CartridgeModel.Code(launcher, game?.AppId, name);
+
+
+        var tile = new CartridgeTile(name, launcher)
+        {
+            CoordinateRoot = RootGrid,
+            CanInteract = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
+                && !string.Equals(_connectedCartridge?.Exe, exe, StringComparison.OrdinalIgnoreCase)
+        };
+        // Sin sombra proyectada en el cartucho: se veía como un halo gris alrededor
+        // del plástico. El volumen lo dan el tilt, el lift y la silueta del propio arte.
+        var card = new Border
+        {
+            Tag = "no-reveal", Padding = new Thickness(4), Child = tile,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            CornerRadius = new CornerRadius(10)
+        };
+        tile.DragStarted += (point, grab) => StartCartridgeDrag(
+            card, tile.CartridgeVisual, tile.Artwork.Source, game, exe, name, installPath, isManual,
+            grab.X, grab.Y, point);
+        tile.DragMoved += MoveCartridgeDrag;
+        tile.DragCompleted += EndCartridgeDrag;
+        tile.InspectRequested += () => ShowGame3DDetail(game, exe, name, installPath, isManual);
+
+        _cartridgeVisuals.Add((exe, tile.CartridgeVisual));
+        tile.SetRemoved(string.Equals(_connectedCartridge?.Exe, exe, StringComparison.OrdinalIgnoreCase));
+        string? defenderFolder = !string.IsNullOrEmpty(installPath) ? installPath
+            : (!string.IsNullOrEmpty(exePath2) ? Path.GetDirectoryName(exePath2) : null);
+        string? cfgExe = !string.IsNullOrEmpty(iconPath2) ? Path.GetFileName(iconPath2) : exe;
+        card.RightTapped += (s, e) => ShowRuleMenu(card, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe);
+        // Sin tooltip en las cards 3D: el cartel al hover se pidió quitar.
+
+        // Renderiza y cachea la imagen completa del cartucho (con banner/ícono cuando esté listo)
+        _ = LoadCartridgeGridImageAsync(tile.Artwork, game, name, launcher, code, iconPath2);
+
+        _cards.Add((card, tile));
+        return card;
+    }
+
+    private static string GridShellCacheDir => Path.Combine(WHPO.Core.AppPaths.RootDir, "cartshells-v7");
+
+    /// <summary>
+    /// Asegura el archivo de arte (banner de Steam/Epic o ícono del ejecutable) y
+    /// pinta la imagen 2D del cartucho (con muescas, pestaña, cabecera, arte y código)
+    /// en segundo plano, guardándola en caché para que la grilla cargue al instante.
+    /// </summary>
+    private async Task LoadCartridgeGridImageAsync(
+        Image target, InstalledGame? game, string title, string launcher, string code, string? iconPath)
+    {
+        try
+        {
+            // Publish a solid cartridge FIRST. Network art must never gate the shell.
+            string? localArt = ResolveBannerFile(game, iconPath);
+            await PaintAndLoadAsync(localArt);
+            string? artFile = await EnsureGameArtFileAsync(game, iconPath);
+            if (!string.Equals(artFile, localArt, StringComparison.OrdinalIgnoreCase))
+                await PaintAndLoadAsync(artFile);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Cartridge artwork '{title}': {ex}");
+        }
+
+        async Task PaintAndLoadAsync(string? artFile)
+        {
+            string stamp = "";
+            if (!string.IsNullOrEmpty(artFile) && File.Exists(artFile))
+            {
+                var fi = new FileInfo(artFile);
+                stamp = $"{Path.GetFileName(artFile)}-{fi.Length}-{fi.LastWriteTimeUtc.Ticks}";
+            }
+            string hash = HashString($"v7|{title}|{launcher}|{code}|{stamp}");
+            string cachedPng = Path.Combine(GridShellCacheDir, $"shell-{hash}.png");
+
+            if (!File.Exists(cachedPng) || !IsValidImageFile(cachedPng))
+            {
+                await Task.Run(() =>
+                {
+                    Directory.CreateDirectory(GridShellCacheDir);
+                    var plastic = CartridgeModel.PlasticColor(title, artFile);
+                    using var bmp = CartridgeModel.PaintFace(title, launcher, code, artFile, plastic, flat: false);
+                    string temp = cachedPng + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    try
+                    {
+                        bmp.Save(temp, System.Drawing.Imaging.ImageFormat.Png);
+                        File.Move(temp, cachedPng, overwrite: true);
+                    }
+                    finally
+                    {
+                        if (File.Exists(temp)) File.Delete(temp);
+                    }
+                });
+            }
+
+            if (File.Exists(cachedPng))
+            {
+                // Stream loading verifies the actual decode, not just the PNG signature.
+                using var stream = File.OpenRead(cachedPng).AsRandomAccessStream();
+                var bi = new BitmapImage { DecodePixelWidth = 360 };
+                await bi.SetSourceAsync(stream);
+                target.Source = bi;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resuelve o descarga el archivo de imagen local del juego (banner de Steam/Battle.net,
+    /// banner del catálogo de Epic o ícono extraído del ejecutable) para alimentar tanto
+    /// el cartucho de la grilla como el modelo 3D.
+    /// </summary>
+    private static async Task<string?> EnsureGameArtFileAsync(InstalledGame? game, string? exePath)
+    {
+        try
+        {
+            if (game != null && !string.IsNullOrEmpty(game.AppId))
+            {
+                if (!string.IsNullOrEmpty(game.BannerUrl))
+                {
+                    string file = Path.Combine(BannerCacheDir, $"{game.AppId}.jpg");
+                    if (!File.Exists(file))
+                    {
+                        try
+                        {
+                            Directory.CreateDirectory(BannerCacheDir);
+                            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                            var bytes = await http.GetByteArrayAsync(game.BannerUrl);
+                            if (IsWebp(bytes))
+                            {
+                                var jpeg = await ConvertWebpToJpegAsync(bytes);
+                                if (jpeg != null) File.WriteAllBytes(file, jpeg);
+                            }
+                            else if (IsValidImageBytes(bytes))
+                            {
+                                File.WriteAllBytes(file, bytes);
+                            }
+                        }
+                        catch { }
+                    }
+                    if (File.Exists(file) && IsValidImageFile(file)) return file;
+                }
+                else if (game.Launcher == "Epic" && !string.IsNullOrEmpty(game.ArtNamespace))
+                {
+                    string file = Path.Combine(BannerCacheDir, $"epic-{game.ArtNamespace}-{game.AppId}.jpg");
+                    if (!File.Exists(file))
+                    {
+                        try
+                        {
+                            string? url = FindEpicKeyImageUrl(game.ArtNamespace, game.AppId);
+                            if (url != null)
+                            {
+                                Directory.CreateDirectory(BannerCacheDir);
+                                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+                                var bytes = await http.GetByteArrayAsync(url);
+                                if (IsValidImageBytes(bytes)) File.WriteAllBytes(file, bytes);
+                            }
+                        }
+                        catch { }
+                    }
+                    if (File.Exists(file) && IsValidImageFile(file)) return file;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(exePath) && File.Exists(exePath))
+            {
+                string cacheDir = Path.Combine(BannerCacheDir, "exeicons-v2");
+                string cacheBase = Path.Combine(cacheDir, HashString(exePath));
+                string icoFile = cacheBase + "-ico.png";
+                string hiFile = cacheBase + "-hi.png";
+                string smallFile = cacheBase + "-small.png";
+
+                if (File.Exists(icoFile) && IsValidImageFile(icoFile)) return icoFile;
+                if (File.Exists(hiFile) && IsValidImageFile(hiFile)) return hiFile;
+
+                // Si no hay ícono cacheado todavía, extraerlo ahora (igual que LoadExeIconAsync)
+                string? extracted = await Task.Run(() =>
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(cacheDir);
+                        string? local = IconExtractor.FindConfidentLocalIcon(exePath);
+                        if (local != null)
+                        {
+                            try
+                            {
+                                using var ico = new System.Drawing.Icon(local, 64, 64);
+                                using var srcIco = ico.ToBitmap();
+                                using var bmpIco = new System.Drawing.Bitmap(64, 64);
+                                using var gIco = System.Drawing.Graphics.FromImage(bmpIco);
+                                gIco.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                                gIco.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                                gIco.Clear(System.Drawing.Color.Transparent);
+                                gIco.DrawImage(srcIco, 0, 0, 64, 64);
+                                bmpIco.Save(icoFile, System.Drawing.Imaging.ImageFormat.Png);
+                                if (File.Exists(icoFile) && IsValidImageFile(icoFile)) return icoFile;
+                            }
+                            catch { }
+                        }
+
+                        System.Drawing.Bitmap? src = IconExtractor.ExtractHighResIcon(exePath);
+                        if (src == null)
+                        {
+                            using var small = System.Drawing.Icon.ExtractAssociatedIcon(exePath);
+                            if (small != null) src = small.ToBitmap();
+                        }
+                        if (src != null)
+                        {
+                            using (src)
+                            using (var bmp = new System.Drawing.Bitmap(64, 64))
+                            {
+                                using var g = System.Drawing.Graphics.FromImage(bmp);
+                                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+                                g.Clear(System.Drawing.Color.Transparent);
+                                g.DrawImage(src, 0, 0, 64, 64);
+                                string targetPath = src.Width >= 64 && src.Height >= 64 ? hiFile : smallFile;
+                                bmp.Save(targetPath, System.Drawing.Imaging.ImageFormat.Png);
+                                if (File.Exists(targetPath) && IsValidImageFile(targetPath)) return targetPath;
+                            }
+                        }
+                    }
+                    catch { }
+                    return null;
+                });
+                if (!string.IsNullOrEmpty(extracted)) return extracted;
+                if (File.Exists(smallFile) && IsValidImageFile(smallFile)) return smallFile;
+            }
+        }
+        catch { }
+        return ResolveBannerFile(game, exePath);
+    }
+
+    /// <summary>
     /// Hover de los botones de las cards: el estado PointerOver por defecto de
     /// WinUI los vuelve translúcidos. Para el botón Iniciar (accent) se usa un azul
     /// más oscuro que el acento (y más oscuro aún al presionar); para los botones
@@ -4323,6 +5229,2222 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// la conversión, cada apertura decodifica una imagen chica al instante. Si algo
     /// falla, queda el ícono/emoji.
     /// </summary>
+    /// <summary>
+    /// Ruta local del banner ya cacheado de un juego (para mostrarlo en el cartucho 3D).
+    /// Devuelve null si todavía no hay banner en disco (el cartucho muestra el plástico).
+    /// Misma convención que LoadBannerAsync/LoadEpicBannerAsync.
+    /// </summary>
+    private static string? ResolveBannerFile(InstalledGame? game, string? exePath = null)
+    {
+        try
+        {
+            if (game != null)
+            {
+                if (!string.IsNullOrEmpty(game.BannerUrl) && !string.IsNullOrEmpty(game.AppId))
+                {
+                    var f = Path.Combine(BannerCacheDir, $"{game.AppId}.jpg");
+                    if (File.Exists(f) && IsValidImageFile(f)) return f;
+                }
+                if (game.Launcher == "Epic" && !string.IsNullOrEmpty(game.AppId) && !string.IsNullOrEmpty(game.ArtNamespace))
+                {
+                    var f = Path.Combine(BannerCacheDir, $"epic-{game.ArtNamespace}-{game.AppId}.jpg");
+                    if (File.Exists(f) && IsValidImageFile(f)) return f;
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(exePath))
+            {
+                string cacheDir = Path.Combine(BannerCacheDir, "exeicons-v2");
+                string cacheBase = Path.Combine(cacheDir, HashString(exePath));
+                foreach (var suffix in new[] { "-ico.png", "-hi.png", "-small.png" })
+                {
+                    var f = cacheBase + suffix;
+                    if (File.Exists(f) && IsValidImageFile(f)) return f;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    // =====================================================================
+    // ARRASTRE FÍSICO DE CARTUCHOS + CONSOLA / DOCK INFERIOR (estilo Carthage)
+    // =====================================================================
+
+    private sealed class ActiveCartridgeDrag
+    {
+        public required Border CardElement;
+        public required UIElement SourceVisual;
+        public required Grid ProxyRoot;
+        public required RotateTransform SwingTransform;
+        public required ScaleTransform ScaleTransform;
+        public required Border HintBadge;
+        public required TextBlock HintText;
+        public required InstalledGame? Game;
+        public required string Exe;
+        public required string Name;
+        public required string? InstallPath;
+        public required bool IsManual;
+        public required double GrabX;
+        public required double GrabY;
+        public required double CardW;
+        public required double CardH;
+        public required Windows.Foundation.Point HomePos;
+        public ImageSource? Artwork;
+        public double Vx;
+        public long LastTicks;
+        public bool OverDock;
+        /// <summary>Escala del proxy al aterrizar en el hueco de la biblioteca.</summary>
+        public double HomeScale = 1;
+        /// <summary>El arrastre salió del cartucho conectado en el dock (retiro).</summary>
+        public bool FromDock;
+    }
+
+    private ActiveCartridgeDrag? _activeDrag;
+    private ActiveCartridgeDrag? _connectedCartridge;
+    private ActiveCartridgeDrag? _flightDrag;
+    private Storyboard? _cartridgeStoryboard;
+    private bool _cartridgeFlight;
+    private bool _dockLaunching;
+    private bool _dockLaunchFailed;
+    private string? _dockMessage;
+    private Border? _dockSlotBorder;
+    private Canvas? _dockCartridgeBay;
+    // All insertion positions share the same mouth coordinate. The cartridge can
+    // protrude above the footer without reserving an empty row in the library.
+    private const double DockFooterHeight = 66;
+    private const double DockMouthY = 8; // shell border (1) + top padding (7): la boca coincide
+    // con el pozo pintado del chasis (y=7..33); con 11 quedaba 3 px por debajo del receso.
+    private const double DockSlotDepth = 20; // cuánto entra el cartucho dentro del pozo antes del labio frontal
+    private const double DockApproachGap = 6;
+    private const double DockLipWall = 9; // paredes laterales del labio frontal
+    private const double DockBaySideGap = 12; // margen del pozo a cada lado del cartucho
+    // El cartucho del dock mide SIEMPRE lo mismo que la card 3D de la grilla: la ranura
+    // (boca, labio y pozo) se deriva de ese ancho en vez de usar medidas fijas. Así la
+    // card entra en una ranura de su propio tamaño y no queda más grande que la boca,
+    // sin importar el ancho de la ventana (UpdateCardWidth recalcula _dockCardWidth al
+    // redimensionar y el dock se reconstruye con la medida nueva).
+    private double _dockCardWidth = MaxCardWidth3D - 8;
+    private double DockCardWidth => _dockCardWidth;
+    // Whole DIPs avoid layout-rounding offsets between the bay clip and slot lip.
+    private double DockCardHeight => Math.Ceiling(DockCardWidth * CartridgeHeightRatio);
+    /// <summary>Ancho exterior del conector: el cartucho entra justo entre las dos paredes.</summary>
+    private double DockPortWidth => DockCardWidth + 2 * DockLipWall;
+    private double DockBayWidth => DockPortWidth + 2 * DockBaySideGap;
+    private double DockBayHeight => DockCardHeight + DockApproachGap;
+    private double DockCardLeft => (DockBayWidth - DockCardWidth) * 0.5;
+    /// <summary>Cuánto asoma el cartucho por encima de la ranura (~15% de la altura).
+    /// La torre tiene que caber en el aire bajo la última fila (44 DIP): con 0.25
+    /// llegaba a 72 DIP y se veía recortada en tiras detrás de las cards de abajo.
+    /// La boca, el labio y el pozo no cambian (derivan del ancho), entra más adentro.</summary>
+    private double DockProtrusion => Math.Round(DockCardHeight * 0.15);
+    private double DockSeatedTop => DockBayHeight - (DockProtrusion + DockSlotDepth);
+    private readonly List<(string Exe, UIElement Visual)> _cartridgeVisuals = new();
+
+    private static void SetCartridgeRemoved(UIElement visual, bool removed)
+    {
+        DependencyObject? owner = visual;
+        while (owner != null && owner is not CartridgeTile)
+            owner = VisualTreeHelper.GetParent(owner);
+        if (owner is CartridgeTile tile) tile.SetRemoved(removed);
+        else visual.Opacity = removed ? 0 : 1;
+    }
+
+    private (string LaunchFile, string LaunchArgs, string? BlizzardCode, string? LauncherProc, bool LauncherFound, bool AutoOpen, bool CanLaunch)
+        ResolveGameLaunchSpec(InstalledGame? game, string exe, string? installPath, bool isManual)
+    {
+        string cacheKey = (installPath ?? "") + "|" + exe;
+        if (!_exeCache.TryGetValue(cacheKey, out var cached))
+        {
+            string? ep = GameLauncher.FindExePath(installPath ?? "", exe);
+            if (string.IsNullOrWhiteSpace(ep) || !File.Exists(ep))
+                ep = GameExeResolver.FindMainExePath(installPath ?? "");
+            string? ip = GameExeResolver.IsStubExe(ep ?? "") && !string.IsNullOrEmpty(installPath)
+                ? GameExeResolver.FindBestGameExePath(installPath)
+                : ep;
+            cached = (ep, ip);
+            _exeCache[cacheKey] = cached;
+        }
+        string? exePath = cached.ExePath;
+
+        bool steamLaunch = game?.Launcher == "Steam" && !string.IsNullOrEmpty(game?.AppId);
+        bool riotLaunch = game?.Launcher == "Riot" && !string.IsNullOrEmpty(game?.AppId);
+        bool blacksmithLaunch = game?.Launcher == "Blacksmith";
+
+        string? manualLauncher = null;
+        if (isManual && game == null)
+        {
+            manualLauncher = _processService.GetManualGameLauncher(exe);
+            if (!string.IsNullOrEmpty(manualLauncher))
+            {
+                blacksmithLaunch = string.Equals(manualLauncher, "Blacksmith", StringComparison.OrdinalIgnoreCase);
+                // Manual games have no AppId: use their resolved exe instead of game!.AppId.
+                steamLaunch = false;
+                riotLaunch = false;
+            }
+        }
+
+        string? blizzardCode = game?.Launcher == "Blizzard"
+            ? (string.IsNullOrEmpty(game.AppId) ? GameLauncher.GetBlizzardProductCode(exe) : game.AppId)
+            : null;
+
+        string launchFile;
+        string launchArgs = "";
+        if (steamLaunch)
+        {
+            launchFile = $"steam://rungameid/{game!.AppId}";
+        }
+        else if (game?.Launcher == "Epic" && !string.IsNullOrEmpty(game.EpicAppName))
+        {
+            // Misma URI canónica que el botón de la card (namespace + catalogItemId +
+            // AppName): la forma corta ya no la aceptan las versiones nuevas.
+            launchFile = GameLauncher.BuildEpicLaunchUri(game.ArtNamespace, game.AppId, game.EpicAppName);
+        }
+        else if (game?.Launcher == "Xbox" && !string.IsNullOrEmpty(game.AppId))
+        {
+            launchFile = $"shell:AppsFolder\\{game.AppId}";
+        }
+        else if (game?.Launcher == "Ubisoft" && !string.IsNullOrEmpty(game.AppId))
+        {
+            launchFile = $"uplay://launch/{game.AppId}/0";
+        }
+        else if (riotLaunch)
+        {
+            launchFile = GameLauncher.FindRiotLauncher() ?? "";
+            launchArgs = $"--launch-product={game!.AppId} --launch-patchline=live";
+        }
+        else
+        {
+            launchFile = exePath ?? "";
+        }
+
+        bool epicLaunch = game?.Launcher == "Epic" && !string.IsNullOrEmpty(game.EpicAppName);
+        bool gogLaunch = game?.Launcher == "GOG";
+        bool xboxLaunch = game?.Launcher == "Xbox";
+        string? battleNetLauncher = blizzardCode != null ? GameLauncher.FindBattleNetLauncher() : null;
+        string? launcherProc = null;
+        bool launcherFound = true;
+        bool autoOpen = true;
+
+        if (blizzardCode != null)
+        {
+            launcherProc = "Battle.net";
+            launcherFound = battleNetLauncher != null;
+        }
+        else if (epicLaunch)
+        {
+            launcherProc = "EpicGamesLauncher";
+            // Epic no depende de encontrar el exe del launcher: la URI del juego la
+            // abre el protocolo registrado del launcher (y GameLauncher la entrega
+            // al shell del usuario, porque la app corre elevada).
+            launcherFound = true;
+        }
+        else if (gogLaunch)
+        {
+            launcherProc = "GalaxyClient";
+            launcherFound = GameLauncher.FindGogLauncher() != null;
+            autoOpen = false;
+        }
+        else if (xboxLaunch)
+        {
+            launcherProc = "Xbox";
+            launcherFound = true;
+            autoOpen = false;
+        }
+        else if (riotLaunch)
+        {
+            launcherProc = "RiotClientServices";
+            launcherFound = GameLauncher.FindRiotLauncher() != null;
+        }
+        else if (!blacksmithLaunch && !string.IsNullOrEmpty(manualLauncher)
+                 && !string.Equals(manualLauncher, "Blacksmith", StringComparison.OrdinalIgnoreCase))
+        {
+            launcherProc = manualLauncher;
+            launcherFound = _processService.IsLauncherRunning(manualLauncher);
+            autoOpen = true;
+        }
+
+        bool canLaunch = launcherFound && (autoOpen || launcherProc == null || IsLauncherRunning(launcherProc))
+            && (!string.IsNullOrEmpty(launchFile) || blizzardCode != null);
+        return (launchFile, launchArgs, blizzardCode, launcherProc, launcherFound, autoOpen, canLaunch);
+    }
+
+    private void StartCartridgeDrag(
+        Border card, UIElement sourceVisual, ImageSource? imgSource,
+        InstalledGame? game, string exe, string name, string? installPath, bool isManual,
+        double grabX, double grabY, Windows.Foundation.Point pointerInRoot,
+        double cardWOverride = 0, double homeScale = 1, bool fromDock = false)
+    {
+        if (_cartridgeFlight || _dockLaunching) return;
+        // cardWOverride: el arrastre que sale del dock usa el tamaño del cartucho
+        // sentado y crece hasta su tamaño de biblioteca (homeScale) al volver a casa.
+        double cardW = cardWOverride > 0 ? cardWOverride : Math.Max(1, card.ActualWidth - 8);
+        double cardH = cardW * CartridgeHeightRatio;
+
+        Windows.Foundation.Point homePos = new(pointerInRoot.X - grabX * cardW, pointerInRoot.Y - grabY * cardH);
+        try
+        {
+            var t = sourceVisual.TransformToVisual(RootGrid);
+            homePos = t.TransformPoint(new Windows.Foundation.Point(0, 0));
+        }
+        catch { }
+
+        // Ocultar el cartucho en la celda para dejar visible el hueco con el nombre grabado
+        SetCartridgeRemoved(sourceVisual, true);
+
+        var swingTransform = new RotateTransform { CenterX = grabX * cardW, CenterY = grabY * cardH };
+        var scaleTransform = new ScaleTransform { ScaleX = 1, ScaleY = 1 };
+        var tg = new TransformGroup();
+        tg.Children.Add(scaleTransform);
+        tg.Children.Add(swingTransform);
+
+        var proxyImg = new Image
+        {
+            Source = imgSource,
+            Width = cardW,
+            Height = cardH,
+            Stretch = Stretch.Fill
+        };
+
+        var hintText = new TextBlock
+        {
+            Text = I18n.T("Soltá para conectar e iniciar"),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Foreground = ThemeBrushes.Get("AccentForegroundBrush"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var hintBadge = new Border
+        {
+            Visibility = Visibility.Collapsed,
+            Background = ThemeBrushes.Get("AccentBrush"),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(12, 5, 12, 5),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, -36, 0, 0),
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    new FontIcon
+                    {
+                        Glyph = "\uE768",
+                        FontSize = 11,
+                        Foreground = ThemeBrushes.Get("AccentForegroundBrush"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    },
+                    hintText
+                }
+            }
+        };
+
+        var proxyVisual = CartridgeTile.CreateVisual(
+            name, string.IsNullOrWhiteSpace(game?.Launcher) ? "Manual" : game.Launcher, proxyImg);
+        // El proxy arrastrable tampoco proyecta sombra (coherente con la grilla).
+        var proxyHost = new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Child = proxyVisual
+        };
+        var proxyRoot = new Grid
+        {
+            Width = cardW,
+            Height = cardH,
+            RenderTransform = tg,
+            IsHitTestVisible = false,
+            Children =
+            {
+                proxyHost,
+                hintBadge
+            }
+        };
+
+        double nx = pointerInRoot.X - grabX * cardW;
+        double ny = pointerInRoot.Y - grabY * cardH;
+        Canvas.SetLeft(proxyRoot, nx);
+        Canvas.SetTop(proxyRoot, ny);
+        CartridgeDragLayer.Children.Add(proxyRoot);
+
+        _activeDrag = new ActiveCartridgeDrag
+        {
+            CardElement = card,
+            SourceVisual = sourceVisual,
+            ProxyRoot = proxyRoot,
+            SwingTransform = swingTransform,
+            ScaleTransform = scaleTransform,
+            HintBadge = hintBadge,
+            HintText = hintText,
+            Game = game,
+            Exe = exe,
+            Name = name,
+            InstallPath = installPath,
+            IsManual = isManual,
+            GrabX = grabX,
+            GrabY = grabY,
+            CardW = cardW,
+            CardH = cardH,
+            HomePos = homePos,
+            Artwork = imgSource,
+            LastTicks = Stopwatch.GetTimestamp(),
+            HomeScale = homeScale,
+            FromDock = fromDock
+        };
+
+        HighlightDockDropTarget(false);
+    }
+
+    private void MoveCartridgeDrag(Windows.Foundation.Point pointerInRoot)
+    {
+        var d = _activeDrag;
+        if (d == null) return;
+
+        double oldX = Canvas.GetLeft(d.ProxyRoot);
+        double nx = pointerInRoot.X - d.GrabX * d.CardW;
+        double ny = pointerInRoot.Y - d.GrabY * d.CardH;
+
+        long now = Stopwatch.GetTimestamp();
+        double dtMs = Math.Max(1.0, (now - d.LastTicks) * 1000.0 / Stopwatch.Frequency);
+        d.LastTicks = now;
+
+        // Suavizado de velocidad horizontal y balanceo (-vx * 0.35, clamp ±9°) igual que CardDrag.qml
+        d.Vx = d.Vx * 0.6 + 0.4 * ((nx - oldX) / dtMs * 16.0);
+        double swing = Math.Clamp(-d.Vx * 0.38, -11.0, 11.0);
+        d.SwingTransform.Angle = swing;
+
+        Canvas.SetLeft(d.ProxyRoot, nx);
+        Canvas.SetTop(d.ProxyRoot, ny);
+
+        // Para retirar el montado la zona es la boca exacta (ver IsPointOverCartridgeMouth):
+        // el highlight y la suelta usan la misma medida, sin sorpresas.
+        bool overDock = d.FromDock
+            ? IsPointOverCartridgeMouth(pointerInRoot)
+            : IsPointOverCartridgeDock(pointerInRoot);
+        if (overDock != d.OverDock)
+        {
+            d.OverDock = overDock;
+            d.ScaleTransform.ScaleX = 1;
+            d.ScaleTransform.ScaleY = 1;
+            d.HintBadge.Visibility = overDock ? Visibility.Visible : Visibility.Collapsed;
+            HighlightDockDropTarget(overDock);
+        }
+    }
+
+    private void EndCartridgeDrag(Windows.Foundation.Point? pointerInRoot)
+    {
+        var d = _activeDrag;
+        if (d == null) return;
+        _activeDrag = null;
+        HighlightDockDropTarget(false);
+
+        // El montado solo se reinserta sobre la boca exacta: soltarlo en la torre o al
+        // costado lo retira (antes la zona generosa lo relanzaba con un arrastre corto).
+        bool dropInDock = pointerInRoot.HasValue && (d.FromDock
+            ? IsPointOverCartridgeMouth(pointerInRoot.Value)
+            : IsPointOverCartridgeDock(pointerInRoot.Value));
+        d.HintBadge.Visibility = Visibility.Collapsed;
+        d.SwingTransform.Angle = 0;
+        _cartridgeFlight = true;
+        _flightDrag = d;
+        if (dropInDock)
+        {
+            var spec = ResolveGameLaunchSpec(d.Game, d.Exe, d.InstallPath, d.IsManual);
+            if (!spec.CanLaunch)
+            {
+                StatusText.Text = I18n.T("Ejecutable no encontrado");
+                StatusText.Foreground = Feedback.WarningBrush;
+                StatusText.Visibility = Visibility.Visible;
+                ReturnCartridgeHome(d);
+                return;
+            }
+            // Align above the mouth, slide INTO the well behind the front lip, then settle into the latch.
+            // Launch only after every phase finishes; cancellation stops the same storyboard.
+            var slot = GetDockSlotCenterInRoot();
+            double scale = DockCardWidth / d.CardW;
+            double x = slot.X - DockCardWidth * 0.5;
+            double y = slot.Y + DockSlotDepth - DockBayHeight;
+            AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, x, y, scale, 260,
+                new CubicEase { EasingMode = EasingMode.EaseOut }, () =>
+                {
+                    if (!ReferenceEquals(_flightDrag, d) || _dockCartridgeBay == null) return;
+                    CartridgeDragLayer.Children.Remove(d.ProxyRoot);
+                    _dockCartridgeBay.Children.Clear();
+                    _dockCartridgeBay.Children.Add(d.ProxyRoot);
+                    Canvas.SetLeft(d.ProxyRoot, DockCardLeft);
+                    Canvas.SetTop(d.ProxyRoot, 0);
+                    AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, DockCardLeft, DockSeatedTop + 3, scale, 300,
+                        new CubicEase { EasingMode = EasingMode.EaseInOut }, () =>
+                        {
+                            if (!ReferenceEquals(_flightDrag, d)) return;
+                            AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, DockCardLeft, DockSeatedTop, scale, 110,
+                                new CubicEase { EasingMode = EasingMode.EaseOut }, () =>
+                                {
+                                    if (!ReferenceEquals(_flightDrag, d)) return;
+                                    _flightDrag = null;
+                                    _cartridgeFlight = false;
+                                    _cartridgeStoryboard = null;
+                                    _connectedCartridge = d;
+                                    _dockLaunchFailed = false;
+                                    _dockMessage = null;
+                                    _dockLaunching = !_runningExes.Contains(d.Exe);
+                                    UpdateCartridgeDock();
+                                    _loggingService.LogInfo($"Cartridge connected: {d.Exe}; starting after insertion.");
+                                    if (_dockLaunching) _ = LaunchConnectedCartridgeAsync(d);
+                                });
+                        });
+                });
+            return;
+        }
+        ReturnCartridgeHome(d);
+    }
+
+    private void ReturnCartridgeHome(ActiveCartridgeDrag d)
+    {
+        AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, d.HomePos.X, d.HomePos.Y, d.HomeScale, 340,
+            new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 }, () =>
+            {
+                if (!ReferenceEquals(_flightDrag, d)) return;
+                CartridgeDragLayer.Children.Remove(d.ProxyRoot);
+                SetCartridgeRemoved(d.SourceVisual, false);
+                _flightDrag = null;
+                _cartridgeFlight = false;
+                _cartridgeStoryboard = null;
+                if (d.FromDock)
+                {
+                    // El cartucho salió del dock para volver a su hueco: queda
+                    // desconectado y la consola vuelve al estado "lista".
+                    _dockMessage = null;
+                    _dockLaunchFailed = false;
+                    UpdateCartridgeDock();
+                }
+            });
+    }
+
+    private async Task LaunchConnectedCartridgeAsync(ActiveCartridgeDrag d)
+    {
+        try
+        {
+            var spec = ResolveGameLaunchSpec(d.Game, d.Exe, d.InstallPath, d.IsManual);
+            await GameLauncher.LaunchGameAsync(_gameBoostService, _processService, _loggingService,
+                spec.LaunchFile, spec.LaunchArgs, spec.BlizzardCode, d.InstallPath, d.Exe,
+                d.Game?.Launcher ?? (d.IsManual ? _processService.GetManualGameLauncher(d.Exe) : null),
+                (message, kind) =>
+                {
+                    if (!ReferenceEquals(_connectedCartridge, d)) return;
+                    if (kind == LaunchStatusKind.Warning) _dockLaunchFailed = true;
+                    if (kind != LaunchStatusKind.Hide) _dockMessage = message;
+                    StatusText.Text = message;
+                    StatusText.Foreground = kind == LaunchStatusKind.Warning ? Feedback.WarningBrush : Feedback.MutedBrush;
+                    StatusText.Visibility = kind == LaunchStatusKind.Hide ? Visibility.Collapsed : Visibility.Visible;
+                    UpdateCartridgeDock();
+                });
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Cartridge launch '{d.Name}': {ex.Message}");
+            _dockLaunchFailed = true;
+            _dockMessage = ex.Message;
+        }
+        finally
+        {
+            _dockLaunching = false;
+            UpdateCartridgeDock();
+        }
+    }
+
+    /// <summary>
+    /// Retira el cartucho conectado ARRASTRÁNDOLO hacia afuera del dock (sólo cuando
+    /// el juego ya se detectó como cerrado). Reutiliza el mismo proxy de arrastre de
+    /// la biblioteca: soltarlo sobre la ranura lo vuelve a conectar e iniciar, y
+    /// soltarlo en cualquier otro lado lo devuelve a su hueco de la biblioteca.
+    /// </summary>
+    private void BeginDockCartridgePull(CartridgeTile seat, Windows.Foundation.Point pointInRoot, Windows.Foundation.Point grab)
+    {
+        var c = _connectedCartridge;
+        if (c == null || _activeDrag != null || _cartridgeFlight || _dockLaunching) return;
+        if (_runningExes.Contains(c.Exe)) return; // juego abierto: el cartucho queda clavado
+
+        var source = _cartridgeVisuals.FirstOrDefault(x => string.Equals(x.Exe, c.Exe, StringComparison.OrdinalIgnoreCase));
+        var entry = _cards.FirstOrDefault(x => x.Body is CartridgeTile t && ReferenceEquals(t.CartridgeVisual, source.Visual));
+        if (source.Visual == null || entry.Card == null) return;
+
+        // Desconectar en el estado SIN reconstruir el dock: el asiento sigue vivo
+        // (oculto) para conducir el gesto hasta que se suelte el puntero.
+        _connectedCartridge = null;
+        _dockMessage = null;
+        _dockLaunchFailed = false;
+        seat.Opacity = 0;
+
+        StartCartridgeDrag(entry.Card, source.Visual, c.Artwork, c.Game, c.Exe, c.Name,
+            c.InstallPath, c.IsManual, grab.X, grab.Y, pointInRoot,
+            cardWOverride: DockCardWidth,
+            homeScale: Math.Max(1, entry.Card.ActualWidth - 8) / DockCardWidth,
+            fromDock: true);
+    }
+
+    private void CancelCartridgeDragImmediate()
+    {
+        var drag = _activeDrag;
+        var flight = _flightDrag;
+        bool pulledFromDock = drag?.FromDock == true || flight?.FromDock == true;
+        _activeDrag = null;
+        _flightDrag = null;
+        _cartridgeFlight = false;
+        _cartridgeStoryboard?.Stop();
+        _cartridgeStoryboard = null;
+        foreach (var d in new[] { drag, flight })
+        {
+            if (d == null) continue;
+            CartridgeDragLayer.Children.Remove(d.ProxyRoot);
+            _dockCartridgeBay?.Children.Remove(d.ProxyRoot);
+            SetCartridgeRemoved(d.SourceVisual, false);
+            if (d.CardElement.Child is CartridgeTile tile) tile.CancelGesture();
+        }
+        HighlightDockDropTarget(false);
+        // Si el arrastre cancelado había salido del dock, restaurar su asiento/estado.
+        if (pulledFromDock) UpdateCartridgeDock();
+    }
+
+    private void AnimateProxyTo(
+        UIElement proxy, ScaleTransform scale, double toX, double toY, double toScale,
+        int durationMs, EasingFunctionBase easing, Action onCompleted)
+    {
+        var dur = new Duration(TimeSpan.FromMilliseconds(durationMs));
+        var sb = new Storyboard();
+
+        var animX = new DoubleAnimation { To = toX, Duration = dur, EasingFunction = easing, EnableDependentAnimation = true };
+        Storyboard.SetTarget(animX, proxy);
+        Storyboard.SetTargetProperty(animX, "(Canvas.Left)");
+        sb.Children.Add(animX);
+
+        var animY = new DoubleAnimation { To = toY, Duration = dur, EasingFunction = easing, EnableDependentAnimation = true };
+        Storyboard.SetTarget(animY, proxy);
+        Storyboard.SetTargetProperty(animY, "(Canvas.Top)");
+        sb.Children.Add(animY);
+
+        var animSx = new DoubleAnimation { To = toScale, Duration = dur, EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, EnableDependentAnimation = true };
+        Storyboard.SetTarget(animSx, scale);
+        Storyboard.SetTargetProperty(animSx, "ScaleX");
+        sb.Children.Add(animSx);
+
+        var animSy = new DoubleAnimation { To = toScale, Duration = dur, EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }, EnableDependentAnimation = true };
+        Storyboard.SetTarget(animSy, scale);
+        Storyboard.SetTargetProperty(animSy, "ScaleY");
+        sb.Children.Add(animSy);
+
+        sb.Completed += (s, e) =>
+        {
+            // Release held animation values before reparenting into the slot bay.
+            sb.Stop();
+            Canvas.SetLeft(proxy, toX);
+            Canvas.SetTop(proxy, toY);
+            scale.ScaleX = scale.ScaleY = toScale;
+            onCompleted();
+        };
+        _cartridgeStoryboard = sb;
+        sb.Begin();
+    }
+
+    private bool IsPointOverCartridgeDock(Windows.Foundation.Point ptInRoot)
+    {
+        if (_connectedCartridge != null || _dockLaunching || _dockSlotBorder == null
+            || CartridgeDockHost.Visibility != Visibility.Visible || _dockSlotBorder.ActualWidth <= 0)
+            return false;
+        try
+        {
+            var t = _dockSlotBorder.TransformToVisual(RootGrid);
+            var dockTopLeft = t.TransformPoint(new Windows.Foundation.Point(0, 0));
+            double left = dockTopLeft.X - 28;
+            double right = dockTopLeft.X + _dockSlotBorder.ActualWidth + 28;
+            double top = dockTopLeft.Y - (DockProtrusion + 28);
+            double bottom = dockTopLeft.Y + _dockSlotBorder.ActualHeight + 20;
+            return ptInRoot.X >= left && ptInRoot.X <= right && ptInRoot.Y >= top && ptInRoot.Y <= bottom;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Boca EXACTA de la ranura (el pozo), sin la generosidad de
+    /// <see cref="IsPointOverCartridgeDock"/>. Es la que vale para el cartucho que se está
+    /// retirando del dock: apuntar a la boca lo vuelve a meter (y relanza); soltar en
+    /// cualquier otro lado —la torre, el chasis, afuera— lo retira a su hueco. Así sacar
+    /// el montado no exige arrastrar lejos: un tirón corto hacia afuera alcanza.</summary>
+    private bool IsPointOverCartridgeMouth(Windows.Foundation.Point ptInRoot)
+    {
+        if (_dockLaunching || _dockSlotBorder == null
+            || CartridgeDockHost.Visibility != Visibility.Visible || _dockSlotBorder.ActualWidth <= 0)
+            return false;
+        try
+        {
+            var t = _dockSlotBorder.TransformToVisual(RootGrid);
+            var dockTopLeft = t.TransformPoint(new Windows.Foundation.Point(0, 0));
+            const double padX = 10;
+            const double padTop = 8;
+            const double padBottom = 10;
+            return ptInRoot.X >= dockTopLeft.X - padX
+                && ptInRoot.X <= dockTopLeft.X + _dockSlotBorder.ActualWidth + padX
+                && ptInRoot.Y >= dockTopLeft.Y - padTop
+                && ptInRoot.Y <= dockTopLeft.Y + _dockSlotBorder.ActualHeight + padBottom;
+        }
+        catch { return false; }
+    }
+
+    private Windows.Foundation.Point GetDockSlotCenterInRoot()
+    {
+        try
+        {
+            FrameworkElement target = (FrameworkElement?)_dockSlotBorder ?? CartridgeDockHost;
+            var t = target.TransformToVisual(RootGrid);
+            return t.TransformPoint(new Windows.Foundation.Point(target.ActualWidth * 0.5, 0));
+        }
+        catch
+        {
+            return new Windows.Foundation.Point(RootGrid.ActualWidth * 0.5, RootGrid.ActualHeight - 48);
+        }
+    }
+
+    private void UpdateCartridgeDockWidth()
+    {
+        // El dock ocupa todo el ancho inferior de la vista y queda pegado al fondo de
+        // la ventana (HorizontalAlignment="Stretch", Margin="0" en XAML). Si la vista
+        // es angosta, oculta el texto largo del Modo rendimiento para no apretar la ranura.
+        if (RootGrid.ActualWidth <= 0) return;
+        CartridgeDockHost.ClearValue(FrameworkElement.WidthProperty);
+        if (_cards3D && GameBoostCard.Parent != null && GameBoostCard.Parent != HeaderPanel)
+        {
+            bool compact = RootGrid.ActualWidth < 760;
+            GameBoostLabel.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        }
+    }
+
+    private void HighlightDockDropTarget(bool active)
+    {
+        if (_dockSlotBorder == null) return;
+        _dockSlotBorder.BorderBrush = active
+            ? ThemeBrushes.Get("AccentBrush")
+            : new SolidColorBrush(Windows.UI.Color.FromArgb(255, 9, 11, 16));
+    }
+
+    /// <summary>
+    /// Contenedores por los que pasó la card (el dock crea un rightWing nuevo en cada
+    /// rebuild). Ver <see cref="DetachGameBoostCard"/>: WinUI puede desincronizar el
+    /// Parent del elemento respecto de la colección que lo contiene, y sin esta lista
+    /// no hay forma de soltarla (el próximo Add/Insert revienta con 0x800F1000).
+    /// </summary>
+    private readonly List<Panel> _gameBoostCardContainers = new();
+
+    /// <summary>
+    /// Desengancha la card "Modo juego de WinForge" de donde esté (header o dock).
+    /// WinUI no permite un control con dos padres: hay que soltarla antes de moverla.
+    /// OJO con confiar solo en <c>GameBoostCard.Parent</c>: medido en runtime (ver
+    /// app.log, "enganchar card del Modo juego al dock") el Parent puede quedar null o
+    /// apuntando a otro contenedor mientras el elemento sigue REGISTRADO como hijo de
+    /// una colección; en ese estado cualquier Children.Add/Insert lanza la COMException
+    /// 0x800F1000 ("No se han detectado componentes instalados", que en realidad es el
+    /// "invalid operation" de XAML = "Element is already the child of another element").
+    /// Por eso se barre por TODOS los contenedores conocidos, no solo por el Parent.
+    /// </summary>
+    private void DetachGameBoostCard()
+    {
+        // 1) Todos los contenedores por los que pasó la card (header + wings del dock).
+        foreach (var panel in _gameBoostCardContainers)
+            panel.Children.Remove(GameBoostCard);
+        HeaderPanel.Children.Remove(GameBoostCard);
+
+        // 2) Red final por si quedó enganchada en un contenedor no previsto.
+        switch (GameBoostCard.Parent)
+        {
+            case Panel panel:
+                panel.Children.Remove(GameBoostCard);
+                break;
+            case ContentControl contentControl when ReferenceEquals(contentControl.Content, GameBoostCard):
+                contentControl.Content = null;
+                break;
+            case Border border when ReferenceEquals(border.Child, GameBoostCard):
+                border.Child = null;
+                break;
+        }
+    }
+
+    /// <summary>Registra un contenedor de la card para poder soltarla después.</summary>
+    private void RememberGameBoostCardContainer(Panel panel)
+    {
+        foreach (var known in _gameBoostCardContainers)
+            if (ReferenceEquals(known, panel)) return;
+        _gameBoostCardContainers.Add(panel);
+    }
+
+    /// <summary>
+    /// Excepción en una sola línea de log CON el detalle real de XAML. El COMException
+    /// 0x800F1000 muestra "No se han detectado componentes instalados" (choque de
+    /// códigos de error con SPAPI): el texto útil viene después, dos líneas más abajo
+    /// en ToString(), y sin esto se perdía en el log.
+    /// </summary>
+    private static string DescribeEx(Exception ex)
+        => ex.ToString().Replace("\r", " ").Replace("\n", " | ");
+
+    /// <summary>
+    /// Aplica el estilo visual a la card "Modo juego de WinForge":
+    /// - En el dock inferior (modo 3D): chasis grabado/empotrado sobre el plástico de la
+    ///   consola (CartridgeDock), con botones metálicos compactos y switch con acento LED.
+    /// - En el header (modo Vanilla): restaura los pinceles, bordes y tamaños de tema.
+    /// </summary>
+    private void ApplyGameBoostCardStyle(bool inDock, bool compactDock = false)
+    {
+        bool wasInit = _boostSwitchInitialized;
+        _boostSwitchInitialized = false;
+        try
+        {
+            if (inDock)
+            {
+                CartridgeDock.StyleWell(GameBoostCard);
+                GameBoostPanel.Spacing = 6;
+
+                // En el dock inferior los controles se integran directo sobre el chasis
+                // de la consola (sin div/card encima): etiqueta + "?" (tooltip) + tuerca + switch.
+                GameBoostIcon.Visibility = Visibility.Collapsed;
+
+                GameBoostLabel.FontSize = 11.5;
+                GameBoostLabel.TextWrapping = TextWrapping.NoWrap;
+                GameBoostLabel.Foreground = CartridgeDock.TextBrush();
+                GameBoostLabel.Visibility = compactDock ? Visibility.Collapsed : Visibility.Visible;
+
+                CartridgeDock.StyleButton(GameBoostInfoButton);
+                GameBoostInfoButton.Width = 24;
+                GameBoostInfoButton.Height = 24;
+                GameBoostInfoButton.Padding = new Thickness(0);
+                GameBoostInfoIcon.FontSize = 11;
+                GameBoostInfoButton.Visibility = Visibility.Visible;
+
+                CartridgeDock.StyleButton(GameBoostSettingsButton);
+                GameBoostSettingsButton.Width = 24;
+                GameBoostSettingsButton.Height = 24;
+                GameBoostSettingsButton.Padding = new Thickness(0);
+                GameBoostSettingsIcon.FontSize = 11;
+                GameBoostSettingsText.Visibility = Visibility.Collapsed;
+                ToolTipService.SetToolTip(GameBoostSettingsButton, I18n.T("Configuración"));
+            }
+            else
+            {
+                GameBoostCard.Tag = null;
+                CartridgeDock.ClearDockResources(GameBoostCard);
+                GameBoostCard.CornerRadius = new CornerRadius(10);
+                GameBoostCard.Padding = new Thickness(14, 9, 14, 9);
+                GameBoostCard.BorderThickness = new Thickness(0);
+                GameBoostCard.ClearValue(Border.BorderBrushProperty);
+                GameBoostCard.Background = ThemeBrushes.GetSurface("CardBackgroundBrush");
+                GameBoostPanel.Spacing = 12;
+
+                GameBoostIcon.Width = 28;
+                GameBoostIcon.Height = 28;
+                GameBoostIcon.Visibility = Visibility.Visible;
+
+                GameBoostLabel.FontSize = 13;
+                GameBoostLabel.TextWrapping = TextWrapping.Wrap;
+                GameBoostLabel.Visibility = Visibility.Visible;
+                GameBoostLabel.ClearValue(TextBlock.ForegroundProperty);
+
+                CartridgeDock.ClearDockResources(GameBoostInfoButton);
+                GameBoostInfoButton.Visibility = Visibility.Visible;
+                GameBoostInfoButton.Width = 28;
+                GameBoostInfoButton.Padding = new Thickness(0);
+                GameBoostInfoButton.CornerRadius = new CornerRadius(14);
+                GameBoostInfoButton.BorderThickness = new Thickness(1);
+                GameBoostInfoButton.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                GameBoostInfoButton.BorderBrush = ThemeBrushes.Get("SensorGridLineBrush");
+                GameBoostInfoButton.Foreground = ThemeBrushes.Get("MutedBrush");
+                GameBoostInfoIcon.FontSize = 12;
+
+                CartridgeDock.ClearDockResources(GameBoostSettingsButton);
+                GameBoostSettingsButton.ClearValue(FrameworkElement.WidthProperty);
+                GameBoostSettingsButton.ClearValue(FrameworkElement.HeightProperty);
+                GameBoostSettingsButton.Padding = new Thickness(11, 5, 11, 5);
+                GameBoostSettingsButton.CornerRadius = new CornerRadius(6);
+                GameBoostSettingsButton.BorderThickness = new Thickness(1);
+                GameBoostSettingsButton.Background = ThemeBrushes.Get("AccentTintBrush");
+                GameBoostSettingsButton.BorderBrush = ThemeBrushes.Get("AccentBrush");
+                GameBoostSettingsButton.Foreground = ThemeBrushes.Get("AccentBrush");
+                GameBoostSettingsIcon.FontSize = 12;
+                GameBoostSettingsText.FontSize = 12;
+                GameBoostSettingsText.Visibility = Visibility.Visible;
+                ToolTipService.SetToolTip(GameBoostSettingsButton, null);
+
+                if (GameBoostSettingsButton.ActualHeight > 0)
+                    GameBoostInfoButton.Height = Math.Max(1, GameBoostSettingsButton.ActualHeight);
+
+                // El switch conserva su estilo propio (PerformanceSwitchStyle) en ambos
+                // modos: la perilla rotatoria del ModeSwitch de Carthage, igual en header
+                // y en el dock.
+            }
+
+            GameBoostSwitch.IsChecked = _gameBoostService.IsEnabled;
+            UpdateGameBoostLabel();
+        }
+        finally
+        {
+            _boostSwitchInitialized = wasInit;
+        }
+    }
+
+    /// <summary>
+    /// Devuelve la card del Modo juego a su lugar en el header (modo Vanilla, sin dock).
+    /// </summary>
+    private void RestoreGameBoostCardHome()
+    {
+        bool wasInit = _boostSwitchInitialized;
+        _boostSwitchInitialized = false;
+        try
+        {
+            if (GameBoostCard.Parent != HeaderPanel)
+            {
+                DetachGameBoostCard();
+                int idx = Math.Clamp(_gameBoostCardHomeIndex, 0, HeaderPanel.Children.Count);
+                HeaderPanel.Children.Insert(idx, GameBoostCard);
+            }
+            ApplyGameBoostCardStyle(inDock: false);
+        }
+        finally
+        {
+            _boostSwitchInitialized = wasInit;
+        }
+    }
+
+    /// <summary>
+    /// Muda la card del Modo juego al ala derecha del dock sin romper nunca la
+    /// página: si el reparentado falla (árbol visual en transición, doble padre),
+    /// la card vuelve al header y el dock se arma igual sin ella. Sin esto, una
+    /// excepción acá abortaba RebuildCards y dejaba el footer vacío.
+    /// </summary>
+    private void SafeMoveGameBoostCardTo(Panel parent, bool compactDock = false)
+    {
+        bool wasInit = _boostSwitchInitialized;
+        _boostSwitchInitialized = false;
+        try
+        {
+            // ENGANCHE y ESTILO son pasos separados a propósito: si el estilo falla,
+            // la card YA está viviendo en el dock y sacarla de ahí (como hacía el catch
+            // anterior) era justamente el "el Modo rendimiento desaparece del footer al
+            // volver a la pestaña". Solo un fallo del enganche la devuelve al header.
+            try
+            {
+                RememberGameBoostCardContainer(parent);
+                DetachGameBoostCard();
+                parent.Children.Add(GameBoostCard);
+            }
+            catch (Exception ex)
+            {
+                // Un reintento tras el barrido: si el estado venía corrupto de un fallo
+                // anterior, el primer intento puede chocar con el registro viejo y el
+                // segundo (tras soltarla de todos los contenedores) engancha derecho.
+                try
+                {
+                    DetachGameBoostCard();
+                    parent.Children.Add(GameBoostCard);
+                }
+                catch (Exception exRetry)
+                {
+                    _loggingService.LogWarning($"GestionarProcesosPage: enganchar card del Modo juego al dock: {DescribeEx(exRetry)} (previo: {ex.GetType().Name})");
+                    try { RestoreGameBoostCardHome(); } catch (Exception ex2)
+                    {
+                        _loggingService.LogWarning($"GestionarProcesosPage: rescate tras fallo de enganche: {DescribeEx(ex2)}");
+                    }
+                    return;
+                }
+            }
+
+            try
+            {
+                ApplyGameBoostCardStyle(inDock: true, compactDock: compactDock);
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"GestionarProcesosPage: estilizar card del Modo juego en el dock: {DescribeEx(ex)}");
+            }
+        }
+        finally
+        {
+            _boostSwitchInitialized = wasInit;
+        }
+    }
+
+    /// <summary>
+    /// Restaura la card al header sin romper nunca la página (ver SafeMoveGameBoostCardTo).
+    /// </summary>
+    private void SafeRestoreGameBoostCardHome()
+    {
+        try { RestoreGameBoostCardHome(); }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"GestionarProcesosPage: restaurar card del Modo juego: {DescribeEx(ex)}");
+        }
+    }
+
+    /// <summary>
+    /// La card está en un árbol vivo (llega hasta el RootGrid) o quedó colgada
+    /// de un panel descartado (un dock viejo ya limpiado). Parent != null NO
+    /// alcanza: tras un Clear() el padre muerto sigue referenciado.
+    /// </summary>
+    private bool GameBoostCardInLiveTree()
+    {
+        try
+        {
+            DependencyObject? cur = GameBoostCard;
+            while (cur != null)
+            {
+                if (ReferenceEquals(cur, RootGrid)) return true;
+                cur = VisualTreeHelper.GetParent(cur);
+            }
+            return false;
+        }
+        catch
+        {
+            return GameBoostCard.Parent != null;
+        }
+    }
+
+    /// <summary>
+    /// Red de seguridad: si la card quedó sin árbol vivo (rebuild del dock
+    /// interrumpido), se devuelve al header sin aplicar estilos (el Insert no
+    /// falla; el estilo se re-aplica en el próximo rebuild exitoso). Garantiza
+    /// que la card siempre esté visible en algún lado.
+    /// </summary>
+    private void EnsureGameBoostCardVisible()
+    {
+        if (GameBoostCardInLiveTree()) return;
+        try
+        {
+            DetachGameBoostCard();
+            int idx = Math.Clamp(_gameBoostCardHomeIndex, 0, HeaderPanel.Children.Count);
+            HeaderPanel.Children.Insert(idx, GameBoostCard);
+            try { ApplyGameBoostCardStyle(inDock: false); } catch { }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"GestionarProcesosPage: rescatar card del Modo juego: {DescribeEx(ex)}");
+        }
+    }
+
+    /// <summary>
+    /// Chequea si el dock ya está armado y la card vive en él (en el árbol vivo):
+    /// en ese caso el rebuild es redundante y se salta. Sin esto, cada
+    /// RequestCartridgeDockUpdate hacía Clear()+Add del host aunque nada hubiera
+    /// cambiado — la card parpadeaba (aparece/desaparece) al cambiar de pestaña.
+    /// </summary>
+    private bool GameBoostCardSettledInDock()
+    {
+        if (!_cards3D) return false;
+        if (CartridgeDockHost.Children.Count == 0) return false;
+        if (CartridgeDockHost.Visibility != Visibility.Visible) return false;
+        if (GameBoostCard.Parent == HeaderPanel) return false;
+        return GameBoostCardInLiveTree();
+    }
+
+    /// <summary>
+    /// Rebuild coalescado del dock: colapsa los N pedidos encadenados al volver
+    /// a la pestaña (OnNavigatedTo + dispatcher diferido + RefreshAsync async +
+    /// eventos WMI) en UN solo rebuild por tick del dispatcher. Sin esto cada
+    /// rebuild hacía Clear()+Add del host y la card parpadeaba (aparece y
+    /// desaparece al cambiar de pestaña).
+    /// </summary>
+    private void RequestCartridgeDockUpdate()
+    {
+        if (_dockUpdatePending) return;
+        // Si la card ya vive en el dock armado, no hay nada que reconstruir:
+        // el rebuild redundante hacía Clear()+Add y la card parpadeaba.
+        if (GameBoostCardSettledInDock()) return;
+        _dockUpdatePending = true;
+        int gen = _navGeneration;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _dockUpdatePending = false;
+            // Si se cambió de pestaña en el medio, no reconstruir: el tick es de
+            // la visita anterior y pisaría el dock recién armado (parpadeo).
+            if (gen != _navGeneration) return;
+            // Re-chequear al correr: otro pedido puede haberlo armado mientras
+            // este esperaba su turno (el Clear()+Add redundante parpadea).
+            if (GameBoostCardSettledInDock()) return;
+            UpdateCartridgeDock();
+        });
+    }
+
+    /// <summary>
+    /// Construye / actualiza la consola inferior (Dock) estilo Carthage:
+    /// - Ala izquierda: LED + estado ("Listo — Arrastrá un cartucho aquí para jugar" o
+    ///   "Jugando <Juego>" cuando hay un cartucho insertado/corriendo).
+    /// - Centro: bahía / ranura hundida donde se inserta el cartucho arrastrado (y donde
+    ///   asoma la cabeza del cartucho activo).
+    /// - Ala derecha: la card "Modo rendimiento de WinForge" (mudada desde el
+    ///   header). El cartucho conectado se retira arrastrándolo hacia afuera (con el
+    ///   juego cerrado) y un clic sobre él abre la inspección: no hay botones rápidos.
+    /// </summary>
+    private void UpdateCartridgeDock()
+    {
+        if (!_cards3D)
+        {
+            SafeRestoreGameBoostCardHome();
+            CartridgeDockHost.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        CartridgeDockHost.Visibility = Visibility.Visible;
+        // Keep the bay stable while a cartridge is sliding behind its lip or while a
+        // cartridge pulled out of the dock is still being dragged: the seated tile
+        // drives the gesture and must survive until the pointer is released.
+        // El guard va ANTES del try: ese return temprano no toca la card y no
+        // necesita red de seguridad.
+        if (_cartridgeFlight || _activeDrag is { FromDock: true }) return;
+        // Rebuild ATÓMICO: el dock nuevo se construye en variables locales y el
+        // host viejo (con la card adentro) sigue visible hasta el swap final de
+        // abajo. Si la construcción falla a mitad, el host viejo queda intacto y
+        // el catch devuelve la card al header: nunca queda sin un padre vivo
+        // (ese era el "desaparece al volver de otra pestaña").
+        try
+        {
+
+        // Buscar si hay algún juego corriendo (o el último insertado si sigue activo)
+        string? activeExe = null;
+        if (_connectedCartridge != null) activeExe = _connectedCartridge.Exe;
+        foreach (var (exe, visual) in _cartridgeVisuals)
+            SetCartridgeRemoved(visual, string.Equals(activeExe, exe, StringComparison.OrdinalIgnoreCase)
+                || ReferenceEquals(_activeDrag?.SourceVisual, visual));
+
+        InstalledGame? activeGame = null;
+        string? activeName = null;
+        string? activeInstallPath = null;
+        bool activeIsManual = false;
+
+        if (!string.IsNullOrEmpty(activeExe))
+        {
+            activeGame = _installed.FirstOrDefault(g => string.Equals(g.ExeFileName, activeExe, StringComparison.OrdinalIgnoreCase));
+            if (activeGame != null)
+            {
+                activeName = activeGame.Name;
+                activeInstallPath = activeGame.InstallPath;
+            }
+            else
+            {
+                var m = _manual.FirstOrDefault(x => string.Equals(x.Exe, activeExe, StringComparison.OrdinalIgnoreCase));
+                activeName = m.Name ?? activeExe;
+                activeInstallPath = m.InstallPath;
+                activeIsManual = true;
+            }
+        }
+
+        if (_connectedCartridge != null)
+        {
+            activeGame = _connectedCartridge.Game;
+            activeName = _connectedCartridge.Name;
+            activeInstallPath = _connectedCartridge.InstallPath;
+            activeIsManual = _connectedCartridge.IsManual;
+        }
+        bool hasRunning = activeExe != null && _runningExes.Contains(activeExe);
+        bool hasConnected = _connectedCartridge != null;
+
+        // Indicador LED (verde con un cartucho puesto o jugando, gris en espera).
+        // Con regla activa la luz sigue a LA REGLA (amarilla esperando, verde solo
+        // aplicada): va en un host para cambiarla sin reconstruir la consola.
+        _dockLedConnected = hasConnected;
+        _dockLedRunning = hasRunning;
+        _dockLedHost = new ContentControl
+        {
+            Content = BuildDockLed(),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+
+        // Línea 1 (WINFORGE + estado): sin el aviso idle "Cartucho conectado"
+        // (ruido: el cartucho a la vista ya lo dice). Con cartucho puesto y sin
+        // actividad queda solo "WINFORGE". Lleva el estilo grande que antes tenía
+        // la línea de abajo (intercambio pedido).
+        string dockState = _dockLaunchFailed ? I18n.T("No se pudo iniciar") : hasRunning ? I18n.T("En ejecución")
+            : _dockLaunching ? I18n.T("Cartucho conectado · iniciando") : hasConnected ? "" : I18n.T("Consola lista");
+        var statusLine1 = new TextBlock
+        {
+            Text = string.IsNullOrEmpty(dockState) ? "WINFORGE" : "WINFORGE  /  " + dockState.ToUpperInvariant(),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = CartridgeDock.TextBrush(),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        // Texto base del footer. La segunda línea es la que reacciona al estado de
+        // la regla (esperando detectar el juego detrás del launcher, aplicada, no
+        // identificada): así el feedback se lee sin agregar otra luz al chasis.
+        _dockDefaultStatus = hasConnected
+            ? (_dockMessage ?? activeName!)
+            : I18n.T("Arrastrá un cartucho a la ranura para iniciar");
+        var statusLine2 = new TextBlock
+        {
+            Text = _dockDefaultStatus,
+            FontSize = 9,
+            CharacterSpacing = 60,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = CartridgeDock.TextBrush(secondary: true),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.Wrap,
+            MaxLines = 2
+        };
+        _dockStatusLine = statusLine2;
+
+        var statusText = new StackPanel
+        {
+            Spacing = 1,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { statusLine1, statusLine2 }
+        };
+
+        var leftWing = new Grid
+        {
+            ColumnSpacing = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { _dockLedHost, statusText }
+        };
+        leftWing.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        leftWing.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(statusText, 1);
+
+        // El cartucho entra 20 DIP DENTRO del pozo de la ranura (por delante del fondo
+        // oscuro del puerto y por detrás del labio frontal CreatePortFrontLip).
+        _dockCartridgeBay = new Canvas
+        {
+            Width = DockBayWidth, Height = DockBayHeight,
+            Margin = new Thickness(0, (DockMouthY + DockSlotDepth) - DockBayHeight, 0, 0),
+            Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, DockBayWidth, DockBayHeight) },
+            // El asiento del cartucho recibe el puntero: un clic abre la inspección y,
+            // con el juego cerrado, se puede arrastrar el cartucho hacia afuera.
+            IsHitTestVisible = true
+        };
+        if (hasConnected && _connectedCartridge is { } connected)
+        {
+            // Asiento INTERACTIVO (mismo CartridgeTile que las cards de la biblioteca,
+            // a tamaño de dock): el cartucho conectado se puede agarrar y retirar.
+            var seat = new CartridgeTile(activeName!, activeGame?.Launcher ?? "Manual")
+            {
+                Width = DockCardWidth,
+                Height = DockCardHeight,
+                CoordinateRoot = RootGrid,                    // Clavado: pasar el mouse por la ranura no lo mueve (ni tilt ni lift).
+                    // Salir (arrastrar hacia afuera) e inspeccionar (clic) siguen vivos.
+                    HoverTiltEnabled = false,
+                // Manito solo cuando realmente se puede retirar: juego cerrado y consola
+                // libre. Se evalúa en vivo al hover (el estado cambia sin rebuild).
+                GrabHintAllowed = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
+                    && _connectedCartridge != null && !_runningExes.Contains(_connectedCartridge.Exe),
+                CanInteract = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
+            };
+            seat.Artwork.Source = connected.Artwork;
+            // Sentado en la ranura: sin sombra propia (la sombra cálida del puerto ya la
+            // dibuja el labio frontal). El asiento no lleva ThemeShadow.
+            seat.DragStarted += (p, g) => BeginDockCartridgePull(seat, p, g);
+            seat.DragMoved += MoveCartridgeDrag;
+            seat.DragCompleted += EndCartridgeDrag;
+            seat.InspectRequested += () => ShowGame3DDetail(activeGame, activeExe!, activeName!, activeInstallPath, activeIsManual);
+            ToolTipService.SetToolTip(seat, I18n.T("Clic para inspeccionar y configurar · arrastrá hacia afuera para retirar"));
+            Canvas.SetLeft(seat, DockCardLeft);
+            Canvas.SetTop(seat, DockSeatedTop);
+            _dockCartridgeBay.Children.Add(seat);
+        }
+
+
+        _dockSlotBorder = CartridgeDock.CreatePort(hasConnected, DockPortWidth);
+
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_dockSlotBorder, "CartridgeSlot");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_dockSlotBorder, I18n.T("Ranura de cartucho"));
+        // Ala derecha: la card del Modo rendimiento (mudada desde el header). Es el
+        // único control del ala: los botones de acción sobre el cartucho se sacaron.
+        // Alineada ARRIBA con un desfase de −2: centrada en la fila (45 DIP), la
+        // perilla de 32 px terminaba justo sobre la costura moldeada del chasis, que
+        // se pinta en y=49 de los 66 DIP del dock (PaintShell: "seam"). Con la perilla
+        // de 38 px de alto desde y=9, el borde inferior del dial queda en y=44 y la
+        // costura respira (5 DIP de aire) sin descolgar el switch de la ranura.
+        var rightWing = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, -2, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+
+        // La card del Modo rendimiento vive acá en modo 3D: es el MISMO control del
+        // header (switch, ?, Configuración y tooltip intactos), mudado de padre. Es el
+        // único control del ala: los botones "Parámetros" y "Retirar cartucho" se
+        // sacaron (el cartucho sale arrastrándolo y un clic sobre él inspecciona).
+        SafeMoveGameBoostCardTo(rightWing, compactDock: RootGrid.ActualWidth > 0 && RootGrid.ActualWidth < 760);
+        var port = new Grid { Width = DockPortWidth, Height = 44, Children = { _dockSlotBorder } };
+        _dockSlotBorder.VerticalAlignment = VerticalAlignment.Top;
+        var dockRow = new Grid { ColumnSpacing = 12 };
+        dockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        dockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        dockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(port, 1);
+        Grid.SetColumn(rightWing, 2);
+        dockRow.Children.Add(leftWing);
+        dockRow.Children.Add(port);
+        dockRow.Children.Add(rightWing);
+
+        var dockShell = CartridgeDock.CreateShell(dockRow, DockFooterHeight, DockPortWidth);
+        var frontLip = CartridgeDock.CreatePortFrontLip(hasConnected, DockPortWidth);
+        frontLip.Margin = new Thickness(0, DockMouthY, 0, 0);
+
+        CartridgeDockHost.Height = DockFooterHeight;
+        UpdateCartridgeDockWidth();
+        // Orden de capas reales de la ranura:
+        // 1) dockShell (consola + pozo trasero del conector)
+        // 2) _dockCartridgeBay (el cartucho entra 20 px dentro del pozo)
+        // 3) frontLip (labio frontal y guías laterales del conector que abrazan al cartucho por delante)
+        var dockLayout = new Grid { Children = { dockShell, _dockCartridgeBay, frontLip } };
+        _dockCartridgeBay.HorizontalAlignment = HorizontalAlignment.Center;
+        _dockCartridgeBay.VerticalAlignment = VerticalAlignment.Top;
+        // Swap final: recién acá se descarta el dock viejo. La card ya vive en
+        // el rightWing nuevo (SafeMoveGameBoostCardTo de arriba); si algo de la
+        // construcción falló, el host viejo sigue intacto y el catch la devuelve
+        // al header.
+        CartridgeDockHost.Children.Clear();
+        CartridgeDockHost.Children.Add(dockLayout);
+        // Estado vigente de la regla en el texto del footer (si hay una partida
+        // con regla enganchada, manda ese mensaje sobre el texto base).
+        UpdateDockStatusText();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"GestionarProcesosPage: reconstruir dock: {DescribeEx(ex)}");
+            EnsureGameBoostCardVisible();
+        }
+    }
+
+    // =====================================================================
+    // VISTA DE INSPECCIÓN CENTRADA (estilo Inspect.qml / GameView.qml de Carthage)
+    // Cartucho 3D interactivo a la izquierda + todos los parámetros de WinForge a la derecha
+    // =====================================================================
+
+    private void ShowGame3DDetail(
+        InstalledGame? game, string exe, string name, string? installPath = null, bool isManual = false)
+    {
+        _loggingService.LogInfo($"Cartridge3D: inspeccionar '{name}' (exe={exe}, launcher={game?.Launcher})");
+        // Al CAMBIAR de juego con las flechas el panel ya estaba abierto: se mantiene
+        // estable (sin re-animar el fondo) y solo entra girando el cartucho nuevo.
+        bool panelAbierto = _detail3DPanel != null;
+        if (_detail3DPanel != null) CloseGame3DDetail();
+
+        string cacheKey = (installPath ?? "") + "|" + exe;
+        if (!_exeCache.TryGetValue(cacheKey, out var cached))
+        {
+            string? ep = GameLauncher.FindExePath(installPath ?? "", exe);
+            if (string.IsNullOrWhiteSpace(ep) || !File.Exists(ep))
+                ep = GameExeResolver.FindMainExePath(installPath ?? "");
+            string? ip = GameExeResolver.IsStubExe(ep ?? "") && !string.IsNullOrEmpty(installPath)
+                ? GameExeResolver.FindBestGameExePath(installPath)
+                : ep;
+            cached = (ep, ip);
+            _exeCache[cacheKey] = cached;
+        }
+        string? exePath = cached.ExePath;
+        string? iconPath = cached.IconPath;
+        string? defenderFolder = !string.IsNullOrEmpty(installPath) ? installPath
+            : (!string.IsNullOrEmpty(exePath) ? Path.GetDirectoryName(exePath) : null);
+        string? cfgExe = !string.IsNullOrEmpty(iconPath) ? Path.GetFileName(iconPath) : exe;
+
+        string launcherDetalle = string.IsNullOrWhiteSpace(game?.Launcher) ? "Manual" : game!.Launcher!;
+        string code = CartridgeModel.Code(launcherDetalle, game?.AppId, name);
+
+        // ── Columna izquierda: Cartucho 3D real (frente + cantos + dorso con contactos dorados) ──
+        var cartridge = new Cartridge3D
+        {
+            Width = 310,
+            Height = 454,
+            HorizontalAlignment = HorizontalAlignment.Center
+        };
+        cartridge.Logger = m => _loggingService.LogInfo($"Cartridge3D[{name}]: {m}");
+        string? initialCover = ResolveBannerFile(game, iconPath);
+        cartridge.SetCard(name, launcherDetalle, code, initialCover);
+        // Entrada con giro: el cartucho se pone en su lugar girando 180° (dorso → frente).
+        cartridge.PlayIntro();
+        // Si el arte todavía no estaba descargado en disco, asegurarlo y refrescar el 3D
+        _ = Task.Run(async () =>
+        {
+            string? ensured = await EnsureGameArtFileAsync(game, iconPath);
+            if (!string.IsNullOrEmpty(ensured) && ensured != initialCover)
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                    cartridge.SetCard(name, launcherDetalle, code, ensured));
+            }
+        });
+
+        var flipBtn = new Button
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 6, 12, 6),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 0, 0, 0)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(55, 255, 255, 255)),
+            BorderThickness = new Thickness(1),
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE72C", FontSize = 12 },
+                    new TextBlock
+                    {
+                        Text = I18n.T("Voltear cartucho (Frente / Dorso)"),
+                        FontSize = 12,
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                    }
+                }
+            }
+        };
+        flipBtn.Click += (s, e) => cartridge.Flip();
+
+        var hint = new TextBlock
+        {
+            Text = I18n.T("Arrastrá para girar 360° · clic en el cartucho para voltear · rueda para acercar"),
+            FontSize = 11,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 300
+        };
+
+        var leftColumn = new StackPanel
+        {
+            Width = 330,
+            Spacing = 10,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children =
+            {
+                cartridge,
+                flipBtn,
+                hint
+            }
+        };
+
+        // ── Columna derecha: Cabecera, botón Iniciar/Favorito y todos los parámetros de WinForge ──
+        var eyebrowTxt = new TextBlock
+        {
+            Text = $"{launcherDetalle.ToUpperInvariant()} · {code}",
+            FontSize = 11,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Foreground = ThemeBrushes.Get("AccentBrush"),
+            CharacterSpacing = 80
+        };
+
+        var titleTxt = new TextBlock
+        {
+            Text = name,
+            FontSize = 26,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Foreground = ThemeBrushes.Get("PrimaryTextBrush"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.Wrap,
+            MaxLines = 2
+        };
+
+        var closeBtn = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE711", FontSize = 14 },
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(110, 0, 0, 0)),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(18),
+            Width = 36,
+            Height = 36,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        ToolTipService.SetToolTip(closeBtn, I18n.T("Cerrar (Esc)"));
+        closeBtn.Click += (s, e) => CloseGame3DDetail();
+
+        var titleHeaderGrid = new Grid();
+        titleHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        titleHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var titleStack = new StackPanel { Spacing = 2, Children = { eyebrowTxt, titleTxt } };
+        Grid.SetColumn(titleStack, 0);
+        Grid.SetColumn(closeBtn, 1);
+        titleHeaderGrid.Children.Add(titleStack);
+        titleHeaderGrid.Children.Add(closeBtn);
+
+        // Fila de acciones principales: Iniciar (grande, estilo Inspect.qml) + Favorito
+        var spec = ResolveGameLaunchSpec(game, exe, installPath, isManual);
+        bool isRunningNow = _runningExes.Contains(exe);
+        var playBtn = new Button
+        {
+            Content = isRunningNow ? I18n.T("En ejecución") : I18n.T("Conectar e iniciar"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(20, 10, 20, 10),
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+            Background = ThemeBrushes.Get("AccentBrush"),
+            Foreground = ThemeBrushes.Get("AccentForegroundBrush"),
+            IsEnabled = spec.CanLaunch && !isRunningNow
+        };
+        ApplyCardButtonHover(playBtn, accent: true);
+        if (!isRunningNow && spec.LauncherProc != null)
+        {
+            UpdateLauncherButton(playBtn, spec.LauncherProc, spec.LauncherFound,
+                spec.LauncherFound && IsLauncherRunning(spec.LauncherProc), spec.AutoOpen);
+        }
+        playBtn.Click += (s, e) =>
+        {
+            CloseGame3DDetail();
+            // Keyboard/accessibility alternative uses the SAME insertion pipeline as dragging.
+            if (_connectedCartridge != null || _cartridgeFlight || _dockLaunching) return;
+            var source = _cartridgeVisuals.FirstOrDefault(x => string.Equals(x.Exe, exe, StringComparison.OrdinalIgnoreCase));
+            var cardEntry = _cards.FirstOrDefault(x => x.Body is CartridgeTile t && t.Title == name);
+            if (cardEntry.Card == null || source.Visual == null) return;
+            var slot = GetDockSlotCenterInRoot();
+            StartCartridgeDrag(cardEntry.Card, source.Visual,
+                (cardEntry.Body as CartridgeTile)?.Artwork.Source, game, exe, name, installPath, isManual, 0.5, 0.5,
+                new Windows.Foundation.Point(RootGrid.ActualWidth * 0.5, RootGrid.ActualHeight * 0.5));
+            EndCartridgeDrag(slot);
+        };
+
+        bool fav = _processService.IsFavorite(exe);
+        var favIcon = new FontIcon
+        {
+            Glyph = fav ? "\uE735" : "\uE734",
+            FontSize = 16,
+            Foreground = fav
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07))
+                : (Brush)ThemeBrushes.Get("PrimaryTextBrush")
+        };
+        var favBtn = new Button
+        {
+            Content = favIcon,
+            Width = 42,
+            Height = 42,
+            CornerRadius = new CornerRadius(8),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 0, 0, 0)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(50, 255, 255, 255)),
+            BorderThickness = new Thickness(1)
+        };
+        ToolTipService.SetToolTip(favBtn, I18n.T(fav ? "Quitar de favoritos" : "Marcar como favorito"));
+        favBtn.Click += (s, e) =>
+        {
+            _processService.ToggleFavorite(exe);
+            fav = _processService.IsFavorite(exe);
+            favIcon.Glyph = fav ? "\uE735" : "\uE734";
+            favIcon.Foreground = fav
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07))
+                : (Brush)ThemeBrushes.Get("PrimaryTextBrush");
+            ToolTipService.SetToolTip(favBtn, I18n.T(fav ? "Quitar de favoritos" : "Marcar como favorito"));
+            RebuildCards();
+        };
+
+        var actionRow = new Grid { ColumnSpacing = 10 };
+        actionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        actionRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(playBtn, 0);
+        Grid.SetColumn(favBtn, 1);
+        actionRow.Children.Add(playBtn);
+        actionRow.Children.Add(favBtn);
+
+        // Feedback interno del panel de inspección
+        var detailStatus = new TextBlock
+        {
+            FontSize = 12,
+            Visibility = Visibility.Collapsed,
+            TextWrapping = TextWrapping.Wrap
+        };
+
+        // ── Controles de parámetros (Prioridad CPU, Prioridad GPU, Prioridad E/S, Afinidad, Plan de energía, Defender, CFG) ──
+        var rules = _processService.GetRulesCached();
+        var rule = rules.TryGetValue(exe, out var r0) ? r0 : new ProcessRule(null, null, null);
+        var sessionRule = _processService.GetSessionRule(exe) ?? new ProcessRule(null, null, null);
+        int procCount = _processService.ProcessorCount;
+        long fullMask = procCount >= 64 ? -1L : ((1L << procCount) - 1);
+        bool scopeAlways = true; // Por defecto edita "Siempre" (aplica siempre); "Actual" aplica solo al lanzar desde WinForge
+
+        bool RuleIsEmptyLocal(ProcessRule? r)
+            => r == null
+            || (r.CpuPriority == null && r.AffinityMask == null && r.GpuPriority == null
+                && string.IsNullOrEmpty(r.PowerPlanGuid)
+                && r.IoPriority == null);
+
+        void ApplyRuleChanges(bool sessionScope)
+        {
+            if (sessionScope)
+                _processService.SetSessionRule(exe, sessionRule);
+            else
+                _processService.SaveRule(exe, rule);
+
+            var apps = _processService.FindRunningProcessesForRule(exe);
+            if (apps.Count == 0)
+            {
+                detailStatus.Text = sessionScope
+                    ? I18n.T("Reglas de sesión listas. Se aplicarán cuando el juego se abra.")
+                    : I18n.T("Reglas guardadas. Se aplicarán cuando el juego esté en ejecución.");
+                detailStatus.Foreground = Feedback.SuccessBrush;
+                detailStatus.Visibility = Visibility.Visible;
+                return;
+            }
+
+            var effective = _processService.GetEffectiveRule(exe);
+            foreach (var app in apps)
+            {
+                if (effective == null || RuleIsEmptyLocal(effective))
+                    _processService.ApplyRuleWithFeedback(app, new ProcessRule(2, fullMask, 3, null, 2));
+                else
+                    _processService.ApplyRuleWithFeedback(app, effective);
+            }
+
+            if (effective == null || RuleIsEmptyLocal(effective))
+                _processService.RevertPowerPlanIfApplied(exe);
+            else if (!string.IsNullOrEmpty(effective.PowerPlanGuid))
+                _processService.ApplyPowerPlanIfRunning(exe, effective.PowerPlanGuid);
+            else
+                _processService.RevertPowerPlanIfApplied(exe);
+
+            detailStatus.Text = sessionScope
+                ? I18n.T("Reglas de sesión aplicadas a {0}", exe)
+                : I18n.T("Reglas aplicadas a {0}", exe);
+            detailStatus.Foreground = Feedback.SuccessBrush;
+            detailStatus.Visibility = Visibility.Visible;
+        }
+
+        // Selector de alcance: "Siempre" (aplica siempre, incluso desde Steam) vs "Actual" (solo al lanzar desde WinForge)
+        var scopeAlwaysBtn = new Button
+        {
+            Content = I18n.T("Siempre"),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 5, 12, 5),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        };
+        var scopeSessionBtn = new Button
+        {
+            Content = I18n.T("Actual"),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 5, 12, 5),
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        };
+
+        string[] cpuNames = { "Por defecto", "Mínima", "Baja", "Normal", "Por encima de lo normal", "Alta", "Tiempo real" };
+        string[] gpuNames = { "Por defecto", "Baja", "Normal", "Alta" };
+        string[] ioNames = { "Por defecto", "Muy baja", "Baja", "Normal", "Alta", "Crítica" };
+
+        var cpuCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, FontSize = 12 };
+        foreach (var n in cpuNames) cpuCombo.Items.Add(I18n.T(n));
+
+        var gpuCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, FontSize = 12 };
+        foreach (var n in gpuNames) gpuCombo.Items.Add(I18n.T(n));
+
+        var ioCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, FontSize = 12 };
+        foreach (var n in ioNames) ioCombo.Items.Add(I18n.T(n));
+
+        var planCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, FontSize = 12 };
+        var planGuids = new List<string?> { null };
+        planCombo.Items.Add(I18n.T("Por defecto"));
+
+        var coreCheckBoxes = new List<CheckBox>();
+        var coresWrap = new Grid { ColumnSpacing = 8, RowSpacing = 6 };
+        const int CoreCols = 4;
+        for (int c = 0; c < CoreCols; c++)
+            coresWrap.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        int coreRows = (procCount + CoreCols - 1) / CoreCols;
+        for (int r = 0; r < coreRows; r++)
+            coresWrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        bool syncingUi = false;
+
+        for (int i = 0; i < procCount; i++)
+        {
+            int ci = i;
+            var cb = new CheckBox
+            {
+                Content = I18n.T("Núcleo {0}", ci + 1),
+                FontSize = 12,
+                MinWidth = 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            cb.Checked += (s, e) => OnCoreAffinityToggled();
+            cb.Unchecked += (s, e) => OnCoreAffinityToggled();
+            Grid.SetRow(cb, ci / CoreCols);
+            Grid.SetColumn(cb, ci % CoreCols);
+            coreCheckBoxes.Add(cb);
+            coresWrap.Children.Add(cb);
+        }
+
+        void OnCoreAffinityToggled()
+        {
+            if (syncingUi) return;
+            long m = 0;
+            for (int k = 0; k < coreCheckBoxes.Count; k++)
+                if (coreCheckBoxes[k].IsChecked == true)
+                    m |= 1L << k;
+            long? affinity = (m == 0 || m == fullMask) ? fullMask : m;
+            if (scopeAlways)
+                rule = new ProcessRule(rule.CpuPriority, affinity, rule.GpuPriority, rule.PowerPlanGuid, rule.IoPriority);
+            else
+                sessionRule = new ProcessRule(sessionRule.CpuPriority, affinity, sessionRule.GpuPriority, sessionRule.PowerPlanGuid, sessionRule.IoPriority);
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+        }
+
+        void SyncControlsFromScope()
+        {
+            syncingUi = true;
+            var activeRule = scopeAlways ? rule : sessionRule;
+
+            scopeAlwaysBtn.Background = scopeAlways ? ThemeBrushes.Get("AccentBrush") : new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
+            scopeAlwaysBtn.Foreground = scopeAlways ? ThemeBrushes.Get("AccentForegroundBrush") : ThemeBrushes.Get("PrimaryTextBrush");
+            scopeSessionBtn.Background = !scopeAlways ? ThemeBrushes.Get("AccentBrush") : new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
+            scopeSessionBtn.Foreground = !scopeAlways ? ThemeBrushes.Get("AccentForegroundBrush") : ThemeBrushes.Get("PrimaryTextBrush");
+
+            int cpuIdx = activeRule.CpuPriority is int cp ? Array.IndexOf(CpuPriorityValues, cp) + 1 : 0;
+            cpuCombo.SelectedIndex = Math.Clamp(cpuIdx, 0, cpuNames.Length - 1);
+
+            int gpuIdx = activeRule.GpuPriority is int gp ? Array.IndexOf(GpuPriorityValues, gp) + 1 : 0;
+            gpuCombo.SelectedIndex = Math.Clamp(gpuIdx, 0, gpuNames.Length - 1);
+
+            int ioIdx = activeRule.IoPriority is int io ? Array.IndexOf(IoPriorityValues, io) + 1 : 0;
+            ioCombo.SelectedIndex = Math.Clamp(ioIdx, 0, ioNames.Length - 1);
+
+            long? mask = activeRule.AffinityMask;
+            bool allCores = mask == null || mask == fullMask;
+            for (int i = 0; i < coreCheckBoxes.Count; i++)
+                coreCheckBoxes[i].IsChecked = allCores || (mask!.Value & (1L << i)) != 0;
+
+            string? pGuid = activeRule.PowerPlanGuid;
+            int planIdx = 0;
+            if (!string.IsNullOrEmpty(pGuid))
+            {
+                for (int i = 1; i < planGuids.Count; i++)
+                {
+                    if (string.Equals(planGuids[i], pGuid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        planIdx = i;
+                        break;
+                    }
+                }
+            }
+            planCombo.SelectedIndex = planIdx;
+            syncingUi = false;
+        }
+
+        scopeAlwaysBtn.Click += (s, e) => { scopeAlways = true; SyncControlsFromScope(); };
+        scopeSessionBtn.Click += (s, e) => { scopeAlways = false; SyncControlsFromScope(); };
+
+        cpuCombo.SelectionChanged += (s, e) =>
+        {
+            if (syncingUi) return;
+            int idx = cpuCombo.SelectedIndex;
+            int? val = idx <= 0 ? null : CpuPriorityValues[idx - 1];
+            if (scopeAlways)
+                rule = new ProcessRule(val, rule.AffinityMask, rule.GpuPriority, rule.PowerPlanGuid, rule.IoPriority);
+            else
+                sessionRule = new ProcessRule(val, sessionRule.AffinityMask, sessionRule.GpuPriority, sessionRule.PowerPlanGuid, sessionRule.IoPriority);
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+        };
+
+        gpuCombo.SelectionChanged += (s, e) =>
+        {
+            if (syncingUi) return;
+            int idx = gpuCombo.SelectedIndex;
+            int? val = idx <= 0 ? null : GpuPriorityValues[idx - 1];
+            if (scopeAlways)
+                rule = new ProcessRule(rule.CpuPriority, rule.AffinityMask, val, rule.PowerPlanGuid, rule.IoPriority);
+            else
+                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, val, sessionRule.PowerPlanGuid, sessionRule.IoPriority);
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+        };
+
+        ioCombo.SelectionChanged += (s, e) =>
+        {
+            if (syncingUi) return;
+            int idx = ioCombo.SelectedIndex;
+            int? val = idx <= 0 ? null : IoPriorityValues[idx - 1];
+            if (scopeAlways)
+                rule = new ProcessRule(rule.CpuPriority, rule.AffinityMask, rule.GpuPriority, rule.PowerPlanGuid, val);
+            else
+                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, sessionRule.GpuPriority, sessionRule.PowerPlanGuid, val);
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+        };
+
+        planCombo.SelectionChanged += (s, e) =>
+        {
+            if (syncingUi) return;
+            int idx = planCombo.SelectedIndex;
+            string? guid = (idx >= 0 && idx < planGuids.Count) ? planGuids[idx] : null;
+            if (scopeAlways)
+                rule = new ProcessRule(rule.CpuPriority, rule.AffinityMask, rule.GpuPriority, guid, rule.IoPriority);
+            else
+                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, sessionRule.GpuPriority, guid, sessionRule.IoPriority);
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+        };
+
+        SyncControlsFromScope();
+
+        // Cargar planes de energía en segundo plano
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var plans = _cpuPowerService.GetPowerPlans();
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    syncingUi = true;
+                    foreach (var p in plans)
+                    {
+                        planGuids.Add(p.Guid);
+                        planCombo.Items.Add(p.Name);
+                    }
+                    syncingUi = false;
+                    SyncControlsFromScope();
+                });
+            }
+            catch { }
+        });
+
+        // Botones de Windows Defender y Control Flow Guard
+        var defenderBtn = new Button
+        {
+            Content = I18n.T("Consultando Windows Defender..."),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 7, 12, 7),
+            FontSize = 12,
+            IsEnabled = !string.IsNullOrEmpty(defenderFolder)
+        };
+        if (!string.IsNullOrEmpty(defenderFolder))
+        {
+            string defTarget = defenderFolder.TrimEnd('\\');
+            _ = Task.Run(async () =>
+            {
+                bool ex = await DefenderService.IsPathExcludedAsync(defTarget);
+                DispatcherQueue.TryEnqueue(() =>
+                    defenderBtn.Content = I18n.T(ex ? "Quitar exclusión de Windows Defender" : "Excluir de Windows Defender"));
+            });
+            defenderBtn.Click += async (s, e) =>
+            {
+                bool ex = await DefenderService.IsPathExcludedAsync(defTarget);
+                var (ok, _) = ex
+                    ? await DefenderService.RemovePathExclusionAsync(defTarget)
+                    : await DefenderService.AddPathExclusionAsync(defTarget);
+                if (ok)
+                {
+                    bool nowEx = !ex;
+                    defenderBtn.Content = I18n.T(nowEx ? "Quitar exclusión de Windows Defender" : "Excluir de Windows Defender");
+                    detailStatus.Text = I18n.T(nowEx ? "Excepción de Windows Defender agregada" : "Excepción de Windows Defender quitada");
+                    detailStatus.Foreground = Feedback.SuccessBrush;
+                    detailStatus.Visibility = Visibility.Visible;
+                }
+            };
+        }
+
+        var cfgBtn = new Button
+        {
+            Content = I18n.T("Consultando Control Flow Guard..."),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 7, 12, 7),
+            FontSize = 12,
+            IsEnabled = !string.IsNullOrEmpty(cfgExe)
+        };
+        if (!string.IsNullOrEmpty(cfgExe))
+        {
+            string cfgTarget = cfgExe;
+            _ = Task.Run(async () =>
+            {
+                bool dis = await CfgService.IsDisabledAsync(cfgTarget);
+                DispatcherQueue.TryEnqueue(() =>
+                    cfgBtn.Content = I18n.T(dis ? "Activar Control Flow Guard" : "Desactivar Control Flow Guard"));
+            });
+            cfgBtn.Click += async (s, e) =>
+            {
+                bool dis = await CfgService.IsDisabledAsync(cfgTarget);
+                var (ok, _) = await CfgService.SetAsync(cfgTarget, !dis);
+                if (ok)
+                {
+                    bool nowDis = !dis;
+                    cfgBtn.Content = I18n.T(nowDis ? "Activar Control Flow Guard" : "Desactivar Control Flow Guard");
+                    detailStatus.Text = I18n.T(nowDis ? "Control Flow Guard desactivado para {0}" : "Control Flow Guard activado para {0}", cfgTarget);
+                    detailStatus.Foreground = Feedback.SuccessBrush;
+                    detailStatus.Visibility = Visibility.Visible;
+                }
+            };
+        }
+
+        // Botones inferiores: Restablecer reglas / Ocultar
+        var resetRulesBtn = new Button
+        {
+            Content = I18n.T("Eliminar reglas"),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 6, 12, 6),
+            FontSize = 12,
+            Foreground = Feedback.ErrorBrush // acción destructiva: en rojo
+        };
+        resetRulesBtn.Click += (s, e) =>
+        {
+            _processService.RemoveRule(exe);
+            _processService.ClearSessionRule(exe);
+            rule = new ProcessRule(null, null, null);
+            sessionRule = new ProcessRule(null, null, null);
+            SyncControlsFromScope();
+            detailStatus.Text = I18n.T("Reglas eliminadas para {0}", exe);
+            detailStatus.Foreground = Feedback.MutedBrush;
+            detailStatus.Visibility = Visibility.Visible;
+        };
+
+        bool isHidden = _processService.GetHiddenExes().Contains(exe, StringComparer.OrdinalIgnoreCase);
+        var hideToggleBtn = new Button
+        {
+            Content = I18n.T(isHidden ? "Mostrar en la biblioteca" : "Ocultar de la biblioteca"),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12, 6, 12, 6),
+            FontSize = 12
+        };
+        hideToggleBtn.Click += async (s, e) =>
+        {
+            CloseGame3DDetail();
+            if (isHidden) _processService.UnhideExe(exe);
+            else _processService.HideExe(exe);
+            await RefreshAsync();
+        };
+
+        StackPanel BuildLabeledField(string labelText, FrameworkElement control) => new()
+        {
+            Spacing = 4,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = labelText,
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrushes.Get("SecondaryTextBrush")
+                },
+                control
+            }
+        };
+
+        var prioGrid = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
+        prioGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        prioGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        prioGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        prioGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var cpuField = BuildLabeledField(I18n.T("Prioridad de CPU"), cpuCombo);
+        var gpuField = BuildLabeledField(I18n.T("Prioridad de GPU"), gpuCombo);
+        var ioField = BuildLabeledField(I18n.T("Prioridad de E/S"), ioCombo);
+        var planField = BuildLabeledField(I18n.T("Plan de energía"), planCombo);
+
+        Grid.SetRow(cpuField, 0); Grid.SetColumn(cpuField, 0);
+        Grid.SetRow(gpuField, 0); Grid.SetColumn(gpuField, 1);
+        Grid.SetRow(ioField, 1);  Grid.SetColumn(ioField, 0);
+        Grid.SetRow(planField, 1); Grid.SetColumn(planField, 1);
+        prioGrid.Children.Add(cpuField);
+        prioGrid.Children.Add(gpuField);
+        prioGrid.Children.Add(ioField);
+        prioGrid.Children.Add(planField);
+
+        var sysGrid = new Grid { ColumnSpacing = 12 };
+        sysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        sysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(defenderBtn, 0);
+        Grid.SetColumn(cfgBtn, 1);
+        sysGrid.Children.Add(defenderBtn);
+        sysGrid.Children.Add(cfgBtn);
+
+        var scopeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = I18n.T("Alcance de reglas:"),
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+                    VerticalAlignment = VerticalAlignment.Center
+                },
+                scopeAlwaysBtn,
+                scopeSessionBtn
+            }
+        };
+
+        var bottomActionsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            // El par de botones queda centrado en el panel (no pegado a la
+            // izquierda, que era como se veía).
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children =
+            {
+                resetRulesBtn,
+                hideToggleBtn
+            }
+        };
+
+        var paramsStack = new StackPanel
+        {
+            Spacing = 14,
+            Children =
+            {
+                scopeRow,
+                prioGrid,
+                BuildLabeledField(I18n.T("Afinidad de CPU"), coresWrap),
+                sysGrid,
+                bottomActionsRow,
+                detailStatus
+            }
+        };
+
+        var paramsScroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = 380,
+            Content = paramsStack
+        };
+
+        // El scrollbar vertical se dibuja ENCIMA del contenido (el ScrollViewer
+        // de WinUI no reserva el ancho de la barra): sin este margen la barra
+        // tapaba la columna derecha de los combos (prioridad de GPU, plan de
+        // energía) y los botones de abajo. El margen se aplica solo cuando hay
+        // algo que scrollear: si todo entra, no queda una franja vacía.
+        const double ParamsScrollGutter = 16;
+        void UpdateParamsScrollGutter()
+        {
+            double right = paramsScroll.ScrollableHeight > 0 ? ParamsScrollGutter : 0;
+            if (Math.Abs(paramsStack.Margin.Right - right) < 0.5) return;
+            paramsStack.Margin = new Thickness(
+                paramsStack.Margin.Left, paramsStack.Margin.Top, right, paramsStack.Margin.Bottom);
+        }
+        paramsScroll.SizeChanged += (_, _) => UpdateParamsScrollGutter();
+        paramsStack.SizeChanged += (_, _) => UpdateParamsScrollGutter();
+        paramsScroll.Loaded += (_, _) => UpdateParamsScrollGutter();
+
+        var rightColumn = new StackPanel
+        {
+            Width = 480,
+            Spacing = 14,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                titleHeaderGrid,
+                actionRow,
+                new Border
+                {
+                    Height = 1,
+                    Background = new SolidColorBrush(Windows.UI.Color.FromArgb(35, 255, 255, 255))
+                },
+                paramsScroll
+            }
+        };
+
+        var bodyLayout = new Border
+        {
+            Tag = "no-reveal",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(16),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 36,
+                Children =
+                {
+                    leftColumn,
+                    rightColumn
+                }
+            }
+        };
+        // Evitar que un clic dentro del contenido cierre la vista de inspección
+        bodyLayout.Tapped += (s, e) => e.Handled = true;
+
+        // Navegación entre juegos de la biblioteca con flechas laterales (y teclas ← / →)
+        int currentIdx = _orderedLibraryGames.FindIndex(g =>
+            string.Equals(g.Exe, exe, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(g.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (currentIdx < 0)
+            currentIdx = _orderedLibraryGames.FindIndex(g =>
+                string.Equals(g.Exe, exe, StringComparison.OrdinalIgnoreCase));
+
+        bool canNav = _orderedLibraryGames.Count > 1 && currentIdx >= 0;
+        _navigateDetail3D = canNav
+            ? delta =>
+            {
+                if (_orderedLibraryGames.Count <= 1) return;
+                int nextIdx = (currentIdx + delta % _orderedLibraryGames.Count + _orderedLibraryGames.Count) % _orderedLibraryGames.Count;
+                var target = _orderedLibraryGames[nextIdx];
+                ShowGame3DDetail(target.Game, target.Exe, target.Name, target.InstallPath, target.IsManual);
+            }
+            : null;
+
+        Button BuildNavArrowButton(string glyph, string tooltipKey, int delta, HorizontalAlignment align)
+        {
+            var btn = new Button
+            {
+                Content = new FontIcon { Glyph = glyph, FontSize = 18 },
+                Width = 48,
+                Height = 48,
+                CornerRadius = new CornerRadius(24),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(135, 18, 18, 18)),
+                BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(65, 255, 255, 255)),
+                BorderThickness = new Thickness(1),
+                HorizontalAlignment = align,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(28, 0, 28, 0),
+                Visibility = canNav ? Visibility.Visible : Visibility.Collapsed
+            };
+            ApplyCardButtonHover(btn, accent: false);
+            ToolTipService.SetToolTip(btn, I18n.T(tooltipKey));
+            btn.Tapped += (s, e) => e.Handled = true;
+            btn.Click += (s, e) => _navigateDetail3D?.Invoke(delta);
+            return btn;
+        }
+
+        var prevBtn = BuildNavArrowButton("\uE76B", "Juego anterior (←)", -1, HorizontalAlignment.Left);
+        var nextBtn = BuildNavArrowButton("\uE76C", "Siguiente juego (→)", +1, HorizontalAlignment.Right);
+
+        // Fondo blureado a pantalla completa sobre la biblioteca (sin div/pop-up encajonado):
+        // usa el mismo grafo de GaussianBlurEffect del compositor (GlassBlurBrush) con radio
+        // amplio para desenfocar toda la biblioteca detrás del cartucho 3D y sus controles.
+        // Velo NEUTRO, sin tinte de color: gris puro (R=G=B). El tinte anterior (8, 10,
+        // 16) era azulado y teñía toda la transparencia del popup.
+        Brush backdropBrush = (Brush?)GlassBlurBrush.TryCreate(24f, Windows.UI.Color.FromArgb(185, 10, 10, 10))
+            ?? new AcrylicBrush
+            {
+                TintColor = Windows.UI.Color.FromArgb(255, 10, 10, 10),
+                TintOpacity = 0.78,
+                FallbackColor = Windows.UI.Color.FromArgb(228, 10, 10, 10)
+            };
+
+        // El velo (transparencia + blur) y el contenido van en capas SEPARADAS para que
+        // cada uno entre con su propio fade: primero se materializa la transparencia y
+        // después entra el texto, los botones y el cartucho — todo suave, sin pop.
+        var veil = new Border { Tag = "no-reveal", Background = backdropBrush };
+        var contentHost = new Border
+        {
+            Tag = "no-reveal",
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Child = new Grid { Children = { bodyLayout, prevBtn, nextBtn } }
+        };
+        var backdrop = new Grid { Children = { veil, contentHost } };
+        Canvas.SetZIndex(backdrop, 50);
+        backdrop.Tapped += (s, e) => CloseGame3DDetail();
+
+        if (!_detail3DCloseHooked)
+        {
+            RootGrid.KeyDown += (s, e) =>
+            {
+                if (_detail3DPanel == null) return;
+                if (e.Key == Windows.System.VirtualKey.Escape)
+                {
+                    CloseGame3DDetail();
+                    e.Handled = true;
+                }
+                else if (e.Key == Windows.System.VirtualKey.Left && _navigateDetail3D != null)
+                {
+                    _navigateDetail3D(-1);
+                    e.Handled = true;
+                }
+                else if (e.Key == Windows.System.VirtualKey.Right && _navigateDetail3D != null)
+                {
+                    _navigateDetail3D(+1);
+                    e.Handled = true;
+                }
+            };
+            _detail3DCloseHooked = true;
+        }
+
+        if (!panelAbierto)
+        {
+            // Estado inicial INVISIBLE antes de entrar al árbol: sin esto, el primer
+            // frame puede mostrar el popup entero y después "pegar" el fade (el pop que
+            // se veía en el texto y en la transparencia).
+            veil.Opacity = 0;
+            contentHost.Opacity = 0;
+            AnimateDetailEntrance(veil, contentHost, bodyLayout);
+        }
+        RootGrid.Children.Add(backdrop);
+        _detail3DPanel = backdrop;
+        backdrop.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>
+    /// Entrada suave de la vista de inspección en dos capas: primero el velo de
+    /// transparencia (blur) se materializa con un fade, y después entra el contenido —
+    /// el texto, los botones y el cartucho— con fade + escala + subida, en sync con el
+    /// giro del cartucho (PlayIntro). Los estados iniciales en 0 se restauran antes de
+    /// animar, y hay un fallback por si Loaded no llegara: la vista jamás puede quedar
+    /// invisible.
+    /// </summary>
+    private void AnimateDetailEntrance(FrameworkElement veil, UIElement contentHost, UIElement body)
+    {
+        void Restore()
+        {
+            veil.Opacity = 1;
+            contentHost.Opacity = 1;
+        }
+
+        void Start()
+        {
+            Restore(); // el fade de composición pisa estos valores durante la animación
+            try
+            {
+                var bodyVisual = ElementCompositionPreview.GetElementVisual(body);
+                var compositor = bodyVisual.Compositor;
+                var ease = compositor.CreateCubicBezierEasingFunction(
+                    new Vector2(0.16f, 1f), new Vector2(0.3f, 1f));
+
+                // 1) La transparencia: el velo blureado se materializa primero.
+                var veilFade = compositor.CreateScalarKeyFrameAnimation();
+                veilFade.InsertKeyFrame(0f, 0f);
+                veilFade.InsertKeyFrame(1f, 1f, ease);
+                veilFade.Duration = TimeSpan.FromMilliseconds(320);
+                ElementCompositionPreview.GetElementVisual(veil).StartAnimation("Opacity", veilFade);
+
+                // 2) El texto y el contenido: fade con leve demora (entra tras el velo).
+                var contentFade = compositor.CreateScalarKeyFrameAnimation();
+                contentFade.InsertKeyFrame(0f, 0f);
+                contentFade.InsertKeyFrame(0.22f, 0f);
+                contentFade.InsertKeyFrame(1f, 1f, ease);
+                contentFade.Duration = TimeSpan.FromMilliseconds(460);
+                ElementCompositionPreview.GetElementVisual(contentHost).StartAnimation("Opacity", contentFade);
+
+                bodyVisual.CenterPoint = new Vector3(bodyVisual.Size.X / 2f, bodyVisual.Size.Y / 2f, 0f);
+                var scale = compositor.CreateVector3KeyFrameAnimation();
+                scale.InsertKeyFrame(0f, new Vector3(0.86f, 0.86f, 1f));
+                scale.InsertKeyFrame(1f, Vector3.One, ease);
+                scale.Duration = TimeSpan.FromMilliseconds(420);
+                bodyVisual.StartAnimation("Scale", scale);
+
+                var slide = compositor.CreateVector3KeyFrameAnimation();
+                slide.InsertKeyFrame(0f, new Vector3(0f, 28f, 0f));
+                slide.InsertKeyFrame(1f, Vector3.Zero, ease);
+                slide.Duration = TimeSpan.FromMilliseconds(420);
+                bodyVisual.StartAnimation("Translation", slide);
+            }
+            catch (Exception ex)
+            {
+                Restore();
+                _loggingService.LogWarning($"GestionarProcesosPage: animación de entrada: {DescribeEx(ex)}");
+            }
+        }
+
+        veil.Loaded += (_, _) => Start();
+        // Fallback: si Loaded no llegara, la vista se restaura igual (nunca invisible).
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, Restore);
+    }
+
+    private void CloseGame3DDetail()
+    {
+        _navigateDetail3D = null;
+        if (_detail3DPanel != null)
+        {
+            try { RootGrid.Children.Remove(_detail3DPanel); } catch { }
+            _detail3DPanel = null;
+        }
+    }
+
     private static async Task LoadBannerAsync(Border banner, Image mediaImage, Image fallbackIcon, string appId, string url, string? exePath)
     {
         try
@@ -4919,35 +8041,137 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     private void LibraryScroll_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateCardWidth();
 
+    private int GetEffectiveColumns()
+    {
+        int baseCols = _cards3D ? GridColumns3D : GridColumns;
+        double w = LibraryScroll?.ActualWidth ?? 0;
+        if (w <= 0) return baseCols;
+
+        double sidePad = _cards3D ? 18 : 0;
+        double avail = w - (ScrollBarReserve + sidePad * 2);
+        if (avail <= 0) return baseCols;
+
+        double maxCardW = _cards3D ? MaxCardWidth3D : MaxCardWidthVanilla;
+        double minCardW = _cards3D ? MinCardWidth3D : MinCardWidthVanilla;
+
+        // Si la ventana es más ancha (p. ej. maximizada o en pantalla completa),
+        // agregamos columnas para que las cards no superen su tamaño máximo ideal.
+        int cols = Math.Max(baseCols,
+            (int)Math.Ceiling((avail + GridCardSpacing) / (maxCardW + GridCardSpacing)));
+
+        // Si la ventana se achica, reducimos columnas para respetar el ancho mínimo.
+        int maxThatFit = Math.Max(1,
+            (int)Math.Floor((avail + GridCardSpacing) / (minCardW + GridCardSpacing)));
+        if (cols > maxThatFit)
+            cols = maxThatFit;
+
+        return cols;
+    }
+
     private void UpdateCardWidth()
     {
         double w = LibraryScroll.ActualWidth;
-        if (w <= 0 || (_cards.Count == 0 && _skeletonCards.Count == 0)) return;
-        // Reserva fija de la canaleta del scrollbar (ver comentario arriba).
-        double reserve = ScrollBarReserve;
-        // N columnas exactas: cada fila es un StackPanel horizontal (Spacing 12) y la
-        // card tiene margen derecho 12, así que cols*(cardWidth+12)+(cols-1)*12 = w.
-        // El padding de 32 del GridView original ya no existe (el ScrollViewer
-        // lleva el margen).
-        int cols = GridColumns;
-        double cardWidth = Math.Max(230, (w - 48 - reserve) / cols);
+        if (w <= 0) return;
+        // La ranura del dock sigue el ancho de la card 3D: se actualiza ANTES del
+        // early-out de la grilla vacía, así la consola también conserva la medida
+        // cuando no hay juegos que dibujar.
+        UpdateDockCardWidth(w);
+        if (_cards.Count == 0 && _skeletonCards.Count == 0) return;
+        // Reserva fija de la canaleta del scrollbar (LibraryPanel margen derecho = 14)
+        // más el aire lateral que necesita el tilt de los cartuchos en los bordes.
+        double sidePad = _cards3D ? 18 : 0;
+        double reserve = ScrollBarReserve + sidePad * 2;
+        int cols = GetEffectiveColumns();
+        if (cols != _currentGridCols && _wrapSectionGroups.Count > 0)
+        {
+            _currentGridCols = cols;
+            foreach (var (host, sectionCards) in _wrapSectionGroups)
+                ReflowWrapSection(host, sectionCards, cols);
+            if (_cards3D) SchedulePaintVisible3D();
+        }
+        double avail = w - reserve;
+        double maxCardW = _cards3D ? MaxCardWidth3D : MaxCardWidthVanilla;
+        double minCardW = _cards3D ? MinCardWidth3D : MinCardWidthVanilla;
+        double rawCardWidth = (avail - GridCardSpacing * (cols - 1)) / cols;
+        double cardWidth = Math.Clamp(rawCardWidth, minCardW, maxCardW);
+        // Aire perimetral para que el tilt y la elevación de las cards en la primera/
+        // última columna y en la primera/última fila no queden cortados por el borde de
+        // LibraryContentGrid ni por el viewport del scroll.
+        if (LibraryPanel != null)
+            LibraryPanel.Margin = new Thickness(sidePad, _cards3D ? 18 : 8, ScrollBarReserve + sidePad,
+                _cards3D ? DockProtrusion + 18 : 8);
+        if (LibraryContentGrid != null)
+            LibraryContentGrid.Margin = new Thickness(0);
         double bannerMin = 100;
-        foreach (var (cardEl, banner) in _cards)
+        double bannerWidth = Math.Max(80, cardWidth);
+        foreach (var (cardEl, body) in _cards)
         {
             cardEl.Width = cardWidth;
-            // Alto de banner IDÉNTICO para todas las cards (estilo NVIDIA App):
-            // ratio panorámico 460:215 (el del header de Steam), así los banners
-            // de Steam (la gran mayoría) se ven COMPLETOS y sin recortes
-            // horizontales. Cualquier imagen llena el marco con recorte central
-            // simétrico (UniformToFill), igual que hace NVIDIA App.
-            banner.Height = cardWidth * BannerHeightRatio;
+            // Alto IDÉNTICO para todas las cards. Vanilla: ratio panorámico 460:215
+            // (el del header de Steam), así los banners de Steam se ven COMPLETOS y
+            // sin recortes horizontales. 3D: relación vertical del propio cartucho,
+            // así el modelo entra completo y sin deformarse.
+            body.Height = _cards3D
+                ? (cardWidth - 8) * CartridgeHeightRatio
+                : bannerWidth * BannerHeightRatio;
         }
         // Misma geometría para el skeleton (si está visible en la grilla).
         foreach (var (card, banner, _) in _skeletonCards)
         {
             card.Width = cardWidth;
-            banner.Height = Math.Max(bannerMin, cardWidth * BannerHeightRatio);
+            banner.Height = Math.Max(bannerMin, _cards3D
+                ? cardWidth * CartridgeHeightRatio
+                : bannerWidth * BannerHeightRatio);
         }
+    }
+
+    /// <summary>
+    /// Mantiene el cartucho (y la ranura) del dock con el mismo ancho que la card 3D
+    /// de la grilla. Repite el cálculo de columnas de <see cref="UpdateCardWidth"/> a
+    /// propósito: tiene que valer también con la biblioteca vacía, donde ese método
+    /// corta antes de tocar las cards.
+    /// </summary>
+    private void UpdateDockCardWidth(double libraryWidth)
+    {
+        if (!_cards3D) return;
+        double sidePad = 18;
+        double reserve = ScrollBarReserve + sidePad * 2;
+        int cols = GetEffectiveColumns();
+        double avail = libraryWidth - reserve;
+        double rawCardWidth = (avail - GridCardSpacing * (cols - 1)) / cols;
+        double cardWidth = Math.Clamp(rawCardWidth, MinCardWidth3D, MaxCardWidth3D);
+        // La card se dibuja dentro de un Border con 4 px de padding: el cartucho
+        // visible (el que entra en la ranura) mide 8 px menos.
+        double dockCardWidth = Math.Max(1, cardWidth - 8);
+        if (Math.Abs(dockCardWidth - _dockCardWidth) < 0.5) return;
+        _dockCardWidth = dockCardWidth;
+        ScheduleDockGeometryUpdate();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _dockGeometryTimer;
+
+    /// <summary>
+    /// Reconstruye el dock cuando cambia el ancho del cartucho 3D, con una espera corta:
+    /// durante el arrastre del borde de la ventana el ancho cambia en cada frame y
+    /// repintar el chasis (GDI+) a 60 fps haría temblar la consola.
+    /// </summary>
+    private void ScheduleDockGeometryUpdate()
+    {
+        if (_dockGeometryTimer == null)
+        {
+            _dockGeometryTimer = DispatcherQueue.CreateTimer();
+            _dockGeometryTimer.IsRepeating = false;
+            _dockGeometryTimer.Interval = TimeSpan.FromMilliseconds(90);
+            _dockGeometryTimer.Tick += (_, _) =>
+            {
+                if (!_cards3D) return;
+                if (CartridgeDockHost.Visibility != Visibility.Visible) return;
+                // UpdateCartridgeDock es atómico y respeta el arrastre en curso.
+                UpdateCartridgeDock();
+            };
+        }
+        _dockGeometryTimer.Stop();
+        _dockGeometryTimer.Start();
     }
 
     // ===== Tuerca → desplegable simple (submenús) =====
@@ -4960,13 +8184,33 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var buildClock = System.Diagnostics.Stopwatch.StartNew();
         var rules = _processService.GetRulesCached();
         var rule = rules.TryGetValue(exe, out var r) ? r : new ProcessRule(null, null, null);
-        // Regla de sesión ("Actual"): solo la apertura actual del juego, en memoria.
+        // Regla de sesión ("Actual"): se recuerda y aplica solo al lanzar desde WinForge.
         var sessionRule = _processService.GetSessionRule(exe) ?? new ProcessRule(null, null, null);
         int procCount = _processService.ProcessorCount;
         long fullMask = procCount >= 64 ? -1L : ((1L << procCount) - 1);
         long rulesMs = buildClock.ElapsedMilliseconds;
 
         var menu = new MenuFlyout { Placement = FlyoutPlacementMode.BottomEdgeAlignedRight };
+
+        // Launcher de por medio: se avisa UNA vez en la configuración del juego, no en
+        // cada arranque. La regla se aplica al proceso real cuando aparece; el launcher
+        // es compartido por varios juegos y no se toca.
+        string? launchLauncher = _installed
+            .FirstOrDefault(g => string.Equals(g.ExeFileName, exe, StringComparison.OrdinalIgnoreCase))?.Launcher;
+        if (string.IsNullOrWhiteSpace(launchLauncher) && isManual)
+            launchLauncher = _processService.GetManualGameLauncher(exe);
+        bool hasLauncher = !string.IsNullOrWhiteSpace(launchLauncher)
+            && !string.Equals(launchLauncher, "Independiente", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(launchLauncher, "Emulador", StringComparison.OrdinalIgnoreCase);
+        if (hasLauncher)
+        {
+            menu.Items.Add(new MenuFlyoutItem
+            {
+                Text = I18n.T("Este juego se lanza con {0}: la regla se aplicará al proceso del juego cuando aparezca, no al launcher.", launchLauncher),
+                IsEnabled = false
+            });
+            menu.Items.Add(new MenuFlyoutSeparator());
+        }
 
         // Aplica en vivo la regla EFECTIVA (la de sesión gana campo por campo sobre
         // la guardada) o restaura los valores del sistema si no queda ninguna.
@@ -4979,7 +8223,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (apps.Count == 0)
             {
                 StatusText.Text = sessionScope
-                    ? I18n.T("Reglas de sesión listas. Se aplicarán cuando el juego se abra.")
+                    ? hasLauncher
+                        ? I18n.T("Reglas de sesión listas. Se aplicarán al proceso del juego cuando aparezca (launcher: {0}).", launchLauncher)
+                        : I18n.T("Reglas de sesión listas. Se aplicarán cuando el juego se abra.")
                     : I18n.T("Reglas guardadas. Se aplicarán cuando el juego esté en ejecución.");
                 StatusText.Foreground = Feedback.MutedBrush;
                 StatusText.Visibility = Visibility.Visible;
@@ -5036,14 +8282,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             StatusText.Visibility = Visibility.Visible;
         }
 
-        // "Siempre": se guarda en el registro y aplica en cada apertura del juego.
+        // "Siempre": se guarda en el registro y aplica en cada apertura (incluso desde Steam).
         void ApplyAndSave(ProcessRule newRule)
         {
             _processService.SaveRule(exe, newRule);
             ApplyEffectiveToRunning(sessionScope: false);
         }
 
-        // "Actual": solo la apertura actual del juego (en memoria, sin guardar).
+        // "Actual": se recuerda pero aplica solo al lanzar desde WinForge.
         void ApplySessionAndNotify()
         {
             _processService.SetSessionRule(exe, sessionRule);
@@ -5112,7 +8358,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             return sub;
         }
 
-        // ===== Prioridad de CPU: alcance "Actual" (solo esta apertura) / "Siempre" =====
+        // ===== Prioridad de CPU: alcance "Actual" (solo WinForge) / "Siempre" =====
         var cpuSub = new MenuFlyoutSubItem { Text = I18n.T("Prioridad de CPU") };
         string[] cpuNames = { "Por defecto", "Mínima", "Baja", "Normal", "Por encima de lo normal", "Alta", "Tiempo real" };
         int cpuPerSel = rule.CpuPriority is int cp ? Array.IndexOf(CpuPriorityValues, cp) + 1 : 0;
@@ -5426,7 +8672,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // ===== Acciones =====
         menu.Items.Add(new MenuFlyoutSeparator());
 
-        var resetItem = new MenuFlyoutItem { Text = I18n.T("Eliminar reglas") };
+        // "Eliminar reglas" es destructivo: en rojo, igual que "Eliminar de la
+        // biblioteca" (más abajo en el mismo menú).
+        var resetItem = new MenuFlyoutItem
+        {
+            Text = I18n.T("Eliminar reglas"),
+            Foreground = Feedback.ErrorBrush
+        };
         resetItem.Click += async (s, e) =>
         {
             var confirm = new ContentDialog

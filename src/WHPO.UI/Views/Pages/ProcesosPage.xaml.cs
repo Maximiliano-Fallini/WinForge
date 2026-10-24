@@ -518,7 +518,7 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
     private void BuildRowsSkeleton()
     {
         RowsSkeleton.Children.Clear();
-        var fill = (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"];
+        var fill = ThemeBrushes.Get("ControlFillColorSecondaryBrush");
 
         for (int i = 0; i < SkeletonRows; i++)
         {

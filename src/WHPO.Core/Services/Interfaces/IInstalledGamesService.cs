@@ -13,7 +13,7 @@ public record InstalledGame(
     string AppId = "",   // id del juego en el launcher (banners/caché, o código de producto Battle.net)
     string BannerUrl = "", // URL directa del banner (CDN de Steam); vacía si no hay
     string ArtNamespace = "", // namespace del catálogo de Epic (para buscar el banner en la API pública)
-    string EpicAppName = ""); // AppName del manifest de Epic (para lanzar por URI del launcher: com.epicgames.launcher://apps/{AppName})
+    string EpicAppName = ""); // AppName del manifest de Epic (para lanzar por URI del launcher: com.epicgames.launcher://apps/{namespace}%3A{catalogItemId}%3A{AppName})
 
 /// <summary>
 /// Avance de un escaneo de emuladores: porcentaje (0-100) y contexto del momento (la unidad en

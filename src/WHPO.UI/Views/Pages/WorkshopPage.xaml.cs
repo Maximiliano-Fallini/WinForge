@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -41,6 +42,26 @@ public sealed partial class WorkshopPage : Page
     // Raíces de las cards construidas: se re-medien en cada resize.
     private readonly List<Border> _cardRoots = new();
 
+    // ===== Feedback temporal de desinstalación =====
+    // El rótulo "Desinstalado" del pie de la card es el feedback del MOMENTO de la
+    // desinstalación: dura 3 s y después desaparece (antes quedaba escrito para
+    // siempre). El estado real ya lo muestra el botón "Instalar".
+    private static readonly TimeSpan UninstallFlashDuration = TimeSpan.FromSeconds(3);
+
+    /// <summary>Feedback temporal de una card: qué muestra y qué dejar al vencer.</summary>
+    private sealed record CardFlash(
+        string Text,
+        SolidColorBrush Brush,
+        string RestoreText,
+        SolidColorBrush RestoreBrush,
+        DateTime ExpiresAt);
+
+    // Feedbacks temporales vigentes (id de componente → feedback) y el rótulo de
+    // estado vivo de cada card (para poder restaurarlo cuando el feedback vence).
+    private readonly Dictionary<string, CardFlash> _flashes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TextBlock> _cardStatus = new(StringComparer.OrdinalIgnoreCase);
+    private DispatcherQueueTimer? _flashTimer;
+
     private readonly ComponentRegistry _registry;
     private readonly ComponentCatalogService _catalogService;
     private readonly WHPO.Core.Services.Interfaces.ILoggingService _logging;
@@ -68,6 +89,46 @@ public sealed partial class WorkshopPage : Page
         _registry = App.Services.GetRequiredService<ComponentRegistry>();
         _catalogService = App.Services.GetRequiredService<ComponentCatalogService>();
         _logging = App.Services.GetRequiredService<WHPO.Core.Services.Interfaces.ILoggingService>();
+
+        // La banda de la cabecera (título + buscador + badges) se pinta a mano, IGUAL que el
+        // navbar interno de Configuración (ver RepaintHeaderCard): WinUI cachea el
+        // {ThemeResource} del Border y no lo vuelve a resolver cuando el ajuste REEMPLAZA la
+        // instancia del diccionario, así que con el XAML solo la banda quedaba opaca y sin
+        // seguir el vidrio/transparencia del tema. La página usa caché de navegación, así que
+        // la suscripción y la baja se atan a Loaded/Unloaded para no dejar el handler colgado.
+        Loaded += (_, _) =>
+        {
+            // Baja antes del alta: la página se carga más de una vez (caché de navegación)
+            // y no puede quedar suscrita dos veces.
+            WHPO_UI.PanelAppearance.Applied -= RepaintHeaderCard;
+            WHPO_UI.PanelAppearance.Applied += RepaintHeaderCard;
+            RepaintHeaderCard();
+        };
+        Unloaded += (_, _) => WHPO_UI.PanelAppearance.Applied -= RepaintHeaderCard;
+    }
+
+    /// <summary>
+    /// Relleno de la banda de cabecera, reusado entre pasadas: con el vidrio encendido es el
+    /// ACRÍLICO de la plataforma (ver <see cref="WHPO_UI.PanelAppearance.SurfaceFill"/>) y con
+    /// el desenfoque apagado el sólido de siempre.
+    /// </summary>
+    private Brush? _headerFill;
+
+    /// <summary>
+    /// Pinta la banda de cabecera (HeaderCard) con el relleno del panel del menú, ya con la
+    /// transparencia vigente y el vidrio que esté en juego (ver
+    /// <see cref="WHPO_UI.PanelAppearance.PaneBarFill"/>): la misma pieza que el navbar de la
+    /// izquierda, así que la banda se lee como continuación del panel y no como un bloque
+    /// aparte cortado sobre el fondo.
+    /// </summary>
+    private void RepaintHeaderCard()
+    {
+        try
+        {
+            _headerFill = WHPO_UI.PanelAppearance.PaneBarFill(_headerFill);
+            HeaderCard.Background = _headerFill;
+        }
+        catch { /* arranque temprano */ }
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -88,6 +149,11 @@ public sealed partial class WorkshopPage : Page
     {
         base.OnNavigatedFrom(e);
         I18n.LanguageChanged -= OnLanguageChanged;
+        // El feedback temporal no sobrevive a la navegación: al volver a la página
+        // la card ya muestra solo el botón "Instalar" (nada de "Desinstalado").
+        _flashTimer?.Stop();
+        _flashTimer = null;
+        _flashes.Clear();
     }
 
     private void OnLanguageChanged()
@@ -164,6 +230,7 @@ public sealed partial class WorkshopPage : Page
     {
         SectionsHost.Children.Clear();
         _cardRoots.Clear();
+        _cardStatus.Clear();   // los rótulos viejos dejan de ser los vivos
         BuildFilterBadges();
 
         var search = (SearchBox.Text ?? "").Trim();
@@ -413,10 +480,13 @@ public sealed partial class WorkshopPage : Page
 
         // 1) Componentes en el registro (integrados y descargados cargados). Los
         // core (Sistema, Red, Núcleos, Biblioteca, Workshop) NO se listan: son
-        // parte de la app, no se pueden desinstalar ni ocultar.
+        // parte de la app, no se pueden desinstalar ni ocultar. Tampoco se listan
+        // los que se absorbieron en el hub de Optimizaciones (TCP, Debloat,
+        // Reparación…): ahora son cards del hub, no componentes del Workshop.
         foreach (var comp in _registry.All)
         {
             if (comp.IsCore) continue;
+            if (ComponentRegistry.HubIntegratedIds.Contains(comp.Id)) continue;
             models[comp.Id] = new CardModel
             {
                 Id = comp.Id,
@@ -436,6 +506,7 @@ public sealed partial class WorkshopPage : Page
             foreach (var entry in _catalog.Components)
             {
                 if (models.ContainsKey(entry.Id)) continue;
+                if (ComponentRegistry.HubIntegratedIds.Contains(entry.Id)) continue;
                 models[entry.Id] = new CardModel
                 {
                     Id = entry.Id,
@@ -454,12 +525,13 @@ public sealed partial class WorkshopPage : Page
                 model.Installed = record;
 
         // 4) Componentes que el catálogo ofrece pero que NO cargaron (instalados
-        // según modules.json): cards "Reinstalar" (dll roto/eliminado a mano).
+        // según modules.json): cards "Instalar" (dll roto/eliminado a mano).
         if (_catalog != null)
         {
             foreach (var entry in _catalog.Components)
             {
                 if (models.ContainsKey(entry.Id)) continue;
+                if (ComponentRegistry.HubIntegratedIds.Contains(entry.Id)) continue;
                 if (!_installed.TryGetValue(entry.Id, out var rec)) continue;
                 models[entry.Id] = new CardModel
                 {
@@ -494,7 +566,7 @@ public sealed partial class WorkshopPage : Page
             }
 
             // 6) Instalados según modules.json cuyo componente NO cargó ni es
-            // integrado: card "Reinstalar" (dll roto o carpeta borrada a mano).
+            // integrado: card "Instalar" (dll roto o carpeta borrada a mano).
             foreach (var kv in _installed)
             {
                 if (models.ContainsKey(kv.Key)) continue;
@@ -768,16 +840,23 @@ public sealed partial class WorkshopPage : Page
             {
                 bool gated = InDevelopmentIds.Contains(card.Id) && !IsDevBuild();
                 bool neverInstalled = !everTouched;
+                // El rótulo "Desinstalado" del pie es TEMPORAL: es el feedback del
+                // momento de la desinstalación (3 s, ver FlashUninstalled). Lo
+                // desinstalado explícito queda solo con el botón "Instalar"; el
+                // que nunca se instaló conserva su rótulo "Disponible".
                 left = new TextBlock
                 {
                     // Componente en desarrollo fuera de build dev: sin texto de
                     // estado, solo el botón deshabilitado (no se revela el motivo).
-                    Text = gated ? "" : I18n.T(neverInstalled ? "Disponible" : "Desinstalado"),
+                    Text = gated ? "" : (neverInstalled ? I18n.T("Disponible") : ""),
                     FontSize = FooterFontSize,
-                    Foreground = neverInstalled && !gated ? ThemeBrushes.Get("SecondaryTextBrush") : Feedback.WarningBrush,
+                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
                     VerticalAlignment = VerticalAlignment.Center
                 };
-                var reinstallBtn = CreateActionButton(I18n.T(neverInstalled ? "Instalar" : "Reinstalar"));
+                // El botón dice siempre "Instalar": el integrado está desinstalado,
+                // así que instalarlo es lo que hay que hacer. "Reinstalar" sonaba a
+                // que el componente estaba roto.
+                var reinstallBtn = CreateActionButton(I18n.T("Instalar"));
                 if (gated) reinstallBtn.IsEnabled = false;
                 else reinstallBtn.Click += (s, e) => ReinstallBuiltin(card);
                 right.Children.Add(reinstallBtn);
@@ -807,22 +886,24 @@ public sealed partial class WorkshopPage : Page
         // 4) Disponible para instalar (entrada del catálogo, no instalado).
         else if (card.Entry != null)
         {
-            // "Reinstalar": estaba instalado según modules.json pero no cargó
-            // (dll roto, carpeta borrada a mano) o es un integrado cuya copia
-            // del repo no cargó en este arranque.
-            bool isRepair = card.Installed != null || _registry.IsBuiltin(card.Id);
-            if (card.Entry.SizeBytes > 0)
+            // Estaba instalado según modules.json pero no cargó (dll roto, carpeta
+            // borrada a mano) o es un integrado cuya copia del repo no cargó en
+            // este arranque: el botón dice "Instalar" igual (instalar de nuevo
+            // repara el componente).
+            // El rótulo de estado siempre existe (aunque esté vacío): es donde se
+            // muestra el feedback temporal de "Desinstalado" y, al vencer, se
+            // restaura el texto anterior (el tamaño del paquete).
+            left = new TextBlock
             {
-                left = new TextBlock
-                {
-                Text = I18n.T("{0} KB", Math.Max(1, (int)Math.Round(card.Entry.SizeBytes / 1024.0))),
+                Text = card.Entry.SizeBytes > 0
+                    ? I18n.T("{0} KB", Math.Max(1, (int)Math.Round(card.Entry.SizeBytes / 1024.0)))
+                    : "",
                 FontSize = FooterFontSize,
-                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-            }
+                Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+                VerticalAlignment = VerticalAlignment.Center
+            };
 
-            var installBtn = CreateActionButton(I18n.T(isRepair ? "Reinstalar" : "Instalar"));
+            var installBtn = CreateActionButton(I18n.T("Instalar"));
             if (!ComponentCatalogService.IsVersionCompatible(card.Entry.MinAppVersion))
             {
                 installBtn.IsEnabled = false;
@@ -850,11 +931,96 @@ public sealed partial class WorkshopPage : Page
             right.Children.Add(installBtn);
         }
 
+        // Rótulo de estado de la card: el recién calculado o el feedback temporal
+        // si hay uno vigente (desinstalación). Se guarda para poder restaurarlo
+        // cuando el feedback vence.
+        if (left is TextBlock status)
+        {
+            if (TryGetActiveFlash(card.Id, out var flash))
+            {
+                status.Text = flash.Text;
+                status.Foreground = flash.Brush;
+            }
+            _cardStatus[card.Id] = status;
+        }
+
         Grid.SetColumn(left, 0);
         footer.Children.Add(left);
         Grid.SetColumn(right, 1);
         footer.Children.Add(right);
         return footer;
+    }
+
+    // =====================================================================
+    // Feedback temporal de desinstalación
+    // =====================================================================
+
+    /// <summary>
+    /// Muestra el feedback temporal "Desinstalado" en la card del componente: dura
+    /// <see cref="UninstallFlashDuration"/> y después la card vuelve a como estaba
+    /// (solo el botón "Instalar": el estado ya no se rotula de forma permanente).
+    /// </summary>
+    private void FlashUninstalled(string id)
+    {
+        if (!_cardStatus.TryGetValue(id, out var tb)) return;
+
+        var flash = new CardFlash(
+            Text: Feedback.SuccessPrefix + " " + I18n.T("Desinstalado"),
+            Brush: Feedback.SuccessBrush,
+            RestoreText: tb.Text,
+            RestoreBrush: tb.Foreground as SolidColorBrush ?? ThemeBrushes.Get("SecondaryTextBrush"),
+            ExpiresAt: DateTime.UtcNow.AddSeconds(UninstallFlashDuration.TotalSeconds));
+
+        _flashes[id] = flash;
+        tb.Text = flash.Text;
+        tb.Foreground = flash.Brush;
+        EnsureFlashTimer();
+    }
+
+    /// <summary>¿Hay un feedback temporal vigente para esta card?</summary>
+    private bool TryGetActiveFlash(string id, out CardFlash flash)
+    {
+        if (_flashes.TryGetValue(id, out var f) && f.ExpiresAt > DateTime.UtcNow)
+        {
+            flash = f;
+            return true;
+        }
+        flash = null!;
+        return false;
+    }
+
+    /// <summary>Barre los feedbacks vencidos y restaura el rótulo anterior.</summary>
+    private void SweepFlashes()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var id in _flashes.Keys.ToList())
+        {
+            var flash = _flashes[id];
+            if (flash.ExpiresAt > now) continue;
+            _flashes.Remove(id);
+            // Solo se restaura si el rótulo sigue siendo el del feedback: si la card
+            // se reconstruyó con otro estado (p. ej. ya reinstalada), no se pisa.
+            if (_cardStatus.TryGetValue(id, out var tb) && tb.Text == flash.Text)
+            {
+                tb.Text = flash.RestoreText;
+                tb.Foreground = flash.RestoreBrush;
+            }
+        }
+
+        if (_flashes.Count == 0)
+        {
+            _flashTimer?.Stop();
+            _flashTimer = null;
+        }
+    }
+
+    private void EnsureFlashTimer()
+    {
+        if (_flashTimer != null) return;
+        _flashTimer = DispatcherQueue.CreateTimer();
+        _flashTimer.Interval = TimeSpan.FromMilliseconds(200);
+        _flashTimer.Tick += (s, e) => SweepFlashes();
+        _flashTimer.Start();
     }
 
     private static Button CreateActionButton(string text) => new()
@@ -941,7 +1107,7 @@ public sealed partial class WorkshopPage : Page
     /// <summary>
     /// Desinstala un componente integrado de fábrica: la pestaña sale del navbar
     /// ("builtin.removed.<id>" + "nav.<id>" = false) y la card pasa a mostrar
-    /// "Desinstalado" con el botón "Reinstalar". No borra nada del exe (los
+    /// "Desinstalado" con el botón "Instalar". No borra nada del exe (los
     /// integrados viven dentro de WinForge.exe), solo lo quita de la UI.
     /// </summary>
     private async Task UninstallBuiltinAsync(CardModel card)
@@ -965,6 +1131,8 @@ public sealed partial class WorkshopPage : Page
         _registry.NotifyRemoved(card.Id);
         Feedback.Success(StatusText, I18n.T("Componente desinstalado: {0}", I18n.T(card.Name)));
         RebuildSections();
+        // El rótulo "Desinstalado" de la card es temporal: 3 s y se va.
+        FlashUninstalled(card.Id);
     }
 
     /// <summary>Vuelve a instalar un integrado: la pestaña reaparece en el navbar.</summary>
@@ -1011,5 +1179,7 @@ public sealed partial class WorkshopPage : Page
         RefreshInstalledRecords();
         Feedback.Success(StatusText, I18n.T("Componente desinstalado: {0}", I18n.T(card.Name)));
         RebuildSections();
+        // El rótulo "Desinstalado" de la card es temporal: 3 s y se va.
+        FlashUninstalled(card.Id);
     }
 }

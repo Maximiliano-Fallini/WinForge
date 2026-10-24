@@ -48,6 +48,19 @@ public static class GameLauncher
         bool gog = string.Equals(launcher, "GOG", StringComparison.OrdinalIgnoreCase);
         bool xbox = string.Equals(launcher, "Xbox", StringComparison.OrdinalIgnoreCase);
 
+        // Abre la sesión justo antes de lanzar (no al entrar acá): si el lanzamiento
+        // se cancela —launcher cerrado, ejecutable faltante—, no queda una sesión
+        // esperando un proceso que nunca va a nacer. Con un launcher de por medio el
+        // proceso del juego puede nacer con otro nombre o dentro de una subcarpeta;
+        // la sesión aporta la carpeta y el launcher para reconocerlo, sin aplicarle
+        // la regla al launcher. Es idempotente: los ApplyLaunchChainRule de más
+        // abajo reutilizan esta misma sesión.
+        void BeginSession(string? launcherName = null)
+        {
+            if (!string.IsNullOrEmpty(exeFileName))
+                processes.BeginLaunchSession(exeFileName, launcherName ?? launcher, installPath);
+        }
+
         // Registrar el objetivo temporalmente en el overlay antes de lanzar: así el
         // detector prioriza este juego y no confunde un launcher/browser con él.
         try
@@ -79,6 +92,7 @@ public static class GameLauncher
                 SetStatus(status, I18n.T("Ejecutable no encontrado"), LaunchStatusKind.Warning);
                 return;
             }
+            BeginSession();
             StartProcess(fileName, arguments);
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
@@ -99,6 +113,7 @@ public static class GameLauncher
                 SetStatus(status, I18n.T("No se encontró el launcher Blacksmith. Asegurate de que esté instalado."), LaunchStatusKind.Warning);
                 return;
             }
+            BeginSession("Blacksmith");
             if (!IsLauncherRunning(processes, "Blacksmith"))
             {
                 SetStatus(status, I18n.T("Abriendo Blacksmith..."), LaunchStatusKind.Info);
@@ -114,25 +129,33 @@ public static class GameLauncher
         {
             // Log de diagnóstico: registrar qué exe se intenta abrir y cualquier
             // error (StartProcess silenciaba todo con Debug.WriteLine).
+            if (!string.IsNullOrEmpty(fileName)) BeginSession();
             StartProcessLogged(fileName, arguments, msg =>
             {
                 try { log.LogWarning(msg); } catch { }
             });
-            // Aplica la regla guardada mientras el juego arranca (los launchers con
-            // anti-cheat viven poco y el proceso real está protegido: aplicarle la
-            // prioridad de CPU al launcher hace que el juego la herede al nacer).
+            // Sigue la cadena de arranque: el proceso real puede nacer con otro
+            // nombre (launcher de por medio), así que no se le aplica la regla al
+            // launcher sino al proceso del juego cuando aparece.
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
             return;
         }
 
-        // Juegos de Battle.net y Epic: el launcher tiene que estar corriendo antes
-        // de lanzar el juego. Blizzard necesita la sesión del launcher; Epic, el
-        // servicio de Epic Online Services (sin él, el juego abre pero lo online
-        // no funciona: "requiere iniciar Epic Games").
-        var launcherPath = blizzardCode != null ? FindBattleNetLauncher() : FindEpicLauncher();
-        string launcherName = blizzardCode != null ? "Battle.net" : "Epic Games";
-        string launcherProc = blizzardCode != null ? "Battle.net" : "EpicGamesLauncher";
+        // Epic: el lanzamiento lo hace el launcher a través de su URI (el mismo
+        // mecanismo que el acceso directo que crea Epic). Va por un camino propio
+        // porque la URI tiene que procesarla el shell del usuario, no este proceso.
+        if (epic)
+        {
+            await LaunchEpicGameAsync(log, processes, fileName, installPath, exeFileName, status);
+            return;
+        }
+
+        // Battle.net: el launcher tiene que estar corriendo antes de lanzar el juego
+        // (los juegos de Blizzard necesitan su sesión).
+        var launcherPath = FindBattleNetLauncher();
+        const string launcherName = "Battle.net";
+        const string launcherProc = "Battle.net";
         if (launcherPath == null)
         {
             SetStatus(status, I18n.T("No se encontró el launcher de {0}.", launcherName), LaunchStatusKind.Warning);
@@ -152,42 +175,94 @@ public static class GameLauncher
         }
 
         SetStatus(status, I18n.T("Iniciando el juego..."), LaunchStatusKind.Info);
+        BeginSession("Battle.net");
 
-        if (blizzardCode != null)
+        // El lanzamiento lo hace el launcher. Si el comando se manda antes de
+        // que el launcher esté listo, se pierde y solo abre la página del juego:
+        // se reintenta hasta que el juego aparezca.
+        var deadline = DateTime.UtcNow.AddSeconds(120);
+        while (DateTime.UtcNow < deadline)
         {
-            // El lanzamiento lo hace el launcher. Si el comando se manda antes de
-            // que el launcher esté listo, se pierde y solo abre la página del juego:
-            // se reintenta hasta que el juego aparezca.
-            var deadline = DateTime.UtcNow.AddSeconds(120);
-            while (DateTime.UtcNow < deadline)
+            if (IsGameProcessRunning(processes, installPath, exeFileName))
             {
-                if (IsGameProcessRunning(processes, installPath, exeFileName))
-                {
-                    SetStatus(status, "", LaunchStatusKind.Hide);
-                    return;
-                }
-                // Si el usuario cerró el launcher mientras esperaba (cambió de idea,
-                // eligió mal el juego...), NO reabrirlo: se cancela el lanzamiento.
-                // Antes el loop reenviaba el comando a ciegas y reabría Battle.net
-                // aunque el usuario lo hubiera cerrado en el medio.
-                if (!IsProcessRunning(launcherProc))
-                {
-                    SetStatus(status, I18n.T("Se cerró el launcher de {0} — se cancela el lanzamiento.", launcherName), LaunchStatusKind.Warning);
-                    return;
-                }
-                StartProcess(launcherPath, $"--exec=\"launch {blizzardCode}\"");
-                await Task.Delay(10000);
+                SetStatus(status, "", LaunchStatusKind.Hide);
+                return;
             }
+            // Si el usuario cerró el launcher mientras esperaba (cambió de idea,
+            // eligió mal el juego...), NO reabrirlo: se cancela el lanzamiento.
+            // Antes el loop reenviaba el comando a ciegas y reabría Battle.net
+            // aunque el usuario lo hubiera cerrado en el medio.
+            if (!IsProcessRunning(launcherProc))
+            {
+                SetStatus(status, I18n.T("Se cerró el launcher de {0} — se cancela el lanzamiento.", launcherName), LaunchStatusKind.Warning);
+                return;
+            }
+            StartProcess(launcherPath, $"--exec=\"launch {blizzardCode}\"");
+            await Task.Delay(10000);
+        }
 
-            SetStatus(status, I18n.T("El juego no arrancó. Verificá que estés logueado en Battle.net y probá de nuevo."), LaunchStatusKind.Warning);
+        SetStatus(status, I18n.T("El juego no arrancó. Verificá que estés logueado en Battle.net y probá de nuevo."), LaunchStatusKind.Warning);
+    }
+
+    /// <summary>
+    /// Lanza un juego de Epic como lo haría su acceso directo: le pide al launcher
+    /// que ejecute el título con la URI <c>com.epicgames.launcher://apps/...?action=launch</c>
+    /// y espera a que aparezca el proceso del juego.
+    ///
+    /// La URI la entrega <c>explorer.exe</c> (el shell del usuario), no este proceso:
+    /// la app corre como administrador y, si se lanzara desde acá, Windows abriría
+    /// EpicGamesLauncher.exe ELEVADO. El launcher de Epic no funciona en ese contexto
+    /// (queda sin sesión y el juego no arranca), que es justo la diferencia con Steam
+    /// y Battle.net: esos sí toleran arrancar elevados. Enviándola al shell, el
+    /// launcher la procesa con el mismo nivel que un doble clic en el escritorio.
+    /// </summary>
+    private static async Task LaunchEpicGameAsync(
+        ILoggingService log,
+        IProcessService processes,
+        string uri,
+        string? installPath,
+        string? exeFileName,
+        Action<string, LaunchStatusKind>? status)
+    {
+        if (string.IsNullOrEmpty(uri))
+        {
+            SetStatus(status, I18n.T("No se pudo armar la URI del launcher de Epic Games."), LaunchStatusKind.Warning);
             return;
         }
 
-        // Epic: el lanzamiento lo hace el launcher por su URI (como un acceso
-        // directo de la biblioteca): así autentica el juego con EOS. Se reintenta
-        // hasta que el juego aparezca (igual que Battle.net).
-        var epDeadline = DateTime.UtcNow.AddSeconds(120);
-        while (DateTime.UtcNow < epDeadline)
+        // La sesión se abre acá, con la URI ya validada: si no hay nada que lanzar,
+        // no queda esperando un proceso inexistente.
+        if (!string.IsNullOrEmpty(exeFileName))
+            processes.BeginLaunchSession(exeFileName, "Epic", installPath);
+
+        // Manifest viejo sin AppName/datos del catálogo: no hay URI que pedirle al
+        // launcher y la card manda el exe. Se abre directo como último recurso.
+        if (!uri.StartsWith("com.epicgames.launcher:", StringComparison.OrdinalIgnoreCase))
+        {
+            StartProcessLogged(uri, "", msg => { try { log.LogWarning(msg); } catch { } });
+            if (!string.IsNullOrEmpty(exeFileName))
+                processes.ApplyLaunchChainRule(exeFileName);
+            return;
+        }
+
+        // Launcher cerrado: se abre primero (también sin elevación) y se espera su
+        // ventana. Si no se encuentra el exe, la URI igual lo abre por el protocolo
+        // registrado, así que no es un error: se sigue con el envío.
+        string? launcherPath = FindEpicLauncher();
+        if (launcherPath != null && !IsProcessRunning("EpicGamesLauncher"))
+        {
+            SetStatus(status, I18n.T("Abriendo el launcher de {0}...", "Epic Games"), LaunchStatusKind.Info);
+            StartProcessAtUserLevel(launcherPath);
+            await WaitForProcessWindowAsync("EpicGamesLauncher", TimeSpan.FromSeconds(45));
+        }
+
+        SetStatus(status, I18n.T("Iniciando el juego..."), LaunchStatusKind.Info);
+        try { log.LogInfo($"GameLauncher: Epic launch URI: {uri}"); } catch { }
+
+        // Se reintenta hasta que aparezca el proceso del juego: si la URI llega antes
+        // de que el launcher termine de arrancar/actualizar, se pierde sin aviso.
+        var deadline = DateTime.UtcNow.AddSeconds(150);
+        while (DateTime.UtcNow < deadline)
         {
             if (IsGameProcessRunning(processes, installPath, exeFileName))
             {
@@ -196,17 +271,53 @@ public static class GameLauncher
                 SetStatus(status, "", LaunchStatusKind.Hide);
                 return;
             }
-            // Igual que Battle.net: si el usuario cerró el launcher, cancelar en
-            // vez de seguir reintentando (el comando de la URI lo reabriría).
-            if (!IsProcessRunning(launcherProc))
-            {
-                SetStatus(status, I18n.T("Se cerró el launcher de {0} — se cancela el lanzamiento.", launcherName), LaunchStatusKind.Warning);
-                return;
-            }
-            StartProcess(fileName, arguments);
+            SendEpicLaunchUri(uri, log);
             await Task.Delay(10000);
         }
+
         SetStatus(status, I18n.T("Si el juego no abre, verificá que estés logueado en Epic Games y probá de nuevo."), LaunchStatusKind.Warning);
+    }
+
+    /// <summary>
+    /// Entrega la URI de Epic al shell del usuario. <c>explorer.exe</c> reenvía el
+    /// pedido a la instancia ya abierta del Explorer (que corre sin elevar) y se
+    /// cierra: la URI nunca la procesa un proceso elevado. Si por algún motivo
+    /// falla, se cae al lanzamiento directo (mejor intentarlo que no hacer nada).
+    /// </summary>
+    private static void SendEpicLaunchUri(string uri, ILoggingService log)
+    {
+        if (StartProcessAtUserLevel(uri)) return;
+        StartProcessLogged(uri, "", msg =>
+        {
+            try { log.LogWarning(msg); } catch { }
+        });
+    }
+
+    /// <summary>
+    /// Lanza un target (exe o URI) a través de <c>explorer.exe</c>, para que lo abra
+    /// el shell del usuario en vez de este proceso elevado. Devuelve false si ni
+    /// siquiera se pudo iniciar explorer (el llamador decide el respaldo).
+    /// </summary>
+    private static bool StartProcessAtUserLevel(string target)
+    {
+        if (string.IsNullOrEmpty(target)) return false;
+        try
+        {
+            // Ruta absoluta: no depende del PATH del proceso elevado.
+            var explorer = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+            var psi = new ProcessStartInfo(explorer, $"\"{target}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            Process.Start(psi);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void SetStatus(Action<string, LaunchStatusKind>? status, string message, LaunchStatusKind kind)
@@ -468,6 +579,29 @@ public static class GameLauncher
             catch { }
         }
         return null;
+    }
+
+    /// <summary>
+    /// URI del launcher de Epic para lanzar un juego:
+    /// <c>com.epicgames.launcher://apps/{namespace}%3A{catalogItemId}%3A{appName}?action=launch&amp;silent=true</c>.
+    ///
+    /// Es la forma que usan los accesos directos que crea Epic y la única que aceptan
+    /// las versiones nuevas del launcher: la forma corta (apps/{AppName}) quedó
+    /// obsoleta y el botón Iniciar no hacía nada. Si al manifest le faltan los datos
+    /// del catálogo (instalaciones viejas) se cae a la forma corta, que sigue
+    /// funcionando en algunas versiones, antes que no intentar nada.
+    /// </summary>
+    public static string BuildEpicLaunchUri(string? catalogNamespace, string? catalogItemId, string? appName)
+    {
+        string app = (appName ?? "").Trim();
+        string ns = (catalogNamespace ?? "").Trim();
+        string item = (catalogItemId ?? "").Trim();
+
+        string apps = !string.IsNullOrEmpty(ns) && !string.IsNullOrEmpty(item) && !string.IsNullOrEmpty(app)
+            ? $"{Uri.EscapeDataString(ns)}%3A{Uri.EscapeDataString(item)}%3A{Uri.EscapeDataString(app)}"
+            : Uri.EscapeDataString(app);
+
+        return $"com.epicgames.launcher://apps/{apps}?action=launch&silent=true";
     }
 
     /// <summary>Busca el ejecutable del launcher de Epic Games en las rutas típicas de instalación.</summary>

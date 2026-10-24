@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="WHPO_UI.Controls.Cartridge3D"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- El cartucho se dibuja a una textura con ALFA y se muestra en este Image (el code
+         behind lo actualiza con una WriteableBitmap). NO se usa SwapChainPanel: ese panel
+         es opaco por diseño en WinUI 3 ("SwapChainPanel does not support transparency",
+         docs de Microsoft) y en la grilla se veía como un rectángulo oscuro sobre el fondo
+         de la app; además en WinAppSDK el Compositor no tiene
+         CreateCompositionSurfaceForSwapChain, así que tampoco se puede colgar con alfa.
+         Con un Image el alfa lo compone XAML: el cartucho queda apoyado sobre el fondo
+         real de la página, sin caja. El Grid transparente es el que recibe el puntero. -->
+    <Border Tag="no-reveal" Background="Transparent">
+        <Grid x:Name="InputRoot" Background="Transparent">
+            <Image x:Name="Surface"
+                   Stretch="Fill"
+                   HorizontalAlignment="Stretch"
+                   VerticalAlignment="Stretch" />
+        </Grid>
+    </Border>
+</UserControl>

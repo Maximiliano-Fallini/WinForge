@@ -53,7 +53,16 @@ public sealed class ComponentRegistry
 {
     /// <summary>Tags del set "si o si": nunca ocultables ni desinstalables.</summary>
     public static readonly HashSet<string> CoreTags = new(StringComparer.OrdinalIgnoreCase)
-    { "sistema", "red", "nucleos", "procesos", "workshop", "guia", "configuracion" };
+    { "sistema", "red", "nucleos", "procesos", "optimizaciones", "workshop", "guia", "configuracion" };
+
+    /// <summary>
+    /// Componentes que se absorbieron en el hub de Optimizaciones: ya no son
+    /// pestañas del navbar ni cards del Workshop, se abren como cards DENTRO del
+    /// hub (la app siempre tiene su copia del exe, así que funcionan aunque el
+    /// usuario no haya instalado nada).
+    /// </summary>
+    public static readonly HashSet<string> HubIntegratedIds = new(StringComparer.OrdinalIgnoreCase)
+    { "tcp", "debloat", "sistematweaks", "herramientas", "panelwindows", "reparacion", "actualizaciones", "limpieza", "arranque" };
 
     private readonly List<IWinForgeComponent> _items = new();
 
@@ -148,8 +157,13 @@ public sealed class ComponentRegistry
         return true;
     }
 
-    /// <summary>Componentes que van al navbar como ítems generados (no core).</summary>
-    public IEnumerable<IWinForgeComponent> NavbarComponents => _items.Where(c => !c.IsCore);
+    /// <summary>
+    /// Componentes que van al navbar como ítems generados (no core). Los que
+    /// se absorbieron en el hub de Optimizaciones quedan fuera: se abren desde
+    /// el hub, no desde el menú lateral.
+    /// </summary>
+    public IEnumerable<IWinForgeComponent> NavbarComponents
+        => _items.Where(c => !c.IsCore && !HubIntegratedIds.Contains(c.Id));
 
     // =====================================================================
     // Catálogo de fábrica (el orden acá es el orden del navbar)
@@ -172,15 +186,18 @@ public sealed class ComponentRegistry
         };
         yield return new BuiltinComponent
         {
-            Id = "tcp", Name = "TCP / Red avanzado", IconGlyph = "\uE8C8", Category = ComponentCategory.Latencia,
-            Description = "Ajustes del stack TCP: Nagle, congestion, ECN, RSS y Fast Open.",
-            PageType = typeof(TcpPage), Version = "0.1.1"
+            Id = "nucleos", Name = "Núcleos", IconGlyph = "\uE950", Category = ComponentCategory.Rendimiento,
+            Description = "Gestión de núcleos del procesador: temperatura, uso, frecuencia y afinidad.",
+            PageType = typeof(NucleosPage), IsCore = true
         };
+        // El hub de optimizaciones es CORE: es el punto de entrada único de los
+        // ajustes de Windows y de las herramientas del sistema (TCP, Debloat,
+        // Reparación…), que se abren como cards dentro de la misma pantalla.
         yield return new BuiltinComponent
         {
-            Id = "nucleos", Name = "Núcleos y Plan de energía", IconGlyph = "\uE950", Category = ComponentCategory.Rendimiento,
-            Description = "Gestión de núcleos del procesador y planes de energía del sistema.",
-            PageType = typeof(NucleosPage), IsCore = true
+            Id = "optimizaciones", Name = "Optimizaciones", IconGlyph = "\uE90F", Category = ComponentCategory.Rendimiento,
+            Description = "Ajustes de Windows, perfiles recomendados y herramientas del sistema en un solo lugar.",
+            PageType = typeof(OptimizacionesPage), IsCore = true
         };
         yield return new BuiltinComponent
         {
@@ -222,12 +239,9 @@ public sealed class ComponentRegistry
             Description = "Limpieza inteligente y automática de la caché en la memoria RAM.",
             PageType = typeof(MemoriaPage)
         };
-        yield return new BuiltinComponent
-        {
-            Id = "optimizaciones", Name = "Optimizaciones", IconGlyph = "\uE90F", Category = ComponentCategory.Rendimiento,
-            Description = "Optimizaciones para ganar rendimiento.",
-            PageType = typeof(OptimizacionesPage)
-        };
+        // El hub de optimizaciones es CORE: es el punto de entrada único de los
+        // ajustes de Windows y de las herramientas del sistema (TCP, Debloat,
+        // Reparación…), que se abren como cards dentro de la misma pantalla.
         yield return new BuiltinComponent
         {
             Id = "sensores", Name = "Monitor de sensores", IconGlyph = "\uE957", Category = ComponentCategory.Monitoreo,
@@ -274,41 +288,66 @@ public sealed class ComponentRegistry
             Description = "Clics automáticos configurables con hotkey global.",
             PageType = typeof(AutoclickerPage)
         };
+        // ===== Absorbidos por el hub de Optimizaciones =====
+        // Estas páginas ya no son pestañas del navbar ni cards del Workshop:
+        // se abren como cards DENTRO del hub (ver HubIntegratedIds). Siguen
+        // registradas acá para que el hub saque de acá su ícono y su nombre.
+        yield return new BuiltinComponent
+        {
+            Id = "tcp", Name = "TCP / Red avanzado", IconGlyph = "\uE968", Category = ComponentCategory.Latencia,
+            Description = "Ajustes del stack TCP: Nagle, congestión, ECN, RSS y Fast Open.",
+            PageType = typeof(TcpPage), Version = "0.1.1"
+        };
         yield return new BuiltinComponent
         {
             Id = "debloat", Name = "Debloat", IconGlyph = "\uE74D", Category = ComponentCategory.Sistema,
-            Description = "Quitá apps y servicios preinstalados de Windows que no usás.",
+            Description = "Quitá apps preinstaladas de Windows que no usás y limpiá las que conservás.",
+            PageType = typeof(DebloatPage)
+        };
+        // Ajustes del sistema: los tweaks que Debloat traía al final (telemetría,
+        // servicios, hibernación, IPv6…) no son desinstalación de apps, así que
+        // tienen su propia card en el hub. Misma página, en su modo de solo ajustes.
+        yield return new BuiltinComponent
+        {
+            Id = "sistematweaks", Name = "Ajustes del sistema", IconGlyph = "\uE713", Category = ComponentCategory.Sistema,
+            Description = "Telemetría, servicios, energía y otras optimizaciones de Windows que no son aplicaciones.",
             PageType = typeof(DebloatPage)
         };
         yield return new BuiltinComponent
         {
-            Id = "herramientas", Name = "Herramientas y funciones", IconGlyph = "\uE713", Category = ComponentCategory.Sistema,
+            Id = "herramientas", Name = "Herramientas y funciones", IconGlyph = "\uE90F", Category = ComponentCategory.Sistema,
             Description = "Funciones opcionales de Windows y utilidades de reparación de un solo uso.",
             PageType = typeof(HerramientasPage)
         };
         yield return new BuiltinComponent
         {
-            Id = "panelwindows", Name = "Panel de Windows", IconGlyph = "\uE8FB", Category = ComponentCategory.Sistema,
+            Id = "panelwindows", Name = "Panel de Windows", IconGlyph = "\uE71D", Category = ComponentCategory.Sistema,
             Description = "Accesos directos a paneles y configuraciones ocultas de Windows.",
             PageType = typeof(PanelWindowsPage)
         };
         yield return new BuiltinComponent
         {
-            Id = "reparacion", Name = "Reparación", IconGlyph = "\uE72C", Category = ComponentCategory.Sistema,
+            Id = "reparacion", Name = "Reparación", IconGlyph = "\uE777", Category = ComponentCategory.Sistema,
             Description = "SFC, DISM y reparaciones del sistema en un solo lugar.",
             PageType = typeof(ReparacionPage)
         };
         yield return new BuiltinComponent
         {
-            Id = "actualizaciones", Name = "Windows Update", IconGlyph = "\uE896", Category = ComponentCategory.Sistema,
+            Id = "actualizaciones", Name = "Windows Update", IconGlyph = "\uE72C", Category = ComponentCategory.Sistema,
             Description = "Gestión de las actualizaciones de Windows y del sistema de la app.",
             PageType = typeof(ActualizacionesPage)
         };
         yield return new BuiltinComponent
         {
-            Id = "limpieza", Name = "Limpieza del dispositivo", IconGlyph = "\uE74D", Category = ComponentCategory.Sistema,
-            Description = "Liberá espacio en el disco (caché, archivos temporales, etc.): chequeo del sistema, buscador de archivos duplicados y administración de aplicaciones al iniciar el sistema.",
+            Id = "limpieza", Name = "Limpieza del dispositivo", IconGlyph = "\uEA99", Category = ComponentCategory.Sistema,
+            Description = "Liberá espacio en el disco (caché, archivos temporales, etc.): chequeo del sistema y buscador de archivos duplicados.",
             PageType = typeof(LimpiezaPage)
+        };
+        yield return new BuiltinComponent
+        {
+            Id = "arranque", Name = "Administración de inicio", IconGlyph = "\uE823", Category = ComponentCategory.Sistema,
+            Description = "Aplicaciones que arrancan con Windows: activalas o desactivalas sin borrarlas.",
+            PageType = typeof(AdministracionInicioPage)
         };
     }
 }

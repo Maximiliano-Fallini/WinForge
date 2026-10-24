@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,13 +87,31 @@ public class MemoryService : IMemoryService
     private static readonly TimeSpan StatsCacheDuration = TimeSpan.FromSeconds(1);
 
     // Constantes para NtSetSystemInformation
+    // SYSTEM_MEMORY_LIST_COMMAND (ntdll): 0/1 capturar bits de acceso, 2 vaciar working
+    // sets del sistema, 3 volcar la lista de páginas modificadas, 4 purgar la lista
+    // standby completa y 5 solo la de baja prioridad.
     private const int SystemMemoryListInformation = 0x50;
+    private const int MemoryFlushModifiedList = 3;
     private const int MemoryPurgeStandbyList = 4;
     private const int MemoryPurgeLowPriorityStandbyList = 5;
 
     // Privilegio SeProfileSingleProcessPrivilege (necesario para purgar lista standby)
     private const int SeProfileSingleProcessPrivilege = 13;
     private bool _privilegeEnabled = false;
+
+    // Accesos para vaciar el working set de otros procesos y recortar la caché de
+    // archivos del sistema (lo que hacen los liberadores de memoria "de verdad").
+    private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    private const uint PROCESS_SET_QUOTA = 0x0100;
+    private const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
+    private const uint TOKEN_QUERY = 0x0008;
+    private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+
+    // Un working set más chico que esto no justifica la llamada (procesos livianos).
+    private const long MinWorkingSetTrimBytes = 16L * 1024 * 1024;
+
+    private PerformanceCounter? _fileCacheCounter;
+    private bool _fileCacheCounterInitialized;
 
     // Constantes para NtSetTimerResolution
     private const int TIMER_RESOLUTION_MINIMUM = 5000; // 0.5ms en 100ns units
@@ -109,6 +128,56 @@ public class MemoryService : IMemoryService
     {
         _loggingService = loggingService;
         EnablePrivilege();
+        // La secuencia completa (igualar a los liberadores de memoria) necesita además
+        // cuota para recortar la caché de archivos y depurar para tocar procesos ajenos.
+        EnablePrivilegeByName("SeIncreaseQuotaPrivilege");
+        EnablePrivilegeByName("SeDebugPrivilege");
+    }
+
+    /// <summary>
+    /// Habilita un privilegio del token propio por nombre (mucho más legible y estable
+    /// que el índice numérico de RtlAdjustPrivilege, que cambia entre versiones).
+    /// </summary>
+    private void EnablePrivilegeByName(string name)
+    {
+        IntPtr token = IntPtr.Zero;
+        try
+        {
+            if (!OpenProcessToken(Process.GetCurrentProcess().Handle, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out token))
+            {
+                _loggingService.LogWarning($"No se pudo abrir el token propio para {name} (código {Marshal.GetLastWin32Error()})");
+                return;
+            }
+            if (!LookupPrivilegeValue(null, name, out var luid))
+            {
+                _loggingService.LogWarning($"No se pudo resolver el privilegio {name} (código {Marshal.GetLastWin32Error()})");
+                return;
+            }
+
+            var state = new TOKEN_PRIVILEGES
+            {
+                PrivilegeCount = 1,
+                Privileges = new LUID_AND_ATTRIBUTES { Luid = luid, Attributes = SE_PRIVILEGE_ENABLED }
+            };
+            if (!AdjustTokenPrivileges(token, false, ref state, 0, IntPtr.Zero, IntPtr.Zero))
+            {
+                _loggingService.LogWarning($"No se pudo habilitar {name} (código {Marshal.GetLastWin32Error()})");
+                return;
+            }
+            // AdjustTokenPrivileges puede devolver true con ERROR_NOT_ALL_ASSIGNED: el
+            // token no tiene el privilegio (usuario sin admin). Se registra y se sigue.
+            int last = Marshal.GetLastWin32Error();
+            if (last == 1300)
+                _loggingService.LogWarning($"El token no tiene el privilegio {name}; esa parte de la limpieza se omite");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error habilitando {name}: {ex.Message}");
+        }
+        finally
+        {
+            if (token != IntPtr.Zero) CloseHandle(token);
+        }
     }
 
     private void EnablePrivilege()
@@ -197,6 +266,50 @@ public class MemoryService : IMemoryService
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LUID
+    {
+        public uint LowPart;
+        public int HighPart;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LUID_AND_ATTRIBUTES
+    {
+        public LUID Luid;
+        public uint Attributes;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_PRIVILEGES
+    {
+        public uint PrivilegeCount;
+        public LUID_AND_ATTRIBUTES Privileges;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LookupPrivilegeValue(string? lpSystemName, string lpName, out LUID lpLuid);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AdjustTokenPrivileges(
+        IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState,
+        uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetSystemFileCacheSize(UIntPtr MinimumFileCacheSize, UIntPtr MaximumFileCacheSize, uint Flags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetProcessWorkingSetSize(IntPtr hProcess, IntPtr dwMinimumWorkingSetSize, IntPtr dwMaximumWorkingSetSize);
 
     // ====== Implementación ======
 
@@ -326,25 +439,36 @@ public class MemoryService : IMemoryService
         }
     }
 
+    /// <summary>
+    /// Liberación de memoria completa, con la misma secuencia que usan los liberadores
+    /// del sistema (y más):
+    /// 1. Vacía el working set de los procesos abiertos (navegadores incluidos): la RAM
+    ///    "en uso" de cada app pasa a la lista standby o al archivo de paginación.
+    /// 2. Recorta la caché de archivos del sistema (SetSystemFileCacheSize) y restaura
+    ///    su límite por defecto enseguida.
+    /// 3. Vuelca la lista de páginas modificadas a disco (MemoryFlushModifiedList), que
+    ///    es el paso que le faltaba a la purga para poder reusar esos marcos.
+    /// 4. Purga la lista standby completa (y de baja prioridad como respaldo).
+    ///
+    /// Es un proceso agresivo a propósito: durante unos segundos las apps vuelven a
+    /// leer del disco y la caché está vacía, así que el equipo puede sentirse lento un
+    /// instante. Lo reportado es la RAM realmente liberada (libre antes vs. después).
+    /// </summary>
     public async Task<CommandResult> CleanStandbyListAsync()
     {
         return await Task.Run(() =>
         {
             try
             {
-                double beforeMB = GetStandbyListSizeMB();
+                var before = GetMemoryStats();
+                double standbyBeforeMB = before.StandbyMB;
+                double freeBeforeMB = before.FreeMB;
 
-                // Purgar lista standby: comando 4 = MemoryPurgeStandbyList
-                uint command = MemoryPurgeStandbyList;
-                int status = NtSetSystemInformation(SystemMemoryListInformation, ref command, sizeof(uint));
+                double workingSetsMB = TrimProcessWorkingSets(out int trimmedProcesses);
+                double fileCacheMB = TrimSystemFileCache();
+                FlushModifiedList();
 
-                if (status != 0)
-                {
-                    // Intentar con lista de baja prioridad: comando 5 = MemoryPurgeLowPriorityStandbyList
-                    command = MemoryPurgeLowPriorityStandbyList;
-                    status = NtSetSystemInformation(SystemMemoryListInformation, ref command, sizeof(uint));
-                }
-
+                int status = PurgeStandbyList();
                 if (status != 0)
                 {
                     _loggingService.LogError($"NtSetSystemInformation falló con código {status}");
@@ -352,17 +476,22 @@ public class MemoryService : IMemoryService
                         "No se pudo limpiar la lista standby (código {0}). Asegúrese de ejecutar como administrador.", new object?[] { status });
                 }
 
-                // Esperar un momento para que el sistema actualice las estadísticas
-                Thread.Sleep(500);
+                // Esperar a que el sistema actualice las estadísticas tras la purga.
+                Thread.Sleep(600);
                 InvalidateStatsCache();
-                double afterMB = GetStandbyListSizeMB();
-                double freedMB = Math.Max(0, beforeMB - afterMB);
 
-                _loggingService.LogInfo($"Lista standby limpiada: {freedMB:F1} MB liberados");
+                var after = GetMemoryStats();
+                double freedMB = Math.Max(0, after.FreeMB - freeBeforeMB);
+                double standbyMB = Math.Max(0, standbyBeforeMB - after.StandbyMB);
+
+                _loggingService.LogInfo(
+                    $"Memoria liberada: {freedMB:F1} MB | standby {standbyMB:F1} MB | working sets {workingSetsMB:F1} MB en {trimmedProcesses} procesos | caché de archivos {fileCacheMB:F1} MB");
                 StandbyCleanupCompleted?.Invoke(this, new StandbyCleanupEventArgs(freedMB, false));
 
-                return new CommandResult(true, $"Lista standby limpiada correctamente. {freedMB:F1} MB liberados.",
-                    "Lista standby limpiada correctamente. {0} MB liberados.", new object?[] { $"{freedMB:F1}" });
+                return new CommandResult(true,
+                    $"Memoria liberada: {freedMB:F1} MB en total (caché {standbyMB:F1} MB, {trimmedProcesses} apps optimizadas).",
+                    "Memoria liberada: {0} MB en total (caché {1} MB, {2} apps optimizadas).",
+                    new object?[] { $"{freedMB:F1}", $"{standbyMB:F1}", trimmedProcesses });
             }
             catch (Exception ex)
             {
@@ -370,6 +499,140 @@ public class MemoryService : IMemoryService
                 return new CommandResult(false, ex.Message);
             }
         });
+    }
+
+    /// <summary>Purga la lista standby completa; si el permiso es parcial, la de baja prioridad.</summary>
+    private static int PurgeStandbyList()
+    {
+        uint command = MemoryPurgeStandbyList;
+        int status = NtSetSystemInformation(SystemMemoryListInformation, ref command, sizeof(uint));
+        if (status != 0)
+        {
+            command = MemoryPurgeLowPriorityStandbyList;
+            status = NtSetSystemInformation(SystemMemoryListInformation, ref command, sizeof(uint));
+        }
+        return status;
+    }
+
+    /// <summary>
+    /// Fuerza el volcado de la lista de páginas modificadas (sucias) a disco. Sin este
+    /// paso la purga de standby no puede reusar esas páginas y libera bastante menos.
+    /// </summary>
+    private void FlushModifiedList()
+    {
+        try
+        {
+            uint command = MemoryFlushModifiedList;
+            int status = NtSetSystemInformation(SystemMemoryListInformation, ref command, sizeof(uint));
+            if (status != 0)
+                _loggingService.LogWarning($"No se pudo volcar la lista de páginas modificadas (código {status})");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error volcando la lista de páginas modificadas: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Vacía el working set de todos los procesos accesibles (el equivalente a "Empty
+    /// Working Sets" de RAMMap, pero por proceso para poder medir cuánto se liberó y
+    /// reportar cuántas apps se optimizaron). Devuelve la RAM que salió de los working
+    /// sets, en MB.
+    /// </summary>
+    private static double TrimProcessWorkingSets(out int trimmed)
+    {
+        double freedMB = 0;
+        trimmed = 0;
+        int ownPid = Environment.ProcessId;
+        var minusOne = new IntPtr(-1);
+
+        Process[] processes;
+        try { processes = Process.GetProcesses(); }
+        catch { return 0; }
+
+        foreach (var process in processes)
+        {
+            IntPtr handle = IntPtr.Zero;
+            try
+            {
+                // Id 0 (Idle) y 4 (System) no son procesos normales.
+                if (process.Id <= 4 || process.Id == ownPid) continue;
+
+                long beforeBytes;
+                try { beforeBytes = process.WorkingSet64; }
+                catch { continue; }
+                if (beforeBytes < MinWorkingSetTrimBytes) continue;
+
+                handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_SET_QUOTA, false, process.Id);
+                if (handle == IntPtr.Zero) continue;
+                if (!SetProcessWorkingSetSize(handle, minusOne, minusOne)) continue;
+
+                trimmed++;
+                long afterBytes = 0;
+                try { process.Refresh(); afterBytes = process.WorkingSet64; } catch { }
+                if (afterBytes > 0 && beforeBytes > afterBytes)
+                    freedMB += (beforeBytes - afterBytes) / (1024.0 * 1024.0);
+            }
+            catch { /* proceso protegido o terminado a mitad: se omite */ }
+            finally
+            {
+                if (handle != IntPtr.Zero) CloseHandle(handle);
+                try { process.Dispose(); } catch { }
+            }
+        }
+        return freedMB;
+    }
+
+    /// <summary>
+    /// Recorta la caché de archivos del sistema a cero y restaura el límite por defecto
+    /// (SIZE_T -1). Las páginas liberadas quedan en standby, que se purga a continuación.
+    /// Devuelve lo recortado según el contador del sistema, en MB.
+    /// </summary>
+    private double TrimSystemFileCache()
+    {
+        try
+        {
+            double beforeMB = GetFileCacheSizeMB();
+            if (!SetSystemFileCacheSize(UIntPtr.Zero, UIntPtr.Zero, 0))
+            {
+                _loggingService.LogWarning($"No se pudo recortar la caché de archivos del sistema (código {Marshal.GetLastWin32Error()})");
+                return 0;
+            }
+
+            var unlimited = new UIntPtr(UIntPtr.Size == 8 ? ulong.MaxValue : uint.MaxValue);
+            if (!SetSystemFileCacheSize(unlimited, unlimited, 0))
+                _loggingService.LogWarning($"No se pudo restaurar el límite de la caché de archivos (código {Marshal.GetLastWin32Error()})");
+
+            Thread.Sleep(100);
+            return Math.Max(0, beforeMB - GetFileCacheSizeMB());
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Error recortando la caché de archivos: {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>Caché de archivos residente en RAM (contador "Memory\\Cache Bytes").</summary>
+    private double GetFileCacheSizeMB()
+    {
+        try
+        {
+            _fileCacheCounter ??= new PerformanceCounter("Memory", "Cache Bytes");
+            double bytes = _fileCacheCounter.NextValue();
+            if (!_fileCacheCounterInitialized)
+            {
+                Thread.Sleep(60);
+                bytes = _fileCacheCounter.NextValue();
+                _fileCacheCounterInitialized = true;
+            }
+            return bytes / (1024.0 * 1024.0);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"No se pudo leer la caché de archivos: {ex.Message}");
+            return 0;
+        }
     }
 
     private void InvalidateStatsCache()
@@ -797,8 +1060,10 @@ public class MemoryService : IMemoryService
             {
                 double beforeMB = standbyMB;
 
-                uint command = MemoryPurgeStandbyList;
-                int status = NtSetSystemInformation(SystemMemoryListInformation, ref command, sizeof(uint));
+                // La limpieza automática se mantiene liviana: solo purga standby. Vaciar
+                // working sets o la caché de archivos en cada tick castigaría el equipo
+                // de forma permanente; eso queda para "Liberar memoria ahora".
+                int status = PurgeStandbyList();
 
                 if (status == 0)
                 {

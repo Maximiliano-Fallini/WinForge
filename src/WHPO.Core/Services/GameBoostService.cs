@@ -1028,7 +1028,13 @@ public sealed class GameBoostService : IGameBoostService
         int count = 0;
         try
         {
-            foreach (var exe in _processService.RunningGameExes)
+            // Los juegos con launcher de por medio no aparecen en RunningGameExes
+            // con el exe de la biblioteca: el proceso real tiene otro nombre. Se
+            // cuentan las reglas que ProcessService tiene enganchadas en vivo.
+            var exes = new HashSet<string>(_processService.RunningRuleExes, StringComparer.OrdinalIgnoreCase);
+            foreach (var exe in _processService.RunningGameExes) exes.Add(exe);
+
+            foreach (var exe in exes)
             {
                 var rule = _processService.GetEffectiveRule(exe);
                 if (rule != null && RuleHasContent(rule))
@@ -1544,7 +1550,11 @@ public sealed class GameBoostService : IGameBoostService
         {
             if (!IsEnabled) return;
 
-            if (_processService.RunningGameExes.Count == 0)
+            // HasRunningGameActivity incluye los procesos que matchean una regla,
+            // aunque el juego real no se llame como el exe de la biblioteca (cadena
+            // launcher→juego). Antes, con un launcher de por medio, el boost no se
+            // activaba porque RunningGameExes quedaba vacío.
+            if (!_processService.HasRunningGameActivity)
             {
                 _logging.LogDebug("GameBoost: no quedan juegos corriendo — restaurando.");
                 _ = RestoreAsync();

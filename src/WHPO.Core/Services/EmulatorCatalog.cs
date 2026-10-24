@@ -67,7 +67,7 @@ public static class EmulatorCatalog
         // PCSX2 (PS2): la rama Qt actual usa pcsx2-qt.exe; se mantienen
         // variantes históricas para instalaciones antiguas.
         new EmulatorDefinition("PCSX2",
-            new[] { "pcsx2-qt.exe", "pcsx2-qtx.exe", "pcsx2-qtx64-avx2.exe", "pcsx2.exe", "pcsx2-avx2.exe" },
+            new[] { "pcsx2-qt.exe", "pcsx2.exe", "pcsx2-avx2.exe" },
             new[] { (@"SOFTWARE\PCSX2", "Install_Dir"), (@"SOFTWARE\WOW6432Node\PCSX2", "Install_Dir") },
             new[] { "PCSX2" }),
 
@@ -107,19 +107,48 @@ public static class EmulatorCatalog
             Array.Empty<(string, string)>(),
             new[] { "yuzu" }),
 
-        // Sudachi / Suyu (forks de Yuzu).
+        // Sudachi / Suyu (forks de Yuzu). Cada uno trae su binario -cmd.
         new EmulatorDefinition("Sudachi",
-            new[] { "sudachi.exe" },
+            new[] { "sudachi.exe", "sudachi-cmd.exe" },
             Array.Empty<(string, string)>(),
             new[] { "sudachi" }),
         new EmulatorDefinition("Suyu",
-            new[] { "suyu.exe" },
+            new[] { "suyu.exe", "suyu-cmd.exe" },
             Array.Empty<(string, string)>(),
             new[] { "suyu" }),
 
-        // Lime3DS (3DS, sucesor de Citra). Las variantes de Citra clásico caen acá.
+        // Sucesores activos de Yuzu (2024-2026): Eden, Citron y Torzu.
+        // El juego corre dentro del exe del emulador (un solo proceso),
+        // así que la regla por nombre + carpeta alcanza sin alias.
+        new EmulatorDefinition("Eden",
+            new[] { "eden.exe" },
+            Array.Empty<(string, string)>(),
+            new[] { "Eden", "eden" }),
+        new EmulatorDefinition("Citron",
+            new[] { "citron.exe" },
+            Array.Empty<(string, string)>(),
+            new[] { "Citron", "citron" }),
+        new EmulatorDefinition("Torzu",
+            new[] { "torzu.exe", "torzu-cmd.exe", "yuzu.exe" },
+            Array.Empty<(string, string)>(),
+            new[] { "Torzu", "torzu" }),
+
+        // shadPS4 (PS4): build Qt documentada como shadPS4.exe.
+        new EmulatorDefinition("shadPS4",
+            new[] { "shadPS4.exe" },
+            Array.Empty<(string, string)>(),
+            new[] { "shadPS4", "shadps4" }),
+
+        // DOSBox (DOS): core, fork X y Staging. CLI de un solo proceso.
+        new EmulatorDefinition("DOSBox",
+            new[] { "dosbox.exe", "dosbox-x.exe", "dosbox_staging.exe" },
+            Array.Empty<(string, string)>(),
+            new[] { "DOSBox", "DOSBox-X", "DOSBox Staging" }),
+
+        // Lime3DS (3DS, sucesor de Citra). Build real documentada: lime-qt.exe;
+        // se conserva lime3ds.exe por compatibilidad y las variantes de Citra clásico.
         new EmulatorDefinition("Lime3DS",
-            new[] { "lime3ds.exe", "citra-qt.exe", "citra.exe" },
+            new[] { "lime-qt.exe", "lime3ds.exe", "lime3ds-qt.exe", "citra-qt.exe", "citra.exe" },
             Array.Empty<(string, string)>(),
             new[] { "Lime3DS", "Citra" }),
 
@@ -142,9 +171,9 @@ public static class EmulatorCatalog
             Array.Empty<(string, string)>(),
             new[] { "DuckStation", "duckstation" }),
 
-        // Xenia (Xbox 360): canary es la rama más distribuida.
+        // Xenia (Xbox 360): canary es la rama más distribuida (guion y guion bajo).
         new EmulatorDefinition("Xenia",
-            new[] { "xenia.exe", "xenia_canary.exe", "xenia_master.exe" },
+            new[] { "xenia.exe", "xenia_canary.exe", "xenia-canary.exe", "xenia_master.exe" },
             Array.Empty<(string, string)>(),
             new[] { "Xenia", "xenia" }),
 
@@ -208,9 +237,9 @@ public static class EmulatorCatalog
             Array.Empty<(string, string)>(),
             new[] { "Demul", "demul" }),
 
-        // Flycast (Dreamcast/NAOMI).
+        // Flycast (Dreamcast/NAOMI). Dojo es la variante netplay.
         new EmulatorDefinition("Flycast",
-            new[] { "flycast.exe" },
+            new[] { "flycast.exe", "flycast-dojo.exe" },
             Array.Empty<(string, string)>(),
             new[] { "flycast" }),
 
@@ -287,13 +316,15 @@ public static class EmulatorCatalog
             SkipAutoDetect: true,
             ProcessNames: new[] { "BlueStacksServices.exe", "BlueStacksHelper.exe" }),
 
-        // LDPlayer: ldnative.exe (>=9) o dnplayer.exe (legacy).
+        // LDPlayer: la UI es dnplayer.exe (player); el juego corre en la VM
+        // Ld9BoxHeadless.exe con su servicio Ld9BoxSVC.exe. ldnative.exe se
+        // conserva por compatibilidad con instalaciones que lo exponen.
         new EmulatorDefinition("LDPlayer",
-            new[] { "ldnative.exe", "dnplayer.exe" },
+            new[] { "dnplayer.exe", "ldnative.exe" },
             new[] { (@"SOFTWARE\DnPlayer", "InstallDir"), (@"SOFTWARE\WOW6432Node\DnPlayer", "InstallDir") },
-            new[] { "LDPlayer", "LDPlayer9" },
+            new[] { "LDPlayer", "LDPlayer9", "LDPlayer\\LDPlayer9" },
             IsMobile: true,
-            ProcessNames: new[] { "ld9boxheadless.exe", "LdVBoxHeadless.exe" }),
+            ProcessNames: new[] { "Ld9BoxHeadless.exe", "Ld9BoxSVC.exe", "LdVBoxHeadless.exe" }),
 
         // Nox: instala en "Bignox" o "Nox".
         // Nox: el juego no corre en Nox.exe (la UI) sino en NoxVMHandle.exe, la VM
@@ -304,7 +335,7 @@ public static class EmulatorCatalog
             new[] { (@"SOFTWARE\BigNox", "InstallPath"), (@"SOFTWARE\WOW6432Node\BigNox", "InstallPath") },
             new[] { "Bignox", "Nox", "Nox\\bin" },
             IsMobile: true,
-            ProcessNames: new[] { "NoxVMHandle.exe" }),
+            ProcessNames: new[] { "NoxVMHandle.exe", "NOXVMHandle.exe", "NoxVMSVC.exe" }),
 
         // MEmu: registro MemuTop.
         new EmulatorDefinition("MEmu",
@@ -312,7 +343,7 @@ public static class EmulatorCatalog
             new[] { (@"SOFTWARE\MemuTop", "InstallPath"), (@"SOFTWARE\WOW6432Node\MemuTop", "InstallPath") },
             new[] { "Microvirt", "Microvirt\\MEmu", "MEmu" },
             IsMobile: true,
-            ProcessNames: new[] { "MEmuHeadless.exe" }),
+            ProcessNames: new[] { "MEmuHeadless.exe", "MEmuSVC.exe" }),
 
         // Genymotion (uso personal/eval).
         new EmulatorDefinition("Genymotion",
@@ -338,22 +369,22 @@ public static class EmulatorCatalog
         // El juego no corre en MuMuPlayer.exe sino en la VM del emulador, así que se
         // declaran esos procesos como alias para el enganche.
         new EmulatorDefinition("MuMu Player",
-            new[] { "MuMuPlayer.exe", "MuMuPlayerGlobal.exe", "NemuPlayer.exe" },
+            new[] { "NemuPlayer.exe", "MuMuPlayer.exe", "MuMuPlayerGlobal.exe" },
             new[] { (@"SOFTWARE\Netease\MuMuPlayer", "InstallDir"), (@"SOFTWARE\WOW6432Node\Netease\MuMuPlayer", "InstallDir") },
             new[] { "Netease\\MuMuPlayer-12.0", "Netease\\MuMuPlayerGlobal-12.0", "Netease\\MuMuPlayer6", "MuMuPlayer-12.0", "MuMuPlayerGlobal-12.0", "MuMuPlayer6", "Nemu" },
             IsMobile: true,
-            ProcessNames: new[] { "MuMuVMMHeadless.exe", "MuMuVMM.exe" }),
+            ProcessNames: new[] { "NemuHeadless.exe", "MuMuVMMSVC.exe", "MuMuVMMHeadless.exe", "MuMuVMM.exe" }),
 
         // Tencent GameLoop (ex Tencent Gaming Buddy): el launcher vive en
         // C:\Program Files\Tencent\GameLoop\Application\GameLoopLauncher.exe y el juego
         // corre bajo el motor Android de Tencent (aow_exe.exe / AndroidEmulatorEx.exe),
         // que es exactamente el caso donde el proceso no se llama como el exe.
         new EmulatorDefinition("GameLoop",
-            new[] { "GameLoopLauncher.exe", "AndroidEmulatorEx.exe" },
+            new[] { "AppMarket.exe", "AndroidEmulator.exe", "GameLoopLauncher.exe", "AndroidEmulatorEx.exe" },
             new[] { (@"SOFTWARE\Tencent\GameLoop", "InstallPath"), (@"SOFTWARE\WOW6432Node\Tencent\GameLoop", "InstallPath") },
-            new[] { "Tencent\\GameLoop\\Application", "Tencent\\GameLoop", "Tencent\\AndroidEmulator", "GameLoop" },
+            new[] { "TxGameAssistant", "TxGameAssistant\\AppMarket", "TxGameAssistant\\ui", "Tencent\\GameLoop\\Application", "Tencent\\GameLoop", "Tencent\\AndroidEmulator", "GameLoop" },
             IsMobile: true,
-            ProcessNames: new[] { "aow_exe.exe", "AndroidEmulatorEn.exe" }),
+            ProcessNames: new[] { "aow_exe.exe", "AndroidEmulatorEx.exe", "AndroidEmulatorEn.exe" }),
 
         // Google Play Games para PC: app oficial de Google en
         // C:\Program Files\Google\Play Games (con subcarpetas versionadas adentro); el
@@ -361,9 +392,9 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Google Play Games",
             new[] { "GooglePlayGames.exe" },
             new[] { (@"SOFTWARE\Google\Play Games", "InstallPath") },
-            new[] { "Google\\Play Games", "Google\\Play Games\\current" },
+            new[] { "Google\\Play Games\\current\\emulator", "Google\\Play Games\\current", "Google\\Play Games" },
             IsMobile: true,
-            ProcessNames: new[] { "crosvm.exe" }),
+            ProcessNames: new[] { "crosvm.exe", "GooglePlayGamesService.exe" }),
 
         // Waydroid no se detecta: solo corre en Linux/WSL, no en Windows nativo.
     };

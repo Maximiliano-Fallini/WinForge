@@ -144,4 +144,12 @@ public interface ITurboCeilingService
     /// uno inventado).
     /// </summary>
     Task<CommandResult> RestoreDefaultsAsync();
+
+    /// <summary>
+    /// Aplica el perfil recomendado para jugar: el techo de frecuencia al máximo del plan
+    /// (100 %) y el modo boost «Agresivo» si el equipo lo expone (si no, «Activado»). No
+    /// toca los ajustes avanzados: no hay un valor recomendado que se pueda afirmar sin
+    /// medir el equipo. Valida y verifica igual que <see cref="ApplyAsync"/>.
+    /// </summary>
+    Task<CommandResult> ApplyRecommendedAsync();
 }

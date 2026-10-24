@@ -11,12 +11,39 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
+                <!-- Estado de la regla: SOLO modo 2D (en 3D el dock lleva el estado en su
+                     propio texto y la torre pasaría por detrás del vidrio). En su fila la
+                     grilla se rebana en su borde superior: corte limpio, sin fantasmas. -->
+                <RowDefinition Height="Auto"/>
+                <!-- Dock de la consola (solo en modo 3D). -->
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
 <!-- ====== CABECERA ====== -->
-<!-- Sin card de fondo ni título: botones + contador de instalados arriba,
-                 buscador centrado debajo, feedback (StatusText) al final. -->
-            <StackPanel Margin="24,20,24,0" Spacing="10">
+<!-- Sin título: botones + contador de instalados arriba, buscador centrado
+                 debajo, feedback (StatusText) al final.
+
+                 La cabecera va sobre una BANDA pegada a las paredes, igual que la del
+                 Workshop y la de Optimizaciones: mismo relleno que el panel del menú
+                 (NavigationViewDefaultPaneBackground), así que la franja de botones se
+                 lee como continuación del navbar y no como un bloque cortado sobre el
+                 fondo de la página. El {ThemeResource} es solo la BASE: WinUI lo cachea
+                 y no lo vuelve a resolver cuando el ajuste cambia la transparencia o el
+                 vidrio, así que el code-behind la repinta a mano con
+                 PanelAppearance.PaneBarFill (ver RepaintHeaderCard). El margen de antes
+                 (24,20,24,0) pasó a ser el Padding de la banda, para que el contenido
+                 quede en el mismo lugar. -->
+<!-- ZIndex 30: la banda pinta ENCIMA del scroll. Las cards con tilt/elevación
+                 (proyección 3D) pueden fugarse del recorte del viewport y, sin esto,
+                 flotaban SOBRE los botones/buscador en vez de rebanarse debajo. -->
+            <Border x:Name="HeaderCard"
+                    Grid.Row="0"
+                    Canvas.ZIndex="30"
+                    Margin="0"
+                    Padding="24,20,24,14"
+                    CornerRadius="0"
+                    Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+            <StackPanel x:Name="HeaderPanel" Spacing="10">
 <!-- Fila 1: botones centrados, contador de juegos instalados a la derecha. -->
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -119,7 +146,8 @@
                      abajo): el ToggleSwitch de WinUI es chico (barrita + círculo) y el texto
                      lo supera en área, así que los clics que caen en la etiqueta "no
                      agarraban" el switch. -->
-                <Border HorizontalAlignment="Center"
+                <Border x:Name="GameBoostCard"
+                        HorizontalAlignment="Center"
                         Background="{ThemeResource CardBackgroundBrush}"
                         BorderThickness="0"
                         CornerRadius="10"
@@ -131,7 +159,8 @@
                              ícono de control de la sección de juegos. Sin cuadro detrás y más
                              grande (28 en vez de 18): la caja con tinte de acento lo hacía
                              parecer un botón y le robaba tamaño al logo. -->
-                        <Image Source="/logos/WinForge.png"
+                        <Image x:Name="GameBoostIcon"
+                               Source="/logos/WinForge.png"
                                Width="28" Height="28"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center"/>
@@ -150,7 +179,7 @@
                                 Foreground="{ThemeResource MutedBrush}"
                                 CornerRadius="14"
                                 VerticalAlignment="Center">
-                            <FontIcon Glyph="&#xE946;" FontSize="12"/>
+                            <FontIcon x:Name="GameBoostInfoIcon" Glyph="&#xE946;" FontSize="12"/>
                         </Button>
 <!-- Configuración del optimizador (lista de procesos en segundo plano). -->
                         <Button x:Name="GameBoostSettingsButton"
@@ -163,18 +192,30 @@
                                 CornerRadius="6"
                                 VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                <FontIcon Glyph="&#xE713;" FontSize="12" VerticalAlignment="Center"/>
-                                <TextBlock Text="Configuración"
+                                <FontIcon x:Name="GameBoostSettingsIcon" Glyph="&#xE713;" FontSize="12" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="GameBoostSettingsText"
+                                           Text="Configuración"
                                            FontSize="12"
                                            VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
-                        <ToggleSwitch x:Name="GameBoostSwitch"
-                                      Toggled="GameBoostSwitch_Toggled"
-                                      OnContent="" OffContent=""
+                        <!-- Switch del Modo rendimiento: PERILLA ROTATORIA clonada del
+                             ModeSwitch de Carthage (el control del mock "LIBRARY / STORE" en
+                             qml/ModeSwitch.qml): disco con cara que gira −50°/+50°, marcas
+                             radiales, tick de acento y puntos detent, con OFF a la izquierda
+                             y ON a la derecha. ToggleButton "lookless" con template propio
+                             (PerformanceSwitchStyle en Controls/Toggles.xaml).
+                             Los eventos Checked/Unchecked replican al viejo Toggled. -->
+                        <ToggleButton x:Name="GameBoostSwitch"
+                                      Checked="GameBoostSwitch_Toggled"
+                                      Unchecked="GameBoostSwitch_Toggled"
+                                      Style="{StaticResource PerformanceSwitchStyle}"
                                       VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
+<!-- El estilo de las cards (2D / 3D) se elige en Configuración → Apariencia:
+     acá ya no hay switch. -->
+
 <!-- Feedback temporal (errores, lanzamientos): debajo de todo. -->
                 <TextBlock x:Name="StatusText"
                            Text=""
@@ -182,11 +223,21 @@
                            Visibility="Collapsed"
                            TextWrapping="Wrap"/>
             </StackPanel>
+            </Border>
 
 <!-- ====== GRILLA DE JUEGOS (3 o 5 columnas según la vista; favoritos separados con barra) ====== -->
+<!-- ZIndex 10: la grilla pasa POR ENCIMA del dock (ZIndex 0) y POR DEBAJO de la
+                 banda (30) y la barra de regla (20). El cartucho montado asoma hasta
+                 ~125 DIP sobre la consola de 66: sin esto tapaba la barra de regla y
+                 la última fila; ahora esas cards lo rebanan limpio al chocar. -->
+<!-- Viewport PEGADO a la banda (arriba) y al dock/regla (abajo): las cards se
+                 rebanan justo al chocar con esos bordes, no flotando en el fondo.
+                 El aire en reposo vive DENTRO (LibraryContentGrid), así que quieto
+                 se ve igual que antes y solo cambia la línea de corte al scrollear. -->
             <ScrollViewer x:Name="LibraryScroll"
                           Grid.Row="1"
-                          Margin="24,16,24,24"
+                          Canvas.ZIndex="10"
+                          Margin="24,0,24,0"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollMode="Disabled"
                           SizeChanged="LibraryScroll_SizeChanged">
@@ -194,11 +245,12 @@
                      ENCIMA del contenido), así que se reserva SIEMPRE el espacio (14 px)
                      para que nunca tape las cards y las cards no cambien de ancho al
                      aparecer/desaparecer el scrollbar. -->
-                <Grid Margin="0,8,0,8">
-<!-- Margen vertical interno: la elevación al hover de las cards (-6 px) y
-                         su sombra no deben quedar cortadas por el borde del viewport del
-                         ScrollViewer (las cards de favoritos, que van primeras, se
-                         recortaban arriba al elevarse). -->
+                <Grid x:Name="LibraryContentGrid" Margin="0,24,0,8">
+<!-- Margen vertical interno (aire en reposo): arriba 24 para que la primera fila
+                         quede donde estaba (16 del scroll + 8 de acá) y la elevación al hover
+                         (-6 px) y su sombra no queden cortadas por el borde del viewport;
+                         abajo lo ajusta el code-behind por modo (8 en 3D, 32 en 2D) para
+                         conservar el aire que había con el margen del scroll. -->
 <!-- Receptor de la sombra de las cards (ThemeShadow exige un
                          receptor que NO sea ancestro del caster): hermano detrás. -->
                     <Border x:Name="CardShadowReceiver"/>
@@ -227,7 +279,60 @@
                     </StackPanel>
                 </Grid>
             </ScrollViewer>
+
+<!-- ====== ESTADO DE LA REGLA DEL JUEGO (solo 2D; en 3D lo dice el dock) ====== -->
+<!-- En su propia fila: la grilla se rebana en su borde superior y nada pasa por
+     detrás del vidrio (ni torre ni cards), así el texto nunca se mezcla con arte.
+     ZIndex 20: las cards con tilt que se fuguen del viewport se rebanan debajo. -->
+<!-- Display-only (LED + texto, sin botones): no participa en hit-test para que los
+                 clics pasen a la torre del cartucho montado que asoma detrás. -->
+            <Border x:Name="GameRuleStatusBar"
+                    Grid.Row="2"
+                    Canvas.ZIndex="20"
+                    IsHitTestVisible="False"
+                    Margin="24,0,24,10"
+                    Padding="12,7"
+                    CornerRadius="8"
+                    Background="{ThemeResource CardBackgroundBrush}"
+                    BorderBrush="{ThemeResource SensorGridLineBrush}"
+                    BorderThickness="1"
+                    Visibility="Collapsed">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <ContentControl x:Name="GameRuleStatusLedHost"
+                                    VerticalAlignment="Center"
+                                    IsTabStop="False"/>
+                    <TextBlock x:Name="GameRuleStatusText"
+                               Grid.Column="1"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+<!-- ====== CONSOLA / DOCK INFERIOR (estilo Carthage) ====== -->
+<!-- Base anclada al pie de la ventana cuando el modo 3D está activo:
+     recibe los cartuchos arrastrados para insertarlos y lanzar el juego, y muestra
+     los cartuchos en ejecución clavados en su ranura. -->
+<!-- ZIndex 0: el dock es la capa más baja (solo el drag flota encima, 60). Lo que
+                 asoma del cartucho montado se rebana detrás de la grilla (10), la
+                 barra de regla (20) y la banda (30) en vez de taparlas. -->
+            <Grid x:Name="CartridgeDockHost"
+                  Grid.Row="3"
+                  HorizontalAlignment="Stretch"
+                  VerticalAlignment="Bottom"
+                  Margin="0"
+                  Visibility="Collapsed"
+                  Canvas.ZIndex="0"/>
         </Grid>
+
+<!-- ====== CAPA DE ARRASTRE FLOTANTE (proxy del cartucho llevado con el mouse) ====== -->
+        <Canvas x:Name="CartridgeDragLayer"
+                IsHitTestVisible="False"
+                Canvas.ZIndex="60"/>
 
  <!-- ====== VISTA 2: CONFIGURACIÓN DEL OPTIMIZADOR ====== -->
  <!-- Estado alterno de la pestaña: reemplaza al ContentDialog (tanta información
@@ -239,48 +344,77 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
- <!-- Cabecera: volver (izquierda) + título/subtítulo + Guardar (derecha). -->
-            <Grid Margin="24,20,24,0" ColumnSpacing="16">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Spacing="6">
-                    <Button x:Name="BoostBackButton"
-                            Click="BoostBackButton_Click"
-                            Padding="10,6"
-                            CornerRadius="6"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            HorizontalAlignment="Left">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE72B;" FontSize="14"/>
-                            <TextBlock Text="Volver a la biblioteca" FontSize="12"/>
-                        </StackPanel>
-                    </Button>
-                    <TextBlock Text="WinForge Modo juego configuración"
-                               FontSize="20"
-                               FontWeight="SemiBold"
-                               TextWrapping="Wrap"
-                               MaxWidth="720"/>
-                    <TextBlock Text="Personalizá los procesos y servicios que se optimizan al iniciar un juego. Los cambios se aplican al guardar."
-                               FontSize="12"
-                               Foreground="{ThemeResource SecondaryTextBrush}"
-                               TextWrapping="Wrap"
-                               MaxWidth="720"
-                               HorizontalAlignment="Left"/>
-                </StackPanel>
-                <Button x:Name="BoostSaveButton"
-                        Grid.Column="1"
-                        Click="BoostSaveButton_Click"
-                        Content="Guardar"
+ <!-- Cabecera: volver arriba y, debajo, la card de presentación con el ícono,
+                 el título, la descripción y la acción principal. Antes el título y la
+                 descripción colgaban sueltos sobre el fondo de la página, con el mismo
+                 peso visual que cualquier otro texto; así el bloque se lee como la
+                 portada de la sección y Guardar queda junto al contexto que explica. -->
+            <StackPanel Margin="24,18,24,0" Spacing="10">
+                <Button x:Name="BoostBackButton"
+                        Click="BoostBackButton_Click"
+                        Padding="8,4"
                         CornerRadius="6"
-                        Padding="18,8"
-                        FontWeight="SemiBold"
-                        Background="{ThemeResource AccentBrush}"
-                        Foreground="{ThemeResource AccentForegroundBrush}"
-                        VerticalAlignment="Top"/>
-            </Grid>
+                        Background="Transparent"
+                        BorderThickness="0"
+                        HorizontalAlignment="Left">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE72B;" FontSize="12"/>
+                        <TextBlock Text="Volver a la biblioteca" FontSize="12"/>
+                    </StackPanel>
+                </Button>
+
+                <Border Background="{ThemeResource CardBackgroundBrush}"
+                        BorderBrush="{ThemeResource CardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Padding="18">
+                    <Grid ColumnSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Ícono de la sección: mismo acento que la acción principal. -->
+                        <Border Width="44"
+                                Height="44"
+                                CornerRadius="10"
+                                Background="{ThemeResource AccentBrush}"
+                                VerticalAlignment="Top">
+                            <FontIcon Glyph="&#xE7FC;"
+                                      FontSize="20"
+                                      Foreground="{ThemeResource AccentForegroundBrush}"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"/>
+                        </Border>
+
+                        <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                            <TextBlock Text="Configuración del Modo juego"
+                                       FontSize="22"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap"/>
+                            <TextBlock Text="Personalizá los procesos y servicios que se optimizan al iniciar un juego. Los cambios se aplican al guardar."
+                                       FontSize="13"
+                                       Foreground="{ThemeResource SecondaryTextBrush}"
+                                       TextWrapping="Wrap"
+                                       MaxWidth="620"
+                                       HorizontalAlignment="Left"/>
+                        </StackPanel>
+
+                        <Button x:Name="BoostSaveButton"
+                                Grid.Column="2"
+                                Click="BoostSaveButton_Click"
+                                Content="Guardar"
+                                MinWidth="104"
+                                CornerRadius="6"
+                                Padding="18,8"
+                                FontWeight="SemiBold"
+                                Background="{ThemeResource AccentBrush}"
+                                Foreground="{ThemeResource AccentForegroundBrush}"
+                                VerticalAlignment="Top"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
 
  <!-- Contenido de configuración (BuildProfessionalProcessesTab). -->
             <ContentControl x:Name="BoostConfigHost"

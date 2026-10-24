@@ -65,7 +65,10 @@ public sealed class InstalledGamesService : IInstalledGamesService
     }
 
     private static readonly string CacheDir = AppPaths.RootDir;
-    private static readonly string CacheFile = Path.Combine(CacheDir, "gamescache.json");
+
+    /// <summary>Nombre viejo de la caché (sin versión): se borra al guardar la nueva.</summary>
+    private static readonly string LegacyCacheFile = Path.Combine(CacheDir, "gamescache.json");
+    private static readonly string CacheFile = Path.Combine(CacheDir, $"gamescache.v{CACHE_VERSION_FOR_FILE}.json");
     // Firma mínima: entradas del launcher de BlueStacks (Store/Updater/Installer)
     // usan nombres parecidos al emulador. Si hay ≥2 definiciones que "gustarían" de
     // reportar la misma carpeta, es family overlap → descartar (BlueStacks vs MSI App
@@ -91,8 +94,12 @@ public sealed class InstalledGamesService : IInstalledGamesService
         }
     }
     // Versión de formato del archivo de caché: cualquier cambio en InstalledGame o en
-    // la forma en que se serializa obliga a reconstruir el caché.
-    private const int CACHE_VERSION = 6;
+    // la detección de juegos obliga a reconstruir el caché. Vive en el NOMBRE del
+    // archivo, así una caché vieja se ignora sola (no se mezcla con la nueva).
+    // 7: los juegos de Epic resuelven el exe real (Fortnite dejó de descartarse).
+    // 8: Epic también se lee de LauncherInstalled.dat (hay instalaciones sin
+    //    carpeta Data\Manifests, donde antes no se detectaba ningún juego).
+    private const int CACHE_VERSION_FOR_FILE = 8;
 
     /// <summary>
     /// Borra la caché de juegos instalados (memoria + archivo en disco): la próxima
@@ -108,6 +115,8 @@ public sealed class InstalledGamesService : IInstalledGamesService
         try
         {
             if (File.Exists(CacheFile)) File.Delete(CacheFile);
+            // Caché de versiones anteriores (nombre sin versión): también se borra.
+            if (File.Exists(LegacyCacheFile)) File.Delete(LegacyCacheFile);
             var tmp = CacheFile + ".tmp";
             if (File.Exists(tmp)) File.Delete(tmp);
         }
@@ -494,16 +503,30 @@ public sealed class InstalledGamesService : IInstalledGamesService
         "itch", "butler"
     };
 
+    /// <summary>
+    /// Launchers que lanzan sus juegos por URI o por comando propio. En sus entradas
+    /// el exe guardado es el del JUEGO, que puede ser un stub con "launcher" en el
+    /// nombre (Fortnite → FortniteLauncher.exe) sin que eso signifique que la entrada
+    /// es el cliente del launcher.
+    /// </summary>
+    private static readonly HashSet<string> UriManagedLaunchers = new(StringComparer.OrdinalIgnoreCase)
+    { "Steam", "Epic", "Blizzard", "Ubisoft", "Riot", "Xbox", "GOG", "Amazon Games", "Blacksmith" };
+
     /// <summary>Un juego detectado es en realidad el cliente de un launcher o un stub.</summary>
     private static bool IsDetectedLauncher(InstalledGame game)
     {
-        if (GameExeResolver.IsStubExeName(game.ExeFileName)
-            || IsLauncherExecutable(game.ExeFileName))
-            return true;
+        if (IsLauncherDisplayName(game.Name)) return true;
+        if (GameExeResolver.IsStubExeName(game.ExeFileName)) return true;
 
         var exeName = Path.GetFileNameWithoutExtension(game.ExeFileName ?? "");
         if (KnownLauncherExecutableNames.Contains(exeName)) return true;
-        return IsLauncherDisplayName(game.Name);
+
+        // Juego de un launcher que lanza por URI/comando: un "launcher" en el nombre
+        // del exe es un stub del propio juego, no el cliente del launcher. Sin esta
+        // excepción Fortnite (FortniteLauncher.exe) se descartaba de la biblioteca.
+        if (UriManagedLaunchers.Contains(game.Launcher ?? "")) return false;
+
+        return IsLauncherExecutable(game.ExeFileName);
     }
 
     /// <summary>Nombre visible que corresponde al cliente de un launcher, no a un juego.</summary>
@@ -742,6 +765,8 @@ public sealed class InstalledGamesService : IInstalledGamesService
             var tmp = CacheFile + ".tmp";
             File.WriteAllText(tmp, json);
             File.Move(tmp, CacheFile, overwrite: true);
+            // Caché de un formato anterior: ya no se lee, no tiene sentido conservarla.
+            try { if (File.Exists(LegacyCacheFile)) File.Delete(LegacyCacheFile); } catch { }
         }
         catch (Exception ex)
         {
@@ -2252,12 +2277,73 @@ public sealed class InstalledGamesService : IInstalledGamesService
 
     // ===================== Epic =====================
 
+    /// <summary>
+    /// Juegos de Epic. Se leen las DOS fuentes del launcher, porque no siempre están
+    /// las dos:
+    /// - LauncherInstalled.dat: la lista viva del launcher (la reescribe al instalar,
+    ///   actualizar o desinstalar). Es la fuente principal: hay instalaciones donde
+    ///   Data\Manifests no existe y ahí no se detectaba NINGÚN juego de Epic (Fortnite
+    ///   no aparecía ni con "escaneo profundo", que solo busca emuladores).
+    /// - Manifests\*.item: un manifest por juego, con DisplayName y el catálogo.
+    /// Las entradas se deduplican por AppName y el exe se resuelve dentro de la
+    /// carpeta de instalación (ver ResolveEpicExe).
+    /// </summary>
     private List<InstalledGame> ScanEpic()
     {
         var games = new List<InstalledGame>();
-        var manifestsDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Epic", "EpicGamesLauncher", "Data", "Manifests");
+        // AppName → posición en games: permite que el manifest complete/mejore una
+        // entrada que ya vino de LauncherInstalled.dat (nombre visible, catálogo).
+        var seenApps = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var epicRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Epic");
+
+        // ---- 1) LauncherInstalled.dat ----
+        try
+        {
+            var installedDat = Path.Combine(epicRoot, "UnrealEngineLauncher", "LauncherInstalled.dat");
+            if (File.Exists(installedDat))
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(installedDat));
+                if (doc.RootElement.TryGetProperty("InstallationList", out var list)
+                    && list.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in list.EnumerateArray())
+                    {
+                        try
+                        {
+                            // El archivo cambió de nombres con las versiones: las nuevas
+                            // usan CatalogNamespace/CatalogItemId, las viejas NamespaceId/
+                            // ItemId. Es la misma dupla (namespace + id del catálogo).
+                            string? appName = EpicJsonString(item, "AppName", "ArtifactId");
+                            string? install = EpicJsonString(item, "InstallLocation");
+                            string? catalogId = EpicJsonString(item, "CatalogItemId", "ItemId");
+                            string? catalogNs = EpicJsonString(item, "CatalogNamespace", "NamespaceId");
+                            if (string.IsNullOrEmpty(appName) || string.IsNullOrEmpty(install)) continue;
+                            // UE_5.x: el motor de Unreal también se lista acá y no es un juego.
+                            if (appName.StartsWith("UE_", StringComparison.OrdinalIgnoreCase)) continue;
+                            if (seenApps.ContainsKey(appName)) continue;
+
+                            var exeFileName = ResolveEpicExe(install, null);
+                            if (string.IsNullOrEmpty(exeFileName)) continue;
+                            seenApps[appName] = games.Count;
+                            games.Add(new InstalledGame(appName, exeFileName, "Epic", install,
+                                catalogId ?? "", "", catalogNs ?? "", appName));
+                        }
+                        catch (Exception ex)
+                        {
+                            _logging.LogWarning($"InstalledGames: Epic LauncherInstalled.dat entrada: {ex.Message}");
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"InstalledGames: Epic LauncherInstalled.dat: {ex.Message}");
+        }
+
+        // ---- 2) Manifests\*.item (nombre visible y datos de catálogo completos) ----
+        var manifestsDir = Path.Combine(epicRoot, "EpicGamesLauncher", "Data", "Manifests");
         if (!Directory.Exists(manifestsDir)) return games;
 
         IEnumerable<string> files;
@@ -2270,19 +2356,40 @@ public sealed class InstalledGamesService : IInstalledGamesService
             {
                 using var doc = JsonDocument.Parse(File.ReadAllText(file));
                 var root = doc.RootElement;
-                string? name = root.TryGetProperty("DisplayName", out var dn) ? dn.GetString() : null;
-                string? exe = root.TryGetProperty("LaunchExecutable", out var le) ? le.GetString() : null;
-                string? install = root.TryGetProperty("InstallLocation", out var il) ? il.GetString() : null;
+                string? name = EpicJsonString(root, "DisplayName");
+                string? exe = EpicJsonString(root, "LaunchExecutable");
+                string? install = EpicJsonString(root, "InstallLocation");
                 // Catálogo de Epic: con estos dos campos la UI puede buscar el banner
                 // en la API pública del catálogo (namespace + catalogItemId).
-                string? catalogId = root.TryGetProperty("CatalogItemId", out var ci) ? ci.GetString() : null;
-                string? catalogNs = root.TryGetProperty("CatalogNamespace", out var cn) ? cn.GetString() : null;
+                string? catalogId = EpicJsonString(root, "CatalogItemId");
+                string? catalogNs = EpicJsonString(root, "CatalogNamespace");
                 // AppName: id que la URI del launcher usa para lanzar el juego
                 // (com.epicgames.launcher://apps/{AppName}); sin él, el exe directo
                 // abre el juego pero las funciones online no funcionan.
-                string? appName = root.TryGetProperty("AppName", out var an) ? an.GetString() : null;
-                if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(exe)) continue;
-                games.Add(new InstalledGame(name, Path.GetFileName(exe), "Epic", install ?? "", catalogId ?? "", "", catalogNs ?? "", appName ?? ""));
+                string? appName = EpicJsonString(root, "AppName");
+                if (string.IsNullOrEmpty(name)) continue;
+
+                // El launcher ya la listó en LauncherInstalled.dat: el manifest solo
+                // aporta lo que ahí no hay (nombre visible y datos del catálogo), para
+                // no duplicar la card ni perder el nombre lindo ("Grand Theft Auto V"
+                // en vez del AppName interno).
+                if (!string.IsNullOrEmpty(appName) && seenApps.TryGetValue(appName, out var index))
+                {
+                    var existing = games[index];
+                    games[index] = existing with
+                    {
+                        Name = name,
+                        AppId = string.IsNullOrEmpty(existing.AppId) ? catalogId ?? "" : existing.AppId,
+                        ArtNamespace = string.IsNullOrEmpty(existing.ArtNamespace) ? catalogNs ?? "" : existing.ArtNamespace
+                    };
+                    continue;
+                }
+                if (!string.IsNullOrEmpty(appName)) seenApps[appName] = games.Count;
+
+                var exeFileName = ResolveEpicExe(install, string.IsNullOrEmpty(exe) ? null : Path.GetFileName(exe));
+                if (string.IsNullOrEmpty(exeFileName)) continue;
+                games.Add(new InstalledGame(name, exeFileName, "Epic", install ?? "",
+                    catalogId ?? "", "", catalogNs ?? "", appName ?? ""));
             }
             catch (Exception ex)
             {
@@ -2290,6 +2397,48 @@ public sealed class InstalledGamesService : IInstalledGamesService
             }
         }
         return games;
+    }
+
+    /// <summary>Propiedad de texto de un JSON de Epic, probando varios nombres posibles.</summary>
+    private static string? EpicJsonString(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.String)
+            {
+                var text = value.GetString();
+                if (!string.IsNullOrWhiteSpace(text)) return text;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Exe real del juego a partir de la carpeta de instalación de Epic. El
+    /// LaunchExecutable del manifest es el stub con el que el launcher arranca el
+    /// título, no el proceso real (Fortnite → FortniteGame\Binaries\Win64\
+    /// FortniteLauncher.exe; el proceso que corre es FortniteClient-Win64-Shipping.exe).
+    /// Ese nombre además contiene "launcher" y hacía que la entrada se descartara
+    /// como si fuera el cliente de Epic: Fortnite nunca aparecía en la biblioteca.
+    /// Si el exe del manifest es el juego de verdad, se respeta; si es el stub del
+    /// launcher/anti-cheat, se resuelve el principal dentro de la carpeta.
+    /// </summary>
+    private static string? ResolveEpicExe(string? installPath, string? manifestExe)
+    {
+        if (!string.IsNullOrEmpty(installPath)
+            && (string.IsNullOrEmpty(manifestExe)
+                || IsLauncherExecutable(manifestExe)
+                || GameExeResolver.IsStubExeName(manifestExe)))
+        {
+            try
+            {
+                var real = GameExeResolver.FindMainExePath(installPath);
+                if (!string.IsNullOrEmpty(real)) return Path.GetFileName(real);
+            }
+            catch { }
+        }
+        return manifestExe;
     }
 
     // ===================== Itch.io =====================
@@ -2569,7 +2718,9 @@ public sealed class InstalledGamesService : IInstalledGamesService
         // PCSX2 (PS2): instalador o portable. Busca pcsx2-qtx.exe (Qt) o pcsx2.exe.
         var pcsx2Dir = GetRegValue(@"SOFTWARE\PCSX2", "Install_Dir")
             ?? GetRegValue(@"SOFTWARE\WOW6432Node\PCSX2", "Install_Dir");
-        var pcsx2Exe = FindInDirs("pcsx2-qtx.exe", pcsx2Dir ?? "", pf, pf86,
+        var pcsx2Exe = FindInDirs("pcsx2-qt.exe", pcsx2Dir ?? "", pf, pf86,
+            Path.Combine(pf, "PCSX2"), Path.Combine(pf86, "PCSX2"))
+            ?? FindInDirs("pcsx2-avx2.exe", pcsx2Dir ?? "", pf, pf86,
             Path.Combine(pf, "PCSX2"), Path.Combine(pf86, "PCSX2"))
             ?? FindInDirs("pcsx2.exe", pcsx2Dir ?? "", pf, pf86,
             Path.Combine(pf, "PCSX2"), Path.Combine(pf86, "PCSX2"));
@@ -2607,7 +2758,10 @@ public sealed class InstalledGamesService : IInstalledGamesService
             Path.Combine(la, "Ryujinx")), "");
 
         // Lime3DS (3DS, sucesor de Citra): portable. Busca lime3ds.exe o citra.exe.
-        var limeExe = FindInDirs("lime3ds.exe", pf, pf86,
+        var limeExe = FindInDirs("lime-qt.exe", pf, pf86,
+            Path.Combine(pf, "Lime3DS"), Path.Combine(pf86, "Lime3DS"),
+            Path.Combine(la, "Lime3DS"))
+            ?? FindInDirs("lime3ds.exe", pf, pf86,
             Path.Combine(pf, "Lime3DS"), Path.Combine(pf86, "Lime3DS"),
             Path.Combine(la, "Lime3DS"))
             ?? FindInDirs("citra-qt.exe", pf, pf86,
@@ -2634,6 +2788,37 @@ public sealed class InstalledGamesService : IInstalledGamesService
             Path.Combine(pf, "FBNeo"), Path.Combine(pf86, "FBNeo"));
         Add("FBNeo", fbneoExe, "");
 
+        // Portables sin registro: se buscan por exe en rutas típicas.
+        // DuckStation (PS1): el build actual es duckstation-qt-x64-ReleaseLTCG.exe.
+        var duckExe = FindInDirs("duckstation-qt-x64-ReleaseLTCG.exe", pf, pf86,
+            Path.Combine(pf, "DuckStation"), Path.Combine(pf86, "DuckStation"),
+            Path.Combine(la, "DuckStation"))
+            ?? FindInDirs("duckstation-qt.exe", pf, pf86,
+            Path.Combine(pf, "DuckStation"), Path.Combine(pf86, "DuckStation"),
+            Path.Combine(la, "DuckStation"))
+            ?? FindInDirs("duckstation.exe", pf, pf86,
+            Path.Combine(pf, "DuckStation"), Path.Combine(pf86, "DuckStation"),
+            Path.Combine(la, "DuckStation"));
+        Add("DuckStation", duckExe, "");
+
+        // Xenia (Xbox 360): canary es la rama más distribuida.
+        var xeniaExe = FindInDirs("xenia_canary.exe", pf, pf86,
+            Path.Combine(pf, "Xenia"), Path.Combine(pf86, "Xenia"))
+            ?? FindInDirs("xenia.exe", pf, pf86,
+            Path.Combine(pf, "Xenia"), Path.Combine(pf86, "Xenia"));
+        Add("Xenia", xeniaExe, "");
+
+        // Azahar (3DS, sucesor vigente de Citra/Lime3DS).
+        Add("Azahar", FindInDirs("azahar.exe", pf, pf86,
+            Path.Combine(pf, "Azahar"), Path.Combine(pf86, "Azahar"),
+            Path.Combine(la, "Azahar")), "");
+
+        // Vita3K (PS Vita) y shadPS4 (PS4): portables de un solo exe.
+        Add("Vita3K", FindInDirs("Vita3K.exe", pf, pf86,
+            Path.Combine(pf, "Vita3K"), Path.Combine(pf86, "Vita3K")), "");
+        Add("shadPS4", FindInDirs("shadPS4.exe", pf, pf86,
+            Path.Combine(pf, "shadPS4"), Path.Combine(pf86, "shadPS4")), "");
+
  // ==== Emuladores móviles (Android) ====
  // BlueStacks 5 ya se detecta en ScanStandalone (HD-Player.exe); acá se
  // cubren los demás emuladores Android de escritorio. Todos usan su propio
@@ -2643,11 +2828,12 @@ public sealed class InstalledGamesService : IInstalledGamesService
  // LDPlayer: busca ldnative.exe (>=9) o dnplayer.exe (legacy).
         var ldDir = GetRegValue(@"SOFTWARE\DnPlayer", "InstallDir")
             ?? GetRegValue(@"SOFTWARE\WOW6432Node\DnPlayer", "InstallDir");
-        var ldExe = FindInDirs("ldnative.exe", ldDir ?? "", pf, pf86,
+        var ldExe = FindInDirs("dnplayer.exe", ldDir ?? "", pf, pf86,
             Path.Combine(pf, "LDPlayer"), Path.Combine(pf86, "LDPlayer"),
             Path.Combine(pf, "LDPlayer9"), Path.Combine(pf86, "LDPlayer9"))
-            ?? FindInDirs("dnplayer.exe", ldDir ?? "", pf, pf86,
-            Path.Combine(pf, "LDPlayer"), Path.Combine(pf86, "LDPlayer"));
+            ?? FindInDirs("ldnative.exe", ldDir ?? "", pf, pf86,
+            Path.Combine(pf, "LDPlayer"), Path.Combine(pf86, "LDPlayer"),
+            Path.Combine(pf, "LDPlayer9"), Path.Combine(pf86, "LDPlayer9"));
         Add("LDPlayer", ldExe, ldDir ?? "");
 
  // Nox: busca Nox.exe. Instala en "Bignox" o "Nox".
@@ -2687,14 +2873,23 @@ public sealed class InstalledGamesService : IInstalledGamesService
             Path.Combine(pf, "Netease"), Path.Combine(pf86, "Netease"),
             Path.Combine(pf, "Netease", "MuMuPlayerGlobal-12.0"), Path.Combine(pf86, "Netease", "MuMuPlayerGlobal-12.0"))
             ?? FindInDirs("NemuPlayer.exe", pf, pf86,
+            Path.Combine(pf, "Netease", "MuMuPlayer-12.0"), Path.Combine(pf86, "Netease", "MuMuPlayer-12.0"),
+            Path.Combine(pf, "Netease", "MuMuPlayerGlobal-12.0"), Path.Combine(pf86, "Netease", "MuMuPlayerGlobal-12.0"),
             Path.Combine(pf, "Nemu"), Path.Combine(pf86, "Nemu"));
         Add("MuMu Player", mumuExe, mumuExe == null ? "" : Path.GetDirectoryName(mumuExe) ?? "");
 
  // Tencent GameLoop: el launcher está en Tencent\GameLoop\Application.
-        Add("GameLoop", FindInDirs("GameLoopLauncher.exe",
+        var gameLoopExe = FindInDirs("AppMarket.exe",
+            Path.Combine(pf, "TxGameAssistant"), Path.Combine(pf86, "TxGameAssistant"),
+            Path.Combine(pf, "TxGameAssistant", "AppMarket"), Path.Combine(pf86, "TxGameAssistant", "AppMarket"))
+            ?? FindInDirs("AndroidEmulator.exe",
+            Path.Combine(pf, "TxGameAssistant", "ui"), Path.Combine(pf86, "TxGameAssistant", "ui"),
+            Path.Combine(pf, "Tencent", "GameLoop"), Path.Combine(pf86, "Tencent", "GameLoop"))
+            ?? FindInDirs("GameLoopLauncher.exe",
             Path.Combine(pf, "Tencent", "GameLoop", "Application"), Path.Combine(pf86, "Tencent", "GameLoop", "Application"),
             Path.Combine(pf, "Tencent", "GameLoop"), Path.Combine(pf86, "Tencent", "GameLoop"),
-            Path.Combine(pf, "GameLoop"), Path.Combine(pf86, "GameLoop")), "");
+            Path.Combine(pf, "GameLoop"), Path.Combine(pf86, "GameLoop"));
+        Add("GameLoop", gameLoopExe, "");
 
  // Google Play Games para PC: Program Files\Google\Play Games.
         Add("Google Play Games", FindInDirs("GooglePlayGames.exe",

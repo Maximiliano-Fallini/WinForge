@@ -147,6 +147,8 @@ public sealed partial class MainWindow : Window
         // Configurar NavigationView
         NavigationViewControl.SelectedItem = NavigationViewControl.MenuItems[0];
         NavigationViewControl.ItemInvoked += NavigationViewControl_ItemInvoked;
+        // Navbar resizable con el mouse (separador sobre el borde derecho del panel).
+        SetupNavResizing();
 
         // Efecto "reveal" al pasar el mouse: halo con el acento que sigue al cursor
         // en los ítems del navbar y en las cards del contenido. Se instala UNA vez
@@ -189,6 +191,7 @@ public sealed partial class MainWindow : Window
             ns.RegisterPage("reparacion", typeof(ReparacionPage));
             ns.RegisterPage("actualizaciones", typeof(ActualizacionesPage));
             ns.RegisterPage("limpieza", typeof(LimpiezaPage));
+            ns.RegisterPage("arranque", typeof(AdministracionInicioPage));
             ns.RegisterPage("guia", typeof(GuiaPage));
             ns.RegisterPage("configuracion", typeof(ConfiguracionPage));
             ns.RegisterPage("workshop", typeof(WorkshopPage));
@@ -544,8 +547,11 @@ public sealed partial class MainWindow : Window
                     _loggingService.LogWarning($"Bandeja: no se pudo lanzar {exe} — ejecutable no encontrado.");
                     return;
                 }
+                // La carpeta del exe permite que la sesión de lanzamiento reconozca
+                // el proceso real aunque el juego tenga un launcher y el proceso
+                // nazca con otro nombre (entrada manual o caché vieja sin InstallPath).
                 await GameLauncher.LaunchGameAsync(_gameBoostService, _processService, _loggingService,
-                    direct, "", null, null, exe, null, TrayLaunchStatus);
+                    direct, "", null, Path.GetDirectoryName(direct), exe, null, TrayLaunchStatus);
                 return;
             }
 
@@ -565,12 +571,20 @@ public sealed partial class MainWindow : Window
             }
             else if (game.Launcher == "Epic" && !string.IsNullOrEmpty(game.EpicAppName))
             {
-                launchFile = $"com.epicgames.launcher://apps/{game.EpicAppName}?action=launch&silent=true";
+                // URI canónica (namespace + catalogItemId + AppName): la forma corta
+                // que usa solo el AppName ya no la aceptan las versiones nuevas del
+                // launcher y el juego no abría.
+                launchFile = GameLauncher.BuildEpicLaunchUri(game.ArtNamespace, game.AppId, game.EpicAppName);
                 launchArgs = "";
             }
             else if (game.Launcher == "Xbox" && !string.IsNullOrEmpty(game.AppId))
             {
                 launchFile = $"shell:AppsFolder\\{game.AppId}";
+                launchArgs = "";
+            }
+            else if (game.Launcher == "Ubisoft" && !string.IsNullOrEmpty(game.AppId))
+            {
+                launchFile = $"uplay://launch/{game.AppId}/0";
                 launchArgs = "";
             }
             else if (riot)
@@ -2523,6 +2537,95 @@ public sealed partial class MainWindow : Window
     private static void Page_Loaded_Blur(object sender, RoutedEventArgs e)
         => PanelBlurLayer.PanelsChanged();
 
+    // ===== Resize del navbar con el mouse =====
+    // El ancho DEFAULT es el actual (256): el que trae la app y el que se usa cuando
+    // nunca se achicó. El ancho elegido con el mouse persiste en settings (nav.width).
+    private const double NavDefaultWidth = 256;
+    /// <summary>Por debajo de este ancho el navbar se CIERRA, como el botón ☰.</summary>
+    private const double NavCollapseWidth = 170;
+    /// <summary>Tope de apertura: apenas ~9% más que el default (256), no una anchura de pantalla.</summary>
+    private const double NavMaxWidth = 280;
+    private double _navDragStartWidth;
+    /// <summary>Arrastre acumulado desde el inicio del drag (para abrir desde el panel cerrado).</summary>
+    private double _navDragDx;
+
+    /// <summary>
+    /// Navbar resizable: el separador sobre el borde derecho del panel lo achica o
+    /// agranda con el mouse. Tirarlo por debajo de <see cref="NavCollapseWidth"/> lo
+    /// cierra como si se tocara el botón ☰, y al reabrir recupera el ancho previo
+    /// (igual que el sidebar de VS Code): el cierre nunca "pierde" el ancho elegido.
+    /// </summary>
+    private void SetupNavResizing()
+    {
+        NavigationViewControl.OpenPaneLength = Math.Clamp(
+            _settingsService.Get("nav.width", NavDefaultWidth), NavCollapseWidth, NavMaxWidth);
+
+        NavResizeThumb.DragStarted += (_, _) =>
+        {
+            _navDragStartWidth = NavigationViewControl.OpenPaneLength;
+            _navDragDx = 0;
+            NavResizeRail.Opacity = 1;
+        };
+        NavResizeThumb.DragDelta += (_, e) =>
+        {
+            _navDragDx += e.HorizontalChange;
+            if (!NavigationViewControl.IsPaneOpen)
+            {
+                // Panel cerrado: estirar el separador hacia la derecha lo VUELVE a
+                // abrir (mismo efecto que el ☰). El resto del arrastre sigue
+                // achicando/agrandando con el ancho recuperado.
+                if (_navDragDx > 10)
+                    NavigationViewControl.IsPaneOpen = true;
+                return;
+            }
+            double ancho = NavigationViewControl.OpenPaneLength + e.HorizontalChange;
+            if (ancho < NavCollapseWidth)
+            {
+                // "Se achicó hasta cierto punto": mismo efecto que el botón ☰ de
+                // cerrar, y el ancho vuelve al previo para recuperarlo al reabrir.
+                NavigationViewControl.OpenPaneLength = _navDragStartWidth;
+                NavigationViewControl.IsPaneOpen = false;
+                return;
+            }
+            NavigationViewControl.OpenPaneLength = Math.Clamp(ancho, NavCollapseWidth, NavMaxWidth);
+            UpdateNavResizeThumb();
+        };
+        NavResizeThumb.DragCompleted += (_, _) =>
+        {
+            if (NavigationViewControl.IsPaneOpen)
+                _settingsService.Set("nav.width", NavigationViewControl.OpenPaneLength);
+            NavResizeRail.Opacity = 0;
+            UpdateNavResizeThumb();
+        };
+        NavResizeHost.PointerEntered += (_, _) => NavResizeRail.Opacity = 1;
+        NavResizeHost.PointerExited += (_, _) => NavResizeRail.Opacity = 0;
+
+        // El cursor de doble flecha lo pone el propio host (NavResizeSplitter): el
+        // ProtectedCursor de UIElement es protected y solo una subclase puede pedirlo.
+
+        NavigationViewControl.PaneOpened += (_, _) => UpdateNavResizeThumb();
+        NavigationViewControl.PaneClosed += (_, _) => UpdateNavResizeThumb();
+        NavigationViewControl.DisplayModeChanged += (_, _) => UpdateNavResizeThumb();
+        UpdateNavResizeThumb();
+    }
+
+    /// <summary>
+    /// Sigue con el separador el borde derecho del panel: con el navbar abierto, el
+    /// borde del panel; con el navbar cerrado, el borde del strip compacto (para poder
+    /// abrir estirando). Se recoloca al abrir, cerrar o redimensionar.
+    /// </summary>
+    private void UpdateNavResizeThumb()
+    {
+        // Siempre visible: también con el panel cerrado, sobre el borde del strip
+        // compacto, para poder ABRIR estirando el separador.
+        NavResizeHost.Visibility = Visibility.Visible;
+        double borde = NavigationViewControl.IsPaneOpen
+            ? NavigationViewControl.OpenPaneLength
+            : NavigationViewControl.CompactPaneLength;
+        NavResizeHost.Margin = new Thickness(
+            Math.Max(0, borde - NavResizeHost.Width / 2), 0, 0, 0);
+    }
+
     private void OnLanguageChanged()
     {
         ApplyLanguageButton();
@@ -2723,9 +2826,9 @@ public sealed partial class MainWindow : Window
                     // Se quitan los overrides de hover verdes para que use los del tema.
                     UpdateTextPanel.Visibility = Visibility.Visible;
                     UpdateButtonText.Text = I18n.T("Desarrollo");
-                    UpdateButtonText.Foreground = ThemeBrushes.Get("TextFillColorPrimaryBrush");
+                    UpdateButtonText.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
                     UpdateButtonIconGlyph.Glyph = "\uE946"; // info
-                    UpdateButtonIconGlyph.Foreground = ThemeBrushes.Get("TextFillColorSecondaryBrush");
+                    UpdateButtonIconGlyph.Foreground = ThemeBrushes.Get("SecondaryTextBrush");
                     UpdateButtonIconGlyph.Visibility = Visibility.Visible;
                     // Alto: el mismo que la pastilla verde (Height=30 del XAML, compartido por
                     // los dos estados). El borde de 1 px NO cambia el alto exterior —Height es

@@ -20,6 +20,12 @@
                          comparten el gris #151517 (definido también en AccentOverrides.xaml). -->
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF0C0C0E"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF151517"/>
+<!-- Claves que también existen en WinUI (card secundaria y relleno de esqueletos). Se
+                         declaran ACÁ para que las usen tanto el XAML como el código: pedirlas al sistema
+                         las resolvía con el tema de WINDOWS, así que con la app en oscuro y Windows en
+                         claro esas cards internas (Limpieza, Procesos) se ponían blancas. -->
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#FF1C1C1E"/>
+                    <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FF2A2A2C"/>
                     <SolidColorBrush x:Key="ToolTipBackgroundBrush" Color="#FF151517"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3A3A3C"/>
 <!-- Borde de las CARDS: TRANSPARENTE. Las cards de la app no llevan contorno (ver
@@ -141,6 +147,10 @@
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFE8EAEE"/>
                     <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF"/>
+<!-- Ver la nota del tema oscuro: las dos claves de WinUI viven en la app para no
+                         seguir el tema de Windows cuando la app tiene otro. -->
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#FFF1F3F6"/>
+                    <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FFE1E6EC"/>
                     <SolidColorBrush x:Key="ToolTipBackgroundBrush" Color="#FFFFFFFF"/>
                     <SolidColorBrush x:Key="CardBorderBrush" Color="#FFD8DDE3"/>
 <!-- Ver la nota del tema oscuro: las cards no llevan contorno, la clave queda

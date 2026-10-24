@@ -52,10 +52,12 @@ public sealed class ProcessService : IProcessService
     // exacto, así que el modo juego no se activaba al abrir el juego.
     private readonly Dictionary<string, string> _processAliases = new(StringComparer.OrdinalIgnoreCase);
 
-    // Reglas de sesión ("Actual"): solo la apertura actual del juego. En memoria,
-    // nunca se persisten ni escriben en el registro. Campos null = sin override de
-    // sesión para esa dimensión; la sesión gana sobre la regla guardada campo por
-    // campo. Se limpian solas cuando el juego cierra (ver UnregisterProcess).
+    // Reglas de sesión ("Actual"): se recuerdan entre reinicios (caché en settings)
+    // y aplican SOLO a lanzamientos desde WinForge (sesión de lanzamiento). Un juego
+    // abierto directo desde su launcher no las recibe (ese es el trabajo de
+    // "Siempre"). Campos null = sin override de sesión para esa dimensión; la
+    // sesión gana sobre la regla guardada campo por campo. Solo las borra
+    // "Eliminar reglas".
     private readonly object _sessionLock = new();
     private readonly Dictionary<string, ProcessRule> _sessionRules = new(StringComparer.OrdinalIgnoreCase);
 
@@ -65,11 +67,67 @@ public sealed class ProcessService : IProcessService
     private readonly object _runningLock = new();
     private HashSet<string> _runningGames = new(StringComparer.OrdinalIgnoreCase);
 
+    // ===== Sesiones de lanzamiento (launcher → juego) =====
+    // Una sesión se abre al lanzar un juego con regla y sigue la cadena hasta 3
+    // minutos. No es configuración por juego: el launcher es un detalle de runtime
+    // y el mismo juego puede arrancar con o sin él. La sesión solo aporta el
+    // contexto (launcher + carpeta de instalación) para identificar el proceso real
+    // cuando nace; después la regla queda enganchada al proceso como siempre.
+    private readonly object _launchSessionLock = new();
+    private readonly Dictionary<string, LaunchSession> _launchSessions = new(StringComparer.OrdinalIgnoreCase);
+    private const int LaunchSessionTimeoutSeconds = 180;
+    // Ventana de estabilización de la cadena: un proceso que solo coincide por
+    // carpeta no recibe la regla hasta que pasa este tiempo sin que aparezca un
+    // hijo real. Así el launcher intermedio (Steam → launcher del juego → juego)
+    // no se lleva la regla del juego. Los nombres de launcher/bootstrapper esperan
+    // un poco más: son los que más probablemente tengan un hijo detrás.
+    private const int LaunchChainSettleSeconds = 10;
+    private readonly Timer _launchSessionTimer;
+    private int _launchSessionTickBusy;
+
+    // Ruta real del proceso del juego aprendida en un lanzamiento anterior:
+    // ruleKey (exe de la biblioteca) → ruta del proceso que terminó recibiendo la
+    // regla. Es una caché automática, no configuración por juego: el usuario no
+    // tiene que elegir nada y se puede reconstruir sola si el juego se mueve.
+    private readonly object _resolvedPathsLock = new();
+    private Dictionary<string, string> _resolvedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private const string ResolvedPathsKey = "process.resolvedPaths";
+
+    // Último estado de regla por exe de la biblioteca (para la UI).
+    private readonly object _ruleStatusLock = new();
+    private readonly Dictionary<string, GameRuleStatus> _ruleStatuses = new(StringComparer.OrdinalIgnoreCase);
+
     public event Action? RunningGamesChanged;
+    public event Action<GameRuleStatus>? GameRuleStatusChanged;
 
     public IReadOnlyCollection<string> RunningGameExes
     {
         get { lock (_runningLock) return new List<string>(_runningGames); }
+    }
+
+    public IReadOnlyCollection<string> RunningRuleExes
+    {
+        get
+        {
+            lock (_eventLock)
+            {
+                return _procGames.Values
+                    .Where(v => v.RuleKey != null)
+                    .Select(v => v.RuleKey!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+    }
+
+    public bool HasRunningGameActivity
+    {
+        get
+        {
+            if (RunningGameExes.Count > 0) return true;
+            lock (_eventLock)
+                return _procGames.Values.Any(v => v.RuleKey != null);
+        }
     }
 
     // Monitoreo por eventos WMI (cero polling): Win32_ProcessStartTrace/StopTrace
@@ -110,6 +168,70 @@ public sealed class ProcessService : IProcessService
         "Blacksmith", "BlacksmithIM"
     };
     public event Action? LauncherStateChanged;
+
+    /// <summary>
+    /// Procesos que forman parte de la cadena de lanzamiento pero NUNCA son "el
+    /// juego": clientes de launcher, helpers, updaters, instaladores y crash
+    /// reporters. La sesión de lanzamiento los saltea para no aplicarles la regla
+    /// del juego (el launcher es compartido por varios juegos y puede estar abierto
+    /// por otro motivo). Los stubs de anti-cheat NO están acá a propósito: algunos
+    /// juegos corren detrás de start_protected_game.exe y ese eslabón sí es parte
+    /// del juego, no del launcher.
+    /// </summary>
+    private static readonly HashSet<string> LaunchChainLauncherProcesses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Steam / Epic / Battle.net / GOG / Ubisoft / EA / Riot / Xbox
+        "steam", "steamwebhelper", "steamerrorreporter", "gameoverlayui", "steamservice",
+        "epicgameslauncher", "epicwebhelper",
+        "battle.net", "battle.net helper", "blizzard error",
+        "galaxyclient", "galaxyclientservice", "goggalaxy",
+        "ubisoftconnect", "ubisoftgamelauncher", "uplay", "upc",
+        "eadesktop", "ealauncher", "origin", "originwebhelperservice",
+        "riotclientservices", "riotclientux", "riotclientuxrender", "riotclientcrashhandler",
+        // Otros clientes que lanzan juegos por URI/comando
+        "rockstargameslauncher", "rockstarservice", "socialclubhelper",
+        "hoyoplay", "hoyoplaylauncher", "wargaminggamecenter", "wgc",
+        "nexonlauncher", "nexonclient", "gaijinlauncher", "jagexlauncher",
+        "amazongames", "amazongameslauncher", "xbox", "xboxapp", "gamingapp",
+        "gamingservices", "itch", "blacksmith", "blacksmithim",
+        "blacksmithbootstrap", "blacksmithworker",
+        // Herramientas de la cadena que no representan al juego
+        "updater", "patcher", "installer", "uninstaller", "setup",
+        "crashreportclient", "crashreporter", "crashpad_handler",
+        "unitycrashhandler", "unitycrashhandler32", "unitycrashhandler64"
+    };
+
+    /// <summary>Nombre de proceso que forma parte del launcher/actualizador, no del juego.</summary>
+    private static bool IsLaunchChainNoise(string processName)
+    {
+        var name = Path.GetFileNameWithoutExtension(processName ?? "").Trim();
+        if (name.Length == 0) return true;
+        return LauncherNames.Contains(name) || LaunchChainLauncherProcesses.Contains(name);
+    }
+
+    /// <summary>
+    /// Proceso con pinta de eslabón intermedio (launcher/bootstrapper/updater del
+    /// propio juego). No se descarta para siempre: la sesión le da una ventana más
+    /// larga para que aparezca el hijo real; si no aparece, se lo usa como fallback.
+    /// </summary>
+    private static bool IsLikelyIntermediateLauncherName(string processName)
+    {
+        var name = Path.GetFileNameWithoutExtension(processName ?? "").ToLowerInvariant();
+        if (name.Length == 0) return false;
+        return name.Contains("launcher") || name.Contains("bootstrap")
+            || name.Contains("updater") || name.Contains("patcher");
+    }
+
+    /// <summary>Helpers que acompañan al juego pero no son el juego final.</summary>
+    private static bool IsChainHelperName(string processName)
+    {
+        var name = Path.GetFileNameWithoutExtension(processName ?? "").ToLowerInvariant();
+        if (name.Length == 0) return true;
+        return name.Contains("helper") || name.Contains("service") || name.Contains("crash")
+            || name.Contains("report") || name.Contains("overlay") || name.Contains("webview")
+            || name.Contains("renderer") || name.Contains("utility") || name.Contains("console")
+            || name.Contains("broker") || name.Contains("surrogate");
+    }
     public bool WmiEventsActive { get; private set; }
 
     public Dictionary<string, ProcessRule> GetRulesCached()
@@ -138,6 +260,72 @@ public sealed class ProcessService : IProcessService
         public string? RuleKey;             // regla (persistente o de sesión) que matchea
     }
 
+    /// <summary>
+    /// Contexto de un lanzamiento: qué regla se está esperando, con qué launcher y
+    /// en qué carpeta. Se abre al lanzar desde WinForge (o desde la bandeja) y la
+    /// usa el matcher para reconocer el proceso real aunque su nombre no coincida
+    /// con el exe de la biblioteca.
+    /// </summary>
+    private sealed class LaunchSession
+    {
+        public required string RuleKey { get; init; }
+        public string? Launcher { get; set; }
+        public string? InstallDir { get; set; }
+        public DateTime DeadlineUtc { get; set; }
+        public HashSet<int> AppliedPids { get; } = new();
+        /// <summary>Inicio del proceso al que se le aplicó la regla. Windows puede
+        /// reutilizar el PID en un relanzamiento; comparar el inicio evita saltarse
+        /// el proceso nuevo creyendo que ya recibió la regla.</summary>
+        public Dictionary<int, DateTime> AppliedProcessStartUtc { get; } = new();
+        public bool Applied { get; set; }
+        /// <summary>Exe principal resuelto de la carpeta (o ruta aprendida); permite
+        /// distinguir el juego real de un launcher intermedio.</summary>
+        public string? ExpectedExePath { get; set; }
+        public bool ExpectedResolved { get; set; }
+        /// <summary>La ruta esperada salió de un lanzamiento anterior ya verificado:
+        /// se puede aplicar casi al instante; la resuelta por escaneo espera la
+        /// ventana de estabilización por si el exe más grande es un launcher.</summary>
+        public bool ExpectedFromMemory { get; set; }
+        /// <summary>Primera vez que el barrido vio cada candidato, para darle tiempo
+        /// a que la cadena launcher→juego se estabilice antes de aplicar.</summary>
+        public Dictionary<int, DateTime> FirstSeenUtc { get; } = new();
+        /// <summary>Serializa la aplicación desde WMI, el timer y el barrido inicial.</summary>
+        public object Sync { get; } = new();
+        public int ScanBusy;
+
+        /// <summary>Prioridades originales de los procesos aplicados en débil: si
+        /// después aparece el juego real (fuerte), se les devuelven.</summary>
+        public Dictionary<int, OriginalPriorities> WeakApplied { get; } = new();
+    }
+
+    /// <summary>Prioridades originales de un proceso aplicado en débil (para
+    /// devolvérselas si aparece el juego real). Null/cero = no se pudo leer.</summary>
+    private sealed record OriginalPriorities(int? Cpu, long Affinity, int? Gpu, int? Io);
+
+    private enum LaunchMatchQuality
+    {
+        None = 0,
+        Path = 1,
+        Expected = 2,
+        Name = 3
+    }
+
+    /// <summary>Candidato vivo dentro de una sesión de lanzamiento.</summary>
+    private sealed class LaunchCandidate
+    {
+        public required int Pid { get; init; }
+        public required string Name { get; init; }
+        public string? Path { get; init; }
+        public LaunchMatchQuality Quality { get; init; }
+        public bool IsStub { get; init; }
+        public bool IsLauncherLike { get; init; }
+        public bool IsHelperLike { get; init; }
+        public DateTime StartUtc { get; init; }
+        /// <summary>True si debajo hay otro candidato real (no stub/helper): este
+        /// proceso es un eslabón intermedio, no el juego final.</summary>
+        public bool HasMatchingChild { get; set; }
+    }
+
     public int ProcessorCount { get; } = Math.Max(1, Environment.ProcessorCount);
 
     public ProcessService(ILoggingService logging, ISettingsService settings, ICpuPowerService powerPlan, IInstalledGamesService games)
@@ -148,14 +336,26 @@ public sealed class ProcessService : IProcessService
         _games = games;
 
         // Reglas de sesión ("Actual") persistidas en un caché (settings): sobreviven
-        // al reinicio de la app. Se limpian solas al cerrar la última instancia del
-        // juego (UnregisterProcess → ClearSessionRule), igual que en memoria.
+        // al reinicio de la app y solo las borra "Eliminar reglas". Aplican
+        // únicamente a lanzamientos desde WinForge (ver sesión de lanzamiento).
         try
         {
             var persistedSession = _settings.Get("process.sessionRules", new Dictionary<string, ProcessRule>());
             if (persistedSession != null)
                 foreach (var kv in persistedSession)
                     if (!string.IsNullOrEmpty(kv.Key)) _sessionRules[kv.Key] = kv.Value;
+        }
+        catch { }
+
+        // Rutas reales aprendidas de lanzamientos anteriores. Si el settings tiene
+        // una entrada vieja que ya no existe, se ignora al usarla (GetRememberedPath).
+        try
+        {
+            var savedPaths = _settings.Get(ResolvedPathsKey, new Dictionary<string, string>());
+            if (savedPaths != null)
+                foreach (var kv in savedPaths)
+                    if (!string.IsNullOrEmpty(kv.Key) && !string.IsNullOrEmpty(kv.Value))
+                        _resolvedPaths[kv.Key] = kv.Value;
         }
         catch { }
 
@@ -185,6 +385,9 @@ public sealed class ProcessService : IProcessService
         // la biblioteca (emuladores, itch.io, DRM-free...). Solo agrega al set
         // compartido; el cierre lo limpia el evento WMI (o el propio watcher sin WMI).
         _fullscreenTimer = new Timer(FullscreenTick, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        // Sesiones de lanzamiento: tick liviano que solo hace trabajo si hay una
+        // sesión abierta (partida lanzada desde WinForge con regla configurada).
+        _launchSessionTimer = new Timer(LaunchSessionTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         _logging.LogDebug("ProcessService: watcher de fullscreen activo (cada 2 s)");
 
         _ = Task.Run(ReconcileBirthPriorities);
@@ -331,22 +534,40 @@ public sealed class ProcessService : IProcessService
     /// </summary>
     private bool MatchesRuleKey(string processName, string? processPath, string ruleExe)
     {
+        if (MatchesRuleName(processName, ruleExe)) return true;
+        return MatchesRulePath(processPath, ruleExe);
+    }
+
+    /// <summary>Nombre exacto o alias declarado (VM de emulador, stub resuelto…).</summary>
+    private bool MatchesRuleName(string processName, string ruleExe)
+    {
         if (string.Equals(processName, ruleExe, StringComparison.OrdinalIgnoreCase)) return true;
         lock (_pathsLock)
         {
             // Alias primero: es más barato que el StartsWith de rutas y cubre el caso
             // en el que la VM del emulador corre desde otra carpeta.
-            if (_processAliases.TryGetValue(processName, out var primary)
-                && string.Equals(primary, ruleExe, StringComparison.OrdinalIgnoreCase))
-                return true;
+            return _processAliases.TryGetValue(processName, out var primary)
+                && string.Equals(primary, ruleExe, StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    /// <summary>El proceso vive dentro de la carpeta de instalación del juego.</summary>
+    private bool MatchesRulePath(string? processPath, string ruleExe)
+    {
         if (string.IsNullOrEmpty(processPath)) return false;
         lock (_pathsLock)
         {
             return _knownPaths.TryGetValue(ruleExe, out var dir)
-                && !string.IsNullOrEmpty(dir)
-                && processPath.StartsWith(dir, StringComparison.OrdinalIgnoreCase);
+                && IsUnderDirectory(processPath, dir);
         }
+    }
+
+    private static bool IsUnderDirectory(string? path, string? directory)
+    {
+        if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(directory)) return false;
+        var dir = directory.TrimEnd('\\');
+        return path.Length > dir.Length
+            && path.StartsWith(dir + "\\", StringComparison.OrdinalIgnoreCase);
     }
 
     // ===== P/Invoke =====
@@ -729,24 +950,47 @@ public sealed class ProcessService : IProcessService
     /// <summary>PID del proceso padre (snapshot Toolhelp, sin abrir el proceso objetivo).</summary>
     private static int GetParentPid(int pid)
     {
+        var map = GetParentPidMap();
+        return map.TryGetValue(pid, out var parent) ? parent : -1;
+    }
+
+    /// <summary>
+    /// Mapa pid → pid padre con UN solo snapshot Toolhelp. El barrido de la cadena
+    /// de lanzamiento lo usa para descartar el launcher intermedio (el padre del
+    /// juego) sin abrir ni consultar cada proceso por separado.
+    /// </summary>
+    private static Dictionary<int, int> GetParentPidMap()
+    {
+        var map = new Dictionary<int, int>();
         try
         {
             IntPtr snap = CreateToolhelp32Snapshot(Th32csSnapprocess, 0);
-            if (snap == IntPtr.Zero) return -1;
+            if (snap == IntPtr.Zero) return map;
             try
             {
                 var entry = new PROCESSENTRY32 { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32>() };
-                if (!Process32First(snap, ref entry)) return -1;
+                if (!Process32First(snap, ref entry)) return map;
                 do
                 {
-                    if (entry.th32ProcessID == (uint)pid)
-                        return (int)entry.th32ParentProcessID;
+                    map[(int)entry.th32ProcessID] = (int)entry.th32ParentProcessID;
                 } while (Process32Next(snap, ref entry));
             }
             finally { CloseHandle(snap); }
         }
         catch { }
-        return -1;
+        return map;
+    }
+
+    /// <summary>Inicio del proceso (UTC), para distinguir un PID reutilizado.</summary>
+    private static DateTime? GetProcessStartUtc(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            if (p.HasExited) return null;
+            return p.StartTime.ToUniversalTime();
+        }
+        catch { return null; }
     }
 
     /// <summary>Ruta del exe de un proceso con solo PROCESS_QUERY_LIMITED_INFORMATION (funciona en procesos protegidos).</summary>
@@ -1085,39 +1329,696 @@ public sealed class ProcessService : IProcessService
 
     /// <summary>
     /// Sigue la cadena de apertura del juego aplicando su regla efectiva (la de
-    /// sesión "Actual" gana sobre la guardada) mientras arranca: cada 5 s y por
-    /// máximo 25 s, incluso con la ventana oculta. Es la red de seguridad de los
-    /// eventos WMI para la cadena launcher→juego (el proceso real suele nacer con
-    /// otro nombre o estar protegido); cada proceso recibe la regla una sola vez.
+    /// sesión "Actual" gana sobre la guardada) mientras arranca. La ventana de
+    /// seguimiento es de 3 minutos y cubre el caso launcher→juego: el proceso real
+    /// suele nacer con otro nombre, en una subcarpeta o detrás de un stub de
+    /// anti-cheat. No aplica la regla al launcher. Es idempotente: GameLauncher ya
+    /// abrió la sesión antes de lanzar y esto la vuelve a pedir después.
     /// Vive en el servicio (no en la página) para no depender de que la ventana
     /// siga abierta ni de la navegación.
     /// </summary>
     public void ApplyLaunchChainRule(string exeFileName)
-        => _ = Task.Run(() => ApplyLaunchChainRuleCore(exeFileName));
+        => BeginLaunchSession(exeFileName);
 
-    private async Task ApplyLaunchChainRuleCore(string exeFileName)
+    /// <summary>
+    /// Abre (o reutiliza) la sesión de lanzamiento del juego. Solo hace algo si hay
+    /// una regla efectiva: sin regla no hay nada que aplicar y la UI no necesita
+    /// estado. La carpeta de instalación permite reconocer el proceso real por
+    /// ruta; el launcher solo se usa para el mensaje de la UI y para excluir sus
+    /// propios procesos del matching.
+    /// </summary>
+    public void BeginLaunchSession(string exeFileName, string? launcher = null, string? installPath = null)
     {
+        if (string.IsNullOrWhiteSpace(exeFileName)) return;
+        var exe = Path.GetFileName(exeFileName);
+        if (string.IsNullOrWhiteSpace(exe)) return;
+        exe = ResolveExeAlias(exe);
+        if (RuleIsEmpty(GetEffectiveRule(exe))) return;
+
+        EnsureKnownPathsLoaded();
+        if (string.IsNullOrWhiteSpace(installPath))
+        {
+            lock (_pathsLock)
+                _knownPaths.TryGetValue(exe, out installPath);
+        }
+
+        // Ruta real aprendida en un lanzamiento anterior: si el juego se movió, se
+        // ignora y el barrido vuelve a resolverlo desde la carpeta.
+        string? learnedPath = GetRememberedPath(exe);
+
+        var now = DateTime.UtcNow;
+        LaunchSession session;
+        bool created = false;
+        lock (_launchSessionLock)
+        {
+            if (_launchSessions.TryGetValue(exe, out var existing) && existing.DeadlineUtc > now)
+            {
+                if (!string.IsNullOrWhiteSpace(launcher)) existing.Launcher ??= launcher.Trim();
+                if (!string.IsNullOrWhiteSpace(installPath)) existing.InstallDir ??= installPath.Trim();
+                if (!string.IsNullOrWhiteSpace(learnedPath))
+                {
+                    // La ruta aprendida es más confiable que el exe más grande de la
+                    // carpeta: reemplaza a la resuelta en el primer lanzamiento.
+                    existing.ExpectedExePath = learnedPath;
+                    existing.ExpectedResolved = true;
+                    existing.ExpectedFromMemory = true;
+                }
+                // El mismo lanzamiento pide la sesión dos veces (antes de abrir el
+                // proceso y al confirmarlo); extender el plazo no cambia nada ahí y
+                // cubre el relanzamiento del juego dentro de la ventana de espera.
+                existing.DeadlineUtc = now.AddSeconds(LaunchSessionTimeoutSeconds);
+                session = existing;
+            }
+            else
+            {
+                _launchSessions.Remove(exe);
+                session = new LaunchSession
+                {
+                    RuleKey = exe,
+                    Launcher = string.IsNullOrWhiteSpace(launcher) ? null : launcher.Trim(),
+                    InstallDir = string.IsNullOrWhiteSpace(installPath) ? null : installPath.Trim(),
+                    ExpectedExePath = learnedPath,
+                    ExpectedResolved = !string.IsNullOrWhiteSpace(learnedPath),
+                    ExpectedFromMemory = !string.IsNullOrWhiteSpace(learnedPath),
+                    DeadlineUtc = now.AddSeconds(LaunchSessionTimeoutSeconds)
+                };
+                _launchSessions[exe] = session;
+                created = true;
+            }
+        }
+
+        if (created)
+        {
+            SetGameRuleStatus(new GameRuleStatus(exe, GameRuleState.Waiting, session.Launcher));
+            _logging.LogInfo($"ProcessService: sesión de lanzamiento de {exe} (launcher={session.Launcher ?? "directo"}, carpeta={session.InstallDir ?? "desconocida"}, exe esperado={session.ExpectedExePath ?? "se resuelve al escanear"}); se busca el proceso real por hasta {LaunchSessionTimeoutSeconds} s.");
+        }
+
+        // Barrido inmediato en segundo plano: cubre el caso sin WMI y el de un
+        // proceso que ya estaba arrancando. No se hace en el hilo de UI (el botón
+        // Iniciar no debe esperar a enumerar procesos). El tick de 1 s sigue después.
+        _ = Task.Run(() => ScanProcessesForLaunchSession(session));
+    }
+
+    /// <summary>Ruta real aprendida para una regla, si todavía existe en disco.</summary>
+    private string? GetRememberedPath(string exe)
+    {
+        if (string.IsNullOrWhiteSpace(exe)) return null;
+        string? path;
+        lock (_resolvedPathsLock) _resolvedPaths.TryGetValue(exe, out path);
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        try { return File.Exists(path) ? path : null; }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Guarda la ruta del proceso que realmente recibió la regla. Es la parte que
+    /// hace que el próximo lanzamiento no tenga que adivinar entre el launcher
+    /// intermedio y el juego. No se guardan launchers, stubs ni helpers.
+    /// </summary>
+    private void RememberResolvedPath(string ruleKey, string? processPath)
+    {
+        if (string.IsNullOrWhiteSpace(ruleKey) || string.IsNullOrWhiteSpace(processPath)) return;
         try
         {
-            var rule = GetEffectiveRule(exeFileName);
-            if (RuleIsEmpty(rule)) return;
-            var applied = new HashSet<int>();
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(25);
-            while (DateTime.UtcNow < deadline)
+            if (!File.Exists(processPath)) return;
+            var name = Path.GetFileName(processPath);
+            if (string.IsNullOrEmpty(name) || IsLaunchChainNoise(name)
+                || IsLikelyIntermediateLauncherName(name) || IsChainHelperName(name)
+                || GameExeResolver.IsStubExeName(name))
+                return;
+
+            Dictionary<string, string> snapshot;
+            lock (_resolvedPathsLock)
             {
-                foreach (var app in FindRunningProcessesForRule(exeFileName))
+                if (_resolvedPaths.TryGetValue(ruleKey, out var existing)
+                    && string.Equals(existing, processPath, StringComparison.OrdinalIgnoreCase))
+                    return;
+                _resolvedPaths[ruleKey] = processPath;
+                snapshot = new Dictionary<string, string>(_resolvedPaths, StringComparer.OrdinalIgnoreCase);
+            }
+            try
+            {
+                _settings.Set(ResolvedPathsKey, snapshot);
+                // Sin Save la ruta aprendida quedaba solo en memoria y el próximo
+                // arranque de la app volvía a adivinar el exe entre los de la carpeta.
+                _settings.Save();
+            }
+            catch (Exception ex) { _logging.LogDebug($"ProcessService: guardar ruta real de {ruleKey}: {ex.Message}"); }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogDebug($"ProcessService: recordar ruta de {ruleKey}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Resuelve una sola vez el exe principal de la carpeta (en el barrido, no en la UI).</summary>
+    private static void EnsureExpectedExe(LaunchSession session)
+    {
+        if (session.ExpectedResolved) return;
+        session.ExpectedResolved = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(session.InstallDir)) return;
+            var resolved = GameExeResolver.FindBestGameExePath(session.InstallDir);
+            if (!string.IsNullOrWhiteSpace(resolved)) session.ExpectedExePath = resolved;
+        }
+        catch { }
+    }
+
+    public GameRuleStatus? GetGameRuleStatus(string exeFileName)
+    {
+        if (string.IsNullOrWhiteSpace(exeFileName)) return null;
+        var exe = ResolveExeAlias(Path.GetFileName(exeFileName));
+        lock (_ruleStatusLock)
+            return _ruleStatuses.TryGetValue(exe, out var status) ? status : null;
+    }
+
+    /// <summary>Tiempo que queda de la ventana de seguimiento launcher→juego (null si no hay sesión activa).</summary>
+    public TimeSpan? GetLaunchSessionRemaining(string exeFileName)
+    {
+        if (string.IsNullOrWhiteSpace(exeFileName)) return null;
+        var exe = ResolveExeAlias(Path.GetFileName(exeFileName));
+        lock (_launchSessionLock)
+        {
+            if (_launchSessions.TryGetValue(exe, out var session))
+            {
+                var left = session.DeadlineUtc - DateTime.UtcNow;
+                return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+            }
+        }
+        return null;
+    }
+
+    private void SetGameRuleStatus(GameRuleStatus status)
+    {
+        lock (_ruleStatusLock) _ruleStatuses[status.Exe] = status;
+        try { GameRuleStatusChanged?.Invoke(status); }
+        catch (Exception ex) { _logging.LogDebug($"ProcessService: notificar estado de regla de {status.Exe}: {ex.Message}"); }
+    }
+
+    /// <summary>Tick de las sesiones: expira las vencidas y reintenta enganchar el proceso real.</summary>
+    private void LaunchSessionTick(object? state)
+    {
+        if (Interlocked.Exchange(ref _launchSessionTickBusy, 1) == 1) return;
+        try
+        {
+            List<LaunchSession> sessions;
+            lock (_launchSessionLock)
+            {
+                if (_launchSessions.Count == 0) return;
+                sessions = _launchSessions.Values.ToList();
+            }
+
+            var now = DateTime.UtcNow;
+            foreach (var session in sessions)
+            {
+                if (now >= session.DeadlineUtc)
                 {
-                    if (!applied.Add(app.Id)) continue;
-                    ApplyRule(app, rule!);
-                    if (!string.IsNullOrEmpty(rule!.PowerPlanGuid))
-                        ApplyPlanFor(exeFileName, rule.PowerPlanGuid);
+                    bool removed;
+                    lock (_launchSessionLock) removed = _launchSessions.Remove(session.RuleKey);
+                    if (!removed) continue;
+
+                    bool applied;
+                    lock (session.Sync) applied = session.Applied;
+                    if (!applied)
+                    {
+                        SetGameRuleStatus(new GameRuleStatus(session.RuleKey, GameRuleState.Failed, session.Launcher));
+                        _logging.LogWarning($"ProcessService: no se encontró el proceso del juego {session.RuleKey} (launcher={session.Launcher ?? "directo"}) en {LaunchSessionTimeoutSeconds} s; la regla no se aplicó.");
+                    }
+                    // Si ya se había aplicado, el estado queda Applied mientras el
+                    // proceso viva; UnregisterProcess lo limpia al cerrar el juego.
+                    continue;
                 }
-                await Task.Delay(5000);
+
+                ScanProcessesForLaunchSession(session);
             }
         }
         catch (Exception ex)
         {
-            _logging.LogWarning($"ProcessService: regla de lanzamiento {exeFileName}: {ex.Message}");
+            _logging.LogDebug($"ProcessService: tick de sesiones de lanzamiento: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _launchSessionTickBusy, 0);
+        }
+    }
+
+    /// <summary>
+    /// Busca los procesos de la cadena y aplica la regla al juego final, no al
+    /// launcher intermedio. La cadena se deja estabilizar: un candidato que solo
+    /// coincide por carpeta espera unos segundos, y si debajo aparece otro proceso
+    /// real, el padre se descarta. La regla recién se aplica a las hojas de la
+    /// cadena. Al final se guarda la ruta real para el próximo lanzamiento.
+    /// </summary>
+    private void ScanProcessesForLaunchSession(LaunchSession session)
+    {
+        // El timer, el barrido inicial y el evento WMI pueden coincidir: un solo
+        // barrido a la vez por sesión.
+        if (Interlocked.Exchange(ref session.ScanBusy, 1) == 1) return;
+        try
+        {
+            EnsureExpectedExe(session);
+            var now = DateTime.UtcNow;
+            var candidates = new List<LaunchCandidate>();
+            var alivePids = new HashSet<int>();
+
+            foreach (var p in Process.GetProcesses())
+            {
+                try
+                {
+                    alivePids.Add(p.Id);
+                    if (p.HasExited) continue;
+                    string pname = p.ProcessName + ".exe";
+                    if (IsLaunchChainNoise(pname)) continue;
+                    bool already;
+                    lock (session.Sync) already = session.AppliedPids.Contains(p.Id);
+                    if (already) continue;
+                    TryGetProcessPath(p, out var ppath);
+                    var quality = MatchLaunchSession(session, pname, ppath);
+                    if (quality == LaunchMatchQuality.None) continue;
+
+                    DateTime start = now;
+                    try { start = p.StartTime; } catch { }
+                    candidates.Add(new LaunchCandidate
+                    {
+                        Pid = p.Id,
+                        Name = pname,
+                        Path = ppath,
+                        Quality = quality,
+                        IsStub = GameExeResolver.IsStubExeName(pname)
+                            || (!string.IsNullOrEmpty(ppath) && GameExeResolver.IsStubExe(ppath)),
+                        IsLauncherLike = IsLikelyIntermediateLauncherName(pname),
+                        IsHelperLike = IsChainHelperName(pname),
+                        StartUtc = start
+                    });
+                }
+                catch { }
+                finally { p.Dispose(); }
+            }
+
+            // Limpiar pids que ya murieron también de la lista de aplicados: si
+            // Windows reutiliza el pid en un relanzamiento, la regla no puede
+            // quedar bloqueada para el proceso nuevo (pasa sin WMI activo, que es
+            // el único que avisa del cierre).
+            lock (session.Sync)
+            {
+                foreach (var pid in session.AppliedPids.ToList())
+                {
+                    bool reused = alivePids.Contains(pid)
+                        && session.AppliedProcessStartUtc.TryGetValue(pid, out var appliedStart)
+                        && GetProcessStartUtc(pid) is DateTime currentStart
+                        && currentStart != appliedStart;
+                    if (!alivePids.Contains(pid) || reused)
+                    {
+                        session.AppliedPids.Remove(pid);
+                        session.AppliedProcessStartUtc.Remove(pid);
+                    }
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                lock (session.Sync)
+                {
+                    foreach (var pid in session.FirstSeenUtc.Keys.Where(pid => !alivePids.Contains(pid)).ToList())
+                        session.FirstSeenUtc.Remove(pid);
+                }
+                return;
+            }
+
+            // Primera vez visto de cada candidato: la ventana de estabilización se
+            // cuenta desde que aparece, no desde que se abrió la sesión (un juego
+            // puede tardar en arrancar y no queremos aplicar al launcher por eso).
+            lock (session.Sync)
+            {
+                var alive = new HashSet<int>(candidates.Select(c => c.Pid));
+                foreach (var pid in session.FirstSeenUtc.Keys.Where(pid => !alive.Contains(pid)).ToList())
+                    session.FirstSeenUtc.Remove(pid);
+                foreach (var c in candidates)
+                    session.FirstSeenUtc.TryAdd(c.Pid, now);
+            }
+
+            // Marcar los padres que tienen un candidato real debajo. Ese es el
+            // launcher intermedio: no recibe la regla; la recibe el hijo.
+            var byPid = candidates.ToDictionary(c => c.Pid);
+            var parentMap = GetParentPidMap();
+            foreach (var child in candidates)
+            {
+                if (child.IsStub || child.IsHelperLike) continue;
+                int current = child.Pid;
+                for (int depth = 0; depth < 8; depth++)
+                {
+                    if (!parentMap.TryGetValue(current, out var parent) || parent <= 0) break;
+                    if (byPid.TryGetValue(parent, out var parentCandidate))
+                        parentCandidate.HasMatchingChild = true;
+                    current = parent;
+                }
+            }
+
+            // Solo las hojas reales: el juego final y sus componentes. Los stubs y
+            // helpers no se muestran ni se usan como "el juego".
+            var leaves = candidates
+                .Where(c => !c.HasMatchingChild && !c.IsStub && !c.IsHelperLike)
+                .OrderByDescending(c => c.Quality)
+                .ThenByDescending(c => c.StartUtc)
+                .ThenByDescending(c => c.Path?.Length ?? 0)
+                .ToList();
+            if (leaves.Count == 0) return;
+
+            // Si lo único que quedó es un launcher (sin hijo real todavía), se
+            // sigue esperando. Nunca se le aplica la regla al launcher intermedio:
+            // la sesión vence y la UI lo informa como "no se pudo identificar".
+            var applySet = leaves.Where(c => !c.IsLauncherLike).ToList();
+            if (applySet.Count == 0) return;
+
+            var ready = applySet.Where(c =>
+            {
+                bool direct = (c.Quality == LaunchMatchQuality.Name && !c.IsLauncherLike)
+                    || (c.Quality == LaunchMatchQuality.Expected && session.ExpectedFromMemory);
+                var settle = direct ? TimeSpan.Zero : TimeSpan.FromSeconds(LaunchChainSettleSeconds);
+                return IsCandidateSettled(session, c, now, settle);
+            }).ToList();
+            if (ready.Count == 0) return;
+
+            ready.Sort((a, b) =>
+            {
+                int q = b.Quality.CompareTo(a.Quality);
+                if (q != 0) return q;
+                int s = b.StartUtc.CompareTo(a.StartUtc);
+                if (s != 0) return s;
+                return (b.Path?.Length ?? 0).CompareTo(a.Path?.Length ?? 0);
+            });
+
+            foreach (var c in ready)
+            {
+                MarkSessionProcess(c.Pid, c.Name, c.Path, session.RuleKey);
+                ApplyRuleToSessionProcess(session, c.Pid, c.Name, c.Path, c.Quality);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logging.LogDebug($"ProcessService: barrido de la sesión de {session.RuleKey}: {ex.Message}");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref session.ScanBusy, 0);
+        }
+    }
+
+    private static bool IsCandidateSettled(LaunchSession session, LaunchCandidate candidate, DateTime now, TimeSpan settle)
+    {
+        if (settle <= TimeSpan.Zero) return true;
+        DateTime first;
+        lock (session.Sync)
+            if (!session.FirstSeenUtc.TryGetValue(candidate.Pid, out first)) return false;
+        return now - first >= settle;
+    }
+
+    /// <summary>
+    /// Deja registrado en el estado de procesos que este pid es el juego de la
+    /// regla (aunque haya nacido con otro nombre). Sin esto, el barrido aplicaría
+    /// la regla pero el cierre del proceso no limpiaría el estado ni el plan.
+    /// </summary>
+    private void MarkSessionProcess(int pid, string pname, string? ppath, string ruleKey)
+    {
+        bool changed = false;
+        lock (_eventLock)
+        {
+            if (_procGames.TryGetValue(pid, out var existing))
+            {
+                if (!string.Equals(existing.RuleKey, ruleKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    existing.RuleKey = ruleKey;
+                    changed = true;
+                }
+                existing.ProcessName = pname;
+                existing.Path ??= ppath;
+            }
+            else
+            {
+                _procGames[pid] = new RunningProc { ProcessName = pname, Path = ppath, RuleKey = ruleKey };
+                changed = true;
+            }
+        }
+        if (changed) RunningGamesChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// ¿Qué tan fuerte es la coincidencia de este proceso con la sesión? Nombre o
+    /// alias es la señal más confiable; la ruta exacta del exe esperado, la
+    /// siguiente; estar dentro de la carpeta, solo un candidato débil.
+    /// </summary>
+    private LaunchMatchQuality MatchLaunchSession(LaunchSession session, string pname, string? ppath)
+    {
+        if (MatchesRuleName(pname, session.RuleKey)) return LaunchMatchQuality.Name;
+        if (!string.IsNullOrEmpty(ppath) && !string.IsNullOrEmpty(session.ExpectedExePath)
+            && string.Equals(ppath, session.ExpectedExePath, StringComparison.OrdinalIgnoreCase))
+            return LaunchMatchQuality.Expected;
+        if (IsUnderDirectory(ppath, session.InstallDir) || MatchesRulePath(ppath, session.RuleKey))
+            return LaunchMatchQuality.Path;
+        return LaunchMatchQuality.None;
+    }
+
+    /// <summary>Sesión activa que corresponde a un proceso (null si ninguna).</summary>
+    private LaunchSession? FindLaunchSessionForProcess(string pname, string? ppath, out LaunchMatchQuality quality)
+    {
+        quality = LaunchMatchQuality.None;
+        List<LaunchSession> sessions;
+        var now = DateTime.UtcNow;
+        lock (_launchSessionLock)
+            sessions = _launchSessions.Values.Where(s => s.DeadlineUtc > now).ToList();
+
+        LaunchSession? best = null;
+        foreach (var session in sessions)
+        {
+            var q = MatchLaunchSession(session, pname, ppath);
+            if (q > quality)
+            {
+                quality = q;
+                best = session;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>Aplica la regla efectiva al proceso identificado y actualiza el estado de la UI.</summary>
+    private void ApplyRuleToSessionProcess(LaunchSession session, int pid, string pname, string? ppath, LaunchMatchQuality quality)
+    {
+        var rules = GetRulesCached();
+        var sessionRules = GetSessionRulesSnapshot();
+        sessionRules.TryGetValue(session.RuleKey, out var sr);
+        rules.TryGetValue(session.RuleKey, out var pr);
+        var effective = Merge(sr, pr);
+        if (RuleIsEmpty(effective))
+        {
+            lock (_launchSessionLock) _launchSessions.Remove(session.RuleKey);
+            SetGameRuleStatus(new GameRuleStatus(session.RuleKey, GameRuleState.None, session.Launcher));
+            return;
+        }
+
+        // El evento WMI, el barrido inicial y el tick pueden llegar con el mismo pid:
+        // se marca antes de aplicar para que la regla se aplique una sola vez.
+        DateTime? processStart = GetProcessStartUtc(pid);
+        bool first;
+        lock (session.Sync)
+        {
+            if (session.AppliedPids.Contains(pid))
+            {
+                // Mismo PID, mismo proceso: ya se le aplicó. Si el PID se reutilizó
+                // (otro inicio), es un proceso nuevo y sí hay que aplicarle.
+                if (!processStart.HasValue
+                    || !session.AppliedProcessStartUtc.TryGetValue(pid, out var appliedStart)
+                    || appliedStart == processStart.Value)
+                    return;
+                session.AppliedPids.Remove(pid);
+                session.WeakApplied.Remove(pid);
+            }
+            session.AppliedPids.Add(pid);
+            if (processStart.HasValue) session.AppliedProcessStartUtc[pid] = processStart.Value;
+            first = !session.Applied;
+            session.Applied = true;
+        }
+
+        bool strong = quality >= LaunchMatchQuality.Expected;
+        // Coincidencia débil (carpeta): se guardan las prioridades originales por si
+        // después aparece el juego real y hay que devolverle este intermedio las suyas.
+        if (!strong)
+            SnapshotWeakApplied(session, pid);
+
+        var feedback = ApplyEffectiveRule(pid, session.RuleKey, sessionRules, rules);
+
+        // El juego real (fuerte) superó a un intermedio débil: al intermedio se le
+        // devuelven sus prioridades originales (no era el juego).
+        if (strong)
+            RevertWeakApplied(session, pid);
+
+        RememberResolvedPath(session.RuleKey, ppath);
+        if (!string.IsNullOrWhiteSpace(ppath))
+        {
+            var name = Path.GetFileName(ppath);
+            if (!string.IsNullOrEmpty(name) && !IsLaunchChainNoise(name)
+                && !IsLikelyIntermediateLauncherName(name) && !IsChainHelperName(name)
+                && !GameExeResolver.IsStubExeName(name))
+            {
+                session.ExpectedExePath = ppath;
+                session.ExpectedResolved = true;
+                session.ExpectedFromMemory = true;
+            }
+        }
+        ReportGameRuleApplied(session.RuleKey, session.Launcher, pname, feedback,
+            force: first, strong: strong);
+        if (first)
+            _logging.LogInfo($"ProcessService: regla de {session.RuleKey} aplicada al proceso real {pname} (pid {pid}; launcher={session.Launcher ?? "directo"}).");
+    }
+
+    /// <summary>Guarda las prioridades originales de un proceso aplicado en débil
+    /// (coincidencia por carpeta): si después aparece el juego real, se revierten.</summary>
+    private void SnapshotWeakApplied(LaunchSession session, int pid)
+    {
+        int? cpu = null;
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            if (p.HasExited) return;
+            try
+            {
+                cpu = p.PriorityClass switch
+                {
+                    ProcessPriorityClass.Idle => 0,
+                    ProcessPriorityClass.BelowNormal => 1,
+                    ProcessPriorityClass.Normal => 2,
+                    ProcessPriorityClass.AboveNormal => 3,
+                    ProcessPriorityClass.High => 4,
+                    ProcessPriorityClass.RealTime => 5,
+                    _ => (int?)null
+                };
+            }
+            catch { }
+        }
+        catch { return; }
+        long affinity = GetAffinity(pid);
+        int? gpu = GetGpuPriority(pid);
+        int? io = GetIoPriority(pid);
+        if (cpu == null && affinity <= 0 && gpu == null && io == null) return;
+        lock (session.Sync) session.WeakApplied[pid] = new OriginalPriorities(cpu, affinity, gpu, io);
+    }
+
+    /// <summary>Devuelve sus prioridades originales a los intermedios aplicados en
+    /// débil cuando el juego real ya recibió la regla (excepto al propio juego).</summary>
+    private void RevertWeakApplied(LaunchSession session, int exceptPid)
+    {
+        List<(int Pid, OriginalPriorities Orig)> pending;
+        lock (session.Sync)
+        {
+            pending = session.WeakApplied
+                .Where(kv => kv.Key != exceptPid)
+                .Select(kv => (kv.Key, kv.Value))
+                .ToList();
+            foreach (var (pid, _) in pending) session.WeakApplied.Remove(pid);
+        }
+        foreach (var (pid, orig) in pending)
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                if (p.HasExited) continue;
+                if (orig.Cpu is int cpu) ApplyCpuPriority(pid, cpu);
+                if (orig.Affinity > 0) ApplyAffinity(pid, orig.Affinity);
+                if (orig.Gpu is int gpu) ApplyGpuPriority(pid, gpu);
+                if (orig.Io is int io) ApplyIoPriority(pid, io);
+                _logging.LogInfo($"ProcessService: prioridades originales devueltas a {pid} (era un intermedio, ya está el juego real).");
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Publica el estado Applied sin pisar un Applied anterior sano: el primer
+    /// proceso identificado es el que se muestra (normalmente el juego), no un hijo
+    /// posterior (anti-cheat, crash handler, etc.). Sí se actualiza cuando el nuevo
+    /// proceso es mejor: deja de haber limitaciones, se pasó de un stub/helper al
+    /// juego real, o se pasó de una coincidencia débil (solo carpeta) a una fuerte
+    /// (nombre/ruta aprendida).
+    /// </summary>
+    private void ReportGameRuleApplied(string ruleKey, string? launcher, string processName, RuleApplyFeedback feedback, bool force = false, bool strong = false)
+    {
+        var current = GetGameRuleStatus(ruleKey);
+        bool improved = current is { State: GameRuleState.Applied }
+            && ((current.Limited && !feedback.AnyFailed)
+                || (!current.Strong && strong)
+                || (IsLaunchChainNoise(current.ProcessName ?? "") || GameExeResolver.IsStubExeName(current.ProcessName ?? ""))
+                   && !(IsLaunchChainNoise(processName) || GameExeResolver.IsStubExeName(processName)));
+        if (!force && current is { State: GameRuleState.Applied } && !improved)
+            return;
+
+        SetGameRuleStatus(new GameRuleStatus(
+            ruleKey,
+            GameRuleState.Applied,
+            launcher ?? current?.Launcher,
+            processName,
+            feedback.AnyFailed,
+            strong));
+    }
+
+    /// <summary>
+    /// Si un proceso no matchea la regla directamente, hereda la de un ancestro que
+    /// sí (el juego real lanza anti-cheat/hijos con otro nombre). El launcher queda
+    /// afuera: si el ancestro no tiene RuleKey, no se propaga nada.
+    /// </summary>
+    private string? FindAncestorRuleKey(int pid, Dictionary<string, ProcessRule> rules, Dictionary<string, ProcessRule> session)
+    {
+        var keys = EffectiveKeys(rules, session);
+        if (keys.Count == 0) return null;
+
+        var visited = new HashSet<int> { pid };
+        int current = pid;
+        // 4 niveles alcanzan para game → stub → juego; caminar todo el árbol de un
+        // proceso ajeno (explorer → userinit → …) sería caro y no aporta.
+        for (int depth = 0; depth < 4; depth++)
+        {
+            current = GetParentPid(current);
+            if (current <= 0 || !visited.Add(current)) return null;
+
+            lock (_eventLock)
+            {
+                if (_procGames.TryGetValue(current, out var parent) && parent.RuleKey != null)
+                    return parent.RuleKey;
+            }
+
+            try
+            {
+                using var p = Process.GetProcessById(current);
+                if (p.HasExited) return null;
+                string pname = p.ProcessName + ".exe";
+                // Un launcher no presta su regla a sus hijos (no tiene); si aparece
+                // uno en la cadena, se corta.
+                if (IsLaunchChainNoise(pname)) return null;
+                TryGetProcessPath(p, out var ppath);
+                foreach (var key in keys)
+                    if (MatchesRuleKey(pname, ppath, key)) return key;
+
+                // Si el ancestro tiene ruta legible y está fuera de una carpeta de
+                // juego conocida, no es parte de la cadena del juego: cortar.
+                if (!string.IsNullOrEmpty(ppath) && !IsKnownGameFolder(ppath)) return null;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    /// <summary>Quita un pid de las sesiones activas (el proceso murió).</summary>
+    private void ReleaseLaunchSessionPid(int pid)
+    {
+        lock (_launchSessionLock)
+        {
+            foreach (var session in _launchSessions.Values)
+                lock (session.Sync)
+                {
+                    session.AppliedPids.Remove(pid);
+                    session.AppliedProcessStartUtc.Remove(pid);
+                    session.FirstSeenUtc.Remove(pid);
+                    session.WeakApplied.Remove(pid);
+                }
         }
     }
 
@@ -1228,11 +2129,6 @@ public sealed class ProcessService : IProcessService
     {
         lock (_sessionLock)
             return new Dictionary<string, ProcessRule>(_sessionRules, StringComparer.OrdinalIgnoreCase);
-    }
-
-    private bool HasSessionRules()
-    {
-        lock (_sessionLock) return _sessionRules.Count > 0;
     }
 
     public void SaveRule(string exe, ProcessRule rule)
@@ -1593,8 +2489,8 @@ public sealed class ProcessService : IProcessService
     // DESPUÉS de suscribirse, así que el estado inicial (procesos ya corriendo al
     // arrancar la app) se siembra con una única enumeración. A partir de ahí, cada
     // nacimiento/muerte de proceso llega por evento y se mantiene: el badge de la
-    // biblioteca, la aplicación de reglas (persistentes y de sesión), la limpieza
-    // de la sesión al cerrar el juego y la reversión del plan de energía.
+    // biblioteca, la aplicación de reglas guardadas (las de sesión solo van por
+    // lanzamiento desde WinForge) y la reversión del plan de energía.
 
     private static List<string> EffectiveKeys(Dictionary<string, ProcessRule> rules, Dictionary<string, ProcessRule> session)
     {
@@ -1608,8 +2504,8 @@ public sealed class ProcessService : IProcessService
 
     /// <summary>
     /// Una sola enumeración al arrancar: siembra el set de juegos en ejecución
-    /// (badge), rastrea los procesos que matchean una regla (guardada o de sesión),
-    /// aplica sus reglas y activa el plan de energía si corresponde. Después de esto
+    /// (badge), rastrea los procesos que matchean una regla guardada, aplica sus
+    /// reglas y activa el plan de energía si corresponde. Después de esto
     /// todo llega por eventos.
     /// </summary>
     private void SeedEventState()
@@ -1622,10 +2518,13 @@ public sealed class ProcessService : IProcessService
             for (int i = 0; i < 25 && !HasKnownPaths(); i++) Thread.Sleep(200);
 
             var rules = GetRulesCached();
-            var session = GetSessionRulesSnapshot();
+            // Fondo = solo guardadas: las de sesión ("Actual") aplican únicamente a
+            // lanzamientos desde WinForge, nunca al matching de fondo.
+            var session = new Dictionary<string, ProcessRule>(StringComparer.OrdinalIgnoreCase);
             var keys = EffectiveKeys(rules, session);
 
             var runningNow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool anyRuleActivity = false;
             foreach (var p in Process.GetProcesses())
             {
                 try
@@ -1634,17 +2533,37 @@ public sealed class ProcessService : IProcessService
                     string pname = p.ProcessName + ".exe";
                     TryGetProcessPath(p, out var ppath);
 
-                    if (LauncherNames.Contains(pname))
-                        lock (_launcherLock) _runningLaunchers.Add(pname);
+                    // LauncherNames guarda nombres sin .exe (Steam, Battle.net…).
+                    string bareName = Path.GetFileNameWithoutExtension(pname);
+                    if (LauncherNames.Contains(bareName))
+                        lock (_launcherLock) _runningLaunchers.Add(bareName);
 
                     bool isKnown;
                     lock (_pathsLock) isKnown = _knownPaths.ContainsKey(pname);
                     if (isKnown) runningNow.Add(pname);
 
                     string? ruleKey = null;
-                    foreach (var key in keys)
+                    if (!IsLaunchChainNoise(pname))
                     {
-                        if (MatchesRuleKey(pname, ppath, key)) { ruleKey = key; break; }
+                        foreach (var key in keys)
+                        {
+                            if (MatchesRuleKey(pname, ppath, key)) { ruleKey = key; break; }
+                        }
+                        // Un launcher intermedio que solo coincide por carpeta no
+                        // hereda la regla del juego. Si coincide por nombre, sí: la
+                        // biblioteca puede haber detectado ese exe como el juego.
+                        if (ruleKey != null && IsLikelyIntermediateLauncherName(pname)
+                            && !MatchesRuleName(pname, ruleKey))
+                            ruleKey = null;
+                        // El proceso real puede ser un hijo con otro nombre (stub de
+                        // anti-cheat, launcher del propio juego): hereda la regla del
+                        // ancestro que sí matcheó. Solo se camina el árbol cuando hay
+                        // un indicio (carpeta de juego conocida, ruta ilegible o nombre
+                        // de stub): recorrer todos los procesos del arranque costaba
+                        // varias instantáneas de Toolhelp por cada uno.
+                        if (ruleKey == null && !IsSystemProcessName(pname)
+                            && (ppath == null || IsKnownGameFolder(ppath) || GameExeResolver.IsStubExeName(pname)))
+                            ruleKey = FindAncestorRuleKey(p.Id, rules, session);
                     }
                     if (isKnown || ruleKey != null)
                     {
@@ -1664,7 +2583,11 @@ public sealed class ProcessService : IProcessService
                             };
                         }
                         if (ruleKey != null)
-                            ApplyEffectiveRule(p.Id, ruleKey, session, rules);
+                        {
+                            var feedback = ApplyEffectiveRule(p.Id, ruleKey, session, rules);
+                            ReportGameRuleApplied(ruleKey, null, pname, feedback);
+                            anyRuleActivity = true;
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -1673,14 +2596,16 @@ public sealed class ProcessService : IProcessService
                 }
             }
 
+            bool runningChanged;
             lock (_runningLock)
             {
-                if (!_runningGames.SetEquals(runningNow))
-                {
-                    _runningGames = runningNow;
-                    RunningGamesChanged?.Invoke();
-                }
+                runningChanged = !_runningGames.SetEquals(runningNow);
+                if (runningChanged) _runningGames = runningNow;
             }
+            // anyRuleActivity: un juego con regla ya estaba corriendo al abrir la app;
+            // el Modo juego tiene que activarse igual (no esperar a un cambio de badge).
+            if (runningChanged || anyRuleActivity)
+                RunningGamesChanged?.Invoke();
         }
         catch (Exception ex)
         {
@@ -1713,10 +2638,11 @@ public sealed class ProcessService : IProcessService
         string pname = rawName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
             ? rawName
             : rawName + ".exe";
-        if (LauncherNames.Contains(pname))
+        string bareName = Path.GetFileNameWithoutExtension(pname);
+        if (LauncherNames.Contains(bareName))
         {
             bool launcherChanged;
-            lock (_launcherLock) launcherChanged = _runningLaunchers.Remove(pname);
+            lock (_launcherLock) launcherChanged = _runningLaunchers.Remove(bareName);
             if (launcherChanged) LauncherStateChanged?.Invoke();
         }
         UnregisterProcess(pid);
@@ -1730,10 +2656,12 @@ public sealed class ProcessService : IProcessService
     private void RegisterProcess(int pid, string pname, string? ppath)
     {
         // Launchers: los eventos ya cubren todo proceso; mantener un HashSet es casi gratis.
-        if (LauncherNames.Contains(pname))
+        // LauncherNames guarda nombres sin .exe (Steam, Battle.net…), así que se normaliza.
+        string bareName = Path.GetFileNameWithoutExtension(pname);
+        if (LauncherNames.Contains(bareName))
         {
             bool launcherChanged;
-            lock (_launcherLock) launcherChanged = _runningLaunchers.Add(pname);
+            lock (_launcherLock) launcherChanged = _runningLaunchers.Add(bareName);
             if (launcherChanged) LauncherStateChanged?.Invoke();
         }
 
@@ -1747,16 +2675,51 @@ public sealed class ProcessService : IProcessService
                 if (_runningGames.Add(pname)) changed = true;
         }
 
-        // Sin reglas configuradas, el único trabajo es el badge (ya hecho): salir
-        // sin copiar el snapshot de sesión (los eventos corren por cada proceso).
+        // Fondo = solo reglas guardadas: las de sesión ("Actual") aplican únicamente
+        // a lanzamientos desde WinForge, nunca al matching de fondo.
         var rules = GetRulesCached();
-        if (!isKnown && rules.Count == 0 && !HasSessionRules()) return;
-        var session = GetSessionRulesSnapshot();
-
+        var session = new Dictionary<string, ProcessRule>(StringComparer.OrdinalIgnoreCase);
+        bool noise = IsLaunchChainNoise(pname);
+        // La sesión se busca antes del conteo rápido: con una regla de sesión y cero
+        // guardadas, la sesión abierta es lo único que hay que atender.
+        LaunchMatchQuality preQuality = LaunchMatchQuality.None;
+        var preSession = noise ? null : FindLaunchSessionForProcess(pname, ppath, out preQuality);
+        if (!isKnown && rules.Count == 0 && preSession == null) return;
         string? ruleKey = null;
-        foreach (var key in EffectiveKeys(rules, session))
+        if (!noise)
         {
-            if (MatchesRuleKey(pname, ppath, key)) { ruleKey = key; break; }
+            foreach (var key in EffectiveKeys(rules, session))
+            {
+                if (MatchesRuleKey(pname, ppath, key)) { ruleKey = key; break; }
+            }
+            // Igual que en el sembrado: un launcher intermedio no recibe la regla
+            // cuando la coincidencia fue solo por carpeta.
+            if (ruleKey != null && IsLikelyIntermediateLauncherName(pname)
+                && !MatchesRuleName(pname, ruleKey))
+                ruleKey = null;
+            // El juego real puede ser un hijo con otro nombre (stub de anti-cheat,
+            // launcher del propio juego): hereda la regla del ancestro que sí matcheó.
+            // Igual que en el sembrado inicial, solo se camina el árbol con un indicio
+            // (carpeta conocida, ruta ilegible o stub): hacerlo por cada proceso del
+            // sistema era caro y no aportaba.
+            if (ruleKey == null && !IsSystemProcessName(pname)
+                && (ppath == null || IsKnownGameFolder(ppath) || GameExeResolver.IsStubExeName(pname)))
+                ruleKey = FindAncestorRuleKey(pid, rules, session);
+        }
+
+        // Sesión de lanzamiento: si hay una abierta y este proceso es el juego, la
+        // sesión manda (aporta launcher + carpeta y el estado de la UI). Una
+        // coincidencia débil (solo carpeta / exe esperado) NO se aplica acá: la
+        // decide el barrido, que espera a que la cadena se estabilice. Así el
+        // launcher intermedio no se lleva la regla antes que el juego.
+        var launchSession = preSession;
+        var launchQuality = preQuality;
+        if (launchSession != null)
+        {
+            bool strongName = launchQuality == LaunchMatchQuality.Name
+                && !IsLikelyIntermediateLauncherName(pname)
+                && !GameExeResolver.IsStubExeName(pname);
+            ruleKey = strongName ? launchSession.RuleKey : null;
         }
 
         if (isKnown || ruleKey != null)
@@ -1779,26 +2742,49 @@ public sealed class ProcessService : IProcessService
         }
 
         if (ruleKey != null)
-            ApplyEffectiveRule(pid, ruleKey, session, rules);
+        {
+            if (launchSession != null)
+            {
+                ApplyRuleToSessionProcess(launchSession, pid, pname, ppath, launchQuality);
+            }
+            else if (!noise)
+            {
+                var feedback = ApplyEffectiveRule(pid, ruleKey, session, rules);
+                ReportGameRuleApplied(ruleKey, null, pname, feedback);
+            }
+        }
 
-        if (changed) RunningGamesChanged?.Invoke();
+        // El Modo juego también se entera de los procesos con regla que no son un
+        // juego "conocido" por nombre (juego real con otro exe).
+        if (changed || (ruleKey != null && !isKnown)) RunningGamesChanged?.Invoke();
     }
 
     /// <summary>
     /// Un proceso murió: se lo quita del rastreo, se actualiza el badge si era un
-    /// juego conocido, y si era la última instancia de un exe con regla de sesión
-    /// ("Actual") se limpia la sesión y se revierte el plan de energía.
+    /// juego conocido y se revierte el plan de energía. La regla de sesión se
+    /// recuerda (no se limpia al cerrar).
     /// </summary>
     private void UnregisterProcess(int pid)
     {
         RunningProc? proc;
+        bool lastForRule = false;
         lock (_eventLock)
         {
             _procGames.TryGetValue(pid, out proc);
             _procGames.Remove(pid);
+            if (proc?.RuleKey != null)
+            {
+                lastForRule = !_procGames.Values.Any(v =>
+                    string.Equals(v.RuleKey, proc.RuleKey, StringComparison.OrdinalIgnoreCase));
+            }
         }
         if (proc == null) return;
 
+        // La sesión de lanzamiento deja de esperar a este pid, pero sigue abierta
+        // por si el juego reinicia su proceso dentro de la ventana de 3 minutos.
+        ReleaseLaunchSessionPid(pid);
+
+        bool fired = false;
         // Badge: si era un juego conocido y no queda ninguna otra instancia con ese
         // nombre, sale del set de "en ejecución".
         if (proc.ExeName != null)
@@ -1812,33 +2798,31 @@ public sealed class ProcessService : IProcessService
                 lock (_runningLock)
                 {
                     if (_runningGames.Remove(proc.ExeName))
+                    {
                         RunningGamesChanged?.Invoke();
+                        fired = true;
+                    }
                 }
             }
         }
 
-        // Regla de sesión ("Actual"): si era la última instancia del juego, la
-        // sesión terminó → se limpia sola (en memoria, nunca persiste).
+        // La regla de sesión ("Actual") se recuerda: no se limpia al cerrar el juego
+        // (solo la borra "Eliminar reglas"). El plan de energía sí se revierte.
         if (proc.RuleKey != null)
         {
             string key = proc.RuleKey;
-            lock (_sessionLock)
-            {
-                if (_sessionRules.ContainsKey(key))
-                {
-                    bool stillRunning;
-                    lock (_eventLock)
-                        stillRunning = _procGames.Values.Any(v => v.RuleKey == key);
-                    if (!stillRunning)
-                    {
-                        // ClearSessionRule (y no remover directo): persiste la
-                        // limpieza en el caché de sesión.
-                        ClearSessionRule(key);
-                    }
-                }
-            }
             RevertPlanIfNoLongerRunning(key);
+
+            if (lastForRule)
+            {
+                var current = GetGameRuleStatus(key);
+                SetGameRuleStatus(new GameRuleStatus(key, GameRuleState.None, current?.Launcher, current?.ProcessName));
+            }
         }
+
+        // Sin instancias con regla, el Modo juego puede restaurar (si tampoco hay un
+        // juego conocido en ejecución; HasRunningGameActivity lo decide allá).
+        if (lastForRule && !fired) RunningGamesChanged?.Invoke();
     }
 
     // ===== Detección complementaria por fullscreen =====
@@ -1962,27 +2946,32 @@ public sealed class ProcessService : IProcessService
     }
 
     /// <summary>Aplica la regla efectiva (sesión gana sobre guardada) a un proceso recién visto.</summary>
-    private void ApplyEffectiveRule(int pid, string ruleKey, Dictionary<string, ProcessRule> session, Dictionary<string, ProcessRule> rules)
+    private RuleApplyFeedback ApplyEffectiveRule(int pid, string ruleKey, Dictionary<string, ProcessRule> session, Dictionary<string, ProcessRule> rules)
     {
+        var failed = new RuleApplyFeedback(false, false, false);
         try
         {
             session.TryGetValue(ruleKey, out var sr);
             rules.TryGetValue(ruleKey, out var pr);
             var effective = Merge(sr, pr);
-            if (RuleIsEmpty(effective)) return;
+            if (RuleIsEmpty(effective)) return failed;
 
-            if (effective!.CpuPriority is int cpu) ApplyCpuPriority(pid, cpu);
-            if (effective.AffinityMask is long mask && mask > 0) ApplyAffinity(pid, mask);
-            if (effective.GpuPriority is int gpu) ApplyGpuPriority(pid, gpu);
-            if (effective.IoPriority is int io) ApplyIoPriority(pid, io);
+            bool cpuFailed = false, affinityFailed = false, gpuFailed = false, ioFailed = false;
+            if (effective!.CpuPriority is int cpu) cpuFailed = !ApplyCpuPriority(pid, cpu);
+            if (effective.AffinityMask is long mask && mask > 0) affinityFailed = !ApplyAffinity(pid, mask);
+            if (effective.GpuPriority is int gpu) gpuFailed = !ApplyGpuPriority(pid, gpu);
+            if (effective.IoPriority is int io) ioFailed = !ApplyIoPriority(pid, io);
 
             if (!string.IsNullOrEmpty(effective.PowerPlanGuid))
                 ApplyPlanFor(ruleKey, effective.PowerPlanGuid!);
+
+            failed = new RuleApplyFeedback(cpuFailed, affinityFailed, gpuFailed, ioFailed);
         }
         catch (Exception ex)
         {
             _logging.LogWarning($"ProcessService: aplicar regla {ruleKey} a {pid}: {ex.Message}");
         }
+        return failed;
     }
 
     /// <summary>Activa el plan del primer juego con regla que se detecta; el resto espera

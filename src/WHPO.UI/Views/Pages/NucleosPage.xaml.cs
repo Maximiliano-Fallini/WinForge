@@ -22,7 +22,7 @@ using WHPO_UI.Controls;
 namespace WHPO_UI.Views.Pages;
 
 /// <summary>
-/// Página "Núcleos y Plan de energía": gráfico de temperatura del CPU estilo
+/// Página "Núcleos": gráfico de temperatura del CPU estilo
 /// Administrador de tareas (cuadrícula, timeline con scroll horizontal), cards
 /// con uso/temperatura/clock (mín/máx mientras la pestaña está abierta) y barras
 /// por núcleo con estado de parking real (0% de uso no implica estacionado).
@@ -33,28 +33,11 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
     private readonly ICpuPowerService _cpuPowerService;
     private readonly IWinUtilService _winUtilService;
     private readonly ILoggingService _loggingService;
-    private readonly ITurboCeilingService _turboCeilingService;
 
     private DispatcherQueueTimer? _samplingTimer;
     private bool _sampling;
     private bool _started;
     private bool _contentShown;
-
-    // ---- Navbar interno (Núcleos / Gestionar / Comparar) ----
-    private int _selectedTabIndex;
-    private bool _manageLoaded;
-    private bool _compareLoaded;
-
-    // ---- Techo de turbo (plan de energía activo) ----
-    private TurboCeilingState? _turboState;
-    private bool _turboUpdating;      // armar los controles no debe contar como cambio del usuario
-    private readonly List<int> _boostOptionValues = new();   // posición de la barra → valor real de Windows
-    private readonly Dictionary<string, Slider> _advancedSliders = new();
-    private readonly Dictionary<string, TextBlock> _advancedValueTexts = new();
-    // Procesador y su frecuencia nominal: se leen una vez y los usa el tooltip del modo boost
-    // (el nombre, para el aviso de AMD; la frecuencia, para la badge del modo apagado).
-    private string _cpuName = "";
-    private double _cpuNominalMhz;
 
     // ---- Gráfico de temperatura ----
     private const int ChartMaxSamples = 1200;        // ~20 min a 1 muestra/seg
@@ -169,7 +152,6 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         _cpuPowerService = App.Services.GetRequiredService<ICpuPowerService>();
         _winUtilService = App.Services.GetRequiredService<IWinUtilService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
-        _turboCeilingService = App.Services.GetRequiredService<ITurboCeilingService>();
 
         ChartScroll.ViewChanged += ChartScroll_ViewChanged;
         ChartScroll.SizeChanged += (s, e) =>
@@ -196,45 +178,11 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         // (el evento de idioma es estático y vive toda la app).
         I18n.LanguageChanged += OnLanguageChanged;
 
-        // El navbar INTERNO se pinta a mano (ver PaintNavBar): su {ThemeResource} no sigue al ajuste
-        // de apariencia —WinUI no lo vuelve a resolver cuando el relleno cambia de TIPO al encender o
-        // apagar el vidrio—, así que la franja se quedaba plana mientras las cards ya tenían vidrio.
-        // La baja va antes del alta: la página puede cargarse más de una vez y no puede quedar
-        // suscrita dos veces al evento estático.
-        Loaded += (s, e) =>
-        {
-            PanelAppearance.Applied -= PaintNavBar;
-            PanelAppearance.Applied += PaintNavBar;
-            PaintNavBar();
-        };
-
         Unloaded += (s, e) =>
         {
             StopSampling();
             I18n.LanguageChanged -= OnLanguageChanged;
-            PanelAppearance.Applied -= PaintNavBar;
         };
-    }
-
-    // ===================== Navbar interno =====================
-
-    /// <summary>Relleno de la barra de pestañas interna (PlanTabs), reusado entre pasadas.</summary>
-    private Brush? _navBarFill;
-
-    /// <summary>
-    /// Pinta la barra interna con el color del panel del menú, el alfa de la transparencia vigente y el
-    /// vidrio que esté en juego (ver <see cref="PanelAppearance.PaneBarFill"/>). Es la misma pieza que el
-    /// menú lateral: sin esto, la franja de la página quedaba sin desenfoque aunque el resto de los
-    /// paneles sí lo tuviera.
-    /// </summary>
-    private void PaintNavBar()
-    {
-        try
-        {
-            _navBarFill = PanelAppearance.PaneBarFill(_navBarFill);
-            PlanNavBar.Background = _navBarFill;
-        }
-        catch { /* arranque temprano */ }
     }
 
     // ===================== Ciclo de vida =====================
@@ -246,13 +194,10 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         ResetStats();
         ShowSkeleton();
         StartSampling();
+        // El techo de turbo se aplica al plan activo: al abrir la pestaña se relee,
+        // así no muestra el estado de un plan que quedó atrás.
+        TurboCeiling?.Refresh();
         _ = ForceShowContentAfterTimeoutAsync();
-
-        // Planes de energía (powercfg, no requiere admin)
-        _ = LoadPowerPlansAsync();
-
-        // Techo de turbo del plan activo (misma vía: política de energía de Windows)
-        _ = LoadTurboCeilingAsync();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -319,24 +264,6 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
             UpdateCoreBars(_lastUsages, _lastCoreTemps, _lastParked);
         }
 
-        // Las filas de planes guardan textos traducidos al crearse. Reconstruirlas
-        // desde la fuente actual evita conservar el idioma anterior cuando la página
-        // ya estaba abierta.
-        if (_manageLoaded)
-        {
-            _ = LoadManagePlansAsync();
-            _ = LoadInstallPresetsAsync();
-        }
-
-        // El marcador "(activo)" se forma al crear cada ComboBoxItem; recargarlo
-        // asegura que el selector no conserve el idioma anterior.
-        _ = LoadPowerPlansAsync();
-
-        // Las etiquetas del modo boost se arman al crear cada ítem, y los textos del
-        // estado vacío/nivel avanzado los escribe el código: se re-arman al cambiar idioma.
-        if (_turboState != null) ApplyTurboState(_turboState);
-
-        UpdateColorButtons();
         ApplyLanguageAfterLayout();
     }
 
@@ -348,8 +275,6 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
             try
             {
                 if (PageContent.Visibility == Visibility.Visible) PageContent.UpdateLayout();
-                if (GestionarTab.Visibility == Visibility.Visible) GestionarTab.UpdateLayout();
-                if (CompararTab.Visibility == Visibility.Visible) CompararTab.UpdateLayout();
             }
             catch { }
 
@@ -361,20 +286,6 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
     private void ApplyLanguageToPage()
     {
         I18n.ApplyToVisualTree(this);
-
-        // Estos controles pueden no tener template visual realizado todavía.
-        PowerPlanCombo.PlaceholderText = I18n.T("Cargando planes...");
-        ComparePlanACombo.PlaceholderText = I18n.T("Seleccioná un plan");
-        ComparePlanBCombo.PlaceholderText = I18n.T("Seleccioná un plan");
-
-        if (PlanTabs != null)
-        {
-            foreach (var item in PlanTabs.Items.OfType<SelectorBarItem>())
-            {
-                if (item.Text is string s && Translations.TryGetSource(s, I18n.Current, out var source))
-                    item.Text = I18n.T(source);
-            }
-        }
     }
 
     // ===================== Skeleton de carga =====================
@@ -382,11 +293,9 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
     private void ShowSkeleton()
     {
         _contentShown = false;
-        if (PageSkeleton == null || PageContent == null || GestionarTab == null || CompararTab == null) return;
+        if (PageSkeleton == null || PageContent == null) return;
         PageSkeleton.Visibility = Visibility.Visible;
         PageContent.Visibility = Visibility.Collapsed;
-        GestionarTab.Visibility = Visibility.Collapsed;
-        CompararTab.Visibility = Visibility.Collapsed;
     }
 
     private void ShowContent()
@@ -395,14 +304,16 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         _contentShown = true;
         if (PageSkeleton == null) return;
         PageSkeleton.Visibility = Visibility.Collapsed;
-        ApplyTabVisibility();
-        LazyLoadTab(_selectedTabIndex);
+
+        // El contenido arranca (y vuelve a quedar, en cada entrada a la pestaña) en
+        // Collapsed: lo oculta el skeleton de ShowSkeleton. Sin esta línea la página
+        // se quedaba en blanco para siempre —el skeleton desaparecía y nadie volvía
+        // a mostrar PageContent—.
+        PageContent.Visibility = Visibility.Visible;
 
         // Forzar layout del contenedor visible para que WinUI construya sus árboles
         // visuales internos — sin esto, ApplyToVisualTree recorre paneles vacíos.
         if (PageContent.Visibility == Visibility.Visible) PageContent.UpdateLayout();
-        if (GestionarTab.Visibility == Visibility.Visible) GestionarTab.UpdateLayout();
-        if (CompararTab.Visibility == Visibility.Visible) CompararTab.UpdateLayout();
 
         ApplyLanguageAfterLayout();
     }
@@ -414,49 +325,6 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         await Task.Delay(TimeSpan.FromSeconds(4));
         if (!_contentShown)
             DispatcherQueue.TryEnqueue(ShowContent);
-    }
-
-    // ===================== Navbar interno =====================
-
-    private void PlanTabs_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
-    {
-        if (PlanTabs == null || PlanTabs.Items.Count == 0) return;
-        int idx = PlanTabs.SelectedItem != null ? PlanTabs.Items.IndexOf(PlanTabs.SelectedItem) : 0;
-        _selectedTabIndex = idx < 0 ? 0 : idx;
-
-        // Mientras el skeleton está visible no se revela contenido de ninguna pestaña.
-        if (!_contentShown) return;
-        ApplyTabVisibility();
-        LazyLoadTab(_selectedTabIndex);
-    }
-
-    private void ApplyTabVisibility()
-    {
-        if (PageContent == null || GestionarTab == null || CompararTab == null) return;
-        PageContent.Visibility = _selectedTabIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
-        GestionarTab.Visibility = _selectedTabIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
-        CompararTab.Visibility = _selectedTabIndex == 2 ? Visibility.Visible : Visibility.Collapsed;
-
-        // Traducir la pestaña Comparar cuando se hace visible
-        if (_selectedTabIndex == 2)
-        {
-            TranslateCompareTab();
-        }
-    }
-
-    private void LazyLoadTab(int index)
-    {
-        if (index == 1 && !_manageLoaded)
-        {
-            _manageLoaded = true;
-            _ = LoadManagePlansAsync();
-            _ = LoadInstallPresetsAsync();
-        }
-        if (index == 2 && !_compareLoaded)
-        {
-            _compareLoaded = true;
-            LoadCompareCombos();
-        }
     }
 
     private void OnSamplingTick(DispatcherQueueTimer sender, object args)
@@ -1016,15 +884,17 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
         for (int i = 0; i < count; i++)
         {
             var bar = new CoreBar();
-            const double trackH = 104;
+            const double trackW = 26;
+            const double trackH = 96;
 
- // Cabecera: nombre a la izquierda + temperatura a la derecha. El nombre
- // va atenuado (el dato importante es el %) y con recorte por si el
- // texto traducido no entra en el ancho fijo de la card.
+ // Cabecera: nombre del núcleo a la izquierda como etiqueta chica y
+ // espaciada, temperatura a la derecha. El dato que manda es el %, así
+ // que el resto queda en segundo plano (jerarquía limpia).
             var name = new TextBlock
             {
-                Text = $"{I18n.T("Núcleo")} {i}",
-                FontSize = 11,
+                Text = $"{I18n.T("Núcleo")} {i}".ToUpperInvariant(),
+                FontSize = 8.5,
+                CharacterSpacing = 40,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = ThemeBrush("SecondaryTextBrush"),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1034,7 +904,7 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
             bar.Temp = new TextBlock
             {
                 Text = "--",
-                FontSize = 10.5,
+                FontSize = 9.5,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = BTimeLabel
@@ -1048,20 +918,22 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
             header.Children.Add(name);
             header.Children.Add(bar.Temp);
 
+ // Pista con extremos redondeados (pastilla): el relleno crece desde
+ // abajo con la misma forma, sin bordes ni biseles que agreguen ruido.
             bar.Fill = new Border
             {
-                Width = 34,
+                Width = trackW,
                 Height = 0,
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(trackW / 2),
                 Background = BGreen,
                 VerticalAlignment = VerticalAlignment.Bottom
             };
 
             var track = new Border
             {
-                Width = 34,
+                Width = trackW,
                 Height = trackH,
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(trackW / 2),
                 Background = CoreTrackBrush,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Child = bar.Fill
@@ -1070,48 +942,41 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
             bar.Usage = new TextBlock
             {
                 Text = "--%",
-                FontSize = 15,
+                FontSize = 16,
                 FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Foreground = BNeutral
             };
 
- // Estado como badge: texto dentro de una píldora con fondo tenue.
- // UpdateCoreBars solo cambia Text/Foreground del TextBlock, así que
- // el color de estado se sigue aplicando igual.
+ // Estado como texto plano (sin píldora de fondo): el color de estado lo
+ // lleva la barra y acá queda solo la palabra. UpdateCoreBars sigue
+ // cambiando Text/Foreground igual que antes.
             bar.Status = new TextBlock
             {
                 Text = "—",
-                FontSize = 9.5,
+                FontSize = 9,
+                CharacterSpacing = 30,
                 FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Foreground = BNeutral
             };
 
-            var statusPill = new Border
-            {
-                CornerRadius = new CornerRadius(9),
-                Padding = new Thickness(9, 2, 9, 3),
-                Background = CoreTrackBrush,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Child = bar.Status
-            };
-
-            var sp = new StackPanel { Spacing = 8 };
+            var sp = new StackPanel { Spacing = 6 };
             sp.Children.Add(header);
             sp.Children.Add(track);
             sp.Children.Add(bar.Usage);
-            sp.Children.Add(statusPill);
+            sp.Children.Add(bar.Status);
 
+ // Card más angosta y compacta: padding parejo y un solo borde hairline.
             var root = new Border
             {
                 Background = CoreCardBrush,
                 BorderBrush = ThemeBrush("CardBorderBrush"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(12, 10, 12, 10),
-                Width = 116,
-                Margin = new Thickness(0, 0, 10, 10),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(10, 10, 10, 9),
+                Width = 112,
+                Margin = new Thickness(0, 0, 8, 8),
                 Child = sp
             };
 
@@ -1145,7 +1010,9 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
                 bar.Fill.Background = BGreen;
                 bar.Usage.Foreground = BGreen;
                 bar.Status.Text = I18n.T("Activo");
-                bar.Status.Foreground = BGreen;
+                // El estado activo va atenuado: el color ya lo dice la barra y el %.
+                // Así solo lo que importa (estacionado) resalta en rojo.
+                bar.Status.Foreground = BNeutral;
             }
             else
             {
@@ -1169,1622 +1036,6 @@ public sealed partial class NucleosPage : Page, IBackgroundPausable
                 bar.Temp.Visibility = Visibility.Collapsed;
             }
         }
-    }
-
-    // ===================== Plan de energía =====================
-
-    // El popup del ComboBox abre con un VerticalOffset que WinUI 3 calcula mal cuando
-    // el combo está dentro del Frame/ScrollViewer: queda desplazado hacia arriba. En
-    // cada apertura alineamos el tope del popup con el tope del combo (igual que el de
-    // "Tipo de test"), una vez que el popup ya está medido.
-    private async void PowerPlanCombo_DropDownOpened(object sender, object e)
-    {
-        var combo = (ComboBox)sender;
-        try
-        {
-            for (int i = 0; i < 20; i++)
-            {
-                await Task.Delay(16);
-                var popups = VisualTreeHelper.GetOpenPopupsForXamlRoot(combo.XamlRoot);
-                if (popups.Count == 0 || popups[0].Child is not FrameworkElement fe || fe.ActualHeight <= 0)
-                    continue;
-
-                var popup = popups[0];
-                var popupPos = fe.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
-                var comboPos = combo.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
-                double delta = comboPos.Y - popupPos.Y;
-                if (Math.Abs(delta) < 0.5) break;
-                popup.VerticalOffset += delta;
-                break;
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"POWERPLAN reposition: {ex.Message}");
-        }
-    }
-
-    private async Task LoadPowerPlansAsync()
-    {
-        try
-        {
-            // GetPowerPlans ya maneja sus errores internamente y devuelve lista vacía.
-            var plans = await Task.Run(() => _cpuPowerService.GetPowerPlans());
-
-            int activeIndex = -1;
-            PowerPlanCombo.Items.Clear();
-            for (int i = 0; i < plans.Count; i++)
-            {
-                var plan = plans[i];
-                PowerPlanCombo.Items.Add(new ComboBoxItem
-                {
-                    Content = plan.IsActive ? I18n.T("{0}  (activo)", plan.Name) : plan.Name,
-                    Tag = plan.Guid
-                });
-                if (plan.IsActive) activeIndex = i;
-            }
-
-            PowerPlanCombo.SelectedIndex = activeIndex >= 0 ? activeIndex : (plans.Count > 0 ? 0 : -1);
-            ApplyPowerPlanButton.IsEnabled = PowerPlanCombo.SelectedIndex >= 0;
-            // No pisar el mensaje de confirmación/error cuando la carga es exitosa.
-            if (plans.Count == 0)
-                Feedback.Warning(PowerPlanStatusText, "No se detectaron planes de energía.");
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"NucleosPage: error cargando planes de energía: {ex.Message}");
-            Feedback.Warning(PowerPlanStatusText, "No se pudieron cargar los planes de energía.");
-        }
-    }
-
-    private async void ApplyPowerPlanButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (PowerPlanCombo.SelectedItem is not ComboBoxItem { Tag: string planGuid })
-            return;
-        var planName = (PowerPlanCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? planGuid;
-
-        ApplyPowerPlanButton.IsEnabled = false;            Feedback.Running(PowerPlanStatusText, I18n.T("Aplicando plan..."));
-        try
-        {
-            var result = await _cpuPowerService.SetActivePowerPlanAsync(planGuid);
-
-            // La selección del combo no representa el estado del sistema: volver a leer ambos
-            // desde Windows asegura que la card muestre el plan que realmente quedó activo.
-            await LoadPowerPlansAsync();
-            var turboPlanActivated = await LoadTurboCeilingAsync(planGuid);
-            if (result.Success && !turboPlanActivated)
-            {
-                result = new CommandResult(false,
-                    I18n.T("Windows no confirmó el cambio al plan {0}; la card muestra el plan que realmente quedó activo.", planName));
-            }
-
-            if (result.Success)
-                Feedback.Success(PowerPlanStatusText, I18n.T("Plan de energía establecido: {0}", planName));
-            else
-                Feedback.Result(PowerPlanStatusText, result);
-        }
-        catch (Exception ex)
-        {
-            Feedback.Error(PowerPlanStatusText, ex.Message);
-            _loggingService.LogWarning($"NucleosPage: error aplicando plan de energía: {ex.Message}");
-        }
-        finally
-        {
-            ApplyPowerPlanButton.IsEnabled = PowerPlanCombo.SelectedIndex >= 0;
-        }
-    }
-
-    // ===================== Techo de turbo =====================
-
-    private async Task<bool> LoadTurboCeilingAsync(string? expectedPlanGuid = null)
-    {
-        try
-        {
-            // powercfg + registro del catálogo de energía: fuera del hilo de UI. Si se acaba
-            // de activar otro plan, esperar a que Windows refleje ese GUID antes de leer sus
-            // ajustes; así no se conserva ni se presenta como nuevo el estado del plan anterior.
-            if (!string.IsNullOrWhiteSpace(expectedPlanGuid))
-            {
-                for (int attempt = 0; attempt < 10; attempt++)
-                {
-                    var activeGuid = await Task.Run(() => _cpuPowerService.GetActivePowerPlanGuid());
-                    if (activeGuid.Equals(expectedPlanGuid, StringComparison.OrdinalIgnoreCase))
-                        break;
-                    if (attempt < 9) await Task.Delay(100);
-                }
-            }
-
-            var state = await Task.Run(() => _turboCeilingService.GetState());
-            _cpuName = state.CpuName;
-            if (_cpuNominalMhz <= 0)
-            {
-                // Una sola vez: es WMI, y el tooltip se rearma al mover la barra.
-                try { _cpuNominalMhz = await Task.Run(() => _systemInfoService.GetCpuInfo().MaxFrequencyMHz); }
-                catch { }
-            }
-            ApplyTurboState(state);
-            return string.IsNullOrWhiteSpace(expectedPlanGuid)
-                || state.PlanGuid.Equals(expectedPlanGuid, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"NucleosPage: no se pudo leer el techo de turbo: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Pinta el estado REAL del equipo: los controles que existen, con el rango que el
-    /// sistema declara y en el valor en el que está. Si el equipo no expone algo, se
-    /// dice por qué en vez de mostrar un control que no puede hacer nada.
-    /// </summary>
-    private void ApplyTurboState(TurboCeilingState state)
-    {
-        _turboState = state;
-        _turboUpdating = true;
-        try
-        {
-            TurboPlanChipText.Text = string.IsNullOrWhiteSpace(state.PlanName)
-                ? string.Empty
-                : I18n.T("Plan activo: {0}", state.PlanName);
-
-            // ---- Modo boost: barra escalonada con las posiciones que declara el sistema ----
-            // Es una LISTA de modos, no una magnitud: la barra salta de uno a otro (sin
-            // valores intermedios, porque Windows no los acepta) y arriba se muestra el
-            // nombre del modo actual. Las posiciones salen del equipo, no del código.
-            TurboBoostRow.Visibility = state.BoostModeExposed ? Visibility.Visible : Visibility.Collapsed;
-            _boostOptionValues.Clear();
-            if (state.BoostModeExposed && state.BoostModeValue != null)
-            {
-                _boostOptionValues.AddRange(state.BoostModeOptions);
-                TurboBoostSlider.Minimum = 0;
-                TurboBoostSlider.Maximum = Math.Max(0, _boostOptionValues.Count - 1);
-                TurboBoostSlider.StepFrequency = 1;
-
-                var index = _boostOptionValues.IndexOf(state.BoostModeValue.Value);
-                TurboBoostSlider.Value = index >= 0 ? index : 0;
-                TurboBoostValueText.Text = BoostModeLabel(state.BoostModeValue.Value);
-                UpdateBoostModeHelp(state.BoostModeValue.Value);
-            }
-            else
-            {
-                TurboBoostValueText.Text = string.Empty;
-                UpdateBoostModeHelp(null);
-            }
-
-            // ---- Límite de rendimiento (rango del equipo, nunca 0-100 fijo) ----
-            TurboLimitRow.Visibility = state.LimitExposed ? Visibility.Visible : Visibility.Collapsed;
-            // Se arma en código (no en el XAML) para que el texto envuelva dentro del tooltip y
-            // siga el idioma: el tooltip de string del XAML se recortaba al llegar al ancho máximo.
-            ToolTipService.SetToolTip(TurboLimitInfoButton, BuildLimitToolTip());
-            if (state.LimitExposed && state.LimitPercent != null)
-            {
-                TurboLimitSlider.Minimum = state.LimitMin;
-                TurboLimitSlider.Maximum = state.LimitMax;
-                TurboLimitSlider.StepFrequency = state.LimitStep > 0 ? state.LimitStep : 1;
-                TurboLimitSlider.Value = state.LimitPercent.Value;
-                TurboLimitValueText.Text = FormatLimitValue(state.LimitPercent.Value, state.LimitUnits);
-            }
-            else
-            {
-                TurboLimitValueText.Text = string.Empty;
-            }
-
-            // ---- Estado vacío: se explica, no se esconde ----
-            var unavailable = !state.HasAnyControl;
-            TurboControlsPanel.Visibility = unavailable ? Visibility.Collapsed : Visibility.Visible;
-            TurboUnavailableBorder.Visibility = unavailable ? Visibility.Visible : Visibility.Collapsed;
-            if (unavailable)
-            {
-                TurboUnavailableText.Text = string.IsNullOrWhiteSpace(state.PlanGuid)
-                    ? I18n.T("No se pudo leer el plan de energía activo, así que no hay ajustes que mostrar.")
-                    : I18n.T("Este equipo no expone estos ajustes: Windows no los ofrece para este procesador o el firmware los bloqueó.");
-            }
-
-            // ---- Ajustes avanzados: se arman solo con los que expone el equipo ----
-            BuildAdvancedControls(state);
-
-            TurboScopeText.Text = unavailable
-                ? string.Empty
-                : I18n.T("Se aplica al plan de energía activo: si cambiás de plan, el techo vuelve al de ese plan.");
-            TurboRestoreButton.IsEnabled = state.HasAnyControl &&
-                ((state.LimitExposed && state.DefaultLimitPercent != null) ||
-                 (state.BoostModeExposed && state.DefaultBoostMode != null));
-            TurboApplyButton.IsEnabled = false;   // se habilita cuando hay un cambio pendiente
-        }
-        catch (Exception ex)
-        {
-            // Un fallo al pintar la card no puede romper el resto de la página.
-            _loggingService.LogWarning($"NucleosPage: no se pudo pintar el techo de turbo: {ex.Message}");
-        }
-        finally
-        {
-            _turboUpdating = false;
-        }
-    }
-
-    /// <summary>
-    /// Arma una tarjeta por cada ajuste avanzado que el equipo expone: nombre, botón de ayuda
-    /// (el detalle va en su tooltip), valor y una barra continua con el rango real del sistema.
-    /// Van de a dos por fila para no apilar todos los ajustes uno abajo del otro. Los ajustes
-    /// que no se pueden leer no se crean (y si no queda ninguno, la sección entera se oculta).
-    /// </summary>
-    private void BuildAdvancedControls(TurboCeilingState state)
-    {
-        TurboAdvancedPanel.Children.Clear();
-        _advancedSliders.Clear();
-        _advancedValueTexts.Clear();
-
-        var exposed = state.Advanced.Where(a => a.Exposed).ToList();
-        TurboAdvancedExpander.Visibility = exposed.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        if (exposed.Count == 0) return;
-
-        for (var i = 0; i < exposed.Count; i += 2)
-        {
-            var row = new Grid { ColumnSpacing = 28, VerticalAlignment = VerticalAlignment.Top };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            row.Children.Add(BuildAdvancedTile(exposed[i]));
-
-            if (i + 1 < exposed.Count)
-            {
-                var right = BuildAdvancedTile(exposed[i + 1]);
-                Grid.SetColumn(right, 1);
-                row.Children.Add(right);
-            }
-
-            TurboAdvancedPanel.Children.Add(row);
-        }
-    }
-
-    /// <summary>
-    /// Una tarjeta de ajuste avanzado: nombre + botón ⓘ (con la ayuda en el tooltip), el valor
-    /// actual arriba de la barra y la barra debajo, igual que los ajustes de arriba de la card.
-    /// </summary>
-    private FrameworkElement BuildAdvancedTile(TurboAdvancedSetting setting)
-    {
-        var tile = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Top };
-
-        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        header.Children.Add(new TextBlock
-        {
-            Text = I18n.T(setting.Key),
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        header.Children.Add(TooltipStyles.CreateInfoButton(
-            InfoToolTipContent(I18n.T(setting.Key), I18n.T(setting.HelpKey))));
-        tile.Children.Add(header);
-
-        var valueText = new TextBlock
-        {
-            Text = FormatAdvancedValue(setting.Value ?? setting.Min, setting.UnitSymbol),
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            TextWrapping = TextWrapping.Wrap
-        };
-        tile.Children.Add(valueText);
-
-        var slider = new Slider
-        {
-            Minimum = setting.Min,
-            Maximum = setting.Max,
-            StepFrequency = Math.Max(1, setting.Step),
-            Value = setting.Value ?? setting.Min,
-            VerticalAlignment = VerticalAlignment.Center,
-            Tag = setting.SettingGuid
-        };
-        slider.ValueChanged += TurboAdvancedSlider_ValueChanged;
-        tile.Children.Add(slider);
-
-        _advancedSliders[setting.SettingGuid] = slider;
-        _advancedValueTexts[setting.SettingGuid] = valueText;
-        return tile;
-    }
-
-    private static string FormatAdvancedValue(int value, string unit)
-        => string.IsNullOrWhiteSpace(unit) ? value.ToString() : $"{value} {unit}";
-
-    private void TurboAdvancedSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_turboUpdating || _turboState == null) return;
-        if (sender is Slider { Tag: string guid } slider)
-        {
-            var setting = _turboState.Advanced.Find(a => a.SettingGuid.Equals(guid, StringComparison.OrdinalIgnoreCase));
-            if (setting != null && _advancedValueTexts.TryGetValue(guid, out var text))
-                text.Text = FormatAdvancedValue((int)Math.Round(slider.Value), setting.UnitSymbol);
-        }
-        UpdateTurboPendingState();
-    }
-
-    /// <summary>Ajustes avanzados que el usuario cambió respecto de lo aplicado.</summary>
-    private Dictionary<string, int> PendingAdvancedValues()
-    {
-        var pending = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (_turboState == null) return pending;
-
-        foreach (var setting in _turboState.Advanced)
-        {
-            if (!setting.Exposed || setting.Value == null) continue;
-            if (!_advancedSliders.TryGetValue(setting.SettingGuid, out var slider)) continue;
-            var value = (int)Math.Round(slider.Value);
-            if (value != setting.Value.Value) pending[setting.SettingGuid] = value;
-        }
-        return pending;
-    }
-
-    private static string BoostModeLabel(int value) => value switch
-    {
-        0 => I18n.T("Desactivado"),
-        1 => I18n.T("Activado"),
-        2 => I18n.T("Agresivo"),
-        3 => I18n.T("Eficiente"),
-        4 => I18n.T("Eficiente agresivo"),
-        5 => I18n.T("Agresivo (frecuencia garantizada)"),
-        6 => I18n.T("Eficiente agresivo (frecuencia garantizada)"),
-        // Un valor que Windows agregue en el futuro se muestra crudo, no se inventa.
-        _ => I18n.T("Modo {0}", value)
-    };
-
-    private static string FormatLimitValue(int value, string units)
-        => string.IsNullOrWhiteSpace(units) ? value.ToString() : $"{value} {units}";
-
-    /// <summary>Valor real del modo boost en la posición actual de la barra.</summary>
-    private int? SelectedBoostMode()
-    {
-        if (_boostOptionValues.Count == 0) return null;
-        var index = (int)Math.Round(TurboBoostSlider.Value);
-        if (index < 0 || index >= _boostOptionValues.Count) return null;
-        return _boostOptionValues[index];
-    }
-
-    private void TurboBoostSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_turboUpdating || _turboState == null) return;
-        var value = SelectedBoostMode();
-        TurboBoostValueText.Text = value != null ? BoostModeLabel(value.Value) : string.Empty;
-        UpdateBoostModeHelp(value);
-        UpdateTurboPendingState();
-    }
-
-    /// <summary>
-    /// Qué cambia con el modo boost elegido, en las tres cosas que lo definen: quién decide si
-    /// hay boost (Windows o el propio procesador), con cuánta gana lo pide, y hasta dónde puede
-    /// llegar (turbo máximo o solo la frecuencia sostenida). Los textos son las claves traducibles.
-    /// </summary>
-    /// <summary>Lo que hay que saber antes de leer la lista de modos: no es una escala.</summary>
-    private static string BoostModeIntro()
-        => I18n.T("Cada posición es un modo que documenta Windows, no un grado de una misma escala.");
-
-    // ---- Contenido de los tooltips de esta card ----
-    //
-    // Un string suelto dentro de un ToolTip NO envuelve: el ContentPresenter lo dibuja sin
-    // TextWrapping y el texto se corta al llegar al ancho máximo. Por eso cada tooltip se arma
-    // con TextBlocks que envuelven, y todos con el mismo formato: título, texto y viñetas.
-
-    private static StackPanel NewToolTipBox() => new() { Spacing = 6, MaxWidth = 430 };
-
-    private static TextBlock ToolTipTitle(string text) => new()
-    {
-        Text = text,
-        FontSize = 13,
-        FontWeight = FontWeights.SemiBold,
-        TextWrapping = TextWrapping.Wrap
-    };
-
-    private static TextBlock ToolTipText(string text, bool emphasis = false, bool bullet = false) => new()
-    {
-        Text = (bullet ? "• " : string.Empty) + text,
-        FontSize = 12,
-        FontWeight = emphasis ? FontWeights.SemiBold : FontWeights.Normal,
-        Foreground = Feedback.MutedBrush,
-        TextWrapping = TextWrapping.Wrap,
-        Margin = new Thickness(bullet ? 8 : 0, 0, 0, 0)
-    };
-
-    private static ToolTip WrapToolTip(StackPanel content)
-        => new() { Placement = PlacementMode.Bottom, Content = content };
-
-    /// <summary>Tooltip informativo con el formato de la card: título, descripción y viñetas.</summary>
-    private static StackPanel InfoToolTipContent(string title, string description, params string[] bullets)
-    {
-        var content = NewToolTipBox();
-        content.Children.Add(ToolTipTitle(title));
-        if (!string.IsNullOrEmpty(description)) content.Children.Add(ToolTipText(description));
-        foreach (var bullet in bullets) content.Children.Add(ToolTipText(bullet, bullet: true));
-        return content;
-    }
-
-    /// <summary>Tooltip del límite de rendimiento: se arma en código para que el texto envuelva.</summary>
-    private static ToolTip BuildLimitToolTip()
-        => WrapToolTip(InfoToolTipContent(
-            I18n.T("Límite de rendimiento"),
-            I18n.T("Porcentaje máximo del procesador que Windows puede usar (turbo incluido).")));
-
-    private static string BoostModeHelp(int value) => value switch
-    {
-        0 => I18n.T("Sin turbo: el procesador no pasa de su frecuencia base. Es la posición más fresca y silenciosa."),
-        1 => I18n.T("Windows pide turbo cuando detecta carga: es el comportamiento con el que viene el equipo."),
-        2 => I18n.T("Windows pide turbo antes y lo sostiene más tiempo: más rendimiento, más calor y más consumo."),
-        3 => I18n.T("No decide Windows: decide el propio procesador, y solo cuando le conviene en consumo."),
-        4 => I18n.T("Decide el propio procesador, pero empuja más fuerte y por más tiempo que el eficiente."),
-        5 => I18n.T("Turbo agresivo, pero limitado a la frecuencia sostenida que el equipo puede mantener sin bajar."),
-        6 => I18n.T("Lo decide el procesador, empuja fuerte y se limita a la frecuencia sostenida: la más previsible."),
-        // Un valor que Windows agregue en el futuro se explica como lo que es, sin inventarle un modo.
-        _ => I18n.T("Valor {0}: el equipo lo informa y Windows no le da un nombre propio.", value)
-    };
-
-    /// <summary>
-    /// Deja la explicación del modo boost en el tooltip del botón de ayuda. No se dibuja como
-    /// texto fijo: la fila queda "nombre + barra" y el detalle se consulta.
-    /// </summary>
-    private void UpdateBoostModeHelp(int? value)
-    {
-        ToolTipService.SetToolTip(TurboBoostInfoButton, BuildBoostModeToolTip(value));
-    }
-
-    /// <summary>
-    /// Tooltip del modo boost: título, aclaración de que no es una escala y la lista de perfiles
-    /// con lo que cambia en cada uno, más el elegido marcado. Mismo formato que el tooltip del
-    /// Modo juego de WinForge (título + subtítulo + viñetas) y se rearma al mover la barra.
-    /// </summary>
-    private ToolTip BuildBoostModeToolTip(int? current)
-    {
-        var content = NewToolTipBox();
-        content.Children.Add(ToolTipTitle(I18n.T("Modo boost")));
-        content.Children.Add(ToolTipText(BoostModeIntro()));
-
-        // Solo los perfiles que expone este equipo: listar los siete documentados cuando el
-        // firmware declara cinco mostraría posiciones que la barra no tiene.
-        if (_boostOptionValues.Count > 0)
-        {
-            content.Children.Add(ToolTipText(I18n.T("Qué cambia en cada perfil:"), emphasis: true));
-            foreach (var mode in _boostOptionValues)
-                content.Children.Add(BuildBoostProfile(mode, mode == current));
-
-            // Honestidad para AMD: el procesador administra el boost por su cuenta y, medido en un
-            // Ryzen, puede no distinguir estas posiciones (la 2 y la 6 rindieron igual).
-            if (IsAmdCpu())
-                content.Children.Add(ToolTipText(I18n.T("En los procesadores AMD el boost lo administra el firmware del procesador, así que puede no distinguir estas posiciones.")));
-        }
-
-        content.Children.Add(ToolTipText(I18n.T("El cambio se aplica al pulsar Aplicar; Restaurar vuelve al valor predeterminado del plan de energía activo.")));
-        return WrapToolTip(content);
-    }
-
-    /// <summary>
-    /// Un perfil de la lista: viñeta, nombre y badge de estado arriba, y la explicación abajo.
-    /// El nombre va en negrita y con el color de texto principal, y la descripción en gris: antes
-    /// los dos compartían estilo y no se veía dónde terminaba uno y empezaba la otra.
-    /// </summary>
-    private FrameworkElement BuildBoostProfile(int mode, bool isCurrent)
-    {
-        var block = new StackPanel { Spacing = 2, Margin = new Thickness(8, 0, 0, 0) };
-
-        var head = new Grid { ColumnSpacing = 8 };
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        head.Children.Add(new TextBlock
-        {
-            Text = "•",
-            FontSize = 12,
-            Foreground = Feedback.MutedBrush,
-            VerticalAlignment = VerticalAlignment.Center
-        });
-
-        var name = new TextBlock
-        {
-            // Sin Foreground propio a propósito: el color de texto principal lo separa de la
-            // descripción gris de abajo.
-            Text = isCurrent ? I18n.T("{0}  (activo)", BoostModeLabel(mode)) : BoostModeLabel(mode),
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        Grid.SetColumn(name, 1);
-        head.Children.Add(name);
-
-        var badge = BuildBoostBadge(mode);
-        if (badge != null)
-        {
-            Grid.SetColumn(badge, 2);
-            head.Children.Add(badge);
-        }
-        block.Children.Add(head);
-
-        block.Children.Add(new TextBlock
-        {
-            Text = BoostModeHelp(mode),
-            FontSize = 11,
-            Foreground = Feedback.MutedBrush,
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(14, 0, 0, 0)
-        });
-
-        return block;
-    }
-
-    /// <summary>
-    /// Badge de estado del perfil: qué significa ese modo para el techo de frecuencia, con lo que
-    /// documenta Windows. Verde = el turbo puede llegar a su máximo; ámbar = no (turbo apagado, o
-    /// limitado a la frecuencia garantizada). El modo apagado dice además en qué frecuencia queda,
-    /// leída del equipo. Un modo que Windows no documenta no lleva badge: no se le inventa un estado.
-    /// </summary>
-    private Border? BuildBoostBadge(int mode)
-    {
-        bool positive;
-        string text;
-        switch (mode)
-        {
-            case 0:
-                positive = false;
-                text = _cpuNominalMhz > 0
-                    ? I18n.T("Sin turbo · {0}", FormatFreqShort(_cpuNominalMhz))
-                    : I18n.T("Sin turbo");
-                break;
-            case >= 1 and <= 4:
-                positive = true;
-                text = I18n.T("Turbo máximo");
-                break;
-            case >= 5 and <= 6:
-                positive = false;
-                text = I18n.T("Tope garantizado");
-                break;
-            default:
-                return null;
-        }
-
-        return new Border
-        {
-            Padding = new Thickness(7, 1, 7, 1),
-            CornerRadius = new CornerRadius(7),
-            Background = ThemeBrushes.Get(positive ? "SuccessTintBrush" : "WarningTintBrush"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
-            {
-                Text = text,
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = positive ? Feedback.SuccessBrush : Feedback.WarningBrush
-            }
-        };
-    }
-
-    /// <summary>Frecuencia compacta para las badges ("3,8 GHz" en vez de "3,80 GHz").</summary>
-    private static string FormatFreqShort(double mhz)
-        => mhz >= 1000 ? $"{mhz / 1000.0:0.#} GHz" : $"{mhz:F0} MHz";
-
-    /// <summary>El boost lo administra el firmware en los procesadores AMD.</summary>
-    private bool IsAmdCpu()
-        => _cpuName.Contains("AMD", StringComparison.OrdinalIgnoreCase)
-           || _cpuName.Contains("Ryzen", StringComparison.OrdinalIgnoreCase)
-           || _cpuName.Contains("Athlon", StringComparison.OrdinalIgnoreCase)
-           || _cpuName.Contains("Threadripper", StringComparison.OrdinalIgnoreCase);
-
-    private void TurboLimitSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-    {
-        if (_turboUpdating || _turboState == null) return;
-        TurboLimitValueText.Text = FormatLimitValue((int)Math.Round(TurboLimitSlider.Value), _turboState.LimitUnits);
-        UpdateTurboPendingState();
-    }
-
-    /// <summary>Habilita "Aplicar" solo cuando hay un cambio real respecto de lo aplicado.</summary>
-    private void UpdateTurboPendingState()
-    {
-        if (_turboState == null) return;
-        var pending = false;
-
-        var boost = SelectedBoostMode();
-        if (_turboState.BoostModeExposed && boost != null && boost != _turboState.BoostModeValue)
-            pending = true;
-
-        if (_turboState.LimitExposed && _turboState.LimitPercent != null &&
-            (int)Math.Round(TurboLimitSlider.Value) != _turboState.LimitPercent.Value)
-            pending = true;
-
-        if (!pending && PendingAdvancedValues().Count > 0) pending = true;
-
-        TurboApplyButton.IsEnabled = pending;
-    }
-
-    private async void TurboApplyButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (_turboState == null) return;
-        TurboApplyButton.IsEnabled = false;
-        TurboRestoreButton.IsEnabled = false;
-        Feedback.Running(TurboStatusText, I18n.T("Aplicando…"));
-
-        try
-        {
-            var boost = _turboState.BoostModeExposed ? SelectedBoostMode() : null;
-            var limit = _turboState.LimitExposed ? (int)Math.Round(TurboLimitSlider.Value) : (int?)null;
-
-            // Solo se envía lo que realmente cambió; el botón ya está deshabilitado si no hay
-            // nada pendiente, pero así el mensaje de error no confunde "sin cambios" con un fallo.
-            var boostPending = boost != null && boost != _turboState.BoostModeValue;
-            var limitPending = limit != null && limit != _turboState.LimitPercent;
-
-            var result = new CommandResult(true, "");
-            if (boostPending || limitPending)
-                result = await _turboCeilingService.ApplyAsync(boostPending ? boost : null, limitPending ? limit : null);
-
-            var advanced = PendingAdvancedValues();
-            if (result.Success && advanced.Count > 0)
-                result = await _turboCeilingService.ApplyAdvancedAsync(advanced);
-
-            Feedback.Result(TurboStatusText, result);
-        }
-        catch (Exception ex)
-        {
-            Feedback.Error(TurboStatusText, ex.Message);
-            _loggingService.LogWarning($"NucleosPage: error aplicando el techo de turbo: {ex.Message}");
-        }
-        finally
-        {
-            // El estado que queda en la UI es el que el equipo reporta después de aplicar.
-            await LoadTurboCeilingAsync();
-        }
-    }
-
-    private async void TurboRestoreButton_Click(object sender, RoutedEventArgs e)
-    {
-        TurboApplyButton.IsEnabled = false;
-        TurboRestoreButton.IsEnabled = false;
-        Feedback.Running(TurboStatusText, I18n.T("Restaurando…"));
-
-        try
-        {
-            var result = await _turboCeilingService.RestoreDefaultsAsync();
-            Feedback.Result(TurboStatusText, result);
-        }
-        catch (Exception ex)
-        {
-            Feedback.Error(TurboStatusText, ex.Message);
-            _loggingService.LogWarning($"NucleosPage: error restaurando el techo de turbo: {ex.Message}");
-        }
-        finally
-        {
-            await LoadTurboCeilingAsync();
-        }
-    }
-
-    // ===================== Gestionar planes de energía =====================
-
-    private sealed class PlanListItem
-    {
-        public string Guid { get; }
-        public string Name { get; }
-        public string Description { get; }
-        public bool IsActive { get; }
-
-        public PlanListItem(string guid, string name, string description, bool isActive)
-        {
-            Guid = guid;
-            Name = name;
-            Description = description;
-            IsActive = isActive;
-        }
-    }
-
-    private async Task LoadManagePlansAsync()
-    {
-        try
-        {
-            var plans = await Task.Run(() => _cpuPowerService.GetPowerPlans());
-
-            var items = new List<PlanListItem>();
-            foreach (var plan in plans)
-            {
-                var desc = await Task.Run(() => _cpuPowerService.GetPowerPlanDescription(plan.Guid));
-                items.Add(new PlanListItem(plan.Guid, plan.Name, desc, plan.IsActive));
-            }
-
-            PlansList.Items.Clear();
-            foreach (var item in items)
-                PlansList.Items.Add(BuildManageRow(item));
-
-            if (items.Count == 0)
-            {
-                ManagePlanStatusText.Visibility = Visibility.Visible;
-                Feedback.Warning(ManagePlanStatusText, "No se detectaron planes de energía.");
-            }
-
-            // Traducir el contenido recién creado cuando sus templates ya existen.
-            ApplyLanguageAfterLayout();
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"NucleosPage: error cargando gestión de planes: {ex.Message}");
-            ManagePlanStatusText.Visibility = Visibility.Visible;
-            Feedback.Warning(ManagePlanStatusText, "No se pudieron cargar los planes de energía.");
-        }
-    }
-
- // Plantilla plana para los ítems de las listas de planes: sin los visuales
- // por defecto de ListViewItem (hover/selección del sistema), que asomaban
- // alrededor de la card y generaban un "doble fondo". El hover y la selección
- // se manejan a mano con los mismos brushes del navbar (CardHover/CardSelected).
-    private static Microsoft.UI.Xaml.Controls.ControlTemplate? _flatListItemTemplate;
-    private static Microsoft.UI.Xaml.Controls.ControlTemplate FlatListItemTemplate()
-    {
-        if (_flatListItemTemplate == null)
-        {
-            const string xaml =
-                "<ControlTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\" " +
-                "TargetType=\"ListViewItem\">" +
-                "<ContentPresenter HorizontalAlignment=\"Stretch\" VerticalAlignment=\"Stretch\"/>" +
-                "</ControlTemplate>";
-            _flatListItemTemplate = (Microsoft.UI.Xaml.Controls.ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(xaml);
-        }
-        return _flatListItemTemplate;
-    }
-
- // Estados visuales de una card de plan: normal / hover / seleccionada.
-    private static void PlanRow_PointerEntered(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is ListViewItem { IsSelected: false } lv && lv.Content is Border b)
-            b.Background = ThemeBrushes.Get("CardHoverBrush");
-    }
-
-    private static void PlanRow_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is ListViewItem { IsSelected: false } lv && lv.Content is Border b)
-            b.Background = RowBackgroundBrush;
-    }
-
-    private static void RefreshPlanRowVisuals(ListView list)
-    {
-        foreach (var i in list.Items)
-            if (i is ListViewItem lv && lv.Content is Border b)
-                b.Background = lv.IsSelected
-                    ? ThemeBrushes.Get("CardSelectedBrush")
-                    : RowBackgroundBrush;
-    }
-
-    private static ListViewItem BuildPlanContainer(object tag, Border card)
-    {
-        var lvItem = new ListViewItem
-        {
-            Content = card,
-            Tag = tag,
-            Template = FlatListItemTemplate(),
-            Margin = new Thickness(0, 0, 0, 4),
-            Padding = new Thickness(0),
-            HorizontalContentAlignment = HorizontalAlignment.Stretch
-        };
-        lvItem.PointerEntered += PlanRow_PointerEntered;
-        lvItem.PointerExited += PlanRow_PointerExited;
-        return lvItem;
-    }
-
-    private static ListViewItem BuildManageRow(PlanListItem item)
-    {
-        var row = new Grid { ColumnSpacing = 12 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
-
-        row.Children.Add(new TextBlock
-        {
-            Text = item.Name,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-
-        var guid = new TextBlock
-        {
-            Text = item.Guid,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 11,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(guid, 1);
-        row.Children.Add(guid);
-
-        var desc = new TextBlock
-        {
-            Text = string.IsNullOrWhiteSpace(item.Description) ? "—" : item.Description,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(desc, 2);
-        row.Children.Add(desc);
-
-        var active = new TextBlock
-        {
-            Text = item.IsActive ? I18n.T("✓ Activo") : "",
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = item.IsActive ? BGreen : BTimeLabel
-        };
-        Grid.SetColumn(active, 3);
-        row.Children.Add(active);
-
- // Card del plan con UN solo fondo: la plantilla plana del contenedor elimina
- // el hover/selección por defecto del sistema; el estilo de selección replica
- // el de las pestañas del navbar (CardSelectedBrush).
-        var card = new Border
-        {
-            Background = RowBackgroundBrush,
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 8, 12, 8),
-            Child = row
-        };
-        return BuildPlanContainer(item, card);
-    }
-
-    private void PlansList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        RefreshPlanRowVisuals(PlansList);
-        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
-        bool has = item != null;
-        RenamePlanButton.IsEnabled = has;
-        ActivatePlanButton.IsEnabled = has && !item!.IsActive;
-        DeletePlanButton.IsEnabled = has && !item!.IsActive;
-    }
-
-    private void SetManageStatus(bool success, string message, string? template = null, object?[]? args = null)
-    {
-        var text = template != null
-            ? I18n.T(template, args ?? Array.Empty<object?>())
-            : I18n.T(message);
-        if (success)
-            Feedback.Success(ManagePlanStatusText, text);
-        else
-            Feedback.Error(ManagePlanStatusText, text);
-    }
-
-    private async void RenamePlanButton_Click(object sender, RoutedEventArgs e)
-    {
-        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
-        if (item == null || XamlRoot == null) return;
-
-        var nameBox = new TextBox
-        {
-            Text = item.Name,
-            Header = I18n.T("Nuevo nombre"),
-            MaxLength = 255
-        };
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = I18n.T("Renombrar plan"),
-            Content = nameBox,
-            PrimaryButtonText = I18n.T("Renombrar"),
-            CloseButtonText = I18n.T("Cancelar"),
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        var newName = nameBox.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(newName))
-        {
-            SetManageStatus(false, "El nombre no puede estar vacío.");
-            return;
-        }
-
-        var result = await _cpuPowerService.RenamePowerPlanAsync(item.Guid, newName);
-        SetManageStatus(result.Success, result.Output, result.MessageTemplate, result.MessageArgs);
-        if (result.Success)
-        {
-            await LoadManagePlansAsync();
-            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
-        }
-    }
-
-    private async void ActivatePlanButton_Click(object sender, RoutedEventArgs e)
-    {
-        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
-        if (item == null) return;
-
-        ActivatePlanButton.IsEnabled = false;
-        Feedback.Running(ManagePlanStatusText, "Activando plan...");
-        var result = await _cpuPowerService.SetActivePowerPlanAsync(item.Guid);
-        SetManageStatus(result.Success, result.Output, result.MessageTemplate, result.MessageArgs);
-        if (result.Success)
-        {
-            await LoadManagePlansAsync();
-            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
-        }
-    }
-
-    private async void OpenPowerOptionsButton_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var result = await _winUtilService.LaunchPanelAsync("power");
-            if (!result.Success) SetManageStatus(false, result.Output, result.MessageTemplate, result.MessageArgs);
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"NucleosPage: error abriendo planes de energía: {ex.Message}");
-            SetManageStatus(false, ex.Message);
-        }
-    }
-
-    private async void DeletePlanButton_Click(object sender, RoutedEventArgs e)
-    {
-        var item = (PlansList.SelectedItem as ListViewItem)?.Tag as PlanListItem;
-        if (item == null || XamlRoot == null) return;
-
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = I18n.T("Borrar plan de energía"),
-            Content = $"{I18n.T("¿Seguro que querés borrar ")}\"{item.Name}\"{I18n.T("? Esta acción no se puede deshacer.")}",
-            PrimaryButtonText = I18n.T("Borrar"),
-            CloseButtonText = I18n.T("Cancelar"),
-            DefaultButton = ContentDialogButton.Close
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-        DeletePlanButton.IsEnabled = false;
-        var result = await _cpuPowerService.DeletePowerPlanAsync(item.Guid);
-        SetManageStatus(result.Success, result.Output, result.MessageTemplate, result.MessageArgs);
-        if (result.Success)
-        {
-            await LoadManagePlansAsync();
-            await LoadInstallPresetsAsync(); // el estado "Instalado" de la lista depende de los planes reales
-            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
-        }
-    }
-
-    // ===================== Instalar planes de energía =====================
-
-    // GUIDs de subgrupos/settings de energía (documentados por Microsoft).
-    private const string SubProcessorGuid = "54533251-82be-4824-96c1-47b60b740d00";
-    private const string ProcThrottleMinGuid = "893dee8e-2bef-41e0-89c6-b55d0929964c";
-    private const string ProcThrottleMaxGuid = "bc5038f7-23e0-4960-96da-33abaf5935ec";
-    private const string PerfBoostModeGuid = "be337238-0d82-4146-a960-4f3749d470c7";
-    private const string PerfAutonomousGuid = "8baa4a8a-14c6-4451-8e8b-14bdbd197537";
-
-    // Esquemas base de Windows.
-    private const string BalancedSchemeGuid = "381b4222-f694-41f0-9685-ff5bb260df2e";
-    private const string HighPerfSchemeGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
-    private const string PowerSaverSchemeGuid = "a1841308-3541-4fab-bc81-f71556f20b4a";
-    private const string UltimatePerfSchemeGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61";
-
-    private sealed class InstallPreset
-    {
-        public string Name { get; }
-        public string Description { get; }
-        public string Category { get; }
-        public string? BuiltInGuid { get; }
-        public string? BaseGuid { get; }
-        public PowerPlanTuning[]? Tunings { get; }
-
-        public InstallPreset(string name, string description, string category, string? builtInGuid = null, string? baseGuid = null, PowerPlanTuning[]? tunings = null)
-        {
-            Name = name;
-            Description = description;
-            Category = category;
-            BuiltInGuid = builtInGuid;
-            BaseGuid = baseGuid;
-            Tunings = tunings;
-        }
-    }
-
-    private sealed class InstallRowItem
-    {
-        public InstallPreset Preset { get; }
-        public bool Installed { get; }
-
-        public InstallRowItem(InstallPreset preset, bool installed)
-        {
-            Preset = preset;
-            Installed = installed;
-        }
-    }
-
-    private static List<InstallPreset> BuildInstallPresets() => new()
-    {
-        new InstallPreset(I18n.T("Máximo rendimiento"), I18n.T("Plan oculto de Windows para máximo desempeño (Ultimate Performance)."), I18n.T("Windows"), builtInGuid: UltimatePerfSchemeGuid),
-        new InstallPreset(I18n.T("Alto rendimiento"), I18n.T("Plan oficial de Windows para alto desempeño."), I18n.T("Windows"), builtInGuid: HighPerfSchemeGuid),
-        new InstallPreset(I18n.T("Ahorro de energía"), I18n.T("Plan oficial de Windows para reducir el consumo."), I18n.T("Windows"), builtInGuid: PowerSaverSchemeGuid),
-        new InstallPreset(I18n.T("Equilibrado"), I18n.T("Plan oficial de Windows: balance entre rendimiento y consumo."), I18n.T("Windows"), builtInGuid: BalancedSchemeGuid),
-        new InstallPreset(I18n.T("Ryzen Balanced"), I18n.T("Preset estilo 1usmus para CPU AMD Ryzen: mínimo 99%, boost eficiente agresivo y modo autónomo desactivado."), I18n.T("Ryzen"), baseGuid: BalancedSchemeGuid, tunings: new[]
-        {
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 99, 99),
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
-            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 4, 4),
-            new PowerPlanTuning(SubProcessorGuid, PerfAutonomousGuid, 0, 0)
-        }),
-        new InstallPreset(I18n.T("Ryzen High Performance"), I18n.T("Preset estilo 1usmus para CPU AMD Ryzen: mínimo 100%, boost agresivo y modo autónomo desactivado."), I18n.T("Ryzen"), baseGuid: HighPerfSchemeGuid, tunings: new[]
-        {
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 100, 100),
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
-            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 2, 2),
-            new PowerPlanTuning(SubProcessorGuid, PerfAutonomousGuid, 0, 0)
-        }),
-        new InstallPreset(I18n.T("Bitsum Highest Performance"), I18n.T("Preset de la comunidad: mínimo 100% para evitar el parking de núcleos y boost agresivo."), I18n.T("Comunidad"), baseGuid: HighPerfSchemeGuid, tunings: new[]
-        {
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 100, 100),
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
-            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 2, 2)
-        }),
-        new InstallPreset(I18n.T("Bitsum Balanced"), I18n.T("Preset de Bitsum para uso general: mínimo 5% y boost eficiente habilitado."), I18n.T("Comunidad"), baseGuid: BalancedSchemeGuid, tunings: new[]
-        {
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMinGuid, 5, 5),
-            new PowerPlanTuning(SubProcessorGuid, ProcThrottleMaxGuid, 100, 100),
-            new PowerPlanTuning(SubProcessorGuid, PerfBoostModeGuid, 3, 3)
-        })
-    };
-
-    private async Task LoadInstallPresetsAsync()
-    {
-        try
-        {
-            var plans = await Task.Run(() => _cpuPowerService.GetPowerPlans());
-            var presets = BuildInstallPresets();
-
-            InstallPlansList.Items.Clear();
-            foreach (var preset in presets)
-            {
-                bool installed = preset.BuiltInGuid != null
-                    ? plans.Any(p => string.Equals(p.Guid, preset.BuiltInGuid, StringComparison.OrdinalIgnoreCase)
-                                  || string.Equals(p.Name, preset.Name, StringComparison.OrdinalIgnoreCase))
-                    : plans.Any(p => string.Equals(p.Name, preset.Name, StringComparison.OrdinalIgnoreCase));
-                InstallPlansList.Items.Add(BuildInstallRow(preset, installed));
-            }
-
-            // Traducir el contenido recién creado cuando sus templates ya existen.
-            ApplyLanguageAfterLayout();
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"NucleosPage: error cargando presets de instalación: {ex.Message}");
-            InstallPlanStatusText.Visibility = Visibility.Visible;
-            Feedback.Warning(InstallPlanStatusText, "No se pudieron cargar los planes instalables.");
-        }
-    }
-
-    private static ListViewItem BuildInstallRow(InstallPreset preset, bool installed)
-    {
-        var row = new Grid { ColumnSpacing = 12 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.4, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.9, GridUnitType.Star) });
-
-        row.Children.Add(new TextBlock
-        {
-            Text = preset.Name,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        });
-
-        var desc = new TextBlock
-        {
-            Text = preset.Description,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            Foreground = BTimeLabel
-        };
-        Grid.SetColumn(desc, 1);
-        row.Children.Add(desc);
-
-        var category = new TextBlock
-        {
-            Text = preset.Category,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = BNeutral
-        };
-        Grid.SetColumn(category, 2);
-        row.Children.Add(category);
-
-        var status = new TextBlock
-        {
-            Text = installed ? I18n.T("Instalado") : "",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = installed ? BGreen : BTimeLabel
-        };
-        Grid.SetColumn(status, 3);
-        row.Children.Add(status);
-
- // Card del plan, misma mecánica que en Gestionar planes.
-        var card = new Border
-        {
-            Background = RowBackgroundBrush,
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 8, 12, 8),
-            Child = row
-        };
-        return BuildPlanContainer(new InstallRowItem(preset, installed), card);
-    }
-
-    private void InstallPlansList_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        RefreshPlanRowVisuals(InstallPlansList);
-        var item = (InstallPlansList.SelectedItem as ListViewItem)?.Tag as InstallRowItem;
-        InstallPlanButton.IsEnabled = item != null && !item.Installed;
-    }
-
-    private async void InstallPlanButton_Click(object sender, RoutedEventArgs e)
-    {
-        var item = (InstallPlansList.SelectedItem as ListViewItem)?.Tag as InstallRowItem;
-        if (item == null || item.Installed) return;
-
-        InstallPlanButton.IsEnabled = false;
-        Feedback.Running(InstallPlanStatusText, "Instalando plan...");
-
-        var preset = item.Preset;
-        var result = preset.BuiltInGuid != null
-            ? await _cpuPowerService.InstallBuiltInSchemeAsync(preset.BuiltInGuid)
-            : await _cpuPowerService.CreateCustomPowerPlanAsync(preset.Name, preset.BaseGuid!, preset.Tunings!);
-
-        SetInstallStatus(result);
-        if (result.Success)
-        {
-            await LoadManagePlansAsync();
-            await LoadInstallPresetsAsync();
-            _ = LoadPowerPlansAsync(); // refrescar el selector de la pestaña Núcleos
-        }
-    }
-
-    private void SetInstallStatus(CommandResult result)
-    {
-        var text = result.MessageTemplate != null
-            ? I18n.T(result.MessageTemplate, result.MessageArgs ?? Array.Empty<object?>())
-            : I18n.T(result.Output);
-        if (result.Success)
-            Feedback.Success(InstallPlanStatusText, text);
-        else
-            Feedback.Error(InstallPlanStatusText, text);
-    }
-
-    // ===================== Comparar planes de energía =====================
-
-    // Colores por defecto de las curvas de comparación: desde los recursos de tema.
-    private static Color DefaultColorA => ThemeBrushes.Get("MetricTempBrush").Color;
-    private static Color DefaultColorB => ThemeBrushes.Get("MetricPowerBrush").Color;
-
-    private Color _colorA = DefaultColorA;
-    private Color _colorB = DefaultColorB;
-    private PowerPlanDetail? _detailA;
-    private PowerPlanDetail? _detailB;
-
-    private void LoadCompareCombos()
-    {
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                var plans = _cpuPowerService.GetPowerPlans();
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    foreach (var plan in plans)
-                    {
-                        ComparePlanACombo.Items.Add(new ComboBoxItem { Content = plan.Name, Tag = plan.Guid });
-                        ComparePlanBCombo.Items.Add(new ComboBoxItem { Content = plan.Name, Tag = plan.Guid });
-                    }
-                    UpdateColorButtons();
-                });
-            }
-            catch (Exception ex)
-            {
-                _loggingService.LogWarning($"NucleosPage: error cargando planes para comparar: {ex.Message}");
-            }
-        });
-    }
-
-    private void TranslateCompareTab()
-    {
-        // Traducir el contenido de la pestaña Comparar cuando se hace visible.
-        if (CompararTab != null && CompararTab.Visibility == Visibility.Visible)
-            ApplyLanguageAfterLayout();
-    }
-
-    private static string? SelectedPlanGuid(ComboBox combo)
-        => (combo.SelectedItem as ComboBoxItem)?.Tag as string;
-
-    private void ComparePlanCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        var guidA = SelectedPlanGuid(ComparePlanACombo);
-        var guidB = SelectedPlanGuid(ComparePlanBCombo);
-
-        if (guidA != null && guidB != null && guidA == guidB)
-        {
-            // No permitir el mismo plan en ambos desplegables
-            if (ReferenceEquals(sender, ComparePlanACombo)) ComparePlanACombo.SelectedItem = null;
-            else ComparePlanBCombo.SelectedItem = null;
-            Feedback.Warning(CompareStatusText, "Los dos planes deben ser diferentes.");
-        }
-        else
-        {
-            Feedback.Set(CompareStatusText, null);
-        }
-
-        CompareButton.IsEnabled = guidA != null && guidB != null && guidA != guidB;
-    }
-
-    private void ColorAButton_Click(object sender, RoutedEventArgs e) => ShowColorPickerFor(planA: true);
-
-    private void ColorBButton_Click(object sender, RoutedEventArgs e) => ShowColorPickerFor(planA: false);
-
-    private void ShowColorPickerFor(bool planA)
-    {
-        if (XamlRoot == null) return;
-        var target = planA ? ColorAButton : ColorBButton;
-        var picker = new ColorPicker
-        {
-            Color = planA ? _colorA : _colorB,
-            IsAlphaEnabled = false,
-            IsMoreButtonVisible = false,
-            IsColorSpectrumVisible = true,
-            IsColorSliderVisible = true,
-            IsHexInputVisible = true,
-            Width = 300
-        };
-        var flyout = new Flyout { Content = picker, Placement = FlyoutPlacementMode.Bottom };
-        flyout.Closed += (_, _) =>
-        {
-            var c = picker.Color;
-            if (planA) _colorA = c; else _colorB = c;
-            UpdateColorButtons();
-            if (CompareScroll.Visibility == Visibility.Visible)
-                BuildComparison();
-        };
-        flyout.ShowAt(target);
-    }
-
-    private void UpdateColorButtons()
-    {
-        SetColorButtonContent(ColorAButton, _colorA, "Color A");
-        SetColorButtonContent(ColorBButton, _colorB, "Color B");
-    }
-
-    private static void SetColorButtonContent(Button button, Color color, string label)
-    {
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        content.Children.Add(new Border
-        {
-            Width = 14,
-            Height = 14,
-            CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(color),
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        content.Children.Add(new TextBlock { Text = I18n.T(label), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
-        button.Content = content;
-    }
-
-    private async void CompareButton_Click(object sender, RoutedEventArgs e)
-    {
-        var guidA = SelectedPlanGuid(ComparePlanACombo);
-        var guidB = SelectedPlanGuid(ComparePlanBCombo);
-        if (guidA == null || guidB == null || guidA == guidB) return;
-
-        CompareButton.IsEnabled = false;
-        Feedback.Running(CompareStatusText, "Comparando planes...");
-
-        try
-        {
-            var (da, db) = await Task.Run(() => (_cpuPowerService.GetPowerPlanDetails(guidA), _cpuPowerService.GetPowerPlanDetails(guidB)));
-            if (da == null || db == null)
-            {
-                Feedback.Error(CompareStatusText, "No se pudo leer el detalle de uno de los planes.");
-                return;
-            }
-
-            _detailA = da;
-            _detailB = db;
-            BuildComparison();
-
-            // Sin feedback de "comparación lista": la cuadrícula ya muestra las diferencias.
-            Feedback.Set(CompareStatusText, null);
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"NucleosPage: error comparando planes: {ex.Message}");
-            Feedback.Error(CompareStatusText, I18n.T("No se pudo comparar: {0}", ex.Message));
-        }
-        finally
-        {
-            CompareButton.IsEnabled = SelectedPlanGuid(ComparePlanACombo) != null && SelectedPlanGuid(ComparePlanBCombo) != null;
-        }
-    }
-
-    private void BuildComparison()
-    {
-        if (_detailA == null || _detailB == null) return;
-
-        ComparePlanAContainer.Children.Clear();
-        ComparePlanBContainer.Children.Clear();
-
-        ComparePlanAContainer.Children.Add(BuildPlanHeader(_detailA.Name, _colorA));
-        ComparePlanBContainer.Children.Add(BuildPlanHeader(_detailB.Name, _colorB));
-
-        int n = Math.Max(_detailA.Subgroups.Count, _detailB.Subgroups.Count);
-        for (int i = 0; i < n; i++)
-        {
-            var sgA = i < _detailA.Subgroups.Count ? _detailA.Subgroups[i] : null;
-            var sgB = i < _detailB.Subgroups.Count ? _detailB.Subgroups[i] : null;
-
-            var cardA = sgA != null ? BuildSubgroupCard(sgA, _detailB, _colorA) : null;
-            var cardB = sgB != null ? BuildSubgroupCard(sgB, _detailA, _colorB) : null;
-
-            // Sincronizar el estado de colapso: si se abre/cierra uno, el otro lo sigue,
-            // así las filas quedan alineadas entre las dos cuadrículas.
-            var expA = SubgroupExpanderOf(cardA);
-            var expB = SubgroupExpanderOf(cardB);
-            if (expA != null && expB != null)
-            {
-                expA.Expanding += (_, _) => expB.IsExpanded = true;
-                expA.Collapsed += (_, _) => expB.IsExpanded = false;
-            }
-
-            if (cardA != null) ComparePlanAContainer.Children.Add(cardA);
-            if (cardB != null) ComparePlanBContainer.Children.Add(cardB);
-        }
-
-        CompareScroll.Visibility = Visibility.Visible;
-        CompareActionsPanel.Visibility = Visibility.Visible;
-
-        // Las cards de los resultados son paneles nuevos: se le pide al desenfoque que los busque en
-        // el acto (ver PanelBlurLayer.ContentChanged). Sin esto, el vidrio recién aparecía cuando
-        // otro cambio de layout disparaba el barrido periódico, y con la ventana quieta no llegaba.
-        PanelBlurLayer.ContentChanged("resultados de la comparación listos");
-
-        // Traducir el contenido de comparación recién creado cuando sus templates ya existen.
-        ApplyLanguageAfterLayout();
-    }
-
-    private void ExpandAllButton_Click(object sender, RoutedEventArgs e) => SetAllExpandersExpanded(true);
-
-    private void CollapseAllButton_Click(object sender, RoutedEventArgs e) => SetAllExpandersExpanded(false);
-
-    private void SetAllExpandersExpanded(bool expanded)
-    {
-        foreach (var child in ComparePlanAContainer.Children)
-            if (SubgroupExpanderOf(child) is { } expA) expA.IsExpanded = expanded;
-        foreach (var child in ComparePlanBContainer.Children)
-            if (SubgroupExpanderOf(child) is { } expB) expB.IsExpanded = expanded;
-    }
-
- /// <summary>
- /// El plegable de un subgrupo de los resultados: vive dentro de su card (ver
- /// <see cref="BuildSubgroupCard"/>), que es la que aporta la superficie del tema.
- /// </summary>
-    private static Expander? SubgroupExpanderOf(object? container)
-        => container is Border { Child: Expander expander } ? expander : null;
-
-    private static Border BuildPlanHeader(string name, Color color)
-    {
-        var stack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        stack.Children.Add(new Border
-        {
-            Width = 12,
-            Height = 12,
-            CornerRadius = new CornerRadius(6),
-            Background = new SolidColorBrush(color),
-            VerticalAlignment = VerticalAlignment.Center
-        });
-        var planName = new TextBlock
-        {
-            Text = name,
-            FontSize = 15,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        ToolTipService.SetToolTip(planName, name);
-        stack.Children.Add(planName);
-        // El contenido se corre con su propio margen (no con el Padding del Border) para que el
-        // tinte del plan pinte la card ENTERA: el encabezado es una sola superficie teñida, y no una
-        // caja de color metida adentro de otra.
-        stack.Margin = new Thickness(12, 10, 12, 10);
-
-        // El encabezado es parte de los resultados, así que lleva la superficie de card del tema
-        // (ver CardBrush): es la que responde a la transparencia y la que el desenfoque reconoce
-        // como panel. El tinte del color del plan —lo que distingue la columna A de la B— va encima
-        // como capa aparte, para no pisar la superficie del tema.
-        var tint = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(0x18, color.R, color.G, color.B)),
-            CornerRadius = new CornerRadius(10)
-        };
-        var layers = new Grid();
-        layers.Children.Add(tint);
-        layers.Children.Add(stack);
-
-        return new Border
-        {
-            Background = CardBrush,
-            CornerRadius = new CornerRadius(10),
-            Margin = new Thickness(0, 0, 0, 12),
-            Child = layers
-        };
-    }
-
- /// <summary>
- /// Un subgrupo de los resultados: la card del tema con el plegable adentro. La card es la que
- /// hace que las filas de los resultados se vean afectadas por la transparencia y el desenfoque
- /// igual que el resto de la app (ver CardBrush y PanelBlurLayer): sin ella quedaban apoyadas
- /// directamente sobre el fondo del tema y ninguno de los dos deslizadores las alcanzaba.
- /// </summary>
-    private Border BuildSubgroupCard(PowerSubgroupInfo sg, PowerPlanDetail? other, Color color)
-        => new()
-        {
-            Background = CardBrush,
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(10, 5, 10, 9),
-            Margin = new Thickness(0, 0, 0, 8),
-            Child = BuildSubgroupExpander(sg, other, color)
-        };
-
-    private Expander BuildSubgroupExpander(PowerSubgroupInfo sg, PowerPlanDetail? other, Color color)
-    {
-        int diffCount = 0;
-        var body = new StackPanel { Spacing = 0 };
-        body.Children.Add(BuildSettingHeaderRow());
-
-        foreach (var setting in sg.Settings)
-        {
-            var otherSetting = FindSetting(other, sg.Guid, setting.Guid);
-            bool acDiff = otherSetting != null && !string.Equals(setting.AcValue, otherSetting.AcValue, StringComparison.OrdinalIgnoreCase);
-            bool dcDiff = otherSetting != null && !string.Equals(setting.DcValue, otherSetting.DcValue, StringComparison.OrdinalIgnoreCase);
-            if (acDiff || dcDiff) diffCount++;
-            body.Children.Add(BuildSettingRow(setting, acDiff, dcDiff, color));
-        }
-
-        var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var subgroupName = new TextBlock
-        {
-            Text = sg.Name,
-            FontWeight = FontWeights.SemiBold,
-            FontSize = 13,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        ToolTipService.SetToolTip(subgroupName, sg.Name);
-        header.Children.Add(subgroupName);
-        if (diffCount > 0)
-        {
-            header.Children.Add(new Border
-            {
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(8, 2, 8, 2),
-                Background = new SolidColorBrush(Color.FromArgb(0x28, color.R, color.G, color.B)),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock
-                {
-                    Text = $"{diffCount} diff",
-                    FontSize = 11,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = new SolidColorBrush(color),
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            });
-        }
-
-        return new Expander
-        {
-            Header = header,
-            Content = body,
-            // El plegable vive DENTRO de la card de resultados (ver BuildSubgroupCard): sin relleno
-            // ni contorno propios, así la superficie —y su parche de vidrio— es una sola.
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            IsExpanded = true
-        };
-    }
-
-    private static PowerSettingInfo? FindSetting(PowerPlanDetail? other, string subgroupGuid, string settingGuid)
-    {
-        if (other == null) return null;
-        var sg = other.Subgroups.FirstOrDefault(x => string.Equals(x.Guid, subgroupGuid, StringComparison.OrdinalIgnoreCase));
-        return sg?.Settings.FirstOrDefault(x => string.Equals(x.Guid, settingGuid, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static Grid BuildSettingHeaderRow()
-    {
-        var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 6, 4, 6) };
-        AddSettingColumns(grid);
-
-        grid.Children.Add(new TextBlock { Text = I18n.T("ID de configuración"), FontSize = 11, FontWeight = FontWeights.SemiBold });
-        var nombre = new TextBlock { Text = I18n.T("Nombre"), FontSize = 11, FontWeight = FontWeights.SemiBold };
-        Grid.SetColumn(nombre, 1);
-        grid.Children.Add(nombre);
-        var ac = new TextBlock { Text = I18n.T("Valor AC"), FontSize = 11, FontWeight = FontWeights.SemiBold };
-        Grid.SetColumn(ac, 2);
-        grid.Children.Add(ac);
-        var dc = new TextBlock { Text = I18n.T("Valor DC"), FontSize = 11, FontWeight = FontWeights.SemiBold };
-        Grid.SetColumn(dc, 3);
-        grid.Children.Add(dc);
-        return grid;
-    }
-
-    private static void AddSettingColumns(Grid grid)
-    {
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
-    }
-
-    private Border BuildSettingRow(PowerSettingInfo setting, bool acDiff, bool dcDiff, Color color)
-    {
-        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(4, 5, 4, 5) };
-        AddSettingColumns(row);
-
-        if (acDiff || dcDiff)
-            row.Background = new SolidColorBrush(Color.FromArgb(0x24, color.R, color.G, color.B));
-
-        var highlight = new SolidColorBrush(color);
-        var normal = SecondaryBrush;
-
-        var guidTb = new TextBlock
-        {
-            Text = setting.Guid,
-            FontFamily = new FontFamily("Consolas"),
-            FontSize = 10.5,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        ToolTipService.SetToolTip(guidTb, setting.Guid);
-        row.Children.Add(guidTb);
-
-        var nombre = new TextBlock
-        {
-            Text = setting.Name,
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.NoWrap
-        };
-        ToolTipService.SetToolTip(nombre, setting.Name);
-        Grid.SetColumn(nombre, 1);
-        row.Children.Add(nombre);
-
-        var ac = new TextBlock
-        {
-            Text = FormatDisplayValue(setting.AcValue),
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            FontWeight = acDiff ? FontWeights.SemiBold : FontWeights.Normal,
-            Foreground = acDiff ? highlight : normal
-        };
-        ToolTipService.SetToolTip(ac, ac.Text);
-        Grid.SetColumn(ac, 2);
-        row.Children.Add(ac);
-
-        var dc = new TextBlock
-        {
-            Text = FormatDisplayValue(setting.DcValue),
-            FontSize = 12,
-            VerticalAlignment = VerticalAlignment.Center,
-            FontWeight = dcDiff ? FontWeights.SemiBold : FontWeights.Normal,
-            Foreground = dcDiff ? highlight : normal
-        };
-        ToolTipService.SetToolTip(dc, dc.Text);
-        Grid.SetColumn(dc, 3);
-        row.Children.Add(dc);
-
-        return new Border { Child = row };
-    }
-
-    private static string FormatDisplayValue(string value)
-    {
-        // Los valores ya llegan traducidos por el servicio (nombre localizado,
-        // porcentaje, tiempo legible o decimal); solo se rellena el vacío.
-        return string.IsNullOrEmpty(value) ? "--" : value;
     }
 
     // ===================== Helpers =====================

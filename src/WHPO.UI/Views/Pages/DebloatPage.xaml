@@ -121,8 +121,8 @@
             <StackPanel Spacing="2" Margin="0,12,0,4">
                 <StackPanel Orientation="Horizontal" Spacing="10">
 <!-- Glifo monocromo con el acento de la app (mismo estilo que los títulos de las demás páginas). -->
-                    <FontIcon Glyph="&#xE74D;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                    <TextBlock Text="Debloat" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
+                    <FontIcon x:Name="HeaderIcon" Glyph="&#xE74D;" FontSize="20" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="HeaderTitleText" Text="Debloat" FontWeight="SemiBold" FontSize="22" VerticalAlignment="Center"/>
                 </StackPanel>
                 <TextBlock x:Name="HeaderSubtitleText"
                            FontSize="13.5"
@@ -175,6 +175,15 @@
                                     Background="Transparent" Foreground="{ThemeResource SecondaryTextBrush}"
                                     CornerRadius="4" Padding="10,4"
                                     Click="ClearConsoleButton_Click"/>
+                            <!-- Cerrar: la consola vuelve a abrirse sola con la próxima línea
+                                 de salida, así que cerrarla no pierde nada. -->
+                            <Button x:Name="CloseConsoleButton"
+                                    ToolTipService.ToolTip="Cerrar consola"
+                                    Background="Transparent" Foreground="{ThemeResource SecondaryTextBrush}"
+                                    BorderThickness="0" CornerRadius="4" Padding="8,4"
+                                    Click="CloseConsoleButton_Click">
+                                <FontIcon Glyph="&#xE711;" FontSize="11" FontFamily="Segoe Fluent Icons"/>
+                            </Button>
                         </StackPanel>
                     </Grid>
                     <ProgressBar x:Name="BatchProgressBar" Minimum="0" Maximum="100" Value="0" Height="4" CornerRadius="2" Visibility="Collapsed" ShowPaused="False" ShowError="False"/>

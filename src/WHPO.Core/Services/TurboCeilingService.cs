@@ -337,6 +337,52 @@ public class TurboCeilingService : ITurboCeilingService
         }
     }
 
+    /// <summary>
+    /// Perfil recomendado para jugar: el techo de frecuencia al máximo del plan (100 %) y el
+    /// modo boost «Agresivo» si el equipo lo expone. Si el firmware no declara ese modo, cae a
+    /// «Activado»; si tampoco, solo se mueve el límite. No toca los ajustes avanzados: sus
+    /// valores recomendados dependen del procesador y no hay uno que se pueda afirmar sin
+    /// medir. Pasa por <see cref="ApplyAsync"/>, así que valida el rango del equipo y verifica
+    /// releyendo antes de reportar éxito.
+    /// </summary>
+    public async Task<CommandResult> ApplyRecommendedAsync()
+    {
+        try
+        {
+            var state = GetState();
+            if (string.IsNullOrWhiteSpace(state.PlanGuid))
+                return new CommandResult(false, "No hay un plan de energía activo.",
+                    "No hay un plan de energía activo.");
+
+            if (!state.HasAnyControl)
+                return new CommandResult(false, "Este equipo no expone ningún ajuste del techo de turbo.",
+                    "Este equipo no expone ningún ajuste del techo de turbo.");
+
+            int? limit = state.LimitExposed ? Math.Clamp(100, state.LimitMin, state.LimitMax) : null;
+
+            int? boost = null;
+            if (state.BoostModeExposed)
+            {
+                if (state.BoostModeOptions.Contains(2)) boost = 2;      // Agresivo
+                else if (state.BoostModeOptions.Contains(1)) boost = 1; // Activado
+            }
+
+            if (limit == null && boost == null)
+                return new CommandResult(false, "Este equipo no expone ningún ajuste del techo de turbo.",
+                    "Este equipo no expone ningún ajuste del techo de turbo.");
+
+            var result = await ApplyAsync(boost, limit);
+            return result.Success
+                ? new CommandResult(true, "Perfil recomendado aplicado.", "Perfil recomendado aplicado.")
+                : result;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogError("Error aplicando el perfil recomendado del techo de turbo", ex);
+            return new CommandResult(false, ex.Message);
+        }
+    }
+
     public async Task<CommandResult> RestoreDefaultsAsync()
     {
         try

@@ -8,25 +8,36 @@
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*">
 
 <!-- ====== CABECERA ====== -->
-        <!-- Título suelto sobre el fondo de la página: sin barra ni descripción, solo el
-             título con su emoji (como el resto de las páginas).
+        <!-- El título, el buscador y los badges de categoría viven en una MISMA card:
+             antes cada uno andaba suelto sobre el fondo de la página y se leían
+             como tres elementos sueltos. La card va PEGADA a las paredes (sin
+             margen lateral, sin esquinas redondeadas: es una banda de cabecera,
+             no una card flotante).
+
+             El fondo es NavigationViewDefaultPaneBackground, IGUAL que el navbar
+             interno de Configuración. Ese {ThemeResource} es solo la BASE: WinUI
+             lo cachea y no lo vuelve a resolver cuando el ajuste cambia la
+             transparencia o el vidrio, así que el code-behind la repinta a mano con
+             PanelAppearance.PaneBarFill (ver RepaintHeaderCard). Con el pincel de
+             superficie directo (ThemeBrushes.GetSurface) la banda se veía "cortada":
+             el vidrio del compositor dibuja un rectángulo de distinto alpha con
+             cantos duros sobre el fondo del tema.
 
              Acá estaba el botón "Actualizar", que rehacía el censo de instalados y volvía a
              bajar el catálogo. Se fue porque eso ya pasa solo al entrar a la página
              (OnNavigatedTo: RefreshInstalledRecords + FetchCatalogAsync, esta con su caché):
-             el botón no agregaba nada que no hiciera navegar al Workshop. Con el botón
-             fuera, la cabecera es el StackPanel del título y nada más —el Grid de dos
-             columnas que lo alineaba a la derecha sobraba. -->
-        <Border Grid.Row="0" Background="Transparent" Padding="24,14,24,12">
-            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                <FontIcon Glyph="&#xE719;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
-                <TextBlock Text="Workshop" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            </StackPanel>
-        </Border>
-
-<!-- ====== CONTENIDO ====== -->
-        <ScrollViewer x:Name="WorkshopScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" SizeChanged="WorkshopScroll_SizeChanged">
-            <StackPanel x:Name="RootPanel" Margin="24,16,24,24" Spacing="14">
+             el botón no agregaba nada que no hiciera navegar al Workshop. -->
+        <Border x:Name="HeaderCard"
+                Grid.Row="0"
+                Margin="0"
+                Padding="24,12,24,14"
+                CornerRadius="0"
+                Background="{ThemeResource NavigationViewDefaultPaneBackground}">
+            <StackPanel Spacing="12">
+                <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE719;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="Workshop" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
                 <!-- Buscador centrado, mismo estilo que el de la Biblioteca de juegos:
                      lupa adentro, esquinas redondeadas y 480px de ancho. -->
                 <Grid Width="480" HorizontalAlignment="Center">
@@ -52,6 +63,12 @@
                 <controls:WrapPanel x:Name="FilterBar"
                                     HorizontalAlignment="Center"
                                     Spacing="8"/>
+            </StackPanel>
+        </Border>
+
+<!-- ====== CONTENIDO ====== -->
+        <ScrollViewer x:Name="WorkshopScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" SizeChanged="WorkshopScroll_SizeChanged">
+            <StackPanel x:Name="RootPanel" Margin="24,16,24,24" Spacing="14">
                 <TextBlock x:Name="StatusText" FontSize="12" Foreground="{ThemeResource SecondaryTextBrush}" Visibility="Collapsed" TextWrapping="Wrap"/>
                 <StackPanel x:Name="SectionsHost" Spacing="18"/>
             </StackPanel>

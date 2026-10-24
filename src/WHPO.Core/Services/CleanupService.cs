@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -140,6 +141,21 @@ public sealed class CleanupService : ICleanupService
             Description = "Íconos cacheados del Explorador. Se regeneran al usarlos.",
             Pattern = "iconcache_*.db",
             GetPaths = () => [Path.Combine(LocalAppData, "Microsoft", "Windows", "Explorer")]
+        },
+        new()
+        {
+            Id = "mm_gpucache", Name = "Caché de sombreadores de la GPU", Kind = TargetKind.Files,
+            Description = "Cachés de shaders de NVIDIA, AMD e Intel. Se regeneran al abrir juegos o apps 3D; la primera carga posterior puede tardar un poco más.",
+            GetPaths = () =>
+            [
+                Path.Combine(LocalAppData, "NVIDIA", "DXCache"),
+                Path.Combine(LocalAppData, "NVIDIA", "GLCache"),
+                Path.Combine(LocalAppData, "NVIDIA", "ComputeCache"),
+                Path.Combine(LocalAppData, "AMD", "DxCache"),
+                Path.Combine(LocalAppData, "AMD", "DxcCache"),
+                Path.Combine(LocalAppData, "AMD", "GLCache"),
+                Path.Combine(LocalAppData, "Intel", "ShaderCache")
+            ]
         },
         new()
         {
@@ -896,9 +912,17 @@ public sealed class CleanupService : ICleanupService
     private static bool MatchesAny(string name, string[] patterns)
         => patterns.Any(p => p == "*" || string.Equals(p, name, StringComparison.OrdinalIgnoreCase));
 
+    private const uint MOVEFILE_DELAY_UNTIL_REBOOT = 0x00000004;
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool MoveFileEx(string lpExistingFileName, string? lpNewFileName, uint dwFlags);
+
     /// <summary>
     /// Borra archivos de una carpeta (o un archivo puntual). Conserva la raíz.
-    /// Los archivos bloqueados se omiten y se cuentan como advertencia.
+    /// Recorre el árbol archivo por archivo: uno bloqueado no aborta el resto de sus
+    /// hermanos (antes, un solo temporal en uso dejaba la carpeta casi entera).
+    /// Los bloqueos transitorios se reintentan y lo que sigue en uso se programa para
+    /// borrarse en el próximo arranque.
     /// </summary>
     private static void DeletePath(string path, string? pattern, ref long freed, ref int deleted, List<string> warnings, CancellationToken ct)
     {
@@ -921,27 +945,7 @@ public sealed class CleanupService : ICleanupService
                 return;
             }
 
-            foreach (var entry in Directory.EnumerateFileSystemEntries(path))
-            {
-                ct.ThrowIfCancellationRequested();
-                try
-                {
-                    if (Directory.Exists(entry))
-                    {
-                        long before = GetDirSize(entry);
-                        Directory.Delete(entry, recursive: true);
-                        freed += before; deleted++;
-                    }
-                    else
-                    {
-                        TryDeleteFile(entry, ref freed, ref deleted, warnings);
-                    }
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    warnings.Add($"No se pudo borrar: {entry}");
-                }
-            }
+            DeleteDirectoryContents(path, ref freed, ref deleted, warnings, ct);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
         {
@@ -949,35 +953,87 @@ public sealed class CleanupService : ICleanupService
         }
     }
 
-    private static void TryDeleteFile(string file, ref long freed, ref int deleted, List<string> warnings)
+    /// <summary>
+    /// Vacía una carpeta recursivamente respetando los puntos de reanálisis (junctions
+    /// y symlinks no se siguen: borrarían el contenido del destino) y sin abortar por un
+    /// archivo bloqueado. Al final intenta borrar las subcarpetas que quedaron vacías.
+    /// </summary>
+    private static void DeleteDirectoryContents(string dir, ref long freed, ref int deleted, List<string> warnings, CancellationToken ct)
     {
-        try
-        {
-            long size = new FileInfo(file).Length;
-            try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
-            File.Delete(file);
-            freed += size; deleted++;
-        }
+        List<string> entries;
+        try { entries = Directory.EnumerateFileSystemEntries(dir).ToList(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            if (deleted < 50) warnings.Add($"En uso, no se pudo borrar: {file}");
-            else warnings.Add("Algunos archivos quedaron en uso y no se borraron.");
+            warnings.Add($"No se pudo leer la carpeta: {dir}");
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(entry); }
+            catch { continue; } // desapareció entre la enumeración y la consulta
+
+            if ((attributes & FileAttributes.Directory) == 0)
+            {
+                TryDeleteFile(entry, ref freed, ref deleted, warnings);
+                continue;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                // Junction/symlink: se borra el enlace, nunca su contenido.
+                try { Directory.Delete(entry, false); } catch { }
+                continue;
+            }
+
+            DeleteDirectoryContents(entry, ref freed, ref deleted, warnings, ct);
+            try { Directory.Delete(entry, false); }
+            catch { /* quedó algo en uso adentro: ya se reportó a nivel de archivo */ }
         }
     }
 
-    private static long GetDirSize(string dir)
+    private static void TryDeleteFile(string file, ref long freed, ref int deleted, List<string> warnings)
     {
-        long total = 0;
+        long size = 0;
+        try { size = new FileInfo(file).Length; } catch { /* en uso: el tamaño es solo informativo */ }
+
+        // 3 intentos: antivirus, indexador o una app cerrando sueltan el handle en ms.
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                try { File.SetAttributes(file, FileAttributes.Normal); } catch { }
+                File.Delete(file);
+                freed += size;
+                deleted++;
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt < 2) Thread.Sleep(80);
+            }
+        }
+
+        // Sigue bloqueado: se programa para el próximo arranque. Es lo que hacen los
+        // limpiadores para los temporales de apps abiertas, sin cerrar nada a la fuerza.
         try
         {
-            foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            if (MoveFileEx(file, null, MOVEFILE_DELAY_UNTIL_REBOOT))
             {
-                try { total += new FileInfo(f).Length; }
-                catch { }
+                warnings.Add(warnings.Count < 50
+                    ? $"En uso: se borrará al reiniciar: {file}"
+                    : "Algunos archivos en uso se borrarán al reiniciar.");
+                return;
             }
         }
         catch { }
-        return total;
+
+        warnings.Add(warnings.Count < 50
+            ? $"En uso, no se pudo borrar: {file}"
+            : "Algunos archivos quedaron en uso y no se borraron.");
     }
 
     // =====================================================================

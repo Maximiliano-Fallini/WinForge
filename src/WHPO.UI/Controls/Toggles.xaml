@@ -91,4 +91,226 @@
         </StackPanel>
     </DataTemplate>
 
+<!-- ===== Switch "Modo rendimiento": PERILLA ROTATORIA =====
+         Clon del ModeSwitch de Carthage (https://github.com/lopiksaa/carthage →
+         carthage/qml/ModeSwitch.qml), el mismo control del mock "LIBRARY / STORE":
+         disco de 32 px con bisel, cara giratoria (−50° apagado / +50° encendido),
+         16 marcas radiales, tick de acento y dos puntos detent a ±50° (verde el
+         activo, gris el inactivo). Colores muestreados del render del mock.
+         Es un ToggleButton "lookless" con template propio: conserva el toggle por
+         clic/teclado y el patrón de automatización Toggle. -->
+    <Style x:Key="PerformanceSwitchStyle" TargetType="ToggleButton">
+        <Setter Property="Width" Value="76"/>
+        <Setter Property="Height" Value="38"/>
+        <Setter Property="MinWidth" Value="0"/>
+        <Setter Property="MinHeight" Value="0"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Grid x:Name="Root" Width="76" Height="38" Background="Transparent">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal"/>
+                                <!-- Sin tinte al pasar el mouse ni al presionar: la perilla
+                                     tiene que verse con la misma luz en ON y en OFF. El
+                                     único cambio entre estados es la rotación de marcas
+                                     y tick (un tinte de hover hacía que el estado recién
+                                     clickeado se viera más gris que el otro). -->
+                                <VisualState x:Name="PointerOver"/>
+                                <VisualState x:Name="Pressed"/>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0.5" Duration="0"/>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="CheckStates">
+                                <VisualState x:Name="Checked">
+                                    <VisualState.Setters>
+                                        <Setter Target="FaceMarks.(UIElement.RenderTransform).(RotateTransform.Angle)" Value="50"/>
+                                        <Setter Target="DotLeftGreen.Opacity" Value="0"/>
+                                        <Setter Target="DotRightGreen.Opacity" Value="1"/>
+                                        <Setter Target="OffLabel.Opacity" Value="0.35"/>
+                                        <Setter Target="OnLabel.Opacity" Value="1"/>
+                                    </VisualState.Setters>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FaceMarks" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                         To="50" Duration="0:0:0.22">
+                                            <DoubleAnimation.EasingFunction>
+                                                <BackEase EasingMode="EaseOut" Amplitude="0.22"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="DotLeftGreen" Storyboard.TargetProperty="Opacity" To="0" Duration="0"/>
+                                        <DoubleAnimation Storyboard.TargetName="DotRightGreen" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+                                        <DoubleAnimation Storyboard.TargetName="OffLabel" Storyboard.TargetProperty="Opacity" To="0.35" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="OnLabel" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Unchecked">
+                                    <VisualState.Setters>
+                                        <Setter Target="FaceMarks.(UIElement.RenderTransform).(RotateTransform.Angle)" Value="-50"/>
+                                        <Setter Target="DotLeftGreen.Opacity" Value="1"/>
+                                        <Setter Target="DotRightGreen.Opacity" Value="0"/>
+                                        <Setter Target="OffLabel.Opacity" Value="1"/>
+                                        <Setter Target="OnLabel.Opacity" Value="0.35"/>
+                                    </VisualState.Setters>
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FaceMarks" Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                         To="-50" Duration="0:0:0.22">
+                                            <DoubleAnimation.EasingFunction>
+                                                <BackEase EasingMode="EaseOut" Amplitude="0.22"/>
+                                            </DoubleAnimation.EasingFunction>
+                                        </DoubleAnimation>
+                                        <DoubleAnimation Storyboard.TargetName="DotLeftGreen" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+                                        <DoubleAnimation Storyboard.TargetName="DotRightGreen" Storyboard.TargetProperty="Opacity" To="0" Duration="0"/>
+                                        <DoubleAnimation Storyboard.TargetName="OffLabel" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
+                                        <DoubleAnimation Storyboard.TargetName="OnLabel" Storyboard.TargetProperty="Opacity" To="0.35" Duration="0:0:0.12"/>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Indeterminate"/>
+                            </VisualStateGroup>
+                            <VisualStateGroup x:Name="FocusStates">
+                                <VisualState x:Name="Focused">
+                                    <Storyboard>
+                                        <DoubleAnimation Storyboard.TargetName="FocusRing" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Unfocused"/>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+
+                        <!-- Etiquetas de los dos estados: OFF a la izquierda, ON a la
+                             derecha. Son literales del template (el motor i18n recorre
+                             árboles visuales, no templates de ResourceDictionary: no se
+                             traducen — trade-off de este control del mock). El estado
+                             activo va a opacidad plena y el inactivo atenuado (los
+                             estados Checked/Unchecked animan la opacidad). -->
+                        <TextBlock x:Name="OffLabel" Text="Off"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   HorizontalAlignment="Left" VerticalAlignment="Center"
+                                   Margin="0,0,2,0" Opacity="1" IsHitTestVisible="False"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"/>
+                        <TextBlock x:Name="OnLabel" Text="On"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   Margin="2,0,0,0" Opacity="0.35" IsHitTestVisible="False"
+                                   Foreground="{ThemeResource SecondaryTextBrush}"/>
+
+<!-- Puntos detent a ±50° (radio 21 desde el centro de la perilla). -->
+                        <Grid x:Name="DotLeft" Width="3" Height="3" IsHitTestVisible="False"
+                              HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4.4,4,0,0">
+                            <Border x:Name="DotLeftDim" CornerRadius="1.5" Background="#FFB4B4B9"/>
+                            <Border x:Name="DotLeftGreen" CornerRadius="1.5" Background="#FF87AF9C"/>
+                        </Grid>
+                        <Grid x:Name="DotRight" Width="3" Height="3" IsHitTestVisible="False"
+                              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,4.4,0">
+                            <Border x:Name="DotRightDim" CornerRadius="1.5" Background="#FFB4B4B9"/>
+                            <Border x:Name="DotRightGreen" CornerRadius="1.5" Background="#FF87AF9C" Opacity="0"/>
+                        </Grid>
+
+<!-- Perilla: bisel + sombra de inset + cara giratoria.
+     OJO: SIN IsHitTestVisible=False acá — este Grid cubre el centro del control
+     y con hit-test desactivado WinUI deja de rutear el clic al ToggleButton:
+     la perilla no giraba. Los overlays visuales (KnobHover/KnobPressed) sí lo
+     llevan para no interferir. -->
+                        <Grid Width="32" Height="32"
+                              HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Border CornerRadius="16" Background="#FF17171B" BorderThickness="1" BorderBrush="#80000000"/>
+                            <Border CornerRadius="15" Margin="1">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Offset="0" Color="#59000000"/>
+                                        <GradientStop Offset="0.4" Color="#00000000"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <Border x:Name="Face" Margin="3" CornerRadius="13" BorderThickness="1" BorderBrush="#8C000000">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Offset="0" Color="#FF3A3A3E"/>
+                                        <GradientStop Offset="1" Color="#FF1D1D20"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <!-- La cara NO gira: su degradado es la luz del disco y,
+                                     si giraba con la perilla, el mismo bisel se veía más
+                                     oscuro en ON que en OFF (el gradiente cambiaba de
+                                     dirección). Gira solo el grupo de marcas + tick. -->
+                                <Grid x:Name="FaceMarks">
+                                    <Grid.RenderTransform>
+                                        <RotateTransform Angle="-50" CenterX="12" CenterY="12"/>
+                                    </Grid.RenderTransform>
+                                    <!-- 16 marcas radiales alrededor de la cara. -->
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="0" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="22.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="45" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="67.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="90" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="112.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="135" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="157.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="180" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="202.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="225" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="247.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="270" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="292.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="315" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <Border Width="1" Height="3" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#73000000">
+                                        <Border.RenderTransform><RotateTransform Angle="337.5" CenterX="0.5" CenterY="13"/></Border.RenderTransform>
+                                    </Border>
+                                    <!-- Tick de acento (gira con la cara). -->
+                                    <Border x:Name="Indicator" Width="3" Height="8" CornerRadius="1.5"
+                                            HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,4,0,0"
+                                            Background="#FF3B7FAA"/>
+                                </Grid>
+                            </Border>
+
+                        </Grid>
+
+<!-- Anillo de foco por teclado. OJO: con IsHitTestVisible=False — es el último
+     hijo del Root (z-order superior) y con Opacity=0 igual intercepta el
+     hit-test: se comía los clics y la perilla quedaba clavada. -->
+                        <Border x:Name="FocusRing" CornerRadius="21" BorderThickness="2" BorderBrush="#FF8AB4F8"
+                                Margin="-3" Opacity="0" IsHitTestVisible="False"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
 </ResourceDictionary>

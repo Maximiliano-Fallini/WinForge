@@ -40,6 +40,10 @@ public sealed partial class ReparacionPage : Page
             _repairService = App.Services.GetRequiredService<IRepairService>();
             Loaded += OnLoaded;
 
+            // La página está cacheada: sin esto la consola volvía a aparecer ABIERTA
+            // (con la salida de la reparación anterior) en la próxima visita.
+            Unloaded += (_, _) => HideConsole();
+
             // Al cambiar el tema o el idioma, reconstruir las cards.
             ActualThemeChanged += (s, e) =>
             {
@@ -423,6 +427,17 @@ public sealed partial class ReparacionPage : Page
 
         ConsoleScroll.UpdateLayout();
         ConsoleScroll.ChangeView(null, double.MaxValue, null, true);
+    }
+
+    /// <summary>
+    /// Cierra la consola sin borrar su contenido: la próxima línea de salida la
+    /// vuelve a abrir sola (ver <c>AppendConsole</c>).
+    /// </summary>
+    private void CloseConsoleButton_Click(object sender, RoutedEventArgs e) => HideConsole();
+
+    private void HideConsole()
+    {
+        if (ConsolePanel != null) ConsolePanel.Visibility = Visibility.Collapsed;
     }
 
     private void ClearConsoleButton_Click(object sender, RoutedEventArgs e)

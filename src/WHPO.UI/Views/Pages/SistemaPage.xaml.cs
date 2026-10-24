@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Shapes;
 using Microsoft.Extensions.DependencyInjection;
 using WHPO.Core.Services.Interfaces;
 
@@ -100,7 +101,7 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         }
         catch (Exception ex)
         {
-            HideAllSkeletons();
+            RevealAllCards();
             DebugText.Visibility = Visibility.Visible;
             DebugText.Text = $"Error: {ex.Message}";
             try { _loggingService.LogError($"Error en OnLoaded SistemaPage: {ex}", ex); } catch { }
@@ -129,9 +130,27 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
 
     private async Task LoadInitialDataAsync()
     {
+        // TODAS las lecturas en paralelo: son independientes entre sí (WMI, registro,
+        // GlobalMemoryStatusEx) y así la página tarda lo que la más lenta y no la suma.
+        // Y como ninguna card se revela hasta que hay datos de todas (ver el final),
+        // no queda una card en skeleton —oscura— al lado de otra ya cargada: eso era lo
+        // que hacía que "algunas cards se vieran más oscuras que otras", y qué card
+        // quedaba atrás dependía de qué lectura tardara más en cada arranque.
+        _loggingService.LogInfo("SistemaPage: leyendo CPU, RAM, GPU, discos, placa base, BIOS, seguridad y SO...");
+        var cpuTask = Task.Run(() => _systemInfoService.GetCpuInfo());
+        var memTask = Task.Run(() => _systemInfoService.GetMemoryInfo());
+        var modulesTask = Task.Run(() => _systemInfoService.GetMemoryModuleInfo());
+        var gpuTask = Task.Run(() => _systemInfoService.GetGpuInfo());
+        var diskTask = Task.Run(() => _systemInfoService.GetDiskInfo());
+        var boardTask = Task.Run(() => _systemInfoService.GetBoardInfo());
+        var biosTask = Task.Run(() => _systemInfoService.GetBiosInfo());
+        var securityTask = Task.Run(() => _systemInfoService.GetSecurityFeatures());
+        var osTask = Task.Run(() => _systemInfoService.GetOsInfo());
+        await Task.WhenAll(cpuTask, memTask, modulesTask, gpuTask, diskTask,
+                           boardTask, biosTask, securityTask, osTask);
+
         // CPU + características
-        _loggingService.LogInfo("SistemaPage: cargando CPU...");
-        var cpuInfo = await Task.Run(() => _systemInfoService.GetCpuInfo());
+        var cpuInfo = await cpuTask;
         _loggingService.LogInfo($"SistemaPage: CPU obtenida: {cpuInfo.Name}");
 
         CpuNameText.Text = cpuInfo.Name.Trim();
@@ -148,27 +167,21 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         _cpuCoresText = I18n.T("{0} núcleos / {1} hilos", cpuInfo.PhysicalCores, cpuInfo.LogicalProcessors);
         CpuDetailsText.Text = $"{FormatFrequency(cpuInfo.CurrentFrequencyMHz)} · {_cpuCoresText}";
 
-        // CPU lista: revelar su card
-        await RevealCardAsync(CpuSkeleton, CpuContent);
-
         // RAM
-        _loggingService.LogInfo("SistemaPage: cargando RAM...");
-        var memInfo = await Task.Run(() => _systemInfoService.GetMemoryInfo());
+        var memInfo = await memTask;
         _loggingService.LogInfo($"SistemaPage: RAM obtenida: {FormatBytes(memInfo.TotalBytes)}");
         RamTotalText.Text = FormatBytes(memInfo.TotalBytes);
         RamUsageText.Text = $"{memInfo.UsagePercent:F1}%";
         RamUsageBar.Value = Math.Max(0, Math.Min(100, memInfo.UsagePercent));
         _ramUsedBytes = memInfo.UsedBytes;
         RamUsedText.Text = I18n.T("· {0} usados", FormatBytes(memInfo.UsedBytes));
-        var moduleInfo = await Task.Run(() => _systemInfoService.GetMemoryModuleInfo());
+        var moduleInfo = await modulesTask;
         _ramChannelModeRaw = moduleInfo.ChannelMode; // crudo de Core ("Dual Channel"…): se traduce al vuelo
         _ramSpeedMHz = moduleInfo.SpeedMHz;
         RamDetailsText.Text = FormatRamDetails();
-        await RevealCardAsync(RamSkeleton, RamContent);
 
         // GPU (preferir dedicada; con más de una, desplegable para elegir)
-        _loggingService.LogInfo("SistemaPage: cargando GPU...");
-        var gpus = await Task.Run(() => _systemInfoService.GetGpuInfo());
+        var gpus = await gpuTask;
         _loggingService.LogInfo($"SistemaPage: GPUs obtenidas: {gpus.Count}");
         if (gpus.Count > 0)
         {
@@ -204,11 +217,9 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
  // lógica de primaria del servicio decide, como siempre).
             _systemInfoService.SelectedGpuName = ordered.Count > 1 ? primaryGpu.Name : null;
         }
-        await RevealCardAsync(GpuSkeleton, GpuContent);
 
         // Almacenamiento
-        _loggingService.LogInfo("SistemaPage: cargando discos...");
-        var disks = await Task.Run(() => _systemInfoService.GetDiskInfo());
+        var disks = await diskTask;
         _loggingService.LogInfo($"SistemaPage: Discos obtenidos: {disks.Count}");
         long totalStorage = disks.Sum(d => d.TotalSizeBytes);
         _totalStorage = totalStorage;
@@ -219,37 +230,33 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
         StorageUsageBar.Value = Math.Max(0, Math.Min(100, storageUsage));
         _storageFreeBytes = totalFreeStorage;
         StorageFreeText.Text = I18n.T("Libre: {0}", FormatBytes(totalFreeStorage));
-        await RevealCardAsync(StorageSkeleton, StorageContent);
 
         // Placa base
-        _loggingService.LogInfo("SistemaPage: cargando placa base...");
-        var boardInfo = await Task.Run(() => _systemInfoService.GetBoardInfo());
+        var boardInfo = await boardTask;
         BoardManufacturerText.Text = boardInfo.Manufacturer;
         BoardProductText.Text = boardInfo.Product;
-        await RevealCardAsync(BoardSkeleton, BoardContent);
 
         // BIOS
-        _loggingService.LogInfo("SistemaPage: cargando BIOS...");
-        var biosInfo = await Task.Run(() => _systemInfoService.GetBiosInfo());
+        var biosInfo = await biosTask;
         BiosManufacturerText.Text = biosInfo.Manufacturer;
         BiosVersionText.Text = biosInfo.SMBIOSBIOSVersion;
-        await RevealCardAsync(BiosSkeleton, BiosContent);
 
         // Seguridad del firmware (TPM, Secure Boot, IOMMU)
-        _loggingService.LogInfo("SistemaPage: cargando seguridad del firmware...");
-        _securityFeatures = await Task.Run(() => _systemInfoService.GetSecurityFeatures());
+        _securityFeatures = await securityTask;
         ApplySecurityFeatures();
-        await RevealCardAsync(TpmSkeleton, TpmContent);
-        await RevealCardAsync(SecureBootSkeleton, SecureBootContent);
-        await RevealCardAsync(IommuSkeleton, IommuContent);
-        await RevealCardAsync(VbsSkeleton, VbsContent);
 
         // Sistema Operativo
-        _loggingService.LogInfo("SistemaPage: cargando SO...");
-        var osInfo = await Task.Run(() => _systemInfoService.GetOsInfo());
+        var osInfo = await osTask;
         OsNameText.Text = osInfo.Name;
         OsDetailsText.Text = $"{osInfo.Version} / Build {osInfo.BuildNumber} · {osInfo.Architecture} · {osInfo.ComputerName}";
-        await RevealCardAsync(OsSkeleton, OsContent);
+
+        // Todas las cards se revelan A LA VEZ, con una sola espera del mínimo del
+        // skeleton: revelarlas de a una dejaba las que faltaban como bloques oscuros
+        // al lado de las que ya mostraban datos.
+        long elapsed = SkeletonWatch.ElapsedMilliseconds;
+        if (elapsed < MinSkeletonVisibleMs)
+            await Task.Delay((int)(MinSkeletonVisibleMs - elapsed));
+        RevealAllCards();
 
         _loggingService.LogInfo("SistemaPage: datos cargados");
 
@@ -259,6 +266,7 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
 
     // ===== Skeleton de carga por tarjeta =====
     private readonly List<Storyboard> _skeletonStoryboards = new();
+    private readonly List<FrameworkElement> _skeletonPanels = new();
 
     private FrameworkElement?[] AllSkeletons => new FrameworkElement?[]
     {
@@ -477,44 +485,112 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
     private static SolidColorBrush StatusBrush(string key) => ThemeBrushes.Get(key);
 
     /// <summary>
-    /// Anima los bloques del skeleton con un pulso de opacidad hasta que cada card se revela.
-    /// IMPORTANTE: se anima cada bloque (Rectangle), NO el panel contenedor: el panel tiene
-    /// fondo opaco que tapa el contenido real, y si se animara su opacidad, el fondo se
-    /// volvería translúcido y el HUD de la card quedaría visible a través del skeleton.
+    /// Anima el COLOR de los bloques de cada skeleton con un pulso hasta que las cards se
+    /// revelan.
+    ///
+    /// POR QUÉ NO SE ANIMA LA OPACIDAD: animar la opacidad dentro de una card la promueve a la
+    /// capa de composición, y el vidrio del tema (el <c>backdrop</c> desenfocado que pinta
+    /// <see cref="GlassBlurBrush"/>) puede quedar sin resolver mientras la animación existe. En
+    /// las capturas, las cards con el pulso encima se veían casi negras (#16191C) frente a su
+    /// gris de vidrio (#353738). Animar el color de un pincel PROPIO de cada card repinta los
+    /// bloques sin tocar la opacidad de nada, así que el vidrio no se pierde.
+    ///
+    /// Los bloques de una card comparten un pincel propio (no el del tema, que usan todas):
+    /// una sola animación por card y ningún riesgo de pintar de más en el resto de la UI.
     /// </summary>
     private void StartSkeletonPulse()
     {
         try
         {
+            _skeletonPanels.Clear();
             foreach (var el in AllSkeletons)
+                if (el is FrameworkElement fe) _skeletonPanels.Add(fe);
+
+            if (_skeletonPanels.Count == 0) return;
+
+            // UN solo Storyboard para TODOS los paneles: cada Begin() trae su
+            // propio reloj, y antes se lanzaba una animación por bloque, así que
+            // los últimos arrancaban decenas de milisegundos atrasados. Por eso
+            // unas cards quedaban en el pico del pulso y otras en el valle: se
+            // veían más oscuras. Con un storyboard único comparten reloj y todas
+            // respiran al mismo tiempo.
+            var sb = new Storyboard
             {
-                if (el is not Panel panel) continue;
-                foreach (var child in panel.Children)
+                RepeatBehavior = RepeatBehavior.Forever,
+                AutoReverse = true
+            };
+
+            foreach (var fe in _skeletonPanels)
+            {
+                if (SkeletonBrush(fe) is not { } brush) continue;
+
+                var anim = new ColorAnimation
                 {
-                    if (child is not FrameworkElement fe) continue;
-                    var sb = new Storyboard
-                    {
-                        RepeatBehavior = RepeatBehavior.Forever,
-                        AutoReverse = true
-                    };
-                    var anim = new DoubleAnimation
-                    {
-                        From = 1.0,
-                        To = 0.35,
-                        Duration = new Duration(TimeSpan.FromMilliseconds(900))
-                    };
-                    Storyboard.SetTarget(anim, fe);
-                    Storyboard.SetTargetProperty(anim, "Opacity");
-                    sb.Children.Add(anim);
-                    _skeletonStoryboards.Add(sb);
-                    sb.Begin();
-                }
+                    From = brush.Color,
+                    To = Brighter(brush.Color),
+                    Duration = new Duration(TimeSpan.FromMilliseconds(900)),
+                    // El color de un pincel no es una propiedad "independiente": se anima
+                    // en el hilo de UI. Son 11 animaciones chicas, no un efecto por frame.
+                    EnableDependentAnimation = true
+                };
+                Storyboard.SetTarget(anim, brush);
+                Storyboard.SetTargetProperty(anim, "Color");
+                sb.Children.Add(anim);
             }
+
+            _skeletonStoryboards.Add(sb);
+            sb.Begin();
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"No se pudo iniciar la animación de carga: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Pincel propio del pulso para un skeleton: copia el color de sus bloques en una
+    /// instancia nueva (compartida solo por los bloques de ESA card) y se la asigna. Así la
+    /// animación de color no toca el pincel del tema, que comparten todas las superficies.
+    /// </summary>
+    private static SolidColorBrush? SkeletonBrush(FrameworkElement panel)
+    {
+        var blocks = Descendants(panel).OfType<Rectangle>().ToList();
+        if (blocks.Count == 0) return null;
+
+        var baseColor = (blocks[0].Fill as SolidColorBrush)?.Color
+                        ?? Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF);
+        var brush = new SolidColorBrush(baseColor);
+        foreach (var block in blocks)
+            block.Fill = brush;
+        return brush;
+    }
+
+    /// <summary>Variante más luminosa del color del pulso (sube el alfa, no el RGB).</summary>
+    private static Windows.UI.Color Brighter(Windows.UI.Color color)
+        => Windows.UI.Color.FromArgb((byte)Math.Min(255, color.A + 0x1E), color.R, color.G, color.B);
+
+    /// <summary>Recorre el subárbol de un panel sin depender del árbol visual (los hijos de un
+    /// StackPanel ya existen cuando corre la animación).</summary>
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        if (root is not Panel panel) yield break;
+        foreach (var child in panel.Children)
+        {
+            yield return child;
+            foreach (var nested in Descendants(child))
+                yield return nested;
+        }
+    }
+
+    /// <summary>Detiene el pulso de los skeletons.</summary>
+    private void StopSkeletonPulse()
+    {
+        foreach (var sb in _skeletonStoryboards)
+        {
+            try { sb.Stop(); } catch { }
+        }
+        _skeletonStoryboards.Clear();
+        _skeletonPanels.Clear();
     }
 
     private void HideSkeleton(FrameworkElement? skeleton)
@@ -524,52 +600,34 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
 
         // Si ya no queda ningún skeleton visible, detener las animaciones de pulso
         if (AllSkeletons.All(s => s == null || s.Visibility != Visibility.Visible))
-        {
-            foreach (var sb in _skeletonStoryboards)
-            {
-                try { sb.Stop(); } catch { }
-            }
-            _skeletonStoryboards.Clear();
-        }
+            StopSkeletonPulse();
     }
 
     /// <summary>
-    /// Revela una card: oculta su skeleton y muestra el contenido real.
-    /// El contenido real arranca Collapsed, por lo que el skeleton nunca deja
-    /// ver el HUD atrás (sin depender de z-order ni de opacidad del fondo).
-    /// Garantiza un mínimo de tiempo visible del skeleton para que el efecto
-    /// de carga se aprecie incluso cuando los datos llegan rápido.
+    /// Revela TODAS las cards de una vez: oculta los skeletons y muestra el contenido
+    /// real, que arranca Collapsed (así el skeleton nunca deja ver el HUD atrás, sin
+    /// depender del z-order ni de la opacidad del fondo). Se usa al terminar la carga y
+    /// también en el camino de error, donde el contenido queda con los valores "--".
     /// </summary>
-    private async Task RevealCardAsync(FrameworkElement? skeleton, FrameworkElement? content)
-    {
-        long elapsed = SkeletonWatch.ElapsedMilliseconds;
-        if (elapsed < MinSkeletonVisibleMs)
-            await Task.Delay((int)(MinSkeletonVisibleMs - elapsed));
-        RevealCard(skeleton, content);
-    }
-
-    private void RevealCard(FrameworkElement? skeleton, FrameworkElement? content)
-    {
-        HideSkeleton(skeleton);
-        if (content != null)
-            content.Visibility = Visibility.Visible;
-    }
-
-    private void HideAllSkeletons()
+    private void RevealAllCards()
     {
         foreach (var el in AllSkeletons)
             HideSkeleton(el);
-        // En caso de error, mostrar el contenido (quedará con los valores por defecto "--")
         foreach (var c in AllContents)
         {
             if (c != null)
                 c.Visibility = Visibility.Visible;
         }
-        foreach (var sb in _skeletonStoryboards)
-        {
-            try { sb.Stop(); } catch { }
-        }
-        _skeletonStoryboards.Clear();
+        StopSkeletonPulse();
+
+        // El contenido mide menos que el skeleton, así que al revelarse las cards se
+        // achican y todo lo de abajo sube. Los parches de desenfoque quedaban medidos con
+        // la geometría vieja: las cards de arriba se veían sin su vidrio (más oscuras que
+        // las de abajo, que todavía caían sobre un parche) hasta el próximo pase, que solo
+        // llegaba al scrollear. Se pide el rearmado un tick después, con el layout ya
+        // aplicado, para que el vidrio quede en su lugar sin que el usuario toque nada.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => PanelBlurLayer.ContentChanged("Sistema: cards reveladas"));
     }
 
     private void StartMonitoring()

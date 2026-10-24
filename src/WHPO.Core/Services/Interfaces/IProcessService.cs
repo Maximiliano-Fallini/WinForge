@@ -29,6 +29,37 @@ public record RuleApplyFeedback(bool CpuFailed, bool AffinityFailed, bool GpuFai
 }
 
 /// <summary>
+/// Estado de la regla de un juego para la UI de la biblioteca. Waiting incluye el
+/// tramo launcher→juego (el proceso real todavía no apareció); Applied dice a qué
+/// proceso se le aplicó; Failed es el timeout sin poder identificarlo.
+/// </summary>
+public enum GameRuleState
+{
+    None,
+    Waiting,
+    Applied,
+    Failed
+}
+
+/// <summary>
+/// Último estado conocido de la regla de un juego. <paramref name="Exe"/> es la clave
+/// de la regla (el exe de la biblioteca), no necesariamente el proceso real: con un
+/// launcher de por medio, <paramref name="ProcessName"/> es el proceso al que se le
+/// aplicó la regla. <paramref name="Limited"/> indica que alguna dimensión no se pudo
+/// aplicar (proceso protegido por anti-cheat).
+/// </summary>
+public sealed record GameRuleStatus(
+    string Exe,
+    GameRuleState State,
+    string? Launcher = null,
+    string? ProcessName = null,
+    bool Limited = false,
+    // La coincidencia fue por nombre/alias o por la ruta real aprendida, no solo
+    // por estar dentro de la carpeta (evita que un launcher intermedio quede como
+    // estado final si luego aparece el juego).
+    bool Strong = false);
+
+/// <summary>
 /// Gestión de procesos: detecta las apps/juegos en ejecución,
 /// aplica prioridad de CPU, afinidad de núcleos y prioridad de GPU, y persiste las
 /// reglas por ejecutable. Nada se aplica sin una regla guardada (no se hardcodea
@@ -89,11 +120,31 @@ public interface IProcessService
 
     /// <summary>
     /// Sigue la cadena de apertura del juego aplicando su regla efectiva (la de
-    /// sesión "Actual" gana sobre la guardada) mientras arranca: cada 5 s y por
-    /// máximo 25 s, aunque la ventana esté oculta. Red de seguridad de los eventos
-    /// WMI para la cadena launcher→juego; cada proceso recibe la regla una sola vez.
+    /// sesión "Actual" gana sobre la guardada) mientras arranca: busca el proceso
+    /// real por nombre, alias o carpeta de instalación, sin aplicar la regla al
+    /// launcher. La ventana de seguimiento es de 3 minutos; cada proceso recibe la
+    /// regla una sola vez. Es la red de seguridad de los eventos WMI para la cadena
+    /// launcher→juego.
     /// </summary>
     void ApplyLaunchChainRule(string exeFileName);
+
+    /// <summary>
+    /// Abre una sesión de lanzamiento para un juego con regla: desde este momento se
+    /// sigue la cadena launcher→juego y se aplica la regla al proceso real cuando
+    /// aparece. Es idempotente (GameLauncher la abre antes de lanzar y
+    /// ApplyLaunchChainRule la vuelve a pedir después). No persiste nada por juego:
+    /// el launcher es un detalle de runtime, no una configuración.
+    /// </summary>
+    void BeginLaunchSession(string exeFileName, string? launcher = null, string? installPath = null);
+
+    /// <summary>Último estado conocido de la regla de un juego (null si nunca se evaluó).</summary>
+    GameRuleStatus? GetGameRuleStatus(string exeFileName);
+
+    /// <summary>Tiempo que queda de la ventana de seguimiento launcher→juego (null si no hay sesión activa).</summary>
+    TimeSpan? GetLaunchSessionRemaining(string exeFileName);
+
+    /// <summary>Se dispara cuando cambia el estado de la regla de un juego (para la UI de la biblioteca).</summary>
+    event Action<GameRuleStatus>? GameRuleStatusChanged;
 
     // ===== Reglas persistidas por ejecutable =====
     Dictionary<string, ProcessRule> GetRules();
@@ -117,6 +168,21 @@ public interface IProcessService
     event Action? RunningGamesChanged;
     /// <summary>Exe de los juegos conocidos que están corriendo ahora (snapshot de los eventos WMI).</summary>
     IReadOnlyCollection<string> RunningGameExes { get; }
+
+    /// <summary>
+    /// Exes de reglas (juegos de la biblioteca) que tienen al menos un proceso vivo,
+    /// aunque el proceso real tenga otro nombre (launcher de por medio). Es lo que
+    /// usa el Modo juego para saber que hay una partida en curso.
+    /// </summary>
+    IReadOnlyCollection<string> RunningRuleExes { get; }
+
+    /// <summary>
+    /// True si hay actividad de juego: un juego conocido en ejecución o un proceso
+    /// que matchea una regla (incluida la cadena launcher→juego). Reemplaza el
+    /// chequeo por RunningGameExes.Count para que el Modo juego también arranque
+    /// cuando el juego real no se llama como el exe de la biblioteca.
+    /// </summary>
+    bool HasRunningGameActivity { get; }
 
     // ===== Launchers (botón "Iniciar" de la biblioteca) =====
     /// <summary>Se dispara cuando un launcher (Battle.net, Epic, GOG, Xbox…) nace o muere.</summary>

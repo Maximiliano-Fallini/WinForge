@@ -322,6 +322,16 @@ public static class ThemeBrushes
     /// si la clave no está ahí (p. ej. ErrorBrush/SuccessBrush/WarningBrush,
     /// iguales en ambos temas), cae a los recursos raíz de la app.
     ///
+    /// La búsqueda por tema es EXPLÍCITA: primero los ThemeDictionaries de App.xaml y después los
+    /// de cada diccionario mergeado (en orden inverso al merge, como resuelve WinUI). No alcanza
+    /// con <c>App.Current.Resources[clave]</c>: esa búsqueda resuelve los ThemeDictionaries con el
+    /// tema del APPLICATION —el de Windows—, así que una clave que solo vive en un diccionario
+    /// mergeado (ExpanderHeaderBackground, ButtonBackground, NavigationViewDefaultPaneBackground…)
+    /// se pintaba con el tema del SISTEMA. Con la app en oscuro y Windows en claro, las filas de
+    /// Optimizaciones —creadas en code-behind con <c>GetSurface("ExpanderHeaderBackground")</c>—
+    /// quedaban BLANCAS, y al revés también. Es el mismo camino que ya usa
+    /// <see cref="PanelAppearance.FindThemeDictionary"/> para escribir esas claves.
+    ///
     /// Devuelve el pincel tal cual está en el diccionario: normalmente un SolidColorBrush, pero
     /// con el desenfoque de paneles encendido las superficies guardan la foto desenfocada (un
     /// ImageBrush). Los llamadores que necesitan un color comprueban el tipo.
@@ -338,6 +348,22 @@ public static class ThemeBrushes
                 return themeBrush;
             }
 
+            var merged = App.Current.Resources.MergedDictionaries;
+            for (int i = merged.Count - 1; i >= 0; i--)
+            {
+                if (merged[i] is not { } dictionary) continue;
+                if (!dictionary.ThemeDictionaries.TryGetValue(themeKey, out var mergedTheme)) continue;
+                if (mergedTheme is ResourceDictionary mergedDict
+                    && mergedDict.TryGetValue(key, out var mergedValue)
+                    && mergedValue is Brush mergedBrush)
+                {
+                    return mergedBrush;
+                }
+            }
+
+            // Recursos de la app que NO dependen del tema (SuccessBrush, WarningBrush, ErrorBrush).
+            // Si la clave no es de la app, esta búsqueda la resolvería con el tema del SISTEMA: por
+            // eso las claves del sistema no se piden desde código (ver PrimaryTextBrush/SecondaryTextBrush).
             if (App.Current.Resources.TryGetValue(key, out var rootValue)
                 && rootValue is Brush rootBrush)
             {

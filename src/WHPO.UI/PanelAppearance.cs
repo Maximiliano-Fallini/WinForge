@@ -725,6 +725,39 @@ public static class PanelAppearance
     }
 
     /// <summary>
+    /// Vuelve a decidir QUIÉN pinta el vidrio y repinta los paneles. Se llama cuando algo de AFUERA
+    /// cambió lo que habilita el acrílico o la base del tema: el hub de Optimizaciones escribe
+    /// "Efectos de transparencia" (EnableTransparency) y el modo claro/oscuro de Windows desde la
+    /// categoría "Tema de Windows".
+    ///
+    /// El camino del vidrio se elige una sola vez y solo se reescribe cuando el TIER cambia (ver
+    /// <see cref="SetBlurPercent"/>), así que sin este refresco el estado viejo sobreviva al cambio
+    /// del sistema: las piezas del chrome quedaban con el tinte del vidrio compartido y sin la copia
+    /// detrás —el navbar se veía transparente y sin desenfoque— hasta mover el deslizador a mano, que
+    /// era la única otra pasada con el vidrio recién consultado.
+    /// </summary>
+    public static void RefreshAfterSystemChange()
+    {
+        try
+        {
+            // 1) El sistema se relee: el ajuste acaba de cambiar el registro que habilita el acrílico.
+            PlatformGlass.Recheck();
+
+            // 2) La copia propia y los parches del chrome se rehacen desde cero.
+            PanelBlurLayer.Invalidate();
+
+            // 3) El desenfoque decide el camino y, si cambió, reescribe las superficies; la
+            //    transparencia repinta lo que va a mano (menú, barra de título, barras internas).
+            SetBlurPercent(BlurPercent, persist: false);
+            SetTransparencyPercent(TransparencyPercent, persist: false);
+        }
+        catch (Exception ex)
+        {
+            Log($"PanelAppearance.RefreshAfterSystemChange: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Persiste los ajustes vigentes (la página guarda con retardo al arrastrar). Es POR TEMA: los
     /// dos números van a las claves del tema que está puesto, y desde ahí ese tema arranca con ellos
     /// (los demás siguen con los suyos: ver <see cref="Resolve"/>).
