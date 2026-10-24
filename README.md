@@ -30,15 +30,17 @@ WinForge reúne en una sola app lo que normalmente está repartido entre media d
 | Área | Qué incluye |
 |---|---|
 | 🎮 **Modo juego** | Optimiza automáticamente al iniciar un juego (procesos, servicios, plan de energía) y lo revierte al cerrar. |
-| 🕹️ **Biblioteca de juegos** | Detecta juegos de Steam, Epic, GOG, Xbox y demás launchers —y emuladores—, con reglas por juego (prioridad, afinidad, plan de energía). |
+| 🕹️ **Biblioteca de juegos** | Detecta juegos de Steam, Epic, GOG, Xbox y demás launchers —y emuladores—, con reglas por juego (prioridad, afinidad, plan de energía). Incluye modo 3D con cartuchos, dock de consola y vista de inspección. |
 | 📊 **Monitoreo** | CPU, memoria, red, temperaturas y overlay de métricas en el juego con atajos de teclado. |
+| ⚡ **Núcleos y energía** | Planes de energía, techo de turbo (boost y límite de rendimiento) con perfiles Predeterminado y Recomendado, afinidad y monitoreo por núcleo. |
 | 🧰 **Herramientas** | Macros, autoclicker, limpieza de caché y registro, planes de energía, DNS, reparación del sistema y más. |
-| 🧠 **Optimizaciones** | El hub de ajustes de Windows, al estilo Winhance: 418 ajustes en 10 categorías (privacidad, energía, juegos, actualización, notificaciones, sonido, explorador, inicio, barra de tareas y tema), con perfil recomendado y perfiles preconfigurados. Adentro del mismo hub viven TCP / Red avanzado, Debloat, Herramientas y funciones, Panel de Windows, Reparación, Windows Update y Limpieza del dispositivo. |
-| 🧩 **Workshop** | Todos los componentes de la app. **Set fijo**: Sistema · Red · Núcleos · Optimizaciones · Biblioteca de juegos · Workshop · Configuración. **Instalables** (se instalan, actualizan o desinstalan desde la propia app): Propiedades del adaptador de red · Resolución del Temporizador · Overclock USB · Filtro de teclas · Memoria · Monitor de sensores · Ventiladores · Gestión de procesos · Test de estabilidad · Overlay de métricas · Macros · Autoclicker. |
+| 🧠 **Optimizaciones** | El hub de ajustes de Windows, al estilo Winhance: 418 ajustes en 10 categorías (privacidad, energía, juegos, actualización, notificaciones, sonido, explorador, inicio, barra de tareas y tema), con perfil recomendado y perfiles preconfigurados. Adentro del mismo hub viven TCP / Red avanzado, Debloat, Herramientas y funciones, Panel de Windows, Reparación, Windows Update, Limpieza del dispositivo y Administración de inicio. |
+| 🧩 **Workshop** | Todos los componentes de la app. **Set fijo**: Sistema · Red · Núcleos · Optimizaciones · Biblioteca de juegos · Guía · Workshop · Configuración. **Instalables** (se instalan, actualizan o desinstalan desde la propia app): Resolución del Temporizador · Overclock USB · Filtro de teclas · Memoria · Monitor de sensores · Ventiladores · Gestión de procesos · Test de estabilidad · Overlay de métricas · Macros · Autoclicker · Benchmark de escenas 3D. |
 
 ## ⚙️ Requisitos
 
-- **Windows 10/11 x64** (testeado en Windows 11 25H2)
+- **Windows 10/11 x64** (probado en Windows 11 25H2).
+- **Permisos de administrador**: la app eleva al abrir porque modifica el sistema.
 
 ## 📦 Instalación
 
@@ -60,6 +62,8 @@ WinForge reúne en una sola app lo que normalmente está repartido entre media d
   <br/>
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
 </p>
+
+El instalador es self-contained (no requiere .NET ni el Windows App SDK) y la app se actualiza desde **Configuración → Actualizaciones**.
 
 ## ⭐ Apoyá el proyecto
 
@@ -92,6 +96,7 @@ WinForge no reinventa la rueda: cada función nació de estudiar (y a veces de i
 | **[DNS Jumper](https://www.sordum.org/7952/dns-jumper-v2-3/)** | Cambio de DNS en un clic |
 | **[Quick CPU](https://coderbag.com/product/quickcpu)** | Plan de energía y control de núcleos |
 | **[WinUtil](https://github.com/ChrisTitusTech/winutil)** | Debloat y tweaks de Windows en un solo lugar |
+| **[Winhance](https://github.com/memstechtips/Winhance)** | Hub de ajustes de Windows con perfil recomendado y perfiles preconfigurados |
 | **[TCP Optimizer](https://www.speedguide.net/downloads.php)** | Tweaks de red y de propiedades del adaptador |
 | **[ISLC](https://www.wagnardsoft.com/intelligent-standby-list-cleaner-islc)** | Limpieza de la lista standby de la RAM |
 | **[MacroGamer](https://www.macrogamer.com/)** | Macros de teclado y mouse con atajo global |
