@@ -24,6 +24,9 @@ public sealed class CartridgeTile : UserControl
     private readonly Border _recess;
 
     public bool IsRemoved { get; private set; }
+    /// <summary>Ejecutable del juego que representa la card: la biblioteca lo usa para
+    /// encontrar la tile al refrescar la carátula o el encabezado personalizados.</summary>
+    public string? GameExe { get; set; }
     /// <summary>El cartucho montado en el dock va clavado: con esto en false el hover
     /// no lo inclina ni lo levanta (el clic para inspeccionar y el arrastre hacia
     /// afuera siguen funcionando igual).</summary>
@@ -108,7 +111,7 @@ public sealed class CartridgeTile : UserControl
     /// Construye el polígono exacto de la silueta del cartucho (con esquinas redondeadas y
     /// muescas laterales en y=708..762 sobre 600×878) para el tamaño actual del control.
     /// </summary>
-    private static PointCollection BuildSilhouettePoints(double w, double h, double offsetX = 0, double offsetY = 0)
+    internal static PointCollection BuildSilhouettePoints(double w, double h, double offsetX = 0, double offsetY = 0)
     {
         var pts = new PointCollection();
         if (w <= 1 || h <= 1) return pts;

@@ -9613,8 +9613,8 @@
        "subgroupGuid": "54533251-82be-4824-96c1-47b60b740d00",
        "settingGuid": "893dee8e-2bef-41e0-89c6-b55d0929964c",
        "powerModeSupport": "Separate",
-       "recommendedAc": 100,
-       "recommendedDc": 5,
+       "recommendedAc": 0,
+       "recommendedDc": 0,
        "defaultAc": 0,
        "defaultDc": 5,
        "units": "%"
@@ -10219,8 +10219,8 @@
        "subgroupGuid": "54533251-82be-4824-96c1-47b60b740d00",
        "settingGuid": "0cc5b647-c1df-4637-891a-dec35c318583",
        "powerModeSupport": "Separate",
-       "recommendedAc": 0,
-       "recommendedDc": 0,
+       "recommendedAc": 100,
+       "recommendedDc": 100,
        "defaultAc": 100,
        "defaultDc": 10,
        "units": "%"

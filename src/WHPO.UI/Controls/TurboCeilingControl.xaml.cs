@@ -7,6 +7,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media.Animation;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO_UI.Controls;
@@ -35,12 +36,57 @@ public sealed partial class TurboCeilingControl : UserControl
     private string _cpuName = "";
     private double _cpuNominalMhz;
 
+    // Perfil de energía elegido: Windows guarda un juego de valores para corriente (AC) y
+    // otro para batería (DC). La card muestra y edita el del perfil elegido, y los atajos
+    // (Predeterminado / Recomendado) actúan sobre ese mismo sin pisar el otro.
+    private TurboPowerMode _mode = TurboPowerMode.Ac;
+
+    // Esqueleto de carga: la lectura del estado (powercfg + registro del catálogo de energía)
+    // tarda, y hasta que llegaba la card se veía vacía —barras sin valor, desplegable sin
+    // contenido—. El esqueleto tiene la silueta de las filas reales y se queda un mínimo de
+    // tiempo para que una lectura rápida no se vea como un parpadeo.
+    private const int MinSkeletonVisibleMs = 450;
+    private bool _turboLoading;
+    private long _skeletonShownAtMs;
+    private readonly List<Storyboard> _turboSkeletonStoryboards = new();
+
+    // Cambios sin aplicar, uno por perfil: cambiar el desplegable no descarta lo movido en el
+    // otro perfil, y "Aplicar" confirma todo junto (el perfil elegido cuenta como cambio
+    // pendiente: nada de la card se da por aplicado hasta que se pulsa Aplicar).
+    private readonly Dictionary<TurboPowerMode, TurboDraft> _drafts = new()
+    {
+        [TurboPowerMode.Ac] = new TurboDraft(),
+        [TurboPowerMode.Dc] = new TurboDraft()
+    };
+
+    // El desplegable también queda pendiente: elegir un perfil no se da por aplicado hasta
+    // que se pulsa Aplicar (ese botón es el que confirma la card entera).
+    private bool _profilePending;
+
+    /// <summary>Cambios de un perfil que todavía no se aplicaron al plan.</summary>
+    private sealed class TurboDraft
+    {
+        public int? BoostMode { get; set; }
+        public int? LimitPercent { get; set; }
+        public Dictionary<string, int> Advanced { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public bool HasChanges => BoostMode != null || LimitPercent != null || Advanced.Count > 0;
+
+        public void Clear()
+        {
+            BoostMode = null;
+            LimitPercent = null;
+            Advanced.Clear();
+        }
+    }
+
     public TurboCeilingControl()
     {
         InitializeComponent();
         _turboCeilingService = App.Services.GetRequiredService<ITurboCeilingService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
+        InitModeCombo();
 
         // La página de Núcleos se cachea: la suscripción se ata a Loaded/Unloaded para
         // no dejar el handler de idioma colgado al desmontar.
@@ -50,32 +96,232 @@ public sealed partial class TurboCeilingControl : UserControl
             I18n.LanguageChanged += OnLanguageChanged;
             Refresh();
         };
-        Unloaded += (_, _) => I18n.LanguageChanged -= OnLanguageChanged;
+        Unloaded += (_, _) =>
+        {
+            I18n.LanguageChanged -= OnLanguageChanged;
+            // Si se sale de la pestaña a mitad de la carga, el pulso no queda vivo.
+            StopSkeletonPulse();
+        };
     }
 
     /// <summary>
     /// Relee el techo de turbo del plan activo. Núcleos la llama al abrir la pestaña,
-    /// para no mostrar el estado de un plan que ya no está vigente.
+    /// para no mostrar el estado de un plan que ya no está vigente, y con el esqueleto
+    /// visible, igual que el resto de la página.
     /// </summary>
-    public void Refresh() => _ = LoadTurboCeilingAsync();
+    public void Refresh() => _ = LoadTurboCeilingAsync(showSkeleton: true);
+
+    // ===================== Skeleton de carga =====================
+
+    /// <summary>Muestra el esqueleto y esconde las filas reales mientras se lee el estado.</summary>
+    private void ShowSkeleton()
+    {
+        _skeletonShownAtMs = Environment.TickCount64;
+        TurboSkeleton.Visibility = Visibility.Visible;
+        TurboContent.Visibility = Visibility.Collapsed;
+        StartSkeletonPulse();
+    }
+
+    private void ShowContent()
+    {
+        StopSkeletonPulse();
+        TurboSkeleton.Visibility = Visibility.Collapsed;
+        TurboContent.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// El esqueleto no se va antes de <see cref="MinSkeletonVisibleMs"/>: con una lectura
+    /// rápida se vería como un parpadeo de la card.
+    /// </summary>
+    private async Task EnsureMinSkeletonVisibleAsync()
+    {
+        long elapsed = Environment.TickCount64 - _skeletonShownAtMs;
+        if (elapsed < MinSkeletonVisibleMs)
+            await Task.Delay((int)(MinSkeletonVisibleMs - elapsed));
+    }
+
+    /// <summary>
+    /// Pulso de opacidad por bloque (1.0 → 0.35 en 900 ms, auto-reverse infinito), el
+    /// mismo que usan los esqueletos de Biblioteca y Sistema.
+    /// </summary>
+    private void StartSkeletonPulse()
+    {
+        StopSkeletonPulse();
+        try
+        {
+            foreach (var block in TurboSkeleton.Children.OfType<FrameworkElement>())
+            {
+                var sb = new Storyboard
+                {
+                    RepeatBehavior = RepeatBehavior.Forever,
+                    AutoReverse = true
+                };
+                var anim = new DoubleAnimation
+                {
+                    From = 1.0,
+                    To = 0.35,
+                    Duration = new Duration(TimeSpan.FromMilliseconds(900))
+                };
+                Storyboard.SetTarget(anim, block);
+                Storyboard.SetTargetProperty(anim, "Opacity");
+                sb.Children.Add(anim);
+                _turboSkeletonStoryboards.Add(sb);
+                sb.Begin();
+            }
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"TurboCeilingControl: animación del esqueleto: {ex.Message}");
+        }
+    }
+
+    private void StopSkeletonPulse()
+    {
+        foreach (var sb in _turboSkeletonStoryboards)
+        {
+            try { sb.Stop(); } catch { }
+        }
+        _turboSkeletonStoryboards.Clear();
+    }
 
     private void OnLanguageChanged()
     {
         I18n.ApplyToVisualTree(this);
-        // Las etiquetas del modo boost y los textos del estado vacío los escribe el
-        // código: se re-arman con el idioma nuevo.
+        // El desplegable de perfil y las etiquetas del modo boost los escribe el código:
+        // se rearman con el idioma nuevo.
+        InitModeCombo();
         if (_turboState != null) ApplyTurboState(_turboState);
+    }
+
+    // ===================== Perfil de energía (AC / DC) =====================
+
+    /// <summary>Carga el desplegable con los dos perfiles que guarda Windows.</summary>
+    private void InitModeCombo()
+    {
+        var previous = _turboUpdating;
+        _turboUpdating = true;
+        try
+        {
+            // Se rearma la lista (no solo el índice) para que un cambio de idioma se vea
+            // aunque el perfil elegido siga siendo el mismo.
+            TurboModeCombo.ItemsSource = new[]
+            {
+                I18n.T("Escritorio (enchufado)"),
+                I18n.T("Notebook (batería)")
+            };
+            TurboModeCombo.SelectedIndex = _mode == TurboPowerMode.Dc ? 1 : 0;
+        }
+        finally
+        {
+            _turboUpdating = previous;
+        }
+    }
+
+    private void TurboModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_turboUpdating) return;
+        var mode = TurboModeCombo.SelectedIndex == 1 ? TurboPowerMode.Dc : TurboPowerMode.Ac;
+        if (mode == _mode) return;
+
+        // Lo movido en el perfil que se deja queda guardado en su borrador (no se pierde) y
+        // el perfil elegido pasa a contar como cambio pendiente: recién lo confirma Aplicar.
+        CaptureDraft(_mode);
+        _mode = mode;
+        _profilePending = true;
+        if (_turboState != null) ApplyTurboState(_turboState);
+    }
+
+    // ===================== Valores del perfil elegido =====================
+
+    private int? BoostValue(TurboCeilingState s)
+        => _mode == TurboPowerMode.Dc ? s.BoostModeValueDc : s.BoostModeValue;
+
+    private int? LimitValue(TurboCeilingState s)
+        => _mode == TurboPowerMode.Dc ? s.LimitPercentDc : s.LimitPercent;
+
+    private int? BoostDefault(TurboCeilingState s)
+        => _mode == TurboPowerMode.Dc ? s.DefaultBoostModeDc : s.DefaultBoostMode;
+
+    private int? LimitDefault(TurboCeilingState s)
+        => _mode == TurboPowerMode.Dc ? s.DefaultLimitPercentDc : s.DefaultLimitPercent;
+
+    private int? AdvancedValue(TurboAdvancedSetting setting)
+        => _mode == TurboPowerMode.Dc ? setting.DcValue : setting.Value;
+
+    private int? AdvancedDefault(TurboAdvancedSetting setting)
+        => _mode == TurboPowerMode.Dc ? setting.DefaultDc : setting.DefaultValue;
+
+    // ===================== Borradores por perfil =====================
+
+    private static int? BoostValueFor(TurboCeilingState s, TurboPowerMode mode)
+        => mode == TurboPowerMode.Dc ? s.BoostModeValueDc : s.BoostModeValue;
+
+    private static int? LimitValueFor(TurboCeilingState s, TurboPowerMode mode)
+        => mode == TurboPowerMode.Dc ? s.LimitPercentDc : s.LimitPercent;
+
+    private static int? AdvancedValueFor(TurboAdvancedSetting setting, TurboPowerMode mode)
+        => mode == TurboPowerMode.Dc ? setting.DcValue : setting.Value;
+
+    /// <summary>
+    /// Guarda en el borrador del perfil lo que el usuario movió y todavía no aplicó. Se llama
+    /// al cambiar de perfil (para no perder ese perfil al pasar al otro) y al pulsar Aplicar.
+    /// </summary>
+    private void CaptureDraft(TurboPowerMode mode)
+    {
+        if (_turboState == null) return;
+        var draft = _drafts[mode];
+        draft.Clear();
+
+        if (_turboState.BoostModeExposed)
+        {
+            var selected = SelectedBoostMode();
+            var applied = BoostValueFor(_turboState, mode);
+            if (selected != null && applied != null && selected != applied) draft.BoostMode = selected;
+        }
+
+        if (_turboState.LimitExposed)
+        {
+            var value = (int)Math.Round(TurboLimitSlider.Value);
+            var applied = LimitValueFor(_turboState, mode);
+            if (applied != null && value != applied.Value) draft.LimitPercent = value;
+        }
+
+        foreach (var setting in _turboState.Advanced)
+        {
+            if (!setting.Exposed) continue;
+            if (!_advancedSliders.TryGetValue(setting.SettingGuid, out var slider)) continue;
+            var applied = AdvancedValueFor(setting, mode);
+            if (applied == null) continue;
+            var value = (int)Math.Round(slider.Value);
+            if (value != applied.Value) draft.Advanced[setting.SettingGuid] = value;
+        }
+    }
+
+    private void ClearDrafts()
+    {
+        foreach (var draft in _drafts.Values) draft.Clear();
     }
 
     // ===================== Lectura del estado =====================
 
-    private async Task LoadTurboCeilingAsync()
+    private async Task LoadTurboCeilingAsync(bool showSkeleton = false)
     {
+        if (_turboLoading) return;
+        // Esqueleto la primera vez (todavía no hay estado que mostrar) y cuando se pide
+        // explícitamente al abrir la pestaña; NO al releer después de Aplicar, que ya
+        // tiene valores en pantalla y solo se refresca.
+        bool skeleton = showSkeleton || _turboState == null;
+        _turboLoading = true;
+        if (skeleton) ShowSkeleton();
+
         try
         {
             // powercfg + registro del catálogo de energía: fuera del hilo de UI.
             var state = await Task.Run(() => _turboCeilingService.GetState());
             _cpuName = state.CpuName;
+            // Lo que el equipo reporta es la verdad: lo movido sin aplicar ya no existe.
+            ClearDrafts();
+            _profilePending = false;
             if (_cpuNominalMhz <= 0)
             {
                 // Una sola vez: es WMI, y el tooltip se rearma al mover la barra.
@@ -87,6 +333,17 @@ public sealed partial class TurboCeilingControl : UserControl
         catch (Exception ex)
         {
             _loggingService.LogWarning($"TurboCeilingControl: no se pudo leer el techo de turbo: {ex.Message}");
+        }
+        finally
+        {
+            // Sin estado no queda un esqueleto eterno: se muestra la card con lo que haya
+            // (el estado vacío propio de la card ya explica cuando el equipo no expone nada).
+            if (skeleton)
+            {
+                await EnsureMinSkeletonVisibleAsync();
+                ShowContent();
+            }
+            _turboLoading = false;
         }
     }
 
@@ -109,19 +366,23 @@ public sealed partial class TurboCeilingControl : UserControl
             // Es una LISTA de modos, no una magnitud: la barra salta de uno a otro (sin
             // valores intermedios, porque Windows no los acepta) y arriba se muestra el
             // nombre del modo actual. Las posiciones salen del equipo, no del código.
+            // La barra muestra lo movido sin aplicar (si lo hay); la badge "Actual" sigue
+            // mostrando lo que el equipo reporta hoy.
+            var boost = BoostValue(state);
+            var boostDisplay = _drafts[_mode].BoostMode ?? boost;
             TurboBoostRow.Visibility = state.BoostModeExposed ? Visibility.Visible : Visibility.Collapsed;
             _boostOptionValues.Clear();
-            if (state.BoostModeExposed && state.BoostModeValue != null)
+            if (state.BoostModeExposed && boostDisplay != null)
             {
                 _boostOptionValues.AddRange(state.BoostModeOptions);
                 TurboBoostSlider.Minimum = 0;
                 TurboBoostSlider.Maximum = Math.Max(0, _boostOptionValues.Count - 1);
                 TurboBoostSlider.StepFrequency = 1;
 
-                var index = _boostOptionValues.IndexOf(state.BoostModeValue.Value);
+                var index = _boostOptionValues.IndexOf(boostDisplay.Value);
                 TurboBoostSlider.Value = index >= 0 ? index : 0;
-                TurboBoostValueText.Text = BoostModeLabel(state.BoostModeValue.Value);
-                UpdateBoostModeHelp(state.BoostModeValue.Value);
+                TurboBoostValueText.Text = BoostModeLabel(boostDisplay.Value);
+                UpdateBoostModeHelp(boostDisplay.Value);
             }
             else
             {
@@ -129,23 +390,32 @@ public sealed partial class TurboCeilingControl : UserControl
                 UpdateBoostModeHelp(null);
             }
 
+            // Badges de la fila, en el mismo formato que las opciones de Optimizaciones.
+            FillBadges(TurboBoostBadges, BoostRecommendedText(state),
+                boost != null ? BoostModeLabel(boost.Value) : null);
+
             // ---- Límite de rendimiento (rango del equipo, nunca 0-100 fijo) ----
             TurboLimitRow.Visibility = state.LimitExposed ? Visibility.Visible : Visibility.Collapsed;
             // Se arma en código (no en el XAML) para que el texto envuelva dentro del tooltip y
             // siga el idioma: el tooltip de string del XAML se recortaba al llegar al ancho máximo.
             ToolTipService.SetToolTip(TurboLimitInfoButton, BuildLimitToolTip());
-            if (state.LimitExposed && state.LimitPercent != null)
+            var limit = LimitValue(state);
+            var limitDisplay = _drafts[_mode].LimitPercent ?? limit;
+            if (state.LimitExposed && limitDisplay != null)
             {
                 TurboLimitSlider.Minimum = state.LimitMin;
                 TurboLimitSlider.Maximum = state.LimitMax;
                 TurboLimitSlider.StepFrequency = state.LimitStep > 0 ? state.LimitStep : 1;
-                TurboLimitSlider.Value = state.LimitPercent.Value;
-                TurboLimitValueText.Text = FormatLimitValue(state.LimitPercent.Value, state.LimitUnits);
+                TurboLimitSlider.Value = limitDisplay.Value;
+                TurboLimitValueText.Text = FormatLimitValue(limitDisplay.Value, state.LimitUnits);
             }
             else
             {
                 TurboLimitValueText.Text = string.Empty;
             }
+
+            FillBadges(TurboLimitBadges, LimitRecommendedText(state),
+                limit != null ? FormatLimitValue(limit.Value, state.LimitUnits) : null);
 
             // ---- Estado vacío: se explica, no se esconde ----
             var unavailable = !state.HasAnyControl;
@@ -167,29 +437,35 @@ public sealed partial class TurboCeilingControl : UserControl
  // "Predeterminado" solo si el sistema reporta algún valor de fábrica (los
  // avanzados también vuelven al suyo); "Recomendado", siempre que haya algo
  // que tocar.
-            var hasFactoryValues = (state.LimitExposed && state.DefaultLimitPercent != null)
-                || (state.BoostModeExposed && state.DefaultBoostMode != null)
-                || state.Advanced.Exists(a => a.Exposed && a.DefaultValue != null);
+            var hasFactoryValues = LimitDefault(state) != null
+                || BoostDefault(state) != null
+                || state.Advanced.Exists(a => a.Exposed && AdvancedDefault(a) != null);
             TurboDefaultsButton.IsEnabled = state.HasAnyControl && hasFactoryValues;
-            // El perfil recomendado solo mueve el boost y el límite (los avanzados no se
-            // tocan): si el equipo no expone ninguno de los dos, no hay nada que aplicar.
-            TurboRecommendedButton.IsEnabled = state.LimitExposed || state.BoostModeExposed;
+            // "Recomendado" solo si el perfil elegido tiene algo que recomendar: el techo, el
+            // boost o algún avanzado con recomendado en el catálogo para ese perfil.
+            TurboRecommendedButton.IsEnabled = LimitValue(state) != null
+                || BoostValue(state) != null
+                || state.Advanced.Exists(a => a.Exposed
+                    && (_mode == TurboPowerMode.Dc ? a.RecommendedDc : a.RecommendedValue) != null);
             TurboApplyButton.IsEnabled = false;   // se habilita cuando hay un cambio pendiente
 
  // Tooltips de los dos atajos: mismo formato que el resto de la card (título +
  // texto que envuelve), y se rearman acá porque el idioma cambia en caliente.
             ToolTipService.SetToolTip(TurboDefaultsButton, WrapToolTip(InfoToolTipContent(
                 I18n.T("Predeterminado"),
-                I18n.T("Vuelve a los valores predeterminados del plan de energía activo."))));
+                I18n.T("Carga los valores predeterminados del plan de energía activo en los ajustes de abajo. Se confirman al pulsar Aplicar."))));
             ToolTipService.SetToolTip(TurboRecommendedButton, WrapToolTip(InfoToolTipContent(
                 I18n.T("Recomendado"),
-                I18n.T("Aplica el perfil recomendado: límite 100 % y modo boost Agresivo (o Activado si el equipo no declara el agresivo). No toca los ajustes avanzados."))));
+                I18n.T("Carga el perfil recomendado del modo elegido: límite 100 %, modo boost Agresivo (o Activado si el equipo no declara el agresivo) y los ajustes avanzados que recomienda el catálogo. Se confirman al pulsar Aplicar."))));
+            ToolTipService.SetToolTip(TurboModeInfoButton, WrapToolTip(InfoToolTipContent(
+                I18n.T("Perfil de energía"),
+                I18n.T("Windows guarda un juego de valores para corriente y otro para batería. Un equipo de escritorio solo usa el de corriente."))));
 
             // Traza de lo que la card pinta, al final: si un valor aplicado no aparece
             // en la UI, esto dice si el estado llegó distinto del que el servicio escribió.
             _loggingService.LogInfo(
-                $"Techo de turbo: pintando boost={state.BoostModeValue?.ToString() ?? "—"} límite={state.LimitPercent?.ToString() ?? "—"} " +
-                string.Join(", ", state.Advanced.Where(a => a.Exposed).Select(a => $"{a.Key}={a.Value}")));
+                $"Techo de turbo ({_mode}): pintando boost={BoostValue(state)?.ToString() ?? "—"} límite={LimitValue(state)?.ToString() ?? "—"} " +
+                string.Join(", ", state.Advanced.Where(a => a.Exposed).Select(a => $"{a.Key}={AdvancedValue(a)}")));
         }
         catch (Exception ex)
         {
@@ -200,6 +476,10 @@ public sealed partial class TurboCeilingControl : UserControl
         {
             _turboUpdating = false;
         }
+
+        // Tras pintar, "Aplicar" queda en su estado real: se habilita si hay algo pendiente,
+        // incluido el perfil elegido en el desplegable o lo movido en el otro perfil.
+        UpdateTurboPendingState();
     }
 
     /// <summary>
@@ -258,9 +538,19 @@ public sealed partial class TurboCeilingControl : UserControl
             InfoToolTipContent(I18n.T(setting.Key), I18n.T(setting.HelpKey))));
         tile.Children.Add(header);
 
+        // Recomendado / Actual del perfil elegido, como en las opciones de Optimizaciones.
+        // El badge es el valor APLICADO; la barra puede estar mostrando uno movido sin aplicar.
+        var displayValue = _drafts[_mode].Advanced.TryGetValue(setting.SettingGuid, out var drafted)
+            ? drafted
+            : (AdvancedValue(setting) ?? setting.Min);
+        var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        FillBadges(badges, AdvancedRecommendedText(setting),
+            FormatAdvancedValue(AdvancedValue(setting) ?? setting.Min, setting.UnitSymbol));
+        tile.Children.Add(badges);
+
         var valueText = new TextBlock
         {
-            Text = FormatAdvancedValue(setting.Value ?? setting.Min, setting.UnitSymbol),
+            Text = FormatAdvancedValue(displayValue, setting.UnitSymbol),
             FontSize = 13,
             FontWeight = FontWeights.SemiBold,
             HorizontalAlignment = HorizontalAlignment.Right,
@@ -273,7 +563,7 @@ public sealed partial class TurboCeilingControl : UserControl
             Minimum = setting.Min,
             Maximum = setting.Max,
             StepFrequency = Math.Max(1, setting.Step),
-            Value = setting.Value ?? setting.Min,
+            Value = displayValue,
             VerticalAlignment = VerticalAlignment.Center,
             Tag = setting.SettingGuid
         };
@@ -308,10 +598,12 @@ public sealed partial class TurboCeilingControl : UserControl
 
         foreach (var setting in _turboState.Advanced)
         {
-            if (!setting.Exposed || setting.Value == null) continue;
+            if (!setting.Exposed) continue;
+            var current = AdvancedValue(setting);
+            if (current == null) continue;
             if (!_advancedSliders.TryGetValue(setting.SettingGuid, out var slider)) continue;
             var value = (int)Math.Round(slider.Value);
-            if (value != setting.Value.Value) pending[setting.SettingGuid] = value;
+            if (value != current.Value) pending[setting.SettingGuid] = value;
         }
         return pending;
     }
@@ -551,6 +843,74 @@ public sealed partial class TurboCeilingControl : UserControl
         };
     }
 
+    /// <summary>Texto del recomendado del boost en el perfil elegido (null si no hay).</summary>
+    private static string? BoostRecommendedText(TurboCeilingState s)
+    {
+        if (!s.BoostModeExposed) return null;
+        if (s.BoostModeOptions.Contains(2)) return BoostModeLabel(2);      // Agresivo
+        if (s.BoostModeOptions.Contains(1)) return BoostModeLabel(1);      // Activado
+        return null;
+    }
+
+    /// <summary>Texto del recomendado del techo: el máximo del plan, dentro del rango.</summary>
+    private static string? LimitRecommendedText(TurboCeilingState s)
+        => s.LimitExposed
+            ? FormatLimitValue(Math.Clamp(100, s.LimitMin, s.LimitMax), s.LimitUnits)
+            : null;
+
+    /// <summary>Recomendado de un ajuste avanzado en el perfil elegido.</summary>
+    private string? AdvancedRecommendedText(TurboAdvancedSetting setting)
+    {
+        var value = _mode == TurboPowerMode.Dc ? setting.RecommendedDc : setting.RecommendedValue;
+        return value != null ? FormatAdvancedValue(value.Value, setting.UnitSymbol) : null;
+    }
+
+    /// <summary>Llena los badges de una fila: recomendado (si hay) y el valor actual del perfil.</summary>
+    private void FillBadges(StackPanel panel, string? recommended, string? actual)
+    {
+        panel.Children.Clear();
+        if (string.IsNullOrEmpty(actual)) return;
+        if (!string.IsNullOrEmpty(recommended))
+            panel.Children.Add(BuildSmallBadge($"{I18n.T("Recomendado")}: {recommended}", positive: true));
+        panel.Children.Add(BuildSmallBadge(I18n.T("Actual: {0}", actual), positive: false));
+    }
+
+    /// <summary>Badge chico de las filas, con el mismo formato que los de Optimizaciones.</summary>
+    private static Border BuildSmallBadge(string text, bool positive)
+    {
+        var content = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        if (positive)
+            content.Children.Add(new FontIcon
+            {
+                Glyph = "\uE735",
+                FontSize = 10,
+                Foreground = Feedback.SuccessBrush,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+        content.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 10.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = positive ? Feedback.SuccessBrush : ThemeBrushes.Get("SecondaryTextBrush"),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+
+        return new Border
+        {
+            Padding = new Thickness(7, 1, 7, 1),
+            CornerRadius = new CornerRadius(7),
+            Background = ThemeBrushes.Get(positive ? "SuccessTintBrush" : "ChipBackgroundBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = content
+        };
+    }
+
     /// <summary>Frecuencia compacta para las badges ("3,8 GHz" en vez de "3,80 GHz").</summary>
     private static string FormatFreqShort(double mhz)
         => mhz >= 1000 ? $"{mhz / 1000.0:0.#} GHz" : $"{mhz:F0} MHz";
@@ -572,21 +932,37 @@ public sealed partial class TurboCeilingControl : UserControl
     /// <summary>Habilita "Aplicar" solo cuando hay un cambio real respecto de lo aplicado.</summary>
     private void UpdateTurboPendingState()
     {
-        if (_turboState == null) return;
+        if (_turboState == null)
+        {
+            TurboApplyButton.IsEnabled = false;
+            TurboModeCombo.IsEnabled = true;
+            return;
+        }
         var pending = false;
 
         var boost = SelectedBoostMode();
-        if (_turboState.BoostModeExposed && boost != null && boost != _turboState.BoostModeValue)
+        if (_turboState.BoostModeExposed && boost != null && boost != BoostValue(_turboState))
             pending = true;
 
-        if (_turboState.LimitExposed && _turboState.LimitPercent != null &&
-            (int)Math.Round(TurboLimitSlider.Value) != _turboState.LimitPercent.Value)
+        var limit = LimitValue(_turboState);
+        if (_turboState.LimitExposed && limit != null &&
+            (int)Math.Round(TurboLimitSlider.Value) != limit.Value)
             pending = true;
 
         if (!pending && PendingAdvancedValues().Count > 0) pending = true;
 
+        // El perfil elegido en el desplegable y lo movido en el otro perfil también son
+        // cambios sin aplicar: se confirman todos con el mismo Aplicar.
+        if (!pending && (_profilePending || _drafts[OtherMode()].HasChanges)) pending = true;
+
         TurboApplyButton.IsEnabled = pending;
+        // El desplegable ya no se bloquea: cambiar de perfil no descarta nada, cada perfil
+        // guarda lo suyo en su borrador hasta que se aplica.
+        TurboModeCombo.IsEnabled = true;
     }
+
+    private TurboPowerMode OtherMode()
+        => _mode == TurboPowerMode.Ac ? TurboPowerMode.Dc : TurboPowerMode.Ac;
 
     private async void TurboApplyButton_Click(object sender, RoutedEventArgs e)
     {
@@ -598,28 +974,53 @@ public sealed partial class TurboCeilingControl : UserControl
 
         try
         {
-            var boost = _turboState.BoostModeExposed ? SelectedBoostMode() : null;
-            var limit = _turboState.LimitExposed ? (int)Math.Round(TurboLimitSlider.Value) : (int?)null;
+            // Lo que muestran las barras es el borrador del perfil elegido: se guarda y se
+            // confirma junto con el desplegable en el mismo Aplicar.
+            CaptureDraft(_mode);
 
-            // Solo se envía lo que realmente cambió; el botón ya está deshabilitado si no hay
-            // nada pendiente, pero así el mensaje de error no confunde "sin cambios" con un fallo.
-            var boostPending = boost != null && boost != _turboState.BoostModeValue;
-            var limitPending = limit != null && limit != _turboState.LimitPercent;
+            var selected = _mode;
+            CommandResult? last = null;
+
+            // Primero el perfil a la vista (el techo y el boost, que es lo que confirma el
+            // desplegable) y después el otro, con lo que haya quedado movido sin aplicar.
+            foreach (var mode in new[] { selected, OtherMode() })
+            {
+                var draft = _drafts[mode];
+                int? boost;
+                int? limit;
+                Dictionary<string, int> advanced;
+
+                if (mode == selected)
+                {
+                    // El perfil a la vista se confirma con el techo y el boost, que es lo que
+                    // el desplegable elige; los avanzados solo si se movieron, para no reescribir
+                    // políticas que el usuario no tocó.
+                    boost = _turboState.BoostModeExposed ? SelectedBoostMode() : null;
+                    limit = _turboState.LimitExposed ? (int)Math.Round(TurboLimitSlider.Value) : (int?)null;
+                    advanced = PendingAdvancedValues();
+                }
+                else
+                {
+                    boost = draft.BoostMode;
+                    limit = draft.LimitPercent;
+                    advanced = new Dictionary<string, int>(draft.Advanced, StringComparer.OrdinalIgnoreCase);
+                }
+
+                if (boost == null && limit == null && advanced.Count == 0) continue;
 
  // Las lecturas de powercfg son síncronas y caras (varios procesos + WMI): si
  // corren en el hilo de UI, la ventana se congela varios segundos y parece que el
  // botón no hizo nada. El servicio se llama desde el pool y el resultado vuelve
  // al hilo de UI para pintar.
-            var result = new CommandResult(true, "");
-            if (boostPending || limitPending)
-                result = await Task.Run(() => _turboCeilingService.ApplyAsync(
-                    boostPending ? boost : null, limitPending ? limit : null));
+                var result = await Task.Run(() => _turboCeilingService.ApplyAsync(boost, limit, mode));
+                if (result.Success && advanced.Count > 0)
+                    result = await Task.Run(() => _turboCeilingService.ApplyAdvancedAsync(advanced, mode));
 
-            var advanced = PendingAdvancedValues();
-            if (result.Success && advanced.Count > 0)
-                result = await Task.Run(() => _turboCeilingService.ApplyAdvancedAsync(advanced));
+                last = result;
+                if (!result.Success) break;
+            }
 
-            Feedback.Result(TurboStatusText, result);
+            if (last != null) Feedback.Result(TurboStatusText, last);
         }
         catch (Exception ex)
         {
@@ -633,54 +1034,141 @@ public sealed partial class TurboCeilingControl : UserControl
         }
     }
 
-    private async void TurboDefaultsButton_Click(object sender, RoutedEventArgs e)
-    {
-        TurboApplyButton.IsEnabled = false;
-        TurboDefaultsButton.IsEnabled = false;
-        TurboRecommendedButton.IsEnabled = false;
-        Feedback.Running(TurboStatusText, I18n.T("Restaurando…"));
+    /// <summary>
+    /// Atajo «Predeterminado»: deja cargados en las barras los valores de fábrica del perfil
+    /// elegido, como cambio PENDIENTE. Ya no escribe en el plan al pulsarlo: se comporta como
+    /// mover una barra o cambiar el desplegable, y el cambio se confirma con Aplicar.
+    /// </summary>
+    private void TurboDefaultsButton_Click(object sender, RoutedEventArgs e)
+        => StageShortcut(recommended: false);
 
-        try
+    /// <summary>
+    /// Atajo «Recomendado»: deja cargado el perfil de rendimiento (límite 100 % y boost agresivo
+    /// si el equipo lo expone, más los avanzados que el catálogo recomienda para el perfil
+    /// elegido) como cambio PENDIENTE. Igual que «Predeterminado», se aplica con Aplicar.
+    /// </summary>
+    private void TurboRecommendedButton_Click(object sender, RoutedEventArgs e)
+        => StageShortcut(recommended: true);
+
+    /// <summary>
+    /// Carga en las barras lo que aplicaría un atajo, sin escribir nada en el plan de energía.
+    /// Se guarda solo lo que cambia algo (lo que ya está aplicado se descarta) y se cuentan los
+    /// cambios para el aviso; después Aplicar confirma todo junto, como cualquier otro cambio.
+    /// </summary>
+    private void StageShortcut(bool recommended)
+    {
+        if (_turboState == null) return;
+
+        var state = _turboState;
+        var draft = _drafts[_mode];
+        var staged = 0;
+
+        // ---- Techo: el recomendado es el máximo del plan dentro del rango; si no, el de fábrica ----
+        if (state.LimitExposed)
         {
-            var result = await Task.Run(() => _turboCeilingService.RestoreDefaultsAsync());
-            Feedback.Result(TurboStatusText, result);
+            int? target = recommended
+                ? Math.Clamp(100, state.LimitMin, state.LimitMax)
+                : LimitDefault(state) is int factory ? Math.Clamp(factory, state.LimitMin, state.LimitMax) : null;
+            if (target != null)
+            {
+                if (target == LimitValue(state))
+                {
+                    draft.LimitPercent = null;   // ya está en ese valor: nada que confirmar
+                }
+                else
+                {
+                    draft.LimitPercent = target;
+                    staged++;
+                }
+            }
         }
-        catch (Exception ex)
+
+        // ---- Modo boost: el mismo criterio que usaba el atajo cuando aplicaba de una ----
+        if (state.BoostModeExposed)
         {
-            Feedback.Error(TurboStatusText, ex.Message);
-            _loggingService.LogWarning($"TurboCeilingControl: error restaurando el techo de turbo: {ex.Message}");
+            var target = recommended ? RecommendedBoost(state) : BoostDefault(state);
+            if (target != null && state.BoostModeOptions.Contains(target.Value))
+            {
+                if (target == BoostValue(state))
+                    draft.BoostMode = null;
+                else
+                {
+                    draft.BoostMode = target;
+                    staged++;
+                }
+            }
         }
-        finally
+
+        // ---- Ajustes avanzados: solo los que el equipo expone y entran en su rango ----
+        foreach (var setting in state.Advanced)
         {
-            await LoadTurboCeilingAsync();
+            if (!setting.Exposed) continue;
+            var target = recommended
+                ? (_mode == TurboPowerMode.Dc ? setting.RecommendedDc : setting.RecommendedValue)
+                : AdvancedDefault(setting);
+            if (target == null) continue;
+            if (target.Value < setting.Min || target.Value > setting.Max) continue;
+
+            if (target == AdvancedValue(setting))
+            {
+                draft.Advanced.Remove(setting.SettingGuid);
+                continue;
+            }
+            draft.Advanced[setting.SettingGuid] = target.Value;
+            staged++;
         }
+
+        if (staged == 0)
+        {
+            // El perfil ya está en esos valores. Se repinta por si el atajo descartó algún
+            // borrador que ya coincidía con lo aplicado, y se informa lo que siga pendiente
+            // (puede haber otro cambio movido a mano o en el otro perfil).
+            ApplyTurboState(state);
+            var pendingElsewhere = CountPendingChanges();
+            Feedback.Info(TurboStatusText, pendingElsewhere == 0
+                ? I18n.T("No hay ajustes pendientes de aplicar.")
+                : I18n.T("{0} cambios pendientes de aplicar", pendingElsewhere), persistent: true);
+            return;
+        }
+
+        // Repinta desde los borradores: barras, valores y badges quedan mostrando lo pendiente
+        // y Aplicar se habilita. Nada se escribe en el plan hasta que se pulse ese botón.
+        ApplyTurboState(state);
+        Feedback.Info(TurboStatusText,
+            I18n.T("{0} cambios pendientes de aplicar", CountPendingChanges()), persistent: true);
     }
 
     /// <summary>
-    /// Atajo "Recomendado": aplica el perfil de rendimiento (límite 100 % y boost agresivo si
-    /// el equipo lo expone) en el momento, igual que los atajos de Optimizaciones, y relee el
-    /// estado para mostrar lo que el equipo aceptó de verdad.
+    /// Total de valores que hoy difieren de lo aplicado, barra por barra y en los dos perfiles.
+    /// Es el número que anuncia el aviso de los atajos: no cuenta solo lo que cargó el atajo,
+    /// sino todo lo que Aplicar va a confirmar.
     /// </summary>
-    private async void TurboRecommendedButton_Click(object sender, RoutedEventArgs e)
+    private int CountPendingChanges()
     {
-        TurboApplyButton.IsEnabled = false;
-        TurboDefaultsButton.IsEnabled = false;
-        TurboRecommendedButton.IsEnabled = false;
-        Feedback.Running(TurboStatusText, I18n.T("Aplicando…"));
+        if (_turboState == null) return 0;
 
-        try
-        {
-            var result = await Task.Run(() => _turboCeilingService.ApplyRecommendedAsync());
-            Feedback.Result(TurboStatusText, result);
-        }
-        catch (Exception ex)
-        {
-            Feedback.Error(TurboStatusText, ex.Message);
-            _loggingService.LogWarning($"TurboCeilingControl: error aplicando el perfil recomendado: {ex.Message}");
-        }
-        finally
-        {
-            await LoadTurboCeilingAsync();
-        }
+        var other = _drafts[OtherMode()];
+        var count = other.Advanced.Count
+            + (other.BoostMode != null ? 1 : 0)
+            + (other.LimitPercent != null ? 1 : 0);
+
+        if (_turboState.BoostModeExposed && SelectedBoostMode() is int boost
+            && boost != BoostValue(_turboState)) count++;
+
+        if (_turboState.LimitExposed && LimitValue(_turboState) is int limit
+            && (int)Math.Round(TurboLimitSlider.Value) != limit) count++;
+
+        count += PendingAdvancedValues().Count;
+        if (_profilePending) count++;
+        return count;
+    }
+
+    /// <summary>Modo boost que recomienda la card: Agresivo si el equipo lo expone; si no, Activado.</summary>
+    private static int? RecommendedBoost(TurboCeilingState s)
+    {
+        if (!s.BoostModeExposed) return null;
+        if (s.BoostModeOptions.Contains(2)) return 2;
+        if (s.BoostModeOptions.Contains(1)) return 1;
+        return null;
     }
 }

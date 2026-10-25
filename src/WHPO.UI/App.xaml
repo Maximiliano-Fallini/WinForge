@@ -14,20 +14,21 @@
                      que el sidebar siempre se diferencie de las vistas. Las cards se separan
                      del fondo por color + borde. -->
                 <ResourceDictionary x:Key="Dark">
-<!-- Paleta base oscura = ex "Oscuro Negro Test" (estilo Blur-AutoClicker:
-                         fondo negro puro #0C0C0E, superficies grises) con el acento AZUL
-                         de la app en vez del verde original. El navbar y las cards
-                         comparten el gris #151517 (definido también en AccentOverrides.xaml). -->
-                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF0C0C0E"/>
-                    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF151517"/>
+<!-- Paleta base oscura = NEGRO: fondo negro puro #000000 y superficies
+                         negro suave #0C0C0E (antes el navbar y las cards compartían el
+                         grafito #151517, que se leía gris). El acento AZUL de la app es el
+                         mismo; la separación entre fondo y superficies la da el tono, no un
+                         gris (definido también en AccentOverrides.xaml). -->
+                    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FF000000"/>
+                    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FF0C0C0E"/>
 <!-- Claves que también existen en WinUI (card secundaria y relleno de esqueletos). Se
                          declaran ACÁ para que las usen tanto el XAML como el código: pedirlas al sistema
                          las resolvía con el tema de WINDOWS, así que con la app en oscuro y Windows en
                          claro esas cards internas (Limpieza, Procesos) se ponían blancas. -->
-                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#FF1C1C1E"/>
-                    <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FF2A2A2C"/>
-                    <SolidColorBrush x:Key="ToolTipBackgroundBrush" Color="#FF151517"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF3A3A3C"/>
+                    <SolidColorBrush x:Key="CardBackgroundFillColorSecondaryBrush" Color="#FF141416"/>
+                    <SolidColorBrush x:Key="ControlFillColorSecondaryBrush" Color="#FF1A1A1C"/>
+                    <SolidColorBrush x:Key="ToolTipBackgroundBrush" Color="#FF0C0C0E"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#FF28282A"/>
 <!-- Borde de las CARDS: TRANSPARENTE. Las cards de la app no llevan contorno (ver
                          CardStyle en Controls/Cards.xaml). Antes era un filete al 10 % y además el
                          ajuste de transparencia lo llevaba al tope del vidrio cuando el desenfoque
@@ -48,7 +49,7 @@
                     <SolidColorBrush x:Key="AccentForegroundBrush" Color="#FF101418"/>
 
 <!-- Gráficas (uso/temperatura/potencia): fondo y paleta de series. -->
-                    <SolidColorBrush x:Key="ChartBackgroundBrush" Color="#FF0A0A0C"/>
+                    <SolidColorBrush x:Key="ChartBackgroundBrush" Color="#FF000000"/>
                     <SolidColorBrush x:Key="ChartBackgroundHotBrush" Color="#FF150B0B"/>
                     <SolidColorBrush x:Key="ChartGridBrush" Color="#FF202022"/>
                     <SolidColorBrush x:Key="ChartCrosshairBrush" Color="#FF4A4A4C"/>
@@ -63,39 +64,39 @@
                     <SolidColorBrush x:Key="MetricPowerBrush" Color="#FFFFC93C"/>
 
 <!-- Grilla del Monitor de sensores (grupos = color de card/navbar). -->
-                    <SolidColorBrush x:Key="SensorGridLineBrush" Color="#FF3A3A3C"/>
-                    <SolidColorBrush x:Key="SensorGroupFillBrush" Color="#FF151517"/>
-                    <SolidColorBrush x:Key="SensorCategoryFillBrush" Color="#FF141416"/>
+                    <SolidColorBrush x:Key="SensorGridLineBrush" Color="#FF28282A"/>
+                    <SolidColorBrush x:Key="SensorGroupFillBrush" Color="#FF0C0C0E"/>
+                    <SolidColorBrush x:Key="SensorCategoryFillBrush" Color="#FF101012"/>
 
 <!-- Card "Desactivar actualizaciones" (intencionalmente oscura/roja). -->
                     <SolidColorBrush x:Key="DisabledCardBackgroundBrush" Color="#FF2B1C1C"/>
                     <SolidColorBrush x:Key="DisabledCardTextBrush" Color="#FFFFC1BC"/>
 
 <!-- Hover/selección de cards en code-behind (Optimizaciones) y tint del acento (Panel Windows). -->
-                    <SolidColorBrush x:Key="CardHoverBrush" Color="#FF242424"/>
-                    <SolidColorBrush x:Key="CardSelectedBrush" Color="#FF262626"/>
+                    <SolidColorBrush x:Key="CardHoverBrush" Color="#FF16161A"/>
+                    <SolidColorBrush x:Key="CardSelectedBrush" Color="#FF1E1E22"/>
                     <SolidColorBrush x:Key="AccentTintBrush" Color="#228AB4F8"/>
                     <SolidColorBrush x:Key="MutedBrush" Color="#FF9A9A9C"/>
 
 <!-- Asistente de primera configuración: fondo con gradiente oscuro. -->
                     <LinearGradientBrush x:Key="OnboardingBackdropBrush" StartPoint="0,0" EndPoint="1,1">
                         <LinearGradientBrush.GradientStops>
-                            <GradientStop Offset="0.0" Color="#FF0C0C0E"/>
-                            <GradientStop Offset="0.55" Color="#FF141722"/>
-                            <GradientStop Offset="1.0" Color="#FF1A2233"/>
+                            <GradientStop Offset="0.0" Color="#FF000000"/>
+                            <GradientStop Offset="0.55" Color="#FF0E1118"/>
+                            <GradientStop Offset="1.0" Color="#FF141B28"/>
                         </LinearGradientBrush.GradientStops>
                     </LinearGradientBrush>
 
 <!-- Capa sobre el banner del asistente: oscurece en tema oscuro. -->
                     <SolidColorBrush x:Key="OnboardingScrimBrush" Color="#55000000"/>
-                    <SolidColorBrush x:Key="OnboardingSurfaceBrush" Color="#D9151517"/>
+                    <SolidColorBrush x:Key="OnboardingSurfaceBrush" Color="#D90C0C0E"/>
 
 <!-- Chips de instrucciones del procesador (Sistema). -->
-                    <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FF262626"/>
+                    <SolidColorBrush x:Key="ChipBackgroundBrush" Color="#FF1A1A1C"/>
 
 <!-- Cards de núcleos (Núcleos): mismo color que las cards/navbar. -->
-                    <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FF151517"/>
-                    <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FF0F0F11"/>
+                    <SolidColorBrush x:Key="CoreCardBackgroundBrush" Color="#FF0C0C0E"/>
+                    <SolidColorBrush x:Key="CoreTrackBackgroundBrush" Color="#FF08080A"/>
 
 <!-- ===== Capa de fondo de la ventana (ver MainWindow.xaml) =====
                          Piezas del fondo: el relleno base y dos resplandores radiales que
@@ -105,7 +106,7 @@
                          se ve, así que estos temas se ven exactamente igual que antes. Los
                          temas con backdrop propio (Marea) los pisan desde
                          ThemePalettes con un gradiente. -->
-                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FF0C0C0E"/>
+                    <SolidColorBrush x:Key="WindowBackdropBrush" Color="#FF000000"/>
                     <SolidColorBrush x:Key="WindowGlowABrush" Color="#00000000"/>
                     <SolidColorBrush x:Key="WindowGlowBBrush" Color="#00000000"/>
 

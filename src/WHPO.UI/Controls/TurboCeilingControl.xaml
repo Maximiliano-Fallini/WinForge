@@ -27,7 +27,80 @@
     <Border Background="{ThemeResource CardBackgroundBrush}"
             CornerRadius="12"
             Padding="16">
-        <StackPanel Spacing="14">
+        <Grid>
+<!-- ===== SKELETON DE CARGA =====
+             La lectura del estado (powercfg + registro del catálogo de energía) tarda y
+             la card se veía vacía mientras tanto: barras sin valor, desplegable sin
+             contenido. El esqueleto tiene las MISMAS filas que la card real (encabezado,
+             descripción, perfil, dos ajustes y pie) para que nada salte al llegar el
+             estado. Se anima con el mismo pulso de opacidad que el resto de la app. -->
+            <StackPanel x:Name="TurboSkeleton" Spacing="14" IsHitTestVisible="False">
+<!-- Encabezado: ícono + título y el chip del plan activo -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Rectangle Width="16" Height="16" RadiusX="4" RadiusY="4"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="140" Height="16" RadiusX="8" RadiusY="8"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                    <Rectangle Grid.Column="1" Width="150" Height="24" RadiusX="6" RadiusY="6"
+                               VerticalAlignment="Center"
+                               Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                </Grid>
+<!-- Descripción (dos líneas) -->
+                <StackPanel Spacing="6">
+                    <Rectangle Height="12" RadiusX="6" RadiusY="6"
+                               Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    <Rectangle Width="360" Height="12" HorizontalAlignment="Left" RadiusX="6" RadiusY="6"
+                               Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                </StackPanel>
+<!-- Perfil de energía: etiqueta a la izquierda, atajos y desplegable a la derecha -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Rectangle Width="14" Height="14" RadiusX="4" RadiusY="4"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="110" Height="13" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Rectangle Width="52" Height="28" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="210" Height="32" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+<!-- Los dos ajustes: nombre, valor y barra -->
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="28" RowSpacing="16">
+                    <StackPanel Spacing="8">
+                        <Rectangle Width="110" Height="13" HorizontalAlignment="Left" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="70" Height="13" HorizontalAlignment="Right" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Height="30" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="8">
+                        <Rectangle Width="150" Height="13" HorizontalAlignment="Left" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Width="70" Height="13" HorizontalAlignment="Right" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                        <Rectangle Height="30" RadiusX="6" RadiusY="6"
+                                   Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+<!-- Pie: alcance del cambio y el botón Aplicar -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <Rectangle Width="260" Height="12" HorizontalAlignment="Left" VerticalAlignment="Center"
+                               RadiusX="6" RadiusY="6"
+                               Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                    <Rectangle Grid.Column="1" Width="110" Height="36" RadiusX="6" RadiusY="6"
+                               Fill="{ThemeResource ControlFillColorSecondaryBrush}"/>
+                </Grid>
+            </StackPanel>
+
+<!-- Contenido real: arranca oculto y lo muestra ShowContent cuando el estado llega. -->
+        <StackPanel x:Name="TurboContent" Spacing="14" Visibility="Collapsed">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                 <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <FontIcon Glyph="&#xE945;" FontSize="16" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
@@ -49,6 +122,64 @@
                        Foreground="{ThemeResource SecondaryTextBrush}"
                        TextWrapping="Wrap"/>
 
+<!-- Perfil de energía: Windows guarda un juego de valores para corriente (AC) y otro
+                 para batería (DC). La card muestra y edita el del perfil elegido, y los
+                 atajos (Predeterminado / Recomendado) actúan sobre ese mismo. -->
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                <FontIcon Glyph="&#xE7E8;" FontSize="13"
+                          Foreground="{ThemeResource SecondaryTextBrush}"
+                          VerticalAlignment="Center"/>
+ <!-- El botón de ayuda va pegado al título, que es a lo que explica. -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="Perfil de energía" FontSize="13"
+                               FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <Button x:Name="TurboModeInfoButton"
+                            Style="{StaticResource InfoIconButtonStyle}">
+                        <FontIcon Glyph="&#xE946;" FontSize="12"
+                                  Foreground="{ThemeResource MutedBrush}"/>
+                    </Button>
+                </StackPanel>
+ <!-- Los dos atajos van junto al desplegable, al borde derecho de la card, porque
+                     actúan sobre el perfil que ese desplegable elige. Son los mismos botones
+                     de ícono que usa Optimizaciones en cada ajuste: sin texto, transparentes,
+                     ★ = valor recomendado y ↺ = valor de fábrica, con el detalle en el tooltip. -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center" HorizontalAlignment="Right">
+                    <StackPanel Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                        <Button x:Name="TurboDefaultsButton"
+                                Click="TurboDefaultsButton_Click"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="6"
+                                Padding="6,4"
+                                MinWidth="0"
+                                MinHeight="0"
+                                IsEnabled="False"
+                                VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE7A7;" FontSize="13"/>
+                        </Button>
+                        <Button x:Name="TurboRecommendedButton"
+                                Click="TurboRecommendedButton_Click"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                CornerRadius="6"
+                                Padding="6,4"
+                                MinWidth="0"
+                                MinHeight="0"
+                                Foreground="{StaticResource SuccessBrush}"
+                                IsEnabled="False"
+                                VerticalAlignment="Center">
+                            <FontIcon Glyph="&#xE735;" FontSize="13"/>
+                        </Button>
+                    </StackPanel>
+                    <ComboBox x:Name="TurboModeCombo"
+                              MinWidth="210"
+                              VerticalAlignment="Center"
+                              SelectionChanged="TurboModeCombo_SelectionChanged"/>
+                </StackPanel>
+            </Grid>
+
 <!-- Dos columnas: cada ajuste es "nombre + botón de ayuda", con su valor y la barra
                  debajo. El detalle de qué hace cada uno vive en el tooltip del botón ⓘ,
                  así no se apilan líneas de texto: la fila se lee de un vistazo. -->
@@ -64,6 +195,8 @@
                                       Foreground="{ThemeResource MutedBrush}"/>
                         </Button>
                     </StackPanel>
+<!-- Recomendado / Actual, como en las opciones de Optimizaciones. -->
+                    <StackPanel x:Name="TurboBoostBadges" Orientation="Horizontal" Spacing="6"/>
                     <TextBlock x:Name="TurboBoostValueText"
                                FontSize="13"
                                FontWeight="SemiBold"
@@ -90,6 +223,8 @@
                                       Foreground="{ThemeResource MutedBrush}"/>
                         </Button>
                     </StackPanel>
+<!-- Recomendado / Actual, como en las opciones de Optimizaciones. -->
+                    <StackPanel x:Name="TurboLimitBadges" Orientation="Horizontal" Spacing="6"/>
                     <TextBlock x:Name="TurboLimitValueText"
                                FontSize="13"
                                FontWeight="SemiBold"
@@ -156,37 +291,10 @@
                            Foreground="{ThemeResource SecondaryTextBrush}"
                            TextWrapping="Wrap"
                            VerticalAlignment="Center"/>
- <!-- Los dos atajos de perfil (Predeterminado / Recomendado) siguen la misma idea que
-                     los de cada ajuste en Optimizaciones: aplican en el momento y confirman con el
-                     estado que el equipo reporta después. Aplicar queda para los cambios manuales
-                     de las barras. -->
+ <!-- Aplicar confirma TODO lo pendiente: lo movido a mano en las barras y lo que
+                     carguen los atajos (Predeterminado / Recomendado), que viven arriba,
+                     junto al perfil. Los atajos ya no escriben en el plan al pulsarlos. -->
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                    <Button x:Name="TurboDefaultsButton"
-                            Click="TurboDefaultsButton_Click"
-                            CornerRadius="6"
-                            Padding="14,8"
-                            FontWeight="SemiBold"
-                            MinWidth="120"
-                            IsEnabled="False">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE7A7;" FontSize="12" VerticalAlignment="Center"/>
-                            <TextBlock Text="Predeterminado" FontSize="12" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="TurboRecommendedButton"
-                            Click="TurboRecommendedButton_Click"
-                            CornerRadius="6"
-                            Padding="14,8"
-                            FontWeight="SemiBold"
-                            MinWidth="120"
-                            IsEnabled="False">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE735;" FontSize="12"
-                                      Foreground="{StaticResource SuccessBrush}"
-                                      VerticalAlignment="Center"/>
-                            <TextBlock Text="Recomendado" FontSize="12" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
                     <Button x:Name="TurboApplyButton"
                             Content="Aplicar"
                             Click="TurboApplyButton_Click"
@@ -203,5 +311,6 @@
                        Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"
                        Visibility="Collapsed"/>
         </StackPanel>
+        </Grid>
     </Border>
 </UserControl>

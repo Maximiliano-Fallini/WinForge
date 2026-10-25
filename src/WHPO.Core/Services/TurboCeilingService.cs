@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using WHPO.Core.Optimizations;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services;
@@ -63,6 +64,51 @@ public class TurboCeilingService : ITurboCeilingService
             "%")
     };
 
+    /// <summary>
+    /// Valores recomendados por GUID de powercfg, separados por modo (corriente y batería),
+    /// tomados del catálogo de Optimizaciones. Es la única fuente de recomendados de la app:
+    /// la card no mantiene su propia tabla, así no puede recomendar algo distinto.
+    /// </summary>
+    private static readonly Lazy<(Dictionary<string, int> Ac, Dictionary<string, int> Dc)> CatalogRecommended =
+        new(BuildCatalogRecommended);
+
+    private static (Dictionary<string, int> Ac, Dictionary<string, int> Dc) BuildCatalogRecommended()
+    {
+        var ac = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var dc = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var feature in OptimizationCatalogProvider.Catalog.Features)
+                foreach (var setting in feature.Settings)
+                    foreach (var power in setting.Power)
+                    {
+                        if (string.IsNullOrWhiteSpace(power.SettingGuid)) continue;
+                        if (power.RecommendedAc != null) ac.TryAdd(power.SettingGuid, power.RecommendedAc.Value);
+                        if (power.RecommendedDc != null) dc.TryAdd(power.SettingGuid, power.RecommendedDc.Value);
+                    }
+        }
+        catch
+        {
+            // Sin catálogo no hay recomendados: la card sigue mostrando lo que el equipo
+            // expone y «Recomendado» solo mueve el techo y el boost.
+        }
+        return (ac, dc);
+    }
+
+    private static int? RecommendedCatalogValue(string settingGuid, TurboPowerMode mode)
+    {
+        var map = mode == TurboPowerMode.Dc ? CatalogRecommended.Value.Dc : CatalogRecommended.Value.Ac;
+        return map.TryGetValue(settingGuid, out var value) ? value : null;
+    }
+
+    /// <summary>Valor AC que se escribe: el pedido si el modo es AC; si no, el que ya tenía.</summary>
+    private static uint AcFor(TurboPowerMode mode, int requested, int? currentOther)
+        => (uint)(mode == TurboPowerMode.Ac ? requested : currentOther ?? requested);
+
+    /// <summary>Valor DC que se escribe: el pedido si el modo es DC; si no, el que ya tenía.</summary>
+    private static uint DcFor(TurboPowerMode mode, int requested, int? currentOther)
+        => (uint)(mode == TurboPowerMode.Dc ? requested : currentOther ?? requested);
+
     private readonly ICpuPowerService _cpuPowerService;
     private readonly ISystemInfoService _systemInfoService;
     private readonly ILoggingService _loggingService;
@@ -123,6 +169,8 @@ public class TurboCeilingService : ITurboCeilingService
         state.LimitExposed = true;
         state.LimitPercent = (int)setting.AcValue.Value;
         if (setting.DefaultAc != null) state.DefaultLimitPercent = (int)setting.DefaultAc.Value;
+        if (setting.DcValue != null) state.LimitPercentDc = (int)setting.DcValue.Value;
+        if (setting.DefaultDc != null) state.DefaultLimitPercentDc = (int)setting.DefaultDc.Value;
         if (setting.HasRange && setting.Max > setting.Min)
         {
             state.LimitMin = (int)setting.Min;
@@ -140,6 +188,8 @@ public class TurboCeilingService : ITurboCeilingService
         state.BoostModeExposed = true;
         state.BoostModeValue = (int)setting.AcValue.Value;
         if (setting.DefaultAc != null) state.DefaultBoostMode = (int)setting.DefaultAc.Value;
+        if (setting.DcValue != null) state.BoostModeValueDc = (int)setting.DcValue.Value;
+        if (setting.DefaultDc != null) state.DefaultBoostModeDc = (int)setting.DefaultDc.Value;
 
         // Los valores que acepta el equipo, si los declara; si no, los documentados.
         var options = setting.PossibleValues != null && setting.PossibleValues.Count > 0
@@ -168,7 +218,9 @@ public class TurboCeilingService : ITurboCeilingService
                 SettingGuid = guid,
                 Key = key,
                 HelpKey = helpKey,
-                UnitSymbol = unit
+                UnitSymbol = unit,
+                RecommendedValue = RecommendedCatalogValue(guid, TurboPowerMode.Ac),
+                RecommendedDc = RecommendedCatalogValue(guid, TurboPowerMode.Dc)
             };
 
             if (setting?.AcValue != null)
@@ -176,6 +228,8 @@ public class TurboCeilingService : ITurboCeilingService
                 advanced.Exposed = true;
                 advanced.Value = (int)setting.AcValue.Value;
                 if (setting.DefaultAc != null) advanced.DefaultValue = (int)setting.DefaultAc.Value;
+                if (setting.DcValue != null) advanced.DcValue = (int)setting.DcValue.Value;
+                if (setting.DefaultDc != null) advanced.DefaultDc = (int)setting.DefaultDc.Value;
                 if (setting.HasRange && setting.Max > setting.Min)
                 {
                     advanced.Min = (int)setting.Min;
@@ -212,7 +266,7 @@ public class TurboCeilingService : ITurboCeilingService
         return TurboAdvancedAvailability.MissingKernelAccess;
     }
 
-    public async Task<CommandResult> ApplyAsync(int? boostMode, int? limitPercent)
+    public async Task<CommandResult> ApplyAsync(int? boostMode, int? limitPercent, TurboPowerMode mode = TurboPowerMode.Ac)
     {
         try
         {
@@ -247,28 +301,37 @@ public class TurboCeilingService : ITurboCeilingService
                         new object[] { state.LimitMin, state.LimitMax, state.LimitUnits });
             }
 
+            // Se escribe solo el valor del modo elegido: el del otro modo viaja tal como
+            // estaba, para no pisar la configuración de batería al tocar la de corriente (ni
+            // al revés).
             if (boostMode != null)
             {
                 var write = await _cpuPowerService.SetPowerSettingAsync(
-                    state.PlanGuid, ProcessorSubgroup, BoostModeSetting, (uint)boostMode.Value, (uint)boostMode.Value);
+                    state.PlanGuid, ProcessorSubgroup, BoostModeSetting,
+                    AcFor(mode, boostMode.Value, state.BoostModeValueDc),
+                    DcFor(mode, boostMode.Value, state.BoostModeValue));
                 if (!write.Success) return write;
             }
 
             if (limitPercent != null)
             {
                 var write = await _cpuPowerService.SetPowerSettingAsync(
-                    state.PlanGuid, ProcessorSubgroup, MaxProcessorState, (uint)limitPercent.Value, (uint)limitPercent.Value);
+                    state.PlanGuid, ProcessorSubgroup, MaxProcessorState,
+                    AcFor(mode, limitPercent.Value, state.LimitPercentDc),
+                    DcFor(mode, limitPercent.Value, state.LimitPercent));
                 if (!write.Success) return write;
             }
 
             // Verificación: se vuelve a leer y se compara con lo pedido. Si el equipo no lo
             // aceptó (BIOS, firmware, política), se dice; no se reporta un éxito falso.
             var after = GetState();
-            if (limitPercent != null && after.LimitPercent != limitPercent.Value)
+            var appliedLimit = mode == TurboPowerMode.Dc ? after.LimitPercentDc : after.LimitPercent;
+            var appliedBoost = mode == TurboPowerMode.Dc ? after.BoostModeValueDc : after.BoostModeValue;
+            if (limitPercent != null && appliedLimit != limitPercent.Value)
                 return new CommandResult(false,
                     "El equipo no aplicó el límite: puede estar bloqueado por el firmware o la BIOS.",
                     "El equipo no aplicó el límite: puede estar bloqueado por el firmware o la BIOS.");
-            if (boostMode != null && after.BoostModeValue != boostMode.Value)
+            if (boostMode != null && appliedBoost != boostMode.Value)
                 return new CommandResult(false,
                     "El equipo no aplicó el modo boost: puede estar bloqueado por el firmware o la BIOS.",
                     "El equipo no aplicó el modo boost: puede estar bloqueado por el firmware o la BIOS.");
@@ -282,7 +345,7 @@ public class TurboCeilingService : ITurboCeilingService
         }
     }
 
-    public async Task<CommandResult> ApplyAdvancedAsync(IReadOnlyDictionary<string, int> values)
+    public async Task<CommandResult> ApplyAdvancedAsync(IReadOnlyDictionary<string, int> values, TurboPowerMode mode = TurboPowerMode.Ac)
     {
         try
         {
@@ -312,8 +375,12 @@ public class TurboCeilingService : ITurboCeilingService
 
             foreach (var pair in values)
             {
+                var current = state.Advanced.Find(a => a.SettingGuid.Equals(pair.Key, StringComparison.OrdinalIgnoreCase));
+                var other = mode == TurboPowerMode.Dc ? current?.Value : current?.DcValue;
                 var write = await _cpuPowerService.SetPowerSettingAsync(
-                    state.PlanGuid, ProcessorSubgroup, pair.Key, (uint)pair.Value, (uint)pair.Value);
+                    state.PlanGuid, ProcessorSubgroup, pair.Key,
+                    AcFor(mode, pair.Value, other),
+                    DcFor(mode, pair.Value, other));
                 if (!write.Success) return write;
             }
 
@@ -322,7 +389,8 @@ public class TurboCeilingService : ITurboCeilingService
             foreach (var pair in values)
             {
                 var setting = after.Advanced.Find(a => a.SettingGuid.Equals(pair.Key, StringComparison.OrdinalIgnoreCase));
-                if (setting == null || setting.Value != pair.Value)
+                var applied = mode == TurboPowerMode.Dc ? setting?.DcValue : setting?.Value;
+                if (setting == null || applied != pair.Value)
                     return new CommandResult(false,
                         "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.",
                         "El equipo no aplicó el ajuste: puede estar bloqueado por el firmware o la BIOS.");
@@ -340,12 +408,14 @@ public class TurboCeilingService : ITurboCeilingService
     /// <summary>
     /// Perfil recomendado para jugar: el techo de frecuencia al máximo del plan (100 %) y el
     /// modo boost «Agresivo» si el equipo lo expone. Si el firmware no declara ese modo, cae a
-    /// «Activado»; si tampoco, solo se mueve el límite. No toca los ajustes avanzados: sus
-    /// valores recomendados dependen del procesador y no hay uno que se pueda afirmar sin
-    /// medir. Pasa por <see cref="ApplyAsync"/>, así que valida el rango del equipo y verifica
-    /// releyendo antes de reportar éxito.
+    /// «Activado»; si tampoco, solo se mueve el límite. Además aplica el recomendado de cada
+    /// ajuste avanzado que el equipo exponga, tomado del catálogo de Optimizaciones: la misma
+    /// fuente que usa el atajo de esa pantalla, así la app no recomienda dos cosas distintas.
+    /// Los ajustes sin recomendado, fuera del rango del equipo o que ya están en ese valor se
+    /// saltan. El recomendado es el del modo elegido: el catálogo declara uno para corriente y
+    /// otro para batería. Valida y verifica releyendo antes de reportar éxito.
     /// </summary>
-    public async Task<CommandResult> ApplyRecommendedAsync()
+    public async Task<CommandResult> ApplyRecommendedAsync(TurboPowerMode mode = TurboPowerMode.Ac)
     {
         try
         {
@@ -367,14 +437,41 @@ public class TurboCeilingService : ITurboCeilingService
                 else if (state.BoostModeOptions.Contains(1)) boost = 1; // Activado
             }
 
-            if (limit == null && boost == null)
+            // Ajustes avanzados: se aplica el recomendado del catálogo para el modo elegido,
+            // solo si el equipo lo expone, entra en su rango y todavía no está en ese valor.
+            var advanced = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var setting in state.Advanced)
+            {
+                if (!setting.Exposed) continue;
+                var recommended = mode == TurboPowerMode.Dc ? setting.RecommendedDc : setting.RecommendedValue;
+                var current = mode == TurboPowerMode.Dc ? setting.DcValue : setting.Value;
+                if (recommended == null) continue;
+                var value = recommended.Value;
+                if (value < setting.Min || value > setting.Max) continue;
+                if (current == value) continue;
+                advanced[setting.SettingGuid] = value;
+            }
+
+            var hasRecommended = state.LimitExposed || state.BoostModeExposed
+                || state.Advanced.Exists(a => a.Exposed &&
+                    (mode == TurboPowerMode.Dc ? a.RecommendedDc : a.RecommendedValue) != null);
+            if (!hasRecommended)
                 return new CommandResult(false, "Este equipo no expone ningún ajuste del techo de turbo.",
                     "Este equipo no expone ningún ajuste del techo de turbo.");
 
-            var result = await ApplyAsync(boost, limit);
-            return result.Success
-                ? new CommandResult(true, "Perfil recomendado aplicado.", "Perfil recomendado aplicado.")
-                : result;
+            if (limit != null || boost != null)
+            {
+                var result = await ApplyAsync(boost, limit, mode);
+                if (!result.Success) return result;
+            }
+
+            if (advanced.Count > 0)
+            {
+                var advancedResult = await ApplyAdvancedAsync(advanced, mode);
+                if (!advancedResult.Success) return advancedResult;
+            }
+
+            return new CommandResult(true, "Perfil recomendado aplicado.", "Perfil recomendado aplicado.");
         }
         catch (Exception ex)
         {
@@ -383,7 +480,7 @@ public class TurboCeilingService : ITurboCeilingService
         }
     }
 
-    public async Task<CommandResult> RestoreDefaultsAsync()
+    public async Task<CommandResult> RestoreDefaultsAsync(TurboPowerMode mode = TurboPowerMode.Ac)
     {
         try
         {
@@ -396,34 +493,47 @@ public class TurboCeilingService : ITurboCeilingService
                 return new CommandResult(false, "Este equipo no expone ningún ajuste del techo de turbo.",
                     "Este equipo no expone ningún ajuste del techo de turbo.");
 
-            if (state.LimitExposed && state.DefaultLimitPercent == null)
+            // El predeterminado que se restaura es el del modo elegido: Windows guarda uno
+            // para corriente y otro para batería, y no tienen por qué ser el mismo.
+            var limitDefault = mode == TurboPowerMode.Dc ? state.DefaultLimitPercentDc : state.DefaultLimitPercent;
+            if (state.LimitExposed && limitDefault == null)
                 return new CommandResult(false,
                     "El sistema no reporta el valor predeterminado del estado máximo del procesador.",
                     "El sistema no reporta el valor predeterminado del estado máximo del procesador.");
 
             if (state.LimitExposed)
             {
-                var limit = state.DefaultLimitPercent!.Value;
+                var limit = limitDefault!.Value;
                 var write = await _cpuPowerService.SetPowerSettingAsync(
-                    state.PlanGuid, ProcessorSubgroup, MaxProcessorState, (uint)limit, (uint)limit);
+                    state.PlanGuid, ProcessorSubgroup, MaxProcessorState,
+                    AcFor(mode, limit, state.LimitPercentDc),
+                    DcFor(mode, limit, state.LimitPercent));
                 if (!write.Success) return write;
             }
 
-            if (state.BoostModeExposed && state.DefaultBoostMode != null)
+            var boostDefault = mode == TurboPowerMode.Dc ? state.DefaultBoostModeDc : state.DefaultBoostMode;
+            if (state.BoostModeExposed && boostDefault != null)
             {
-                var boost = state.DefaultBoostMode.Value;
+                var boost = boostDefault.Value;
                 var write = await _cpuPowerService.SetPowerSettingAsync(
-                    state.PlanGuid, ProcessorSubgroup, BoostModeSetting, (uint)boost, (uint)boost);
+                    state.PlanGuid, ProcessorSubgroup, BoostModeSetting,
+                    AcFor(mode, boost, state.BoostModeValueDc),
+                    DcFor(mode, boost, state.BoostModeValue));
                 if (!write.Success) return write;
             }
 
-            // Ajustes avanzados: cada uno vuelve al predeterminado que reporta el sistema.
+            // Ajustes avanzados: cada uno vuelve al predeterminado que reporta el sistema para
+            // el modo elegido (el de batería y el de corriente son distintos).
             foreach (var setting in state.Advanced)
             {
-                if (!setting.Exposed || setting.DefaultValue == null) continue;
-                var value = setting.DefaultValue.Value;
+                if (!setting.Exposed) continue;
+                var value = mode == TurboPowerMode.Dc ? setting.DefaultDc : setting.DefaultValue;
+                var other = mode == TurboPowerMode.Dc ? setting.Value : setting.DcValue;
+                if (value == null) continue;
                 var write = await _cpuPowerService.SetPowerSettingAsync(
-                    state.PlanGuid, ProcessorSubgroup, setting.SettingGuid, (uint)value, (uint)value);
+                    state.PlanGuid, ProcessorSubgroup, setting.SettingGuid,
+                    AcFor(mode, value.Value, other),
+                    DcFor(mode, value.Value, other));
                 if (!write.Success) return write;
             }
 

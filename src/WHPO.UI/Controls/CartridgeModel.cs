@@ -298,12 +298,12 @@ float4 PSMain(VSOut i) : SV_TARGET
     /// </summary>
     public static Color PlasticColor(string title, string? artPath)
     {
-        // Color de plástico ÚNICO y fijo para todos los cartuchos. Antes se teñía con el
-        // color promedio del arte de cada juego (RgbToHsl + ColorFromHsl), lo que hacía
-        // que cada card tuviera un tono distinto —o quedara grafito cuando no había arte—
-        // y la biblioteca se vieracomocada cartucho de un "lote" distinto. Ahora toda la
-        // bandeja es homogénea. El color grafito de Carthage (#303036).
-        return Color.FromArgb(48, 48, 54);
+        // Color de plástico ÚNICO para toda la bandeja: el que elige la apariencia 3D
+        // (CardSkin). Así el cartucho y la consola del pie comparten el color del tema o
+        // el preset elegido en Configuración → Apariencia. Antes se teñía con el promedio
+        // del arte de cada juego y la biblioteca se veía como cartuchos de lotes distintos.
+        // Los parámetros se mantienen por compatibilidad: el color ya no depende del juego.
+        return CardSkin.Current.Plastic;
     }
 
     /// <summary>
@@ -482,7 +482,7 @@ float4 PSMain(VSOut i) : SV_TARGET
     /// Cara frontal del cartucho: carcasa, pestaña superior hundida, pozo, etiqueta con
     /// cabecera del launcher, ventana de carátula, franja inferior de código y flecha inferior.
     /// </summary>
-    public static Bitmap PaintFace(string title, string launcher, string code, string? artPath, Color plastic, bool flat = true)
+    public static Bitmap PaintFace(string title, string launcher, string code, string? artPath, Color plastic, bool flat = true, GameHeader? header = null)
     {
         var bmp = new Bitmap(FaceWidth, FaceHeight, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -519,8 +519,9 @@ float4 PSMain(VSOut i) : SV_TARGET
         using (var headBrush = new SolidBrush(Color.FromArgb(28, 28, 32)))
             g.FillRectangle(headBrush, headerRect);
 
-        // Cabecera: logo oficial del launcher + nombre de la plataforma
-        PaintHeader(g, headerRect, launcher, title);
+        // Cabecera: logo oficial del launcher + nombre de la plataforma, o el texto
+        // elegido por juego (nombre del juego, texto libre, solo marca o nada).
+        PaintHeader(g, headerRect, launcher, title, header);
 
         // Fondo de la ventana de arte
         using (var artBack = new SolidBrush(Color.FromArgb(14, 14, 18)))
@@ -571,8 +572,12 @@ float4 PSMain(VSOut i) : SV_TARGET
     /// Cabecera de la etiqueta (44, 60, 512×172): muestra el icono/logo del launcher y
     /// su nombre en tipografía pesada centrada (como `render_header` en Carthage).
     /// </summary>
-    private static void PaintHeader(Graphics g, Rectangle r, string launcher, string title)
+    private static void PaintHeader(Graphics g, Rectangle r, string launcher, string title, GameHeader? look)
     {
+        string mode = look?.Mode ?? GameLook.HeaderPlatform;
+        // «Sin texto» deja el fondo oscuro de la cabecera: la etiqueta respira sin marca.
+        if (mode == GameLook.HeaderNone) return;
+
         string norm = (launcher ?? "").Trim();
         string brandName = norm.ToUpperInvariant() switch
         {
@@ -589,29 +594,60 @@ float4 PSMain(VSOut i) : SV_TARGET
             _ => string.IsNullOrWhiteSpace(norm) ? "WINFORGE" : norm.ToUpperInvariant()
         };
 
-        using var logoBmp = LoadLauncherLogoBitmap(norm);
-        using var font = new Font("Segoe UI", 34f, FontStyle.Bold, GraphicsUnit.Pixel);
-        var textSize = g.MeasureString(brandName, font);
+        bool showLogo = mode == GameLook.HeaderPlatform;
+        string text = mode switch
+        {
+            GameLook.HeaderTitle => (title ?? "").Trim().ToUpperInvariant(),
+            GameLook.HeaderCustom => (look?.Text ?? "").Trim().ToUpperInvariant(),
+            _ => brandName
+        };
+        if (string.IsNullOrWhiteSpace(text)) return;
 
+        using var logoBmp = showLogo ? LoadLauncherLogoBitmap(norm) : null;
         int iconSize = logoBmp != null ? 54 : 0;
         int gap = logoBmp != null ? 16 : 0;
-        float totalW = iconSize + gap + textSize.Width;
-        float startX = r.X + (r.Width - totalW) * 0.5f;
-        float centerY = r.Y + r.Height * 0.5f;
+        float available = Math.Max(40f, r.Width - 32 - iconSize - gap);
 
-        if (logoBmp != null)
+        // El texto se achica hasta entrar en la cabecera: un nombre de juego largo no
+        // puede pisar la carátula ni salirse de la etiqueta.
+        Font font = new("Segoe UI", 34f, FontStyle.Bold, GraphicsUnit.Pixel);
+        SizeF textSize = g.MeasureString(text, font);
+        for (float size = 32f; size >= 18f && textSize.Width > available; size -= 2f)
         {
-            var iconRect = new Rectangle(
-                (int)MathF.Round(startX),
-                (int)MathF.Round(centerY - iconSize * 0.5f),
-                iconSize, iconSize);
-            g.DrawImage(logoBmp, iconRect);
+            font.Dispose();
+            font = new Font("Segoe UI", size, FontStyle.Bold, GraphicsUnit.Pixel);
+            textSize = g.MeasureString(text, font);
         }
 
-        using var textBrush = new SolidBrush(Color.FromArgb(244, 244, 246));
-        using var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
-        var textRect = new RectangleF(startX + iconSize + gap, r.Y, textSize.Width + 20, r.Height);
-        g.DrawString(brandName, font, textBrush, textRect, sf);
+        using (font)
+        using (var textBrush = new SolidBrush(Color.FromArgb(244, 244, 246)))
+        using (var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center })
+        {
+            // Último recurso: recorte con puntos suspensivos si ni en el mínimo entra.
+            if (textSize.Width > available)
+            {
+                while (text.Length > 1 && g.MeasureString(text + "…", font).Width > available)
+                    text = text[..^1];
+                text = text.TrimEnd() + "…";
+                textSize = g.MeasureString(text, font);
+            }
+
+            float totalW = iconSize + gap + textSize.Width;
+            float startX = r.X + (r.Width - totalW) * 0.5f;
+            float centerY = r.Y + r.Height * 0.5f;
+
+            if (logoBmp != null)
+            {
+                var iconRect = new Rectangle(
+                    (int)MathF.Round(startX),
+                    (int)MathF.Round(centerY - iconSize * 0.5f),
+                    iconSize, iconSize);
+                g.DrawImage(logoBmp, iconRect);
+            }
+
+            var textRect = new RectangleF(startX + iconSize + gap, r.Y, textSize.Width + 20, r.Height);
+            g.DrawString(text, font, textBrush, textRect, sf);
+        }
     }
 
     private static Bitmap? LoadLauncherLogoBitmap(string launcher)
@@ -829,7 +865,10 @@ float4 PSMain(VSOut i) : SV_TARGET
         DrawShellBody(g, plastic, flat);
 
         Color shellHi = Color.FromArgb(72, 255, 255, 255);
-        Color shellTop = Lighten(plastic, 0.10f);
+        // En plásticos claros (blanco, celeste muy liviano) el relieve aclarado no se leería:
+        // el texto se pinta oscuro y el labio iluminado queda solo como brillo del molde.
+        bool lightPlastic = 0.299f * plastic.R + 0.587f * plastic.G + 0.114f * plastic.B > 150;
+        Color shellTop = lightPlastic ? Darken(plastic, 0.62f) : Lighten(plastic, 0.10f);
 
         // Letras moldeadas en relieve en el centro superior
         DrawRaisedText(g, "WINFORGE", 58f, FontStyle.Bold, FaceWidth * 0.5f, 320f, shellTop, shellHi);

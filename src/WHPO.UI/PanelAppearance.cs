@@ -1135,7 +1135,7 @@ public static class PanelAppearance
             // base, el mismo que usaba el navbar interno de Configuración desde antes de este helper.
             paneColor = ThemePalettes.BaseThemeFor(theme) == AppTheme.Light
                 ? Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF)
-                : Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17);
+                : Windows.UI.Color.FromArgb(255, 0x0C, 0x0C, 0x0E);
         }
 
         var fill = ChromeFill(current, ApplyToColor(paneColor));

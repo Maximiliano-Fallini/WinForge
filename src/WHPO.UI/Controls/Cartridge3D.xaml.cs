@@ -204,6 +204,7 @@ public sealed partial class Cartridge3D : UserControl
     private string _launcher = "";
     private string _code = "";
     private string? _artPath;
+    private GameHeader _header = GameLook.DefaultHeader;
     private Color _plastic = Color.FromArgb(48, 48, 54);
     private bool _pendingFaces;   // se pidió pintar antes de que D3D esté listo
     /// <summary>
@@ -727,11 +728,12 @@ public sealed partial class Cartridge3D : UserControl
     /// antes de que el control esté cargado: en ese caso queda pendiente y se pinta al
     /// terminar la inicialización de D3D.
     /// </summary>
-    public void SetCard(string title, string launcher, string code, string? artPath, bool deferred = false)
+    public void SetCard(string title, string launcher, string code, string? artPath, bool deferred = false, GameHeader? header = null)
     {
         _title = string.IsNullOrWhiteSpace(title) ? "Juego" : title;
         _launcher = launcher ?? "";
         _code = code ?? "";
+        _header = header ?? GameLook.DefaultHeader;
         _artPath = !string.IsNullOrEmpty(artPath) && System.IO.File.Exists(artPath) ? artPath : null;
         _plastic = CartridgeModel.PlasticColor(_title, _artPath);
         _deferredPaint = deferred;
@@ -775,6 +777,7 @@ public sealed partial class Cartridge3D : UserControl
         int gen = ++_paintGeneration;
         string title = _title, launcher = _launcher, code = _code;
         string? arte = _artPath;
+        GameHeader header = _header;
         Color plastic0 = _plastic;
         _ = Task.Run(() =>
         {
@@ -791,9 +794,9 @@ public sealed partial class Cartridge3D : UserControl
                 PaintGate.Wait();
                 gateTaken = true;
                 plastic = CartridgeModel.PlasticColor(title, arte);
-                string clave = CacheKey(title, code, arte);
-                cara = LoadCached(CaraCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, false);
-                dorso = LoadCached(DorsoCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, true);
+                string clave = CacheKey(title, code, arte, header);
+                cara = LoadCached(CaraCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, false, header);
+                dorso = LoadCached(DorsoCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, true, header);
             }
             catch (Exception ex) { Fail("pintar", ex); }
             finally { if (gateTaken) { try { PaintGate.Release(); } catch { } } }
@@ -818,10 +821,12 @@ public sealed partial class Cartridge3D : UserControl
     private static string DorsoCache => System.IO.Path.Combine(FaceCacheDir, "dorso");
 
     /// <summary>Versión del pintado de caras: al subirla, las caras cacheadas se repintan.</summary>
-    private const int FaceCacheVersion = 15;
+    private const int FaceCacheVersion = 17;
 
-    /// <summary>Clave de caché: versión + título + código + arte (nombre, tamaño y fecha).</summary>
-    private static string CacheKey(string title, string code, string? artPath)
+    /// <summary>Clave de caché: versión + título + código + arte (nombre, tamaño y fecha) + paleta
+    /// + encabezado. La paleta y el encabezado forman parte de la clave para que cambiar de
+    /// carcasa o editar la etiqueta no reutilice caras viejas.</summary>
+    private static string CacheKey(string title, string code, string? artPath, GameHeader header)
     {
         string arte = "";
         try
@@ -833,7 +838,7 @@ public sealed partial class Cartridge3D : UserControl
             }
         }
         catch { }
-        return Math.Abs($"v{FaceCacheVersion}|{title}|{code}|{arte}".GetHashCode(StringComparison.Ordinal)).ToString("x8");
+        return Math.Abs($"v{FaceCacheVersion}|{title}|{code}|{arte}|{CardSkin.Current.Key}|{header.Signature}".GetHashCode(StringComparison.Ordinal)).ToString("x8");
     }
 
     private static Bitmap? LoadCached(string baseRuta, string clave)
@@ -847,15 +852,15 @@ public sealed partial class Cartridge3D : UserControl
     }
 
     private static Bitmap? PaintAndCache(
-        string title, string launcher, string code, string? arte, Color plastic, bool dorso)
+        string title, string launcher, string code, string? arte, Color plastic, bool dorso, GameHeader header)
     {
         var bmp = dorso
             ? CartridgeModel.PaintBack(launcher, code, plastic, flat: true)
-            : CartridgeModel.PaintFace(title, launcher, code, arte, plastic, flat: true);
+            : CartridgeModel.PaintFace(title, launcher, code, arte, plastic, flat: true, header: header);
         try
         {
             System.IO.Directory.CreateDirectory(FaceCacheDir);
-            bmp.Save($"{(dorso ? DorsoCache : CaraCache)}-{CacheKey(title, code, arte)}.png",
+            bmp.Save($"{(dorso ? DorsoCache : CaraCache)}-{CacheKey(title, code, arte, header)}.png",
                 System.Drawing.Imaging.ImageFormat.Png);
         }
         catch { } // sin caché se repinta la próxima vez: no es fatal

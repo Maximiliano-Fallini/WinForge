@@ -20,7 +20,13 @@ namespace WHPO_UI.Controls;
 public static class CartridgeDock
 {
     // The shell is static: reuse it across running-state/hover updates, not per frame.
-    private static readonly Dictionary<(int W, int H, int Port), BitmapImage> ShellCache = new();
+    private static readonly Dictionary<(int W, int H, int Port, string Skin), BitmapImage> ShellCache = new();
+
+    // Luz del dock: apagada mantiene el tamaño de siempre; encendida crece un poco
+    // (LED completo, bisel incluido) para que el ojo la registre de reojo sin que
+    // deje de ser un LED de consola.
+    private const double LedSize = 16;
+    private const double LitLedSize = 20;
 
     /// <summary>
     /// Chasis del dock. <paramref name="portWidth"/> es el ancho de la boca/ranura
@@ -55,7 +61,9 @@ public static class CartridgeDock
             int w = Math.Max(1, (int)Math.Ceiling(shell.ActualWidth * scale));
             int h = Math.Max(1, (int)Math.Ceiling(height * scale));
             int port = Math.Max(1, (int)Math.Round(portWidth * scale));
-            var key = (w, h, port);
+            // La apariencia 3D (CardSkin) también forma parte de la clave: el chasis se
+            // repinta con el plástico elegido en Configuración → Apariencia.
+            var key = (w, h, port, CardSkin.Current.Key);
             if (!ShellCache.TryGetValue(key, out var bitmap))
             {
                 using var body = PaintShell(w, h, portWidth);
@@ -120,11 +128,13 @@ public static class CartridgeDock
             },
             IsHitTestVisible = false
         };
+        var skin = CardSkin.Current;
         return new Border
         {
             Width = width, Height = 26, CornerRadius = new CornerRadius(5),
-            Background = Gradient((0, "#FF0B0D12"), (0.45, "#FF262A34"), (1, "#FF484E5B")),
-            BorderBrush = Brush("#FF090B10"), BorderThickness = new Thickness(1), Child = well,
+            Background = Gradient((0, skin.Dark(0.78f)), (0.45, skin.Dark(0.22f)), (1, skin.Light(0.12f))),
+            BorderBrush = Brush("#FF090B10"),
+            BorderThickness = new Thickness(1), Child = well,
             VerticalAlignment = VerticalAlignment.Top
         };
     }
@@ -136,6 +146,7 @@ public static class CartridgeDock
     /// </summary>
     public static Grid CreatePortFrontLip(bool connected, double width)
     {
+        var skin = CardSkin.Current;
         return new Grid
         {
             Width = width,
@@ -151,7 +162,8 @@ public static class CartridgeDock
                     Height = 3,
                     VerticalAlignment = VerticalAlignment.Bottom,
                     Margin = new Thickness(8, 0, 8, 7),
-                    Background = Gradient((0, "#00000000"), (1, connected ? "#D8000000" : "#70000000"))
+                    Background = Gradient((0, "#00000000"), (1, connected
+                        ? "#D8000000" : "#70000000"))
                 },
                 // Pared frontal inferior del puerto (tapa el corte inferior del cartucho)
                 new Border
@@ -159,7 +171,7 @@ public static class CartridgeDock
                     Height = 8,
                     VerticalAlignment = VerticalAlignment.Bottom,
                     CornerRadius = new CornerRadius(0, 0, 5, 5),
-                    Background = Gradient((0, "#FF525866"), (0.28, "#FF323743"), (1, "#FF181C24")),
+                    Background = Gradient((0, skin.Light(0.15f)), (0.28, skin.Dark(0.02f)), (1, skin.Dark(0.55f))),
                     BorderBrush = Brush("#FF090B10"),
                     BorderThickness = new Thickness(1, 1, 1, 1),
                     Child = new Border
@@ -178,7 +190,7 @@ public static class CartridgeDock
                     VerticalAlignment = VerticalAlignment.Stretch,
                     Margin = new Thickness(0, 4, 0, 0),
                     CornerRadius = new CornerRadius(2, 0, 0, 5),
-                    Background = Gradient((0, "#FF262B35"), (0.65, "#FF323743"), (1, "#FF181C24")),
+                    Background = Gradient((0, skin.Dark(0.20f)), (0.65, skin.Dark(0.02f)), (1, skin.Dark(0.55f))),
                     BorderBrush = Brush("#FF090B10"),
                     BorderThickness = new Thickness(1, 0, 1, 1)
                 },
@@ -189,7 +201,7 @@ public static class CartridgeDock
                     VerticalAlignment = VerticalAlignment.Stretch,
                     Margin = new Thickness(0, 4, 0, 0),
                     CornerRadius = new CornerRadius(0, 2, 5, 0),
-                    Background = Gradient((0, "#FF262B35"), (0.65, "#FF323743"), (1, "#FF181C24")),
+                    Background = Gradient((0, skin.Dark(0.20f)), (0.65, skin.Dark(0.02f)), (1, skin.Dark(0.55f))),
                     BorderBrush = Brush("#FF090B10"),
                     BorderThickness = new Thickness(1, 0, 1, 1)
                 }
@@ -201,9 +213,10 @@ public static class CartridgeDock
     {
         // Verde en cuanto hay un cartucho puesto (insertado o ya corriendo): es la señal de
         // "la consola tiene un juego". Gris en espera y rojo si el último lanzamiento falló.
+        bool lit = connected || running || failed;
         string core = failed ? "#FFE07059" : running || connected ? "#FF83E8AE" : "#FF62746B";
         string shade = failed ? "#FF4B211C" : running || connected ? "#FF1E4A38" : "#FF213C32";
-        return BuildLed(core, shade);
+        return BuildLed(core, shade, lit ? LitLedSize : LedSize);
     }
 
     /// <summary>
@@ -212,7 +225,7 @@ public static class CartridgeDock
     /// Amarillo mientras se espera el proceso real (verde solo cuando se aplicó),
     /// ámbar cuando se aplicó con limitaciones y rojo si venció la espera.
     /// </summary>
-    public static Grid CreateRuleLed(GameRuleState state, bool limited, double size = 16)
+    public static Grid CreateRuleLed(GameRuleState state, bool limited, double size = LitLedSize)
     {
         string core = state switch
         {
@@ -234,8 +247,9 @@ public static class CartridgeDock
     }
 
     /// <summary>
-    /// LED biselado del dock. <paramref name="size"/> permite la segunda luz de la
-    /// regla, un poco más chica que la del encendido, manteniendo las proporciones.
+    /// LED biselado del dock. <paramref name="size"/> permite ajustar la luz de la
+    /// regla manteniendo las proporciones; las luces encendidas usan el tamaño grande
+    /// para no encogerse cuando el dock pasa del estado de consola al de la regla.
     /// </summary>
     private static Grid BuildLed(string core, string shade, double size = 16)
     {
@@ -297,8 +311,144 @@ public static class CartridgeDock
         element.Resources.Clear();
     }
 
+    /// <summary>
+    /// Vista previa de la apariencia 3D para Configuración → Apariencia: la card de la
+    /// biblioteca (la misma cara de muestra) junto a la consola REAL —chasis, puerto,
+    /// labio frontal, LED y textos de <see cref="CartridgeDock"/>— con el plástico vigente
+    /// de <see cref="CardSkin"/>. Replica la geometría del dock de la biblioteca (66 DIP
+    /// de alto, boca a 8, el cartucho entra 20 DIP y asoma ~15 %) para que la previa no
+    /// sea un dibujo aparte: es el mismo material, pintado por el mismo código.
+    /// </summary>
+    public static FrameworkElement CreateAppearancePreview(ImageSource? card, double previewHeight = 320)
+    {
+        // Tamaño REAL del dock de la biblioteca, no uno inventado para la previa: el ancho
+        // es el de la card 3D en la ventana estándar y el alto del chasis es 66. Todo el
+        // escenario se dibuja a esa escala y después se reduce con un Viewbox, así las
+        // proporciones del pie, la ranura y el cartucho quedan idénticas a la biblioteca.
+        const double cardWidth = 197; // MaxCardWidth3D (205) - 8
+        const double stageWidth = 760;
+        double cardHeight = Math.Ceiling(cardWidth * CartridgeModel.Aspect);
+
+        // Medidas del dock de la biblioteca (GestionarProcesosPage).
+        const double FooterHeight = 66;
+        const double MouthY = 8;
+        const double SlotDepth = 20;
+        const double ApproachGap = 6;
+        const double LipWall = 9;
+        const double BaySideGap = 12;
+
+        double portWidth = cardWidth + LipWall * 2;
+        double bayWidth = portWidth + BaySideGap * 2;
+        double bayHeight = cardHeight + ApproachGap;
+        double protrusion = Math.Round(cardHeight * 0.15);
+        double seatedTop = bayHeight - (protrusion + SlotDepth);
+
+        // Card suelta, como se ve en la grilla de la biblioteca.
+        var fullCard = new Grid
+        {
+            Width = cardWidth, Height = cardHeight,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 14, 0, 0)
+        };
+        if (card != null)
+            fullCard.Children.Add(new Microsoft.UI.Xaml.Controls.Image { Source = card, Stretch = Stretch.Fill });
+
+        // Mismo asiento que el dock real: el canvas recortado deja el cartucho dentro de
+        // la ranura, con solo la torre asomando por encima de la boca.
+        var bay = new Canvas
+        {
+            Width = bayWidth, Height = bayHeight,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, (MouthY + SlotDepth) - bayHeight, 0, 0),
+            Clip = new RectangleGeometry { Rect = new Rect(0, 0, bayWidth, bayHeight) }
+        };
+        if (card != null)
+        {
+            var seated = new Microsoft.UI.Xaml.Controls.Image
+            {
+                Source = card, Width = cardWidth, Height = cardHeight, Stretch = Stretch.Fill
+            };
+            Canvas.SetLeft(seated, (bayWidth - cardWidth) * 0.5);
+            Canvas.SetTop(seated, seatedTop);
+            bay.Children.Add(seated);
+        }
+
+        // Ala izquierda: los mismos textos y el mismo LED que la consola de la biblioteca.
+        var line1 = new TextBlock
+        {
+            Text = "WINFORGE", FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = TextBrush(), TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        var line2 = new TextBlock
+        {
+            Text = "GAME CARD", FontSize = 9, CharacterSpacing = 60,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = TextBrush(secondary: true), TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        var status = new StackPanel
+        {
+            Spacing = 1, VerticalAlignment = VerticalAlignment.Center, Children = { line1, line2 }
+        };
+        var leftWing = new Grid { ColumnSpacing = 12, VerticalAlignment = VerticalAlignment.Center };
+        leftWing.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        leftWing.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        leftWing.Children.Add(CreateLed(connected: true, running: false, failed: false));
+        Grid.SetColumn(status, 1);
+        leftWing.Children.Add(status);
+
+        var port = new Grid { Width = portWidth, Height = 44 };
+        var portBorder = CreatePort(connected: true, portWidth);
+        portBorder.VerticalAlignment = VerticalAlignment.Top;
+        port.Children.Add(portBorder);
+
+        // Tres columnas como el dock real (ala / ranura / ala): la ranura queda centrada.
+        var row = new Grid { ColumnSpacing = 12 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(leftWing, 0);
+        Grid.SetColumn(port, 1);
+        row.Children.Add(leftWing);
+        row.Children.Add(port);
+
+        var shell = CreateShell(row, FooterHeight, portWidth);
+        var lip = CreatePortFrontLip(connected: true, portWidth);
+        lip.Margin = new Thickness(0, MouthY, 0, 0);
+
+        var dock = new Grid { Height = FooterHeight, VerticalAlignment = VerticalAlignment.Bottom };
+        dock.Children.Add(shell);
+        dock.Children.Add(bay);
+        dock.Children.Add(lip);
+
+        var stage = new Grid
+        {
+            Width = stageWidth,
+            Height = cardHeight + FooterHeight + 80 // aire entre la card y la torre que asoma
+        };
+        stage.Children.Add(fullCard);
+        stage.Children.Add(dock);
+
+        return new Viewbox
+        {
+            Child = stage,
+            Stretch = Stretch.Uniform,
+            Height = previewHeight,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+    }
+
     public static SolidColorBrush TextBrush(bool secondary = false)
-        => Brush(secondary ? "#FF9DA5B1" : "#FFE1E6EE");
+    {
+        // En plástico claro (Blanco) el texto del dock va en oscuro: el gris claro de
+        // siempre quedaría casi invisible sobre la consola blanca.
+        if (CardSkin.Current.IsLight)
+            return Brush(secondary ? "#FF4A5059" : "#FF1A1D22");
+        return Brush(secondary ? "#FF9DA5B1" : "#FFE1E6EE");
+    }
 
     private static SolidColorBrush Brush(string hex) => new(ToUiColor(hex));
     private static Windows.UI.Color ToUiColor(string hex)
@@ -314,6 +464,14 @@ public static class CartridgeDock
         return brush;
     }
 
+    private static Microsoft.UI.Xaml.Media.LinearGradientBrush Gradient(params (double Offset, Color Color)[] stops)
+    {
+        var brush = new Microsoft.UI.Xaml.Media.LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) };
+        foreach (var (offset, color) in stops)
+            brush.GradientStops.Add(new GradientStop { Offset = offset, Color = CardSkin.ToUi(color) });
+        return brush;
+    }
+
     private static Bitmap PaintShell(int pixelWidth, int pixelHeight, double portWidth)
     {
         // Paint in 66-DIP reference coordinates, rasterized at the window's DPI.
@@ -323,9 +481,11 @@ public static class CartridgeDock
         float width = pixelWidth / scale;
         g.ScaleTransform(scale, scale);
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        // Chasis del plástico elegido: claro arriba, casi negro abajo, como una pieza moldeada.
+        var skin = CardSkin.Current;
         using var silhouette = TopRounded(new RectangleF(0.5f, 1, width - 1, 65), 11);
         using (var body = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(0, 0, width, 66),
-            Color.FromArgb(59, 64, 74), Color.FromArgb(22, 25, 32), 90f))
+            skin.Light(0.14f), skin.Dark(0.55f), 90f))
             g.FillPath(body, silhouette);
         var state = g.Save();
         g.SetClip(silhouette);
@@ -338,7 +498,7 @@ public static class CartridgeDock
                 (float)random.NextDouble() * width, (float)random.NextDouble() * 65, 0.6f, 0.6f);
         // Lower moulded face: depth, seam and a narrow reflected bevel anchored to the bottom.
         using (var face = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(0, 48, width, 18),
-            Color.FromArgb(37, 41, 50), Color.FromArgb(12, 15, 20), 90f))
+            skin.Dark(0.08f), skin.Dark(0.62f), 90f))
             g.FillRectangle(face, 0, 49, width, 18);
         using (var seam = new Pen(Color.FromArgb(190, 8, 10, 14), 1)) g.DrawLine(seam, 7, 49, width - 7, 49);
         using (var faceLight = new Pen(Color.FromArgb(50, 164, 175, 193), 1)) g.DrawLine(faceLight, 10, 50, width - 10, 50);
@@ -347,12 +507,12 @@ public static class CartridgeDock
         float recessW = (float)Math.Max(96, portWidth) + 22f;
         using var portPath = Rounded(new RectangleF(width * 0.5f - recessW * 0.5f, 5, recessW, 31), 6);
         using (var bevel = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(0, 5, 1, 31),
-            Color.FromArgb(14, 17, 23), Color.FromArgb(91, 97, 109), 90f))
+            skin.Dark(0.70f), skin.Light(0.22f), 90f))
             g.FillPath(bevel, portPath);
         using (var groove = new Pen(Color.FromArgb(205, 9, 11, 16), 1)) g.DrawPath(groove, portPath);
         float insetW = (float)Math.Max(88, portWidth) - 4f;
         using (var inset = Rounded(new RectangleF(width * 0.5f - insetW * 0.5f, 7, insetW, 26), 4))
-        using (var plastic = new SolidBrush(Color.FromArgb(32, 36, 44))) g.FillPath(plastic, inset);
+        using (var plastic = new SolidBrush(skin.Dark(0.30f))) g.FillPath(plastic, inset);
         // Side vents carved into the front, away from interactive content.
         // Las rejillas laterales se corren hacia afuera con el pozo: si quedan fijas,
         // una ranura ancha las taparía y el chasis perdería el detalle lateral.

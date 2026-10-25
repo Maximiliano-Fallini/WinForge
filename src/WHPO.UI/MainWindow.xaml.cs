@@ -3633,7 +3633,7 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Color con el que se funde el borde de la ventana: el fondo de la barra de
     /// título del tema activo. Lo actualiza ApplyTitleBarTheme en cada cambio de tema.</summary>
-    private Windows.UI.Color _frameBorderColor = Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17);
+    private Windows.UI.Color _frameBorderColor = Windows.UI.Color.FromArgb(255, 0x0C, 0x0C, 0x0E);
 
     /// <summary>
     /// Pincel del panel del MENÚ en los temas con fondo propio. El NavigationView pinta esa
@@ -3882,7 +3882,7 @@ public sealed partial class MainWindow : Window
 
         // Sin paleta propia (Claro/Oscuro/Sistema): los valores de siempre.
         return dark
-            ? Windows.UI.Color.FromArgb(255, 0x15, 0x15, 0x17)  // Oscuro / Sistema oscuro
+            ? Windows.UI.Color.FromArgb(255, 0x0C, 0x0C, 0x0E)  // Oscuro / Sistema oscuro
             : Windows.UI.Color.FromArgb(255, 0xFF, 0xFF, 0xFF); // Claro / Sistema claro
     }
 
@@ -3935,7 +3935,7 @@ public sealed partial class MainWindow : Window
 
         // La barra de título propia lleva el MISMO tono que el panel del menú —sin esto, en
         // Negro/Azul y Rosa/Blanco quedaban dos tonos distintos: el navbar es #0E1524 /
-        // blanco y el color calculado por ApplyTitleBarColors es #151517 / blanco— con la
+        // blanco y el color calculado por ApplyTitleBarColors es #0C0C0E / blanco— con la
         // transparencia de paneles ya aplicada: es un panel más, así que en 0 % queda opaca
         // (tapa la foto) y arriba deja verla.
         AppTitleBar.Background = _navBrush;
@@ -4089,13 +4089,13 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Colorea la barra de título con el color del navbar: #151517 (oscuro) o
+    /// Colorea la barra de título con el color del navbar: #0C0C0E (oscuro) o
     /// blanco (claro), para que la ventana sea un solo bloque con el menú lateral.
     /// </summary>
     private static void ApplyTitleBarColors(AppWindow appWindow, bool dark)
     {
         var tb = appWindow.TitleBar;
-        var bg = Windows.UI.Color.FromArgb(255, dark ? (byte)0x15 : (byte)0xFF, dark ? (byte)0x15 : (byte)0xFF, dark ? (byte)0x17 : (byte)0xFF);
+        var bg = Windows.UI.Color.FromArgb(255, dark ? (byte)0x0C : (byte)0xFF, dark ? (byte)0x0C : (byte)0xFF, dark ? (byte)0x0E : (byte)0xFF);
         var fg = Windows.UI.Color.FromArgb(255, dark ? (byte)255 : (byte)16, dark ? (byte)255 : (byte)20, dark ? (byte)255 : (byte)24);
         var inactiveFg = Windows.UI.Color.FromArgb(255, dark ? (byte)128 : (byte)96, dark ? (byte)128 : (byte)100, dark ? (byte)128 : (byte)104);
         var hover = Windows.UI.Color.FromArgb(255, dark ? (byte)45 : (byte)224, dark ? (byte)45 : (byte)228, dark ? (byte)45 : (byte)232);

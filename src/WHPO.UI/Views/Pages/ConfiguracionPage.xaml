@@ -86,6 +86,31 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- Muestra de color del estilo 3D: un RadioButton sin cromo propio, con el círculo
+             y la etiqueta armados en código (BuildCardSkinPicker). El elegido se marca con el
+             aro de acento y el tilde, igual que el selector de temas. -->
+        <Style x:Key="CardSkinSwatch" TargetType="RadioButton">
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="UseSystemFocusVisuals" Value="False"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid Background="Transparent" Padding="5,4">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Page.Resources>
 
     <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*"><!-- ====== NAVBAR INTERNO: Inicio / Apariencia / Caché / Navegación / Desarrollo ======
@@ -153,76 +178,6 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-
-                            <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock Text="Mostrar métricas en bandeja" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock
-                                    Text="Prendido: el ícono de la bandeja muestra uso de CPU, memoria y temperatura al pasar el cursor, con sondeos periódicos de hardware que elevan el consumo de CPU de la app en segundo plano. Apagado (predeterminado): sin métricas; al ocultar la ventana se libera la memoria del proceso para un consumo mínimo."
-                                    FontSize="13"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    TextWrapping="Wrap"/>
-                            </StackPanel>
-
-                            <ToggleSwitch
-                                x:Name="TrayMetricsToggle"
-                                Grid.Column="1"
-                                Style="{StaticResource CompactToggleSwitchStyle}"
-                                IsOn="True"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center"/>
-                        </Grid>
-                    </Border>
-
-                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
-                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-
-                            <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock x:Name="TrayEcoModeTitle" Text="Modo eficiencia en bandeja" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock
-                                    x:Name="TrayEcoModeDescription"
-                                    Text="Prendido (predeterminado): al ocultar la ventana a la bandeja, WHPO se marca como tarea de fondo (EcoQoS de Windows) para consumir lo mínimo. Al volver se quita solo. En un Windows que no lo soporta no hace nada. Las optimizaciones activas siguen aplicándose en segundo plano mientras la app esté en la bandeja."
-                                    FontSize="13"
-                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                    TextWrapping="Wrap"/>
-                            </StackPanel>
-
-                            <ToggleSwitch
-                                x:Name="TrayEcoModeToggle"
-                                Grid.Column="1"
-                                Style="{StaticResource CompactToggleSwitchStyle}"
-                                IsOn="True"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center"/>
-                        </Grid>
-                    </Border>
-
-                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Posición de la ventana" FontSize="16" FontWeight="SemiBold"/>
-                            <TextBlock
-                                Text="Restablece la posición y el tamaño guardados para que la ventana vuelva a abrirse centrada (útil si quedó fuera de la vista al cambiar de monitor)."
-                                FontSize="13"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                TextWrapping="Wrap"/>
-                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-                                <Button x:Name="ResetWindowPositionButton" Content="Restablecer posición" FontSize="12"
-                                        Padding="12,4" VerticalAlignment="Center" Click="ResetWindowPositionButton_Click"/>
-                                <TextBlock x:Name="ResetWindowPositionFeedbackText" Text="" FontSize="12"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
-                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
                                 <TextBlock Text="Iniciar con Windows" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock Text="Abre WHPO automáticamente cuando iniciás sesión en este equipo."
@@ -257,6 +212,118 @@
                             <ToggleSwitch x:Name="StartMinimizedToggle" Grid.Column="1" Style="{StaticResource CompactToggleSwitchStyle}"
                                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Mostrar métricas en bandeja" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock
+                                    Text="Prendido: el ícono de la bandeja muestra uso de CPU, memoria y temperatura al pasar el cursor, con sondeos periódicos de hardware que elevan el consumo de CPU de la app en segundo plano. Apagado (predeterminado): sin métricas; al ocultar la ventana se libera la memoria del proceso para un consumo mínimo."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <ToggleSwitch
+                                x:Name="TrayMetricsToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="True"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <Grid ColumnSpacing="24" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock x:Name="TrayEcoModeTitle" Text="Modo eficiencia en bandeja"
+                                               FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <Border Background="{ThemeResource AccentTintBrush}"
+                                            CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
+                                        <TextBlock Text="Recomendado" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource AccentBrush}"/>
+                                    </Border>
+                                </StackPanel>
+                                <TextBlock
+                                    x:Name="TrayEcoModeDescription"
+                                    Text="Al minimizar a la bandeja, WHPO pasa a segundo plano (EcoQoS) y consume lo mínimo. Se quita solo al volver."
+                                    FontSize="13"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    TextWrapping="Wrap"/>
+                                <!-- Detalles que antes iban en la descripción, ahora como distintivos:
+                                     se leen de un vistazo y la descripción queda en una sola línea. -->
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0">
+                                    <Border Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="8" Padding="7,3">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <FontIcon Glyph="&#xE945;" FontSize="10"
+                                                      Foreground="{ThemeResource AccentBrush}"
+                                                      VerticalAlignment="Center"/>
+                                            <TextBlock Text="EcoQoS" FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="8" Padding="7,3">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <FontIcon Glyph="&#xE945;" FontSize="10"
+                                                      Foreground="{ThemeResource SecondaryTextBrush}"
+                                                      VerticalAlignment="Center"/>
+                                            <TextBlock Text="Segundo plano" FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Background="{ThemeResource ControlFillColorSecondaryBrush}"
+                                            CornerRadius="8" Padding="7,3">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <FontIcon Glyph="&#xE895;" FontSize="10"
+                                                      Foreground="{ThemeResource SecondaryTextBrush}"
+                                                      VerticalAlignment="Center"/>
+                                            <TextBlock Text="Automático" FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <ToggleSwitch
+                                x:Name="TrayEcoModeToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="True"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Posición de la ventana" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock
+                                Text="Restablece la posición y el tamaño guardados para que la ventana vuelva a abrirse centrada (útil si quedó fuera de la vista al cambiar de monitor)."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                <Button x:Name="ResetWindowPositionButton" Content="Restablecer posición" FontSize="12"
+                                        Padding="12,4" VerticalAlignment="Center" Click="ResetWindowPositionButton_Click"/>
+                                <TextBlock x:Name="ResetWindowPositionFeedbackText" Text="" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
                     </Border>
 
                 </StackPanel>
@@ -398,7 +465,8 @@
 <!-- Consola del pie, con la boca de la ranura asomando a los costados
                                                  del cartucho: el cartucho queda CLAVADO en el puerto, igual que
                                                  en la biblioteca. -->
-                                            <Border Width="148" Height="18"
+                                            <Border x:Name="LibraryStyle3DDock"
+                                                    Width="148" Height="18"
                                                     CornerRadius="9,9,0,0"
                                                     VerticalAlignment="Bottom"
                                                     HorizontalAlignment="Center"
@@ -443,6 +511,68 @@
                                     </StackPanel>
                                 </RadioButton>
                             </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+<!-- Estilo de los cartuchos y la consola del pie: el color de «hardware» que comparten
+     la biblioteca 3D y el dock (ajuste "biblioteca.cards3D.skin", ver CardSkin).
+     Solo se muestra con las cards 3D activas: en 2D no hay cartucho que teñir. -->
+                    <Border x:Name="CardSkinCard" Style="{StaticResource CardStyle}" Padding="20"
+                            CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal"
+                            Visibility="Collapsed">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Estilo de los cartuchos y la consola" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock
+                                Text="El color de la carcasa de los cartuchos 3D y de la consola del pie. Por defecto acompaña al tema de la app; también podés fijar un color propio para no depender del tema."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"/>
+
+                            <!-- Vista previa EN VIVO: la card REAL de la biblioteca y la consola del
+                                 pie REAL (CartridgeDock: chasis, ranura, labio, LED) con el color
+                                 elegido. La arma CartridgeDock.CreateAppearancePreview y se rehace
+                                 al elegir cada muestra, con el mismo código que dibuja el dock. -->
+                            <Border x:Name="CardSkinStage" Height="320" Margin="0,14,0,0"
+                                    CornerRadius="12"
+                                    Background="{ThemeResource CardHoverBrush}"
+                                    BorderBrush="{ThemeResource SensorGridLineBrush}"
+                                    BorderThickness="1" Tag="no-reveal">
+                                <ContentControl x:Name="CardSkinStageHost"
+                                                HorizontalContentAlignment="Stretch"
+                                                VerticalContentAlignment="Stretch"
+                                                IsTabStop="False"/>
+                            </Border>
+
+                            <!-- Las muestras las arma BuildCardSkinPicker: una por preset, con el
+                                 color real del plástico y la etiqueta traducida por I18n. -->
+                            <StackPanel x:Name="CardSkinHost" Orientation="Horizontal" Spacing="2"
+                                        Margin="0,12,0,0" HorizontalAlignment="Left"/>
+
+                            <!-- Inclinación al hover: es una preferencia de las cards 3D, por eso
+                                 vive acá y no en la pestaña de navegación. Por defecto, activada. -->
+                            <Grid ColumnSpacing="16" Margin="0,16,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock Text="Inclinar las cards al pasar el mouse" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Si lo apagás, las cards quedan planas y solo se levantan al arrastrarlas o inspeccionarlas."
+                                               FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <ToggleSwitch x:Name="CardTiltToggle" Grid.Column="1"
+                                              Style="{StaticResource CompactToggleSwitchStyle}"
+                                              IsOn="True"
+                                              HorizontalAlignment="Right"
+                                              VerticalAlignment="Center"/>
+                            </Grid>
+
+                            <TextBlock Text="El cambio se aplica al volver a la biblioteca de juegos."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
 

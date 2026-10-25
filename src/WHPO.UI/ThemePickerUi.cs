@@ -431,10 +431,10 @@ public static class ThemePickerUi
         {
             "AppBackgroundBrush" => light
                 ? Windows.UI.Color.FromArgb(255, 0xF3, 0xF3, 0xF3)
-                : Windows.UI.Color.FromArgb(255, 0x20, 0x20, 0x20),
+                : Windows.UI.Color.FromArgb(255, 0x00, 0x00, 0x00),
             "CardBackgroundBrush" or "NavigationViewDefaultPaneBackground" => light
                 ? Microsoft.UI.Colors.White
-                : Windows.UI.Color.FromArgb(255, 0x29, 0x29, 0x29),
+                : Windows.UI.Color.FromArgb(255, 0x0C, 0x0C, 0x0E),
             "AccentBrush" => Windows.UI.Color.FromArgb(255, 0x00, 0x78, 0xD4),
             "SecondaryTextBrush" => light
                 ? Windows.UI.Color.FromArgb(255, 0x66, 0x66, 0x66)

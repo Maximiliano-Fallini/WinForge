@@ -45,14 +45,14 @@
              WinUI (que ignora la apariencia de la app), el popup usa el MISMO
              color de las cards, y los items usan los hovers/selecciones de las
              cards (CardHoverBrush / CardSelectedBrush). -->
-            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FF151517"/>
-            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#FF1A1A1C"/>
-            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerPressed" Color="#FF202022"/>
-            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#FF3A3A3C"/>
-            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FF151517"/>
-            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#FF3A3A3C"/>
-            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FF242424"/>
-            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FF262626"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerOver" Color="#FF16161A"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBackgroundPointerPressed" Color="#FF1E1E22"/>
+            <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#FF28282A"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#FF28282A"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundPointerOver" Color="#FF16161A"/>
+            <SolidColorBrush x:Key="ComboBoxItemBackgroundSelected" Color="#FF1E1E22"/>
             <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPointerOver" Color="#FF2A2A2C"/>
             <SolidColorBrush x:Key="ComboBoxItemBackgroundSelectedPressed" Color="#FF262626"/>
 
@@ -64,10 +64,10 @@
                  del sistema y queda opaco mientras el resto de la UI responde a los
                  deslizadores. Los temas con paleta propia las pisan con sus tonos en
                  Themes\<Tema>Theme.cs (OverrideBrushes). -->
-            <SolidColorBrush x:Key="TextControlBackground" Color="#FF151517"/>
-            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FF1A1A1C"/>
-            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FF202022"/>
-            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FF151517"/>
+            <SolidColorBrush x:Key="TextControlBackground" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FF16161A"/>
+            <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FF1E1E22"/>
+            <SolidColorBrush x:Key="TextControlBackgroundDisabled" Color="#FF0C0C0E"/>
 
 <!-- Claves que los CONTROLES de WinUI piden por su cuenta y que la app no declaraba, así que
                  las pintaba el SISTEMA con rellenos translúcidos: el desplegable CERRADO, el Expander
@@ -81,13 +81,13 @@
                  (ver ThemePalettes.InheritedKeys). Estar en este diccionario es lo que además las
                  mete en el censo de superficies: siguen la transparencia y el vidrio (ver
                  PanelAppearance.SurfaceKeys). -->
-            <SolidColorBrush x:Key="ComboBoxBackground" Color="#FF151517"/>
-            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#FF1A1A1C"/>
-            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#FF202022"/>
-            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#FF202022"/>
-            <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="#FF151517"/>
-            <SolidColorBrush x:Key="ExpanderHeaderBackground" Color="#FF151517"/>
-            <SolidColorBrush x:Key="ExpanderContentBackground" Color="#FF151517"/>
+            <SolidColorBrush x:Key="ComboBoxBackground" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#FF16161A"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#FF1E1E22"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#FF1E1E22"/>
+            <SolidColorBrush x:Key="ComboBoxBackgroundDisabled" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="ExpanderHeaderBackground" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="ExpanderContentBackground" Color="#FF0C0C0E"/>
 <!-- Y el BOTÓN sin fondo propio: una CAPA NEUTRA, no una superficie. Darle el tono del cuadro de
                  texto —opaco— lo convertía en una cajita oscura (el reporte "los botones de abrir grupos son
                  negros"): el tono de una superficie grande no es el de un control chico. El alfa es más alto
@@ -102,10 +102,11 @@
 
 <!-- Navbar: debe vivir en un diccionario mergeado DESPUÉS de
                  XamlControlsResources (si se define solo en el raíz de App.xaml,
-                 WinUI gana con su AcrylicBrush por defecto). Mismo gris que las
-                 cards (#151517) para que toda la UI sea un solo bloque. -->
-            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF151517"/>
-            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF0C0C0E"/>
+                 WinUI gana con su AcrylicBrush por defecto). Mismo NEGRO suave que las
+                 cards (#0C0C0E) para que toda la UI sea un solo bloque; el contenido
+                 va sobre negro puro (#000000). -->
+            <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="#FF0C0C0E"/>
+            <SolidColorBrush x:Key="NavigationViewContentBackground" Color="#FF000000"/>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <Color x:Key="SystemAccentColor">#FF3D7EDB</Color>

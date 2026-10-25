@@ -57,11 +57,18 @@ public sealed class InstalledGamesService : IInstalledGamesService
     private readonly object _lock = new();
     private List<InstalledGame>? _cache;
     private Task<List<InstalledGame>>? _scanTask;
+    private int _cacheClearVersion;
 
     /// <summary>True si hay una biblioteca cacheada en memoria (no hace falta re-escannear).</summary>
     public bool HasCachedResult
     {
         get { lock (_lock) return _cache != null; }
+    }
+
+    /// <summary>Sube con cada limpieza de caché (ver <see cref="ClearCache"/>).</summary>
+    public int CacheClearVersion
+    {
+        get { lock (_lock) return _cacheClearVersion; }
     }
 
     private static readonly string CacheDir = AppPaths.RootDir;
@@ -111,6 +118,7 @@ public sealed class InstalledGamesService : IInstalledGamesService
         lock (_lock)
         {
             _cache = null;
+            _cacheClearVersion++;
         }
         try
         {

@@ -33,6 +33,12 @@ public sealed partial class ConfiguracionPage : Page
 
     private OnboardingSimulatorWindow? _onboardingSimulator;
 
+    // Selector del estilo 3D (cartucho + consola): las muestras se arman en código para
+    // que «Del tema» tome el acento vigente. _buildingCardSkin evita que reflejar la
+    // selección guardada dispare el guardado y el repintado de miniaturas.
+    private readonly Dictionary<string, (Border Ring, FontIcon Check, FontIcon? ThemeGlyph)> _cardSkinSwatches = new();
+    private bool _buildingCardSkin;
+
     // ---- Menú de navegación: pestañas del menú lateral y su clave de configuración ----
     // TCP, Debloat, Herramientas, Panel de Windows, Reparación, Windows Update y
     // Limpieza ya no son pestañas: son cards DENTRO del hub de Optimizaciones, así
@@ -103,6 +109,7 @@ public sealed partial class ConfiguracionPage : Page
         DeveloperLogsToggle.Toggled += OnDeveloperLogsToggled;
         LaunchAtStartupToggle.Toggled += OnLaunchAtStartupToggled;
         StartMinimizedToggle.Toggled += OnStartMinimizedToggled;
+        CardTiltToggle.Toggled += OnCardTiltToggled;
         // Selector 2D / 3D de las cards: toda la tarjeta es un RadioButton lookless
         // (ver LibraryStyleTile), así que el cambio llega por Checked.
         AttachPickerTileHover(LibraryStyle2DTile);
@@ -126,7 +133,13 @@ public sealed partial class ConfiguracionPage : Page
             // biblioteca en OnNavigatedTo, así que se aplica al volver.
             if (_settingsService.Get("biblioteca.cards3D", true)) LibraryStyle3DTile.IsChecked = true;
             else LibraryStyle2DTile.IsChecked = true;
+            // Inclinación de las cards 3D al pasar el mouse: activada de fábrica.
+            CardTiltToggle.IsOn = _settingsService.Get("biblioteca.cards3D.tilt", true);
+
+            // Paleta de la apariencia 3D antes de pintar las miniaturas y las muestras.
+            WHPO_UI.Controls.CardSkin.Refresh();
             PaintLibraryStylePreviews();
+            BuildCardSkinPicker();
 
             // Pestaña Apariencia: los controles reflejan el ajuste VIGENTE (el que tienen
             // puesto las superficies ahora mismo), no el guardado en disco: ese se escribe
@@ -237,6 +250,10 @@ public sealed partial class ConfiguracionPage : Page
         }
 
         ThemePickerUi.MarkSelected(theme);
+        // Cada apariencia estrena su estilo de cartuchos y consola: si el usuario había
+        // fijado un color propio, se vuelve a «Del tema» para que acompañe al tema nuevo
+        // en vez de arrastrar el plástico de la apariencia anterior.
+        WHPO_UI.Controls.CardSkin.ResetToTheme();
         _themeService.SetTheme(theme);
         App.MainWindowInstance?.RestartForThemeChange();
     }
@@ -347,9 +364,185 @@ public sealed partial class ConfiguracionPage : Page
             LibraryStyleCheck2D.Visibility = threeD ? Visibility.Collapsed : Visibility.Visible;
         if (LibraryStyleCheck3D != null)
             LibraryStyleCheck3D.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
+        // El color de carcasa solo tiene sentido con cartuchos: en 2D no hay qué teñir.
+        if (CardSkinCard != null)
+            CardSkinCard.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
         if (_isLoading) return;
         _settingsService.Set("biblioteca.cards3D", threeD);
         _settingsService.Save();
+    }
+
+    /// <summary>
+    /// Arma el selector de estilo 3D: una muestra por preset de CardSkin, con el color
+    /// real del plástico y la etiqueta ya traducida por I18n.
+    /// Se rearma al cambiar de idioma; la selección vigente se refleja sin guardar nada.
+    /// </summary>
+    private void BuildCardSkinPicker()
+    {
+        if (CardSkinHost == null) return;
+        WHPO_UI.Controls.CardSkin.Refresh();
+        _buildingCardSkin = true;
+        try
+        {
+            CardSkinHost.Children.Clear();
+            _cardSkinSwatches.Clear();
+            string current = WHPO_UI.Controls.CardSkin.CurrentId;
+
+            foreach (var option in WHPO_UI.Controls.CardSkin.Options)
+            {
+                // «Del tema» no es una muestra de color: es el atajo para volver a la
+                // apariencia de la app. Va más grande y con el glifo de restaurar.
+                bool isTheme = string.Equals(option.Id, WHPO_UI.Controls.CardSkin.ThemeId,
+                    StringComparison.OrdinalIgnoreCase);
+
+                // «Del tema» no es una muestra de color: es el glifo de restaurar, MÁS
+                // GRANDE que los demás y sin círculo de fondo. La selección se marca con
+                // el glifo en acento, no con un aro alrededor.
+                FontIcon? themeGlyph = null;
+                var dot = new Grid { Width = 44, Height = 44 };
+                Border ring;
+                if (isTheme)
+                {
+                    themeGlyph = new FontIcon
+                    {
+                        Glyph = "\uE7A7", FontSize = 36,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = WHPO_UI.ThemeBrushes.Get("PrimaryTextBrush")
+                    };
+                    if (Application.Current.Resources.TryGetValue("SymbolThemeFontFamily", out var symbolFont)
+                        && symbolFont is FontFamily family)
+                        themeGlyph.FontFamily = family;
+                    dot.Children.Add(themeGlyph);
+                    // Solo rellena el contrato del diccionario: no se agrega al árbol visual.
+                    ring = new Border { Width = 44, Height = 44, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+                }
+                else
+                {
+                    const double ringSize = 30;
+                    ring = new Border
+                    {
+                        Width = ringSize, Height = ringSize, CornerRadius = new CornerRadius(ringSize * 0.5),
+                        Background = new SolidColorBrush(option.Color is { } fixedColor
+                            ? WHPO_UI.Controls.CardSkin.ToUi(fixedColor)
+                            : WHPO_UI.Controls.CardSkin.Current.Swatch),
+                        BorderThickness = new Thickness(2),
+                        // Aro de la grilla del tema: mantiene visible una muestra blanca o negra
+                        // sobre un fondo parecido. El elegido lo pasa a acento en UpdateCardSkinSelection.
+                        BorderBrush = WHPO_UI.ThemeBrushes.Get("SensorGridLineBrush")
+                    };
+                    dot.Children.Add(ring);
+                }
+
+                // El tilde va en negro o blanco según el brillo de la muestra, para que se lea
+                // tanto en el blanco como en el negro. En «Del tema» no se usa: la selección
+                // la marca el propio glifo en acento.
+                var check = new FontIcon
+                {
+                    Glyph = "\uE73E",
+                    FontSize = 12,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = new SolidColorBrush(option.Color is { } checkColor
+                        && (0.299 * checkColor.R + 0.587 * checkColor.G + 0.114 * checkColor.B) <= 150
+                            ? Windows.UI.Color.FromArgb(255, 255, 255, 255)
+                            : Windows.UI.Color.FromArgb(255, 24, 26, 30)),
+                    Visibility = Visibility.Collapsed
+                };
+                dot.Children.Add(check);
+                var label = new TextBlock
+                {
+                    // Traducida al armar: el contenido de un RadioButton no está en el
+                    // árbol visual hasta que se aplica la plantilla, y el walker de I18n
+                    // no lo alcanzaría. Al cambiar de idioma se rearma el selector.
+                    Text = I18n.T(option.Label),
+                    FontSize = 11,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    TextAlignment = TextAlignment.Center,
+                    Foreground = WHPO_UI.ThemeBrushes.Get("SecondaryTextBrush")
+                };
+
+                var swatch = new RadioButton
+                {
+                    Style = (Style)Resources["CardSkinSwatch"],
+                    GroupName = "CardSkinPreset",
+                    Tag = option.Id,
+                    Content = new StackPanel { Spacing = 4, Children = { dot, label } },
+                    IsChecked = string.Equals(option.Id, current, StringComparison.OrdinalIgnoreCase)
+                };
+                swatch.Checked += CardSkinTile_Checked;
+
+                CardSkinHost.Children.Add(swatch);
+                _cardSkinSwatches[option.Id] = (ring, check, themeGlyph);
+            }
+        }
+        finally
+        {
+            _buildingCardSkin = false;
+        }
+
+        UpdateCardSkinSelection();
+    }
+
+    /// <summary>Marca la muestra del preset vigente con el aro de acento y el tilde.</summary>
+    private void UpdateCardSkinSelection()
+    {
+        string current = WHPO_UI.Controls.CardSkin.CurrentId;
+        foreach (var (id, parts) in _cardSkinSwatches)
+        {
+            bool selected = string.Equals(id, current, StringComparison.OrdinalIgnoreCase);
+            bool isTheme = string.Equals(id, WHPO_UI.Controls.CardSkin.ThemeId, StringComparison.OrdinalIgnoreCase);
+
+            // El glifo de restaurar no lleva círculo: se tiñe de acento cuando es el elegido.
+            if (isTheme)
+            {
+                if (parts.ThemeGlyph is { } glyph)
+                    glyph.Foreground = selected
+                        ? WHPO_UI.ThemeBrushes.Get("AccentBrush")
+                        : WHPO_UI.ThemeBrushes.Get("PrimaryTextBrush");
+                parts.Check.Visibility = Visibility.Collapsed;
+                continue;
+            }
+
+            parts.Ring.BorderBrush = selected
+                ? WHPO_UI.ThemeBrushes.Get("AccentBrush")
+                : WHPO_UI.ThemeBrushes.Get("SensorGridLineBrush");
+            parts.Check.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// Inclinación de las cards 3D al pasar el mouse. La biblioteca relee el ajuste en
+    /// cada visita y se lo pasa a las CartridgeTile nuevas; el asiento del dock queda
+    /// clavado igual (ahí el tilt está desactivado a propósito).
+    /// </summary>
+    private void OnCardTiltToggled(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading) return;
+        _settingsService.Set("biblioteca.cards3D.tilt", CardTiltToggle.IsOn);
+        _settingsService.Save();
+    }
+
+    /// <summary>
+    /// Elige el color de carcasa de los cartuchos 3D y de la consola del pie. Se guarda al
+    /// instante ("biblioteca.cards3D.skin") y la biblioteca lo toma al volver, igual que el
+    /// selector 2D/3D. La miniatura del cartucho y la de la consola se repintan acá mismo.
+    /// </summary>
+    private void CardSkinTile_Checked(object sender, RoutedEventArgs e)
+    {
+        if (_buildingCardSkin) return;
+        if (sender is not RadioButton { Tag: string id }) return;
+
+        if (!string.Equals(WHPO_UI.Controls.CardSkin.CurrentId, id, StringComparison.OrdinalIgnoreCase))
+        {
+            _settingsService.Set(WHPO_UI.Controls.CardSkin.SettingKey, id);
+            _settingsService.Save();
+            WHPO_UI.Controls.CardSkin.Refresh();
+        }
+
+        UpdateCardSkinSelection();
+        _sampleCartridge = null;
+        PaintLibraryStylePreviews();
     }
 
     /// <summary>Hover de las tarjetas del selector: levante de 1,5 % como en el selector de temas.</summary>
@@ -391,7 +584,24 @@ public sealed partial class ConfiguracionPage : Page
                 };
             }
 
-            if (_sampleCartridge == null)
+            // La consola de la miniatura usa la MISMA paleta que el dock real: al cambiar
+            // de carcasa, la muestra de 3D cuenta el color que va a tener la biblioteca.
+            var skin = WHPO_UI.Controls.CardSkin.Current;
+            if (LibraryStyle3DDock != null)
+            {
+                LibraryStyle3DDock.Background = new LinearGradientBrush
+                {
+                    StartPoint = new Windows.Foundation.Point(0, 0),
+                    EndPoint = new Windows.Foundation.Point(0, 1),
+                    GradientStops =
+                    {
+                        new GradientStop { Color = WHPO_UI.Controls.CardSkin.ToUi(skin.Light(0.15f)), Offset = 0 },
+                        new GradientStop { Color = WHPO_UI.Controls.CardSkin.ToUi(skin.Dark(0.55f)), Offset = 1 }
+                    }
+                };
+            }
+
+            if (_sampleCartridge == null || !string.Equals(_sampleSkinKey, skin.Key, StringComparison.Ordinal))
             {
                 byte[] png = WHPO_UI.Controls.CartridgeModel.PaintSampleFacePng(192, 281);
                 using var stream = new MemoryStream(png);
@@ -400,8 +610,10 @@ public sealed partial class ConfiguracionPage : Page
                 var image = new BitmapImage();
                 image.SetSource(ras);
                 _sampleCartridge = image;
+                _sampleSkinKey = skin.Key;
             }
             LibraryStyle3DPreview.Source = _sampleCartridge;
+            PaintCardSkinStage(_sampleCartridge);
         }
         catch (Exception ex)
         {
@@ -409,8 +621,23 @@ public sealed partial class ConfiguracionPage : Page
         }
     }
 
-    /// <summary>Cara de muestra del cartucho (PNG ya decodificado), compartida entre visitas.</summary>
+    /// <summary>
+    /// Vista previa de la apariencia 3D: no es un dibujo aparte. La card es la MISMA cara
+    /// de muestra de la biblioteca y la consola la arma CartridgeDock con su chasis, su
+    /// puerto, su labio y su LED reales, con el plástico vigente de CardSkin. Se rehace al
+    /// elegir cada muestra (y al cargar la página) para que el color cambie en vivo.
+    /// </summary>
+    private void PaintCardSkinStage(ImageSource? sample)
+    {
+        if (CardSkinStageHost == null) return;
+        CardSkinStageHost.Content = WHPO_UI.Controls.CartridgeDock.CreateAppearancePreview(
+            sample, previewHeight: 320);
+    }
+
+    /// <summary>Cara de muestra del cartucho (PNG ya decodificado), compartida entre visitas.
+    /// Se repinta cuando cambia la paleta de la apariencia 3D (ver _sampleSkinKey).</summary>
     private static BitmapImage? _sampleCartridge;
+    private static string? _sampleSkinKey;
 
     private void OnDeveloperLogsToggled(object sender, RoutedEventArgs e)
     {
@@ -920,6 +1147,8 @@ public sealed partial class ConfiguracionPage : Page
         // La grilla de temas se etiqueta al armarla (I18n.T en cada card): se rearma para que los
         // nombres y los encabezados de grupo queden en el idioma nuevo.
         ThemePickerUi.Relabel(_themeService.CurrentTheme);
+        // Las etiquetas de las muestras de carcasa se arman en código: se rearman traducidas.
+        BuildCardSkinPicker();
         UpdateDeveloperLogsSize();
     }
 

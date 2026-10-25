@@ -73,6 +73,13 @@ public interface IInstalledGamesService
     /// <summary>¿Ya hay un resultado en caché (para no mostrar el skeleton de carga)?</summary>
     bool HasCachedResult { get; }
 
+    /// <summary>
+    /// Versión que cambia cada vez que se limpia la caché. La biblioteca la compara
+    /// con la última que vio para mostrar el skeleton y re-escanear aunque otra
+    /// consulta (bandeja, procesos) haya vuelto a llenar la caché en el medio.
+    /// </summary>
+    int CacheClearVersion { get; }
+
     /// <summary>Borra la caché de juegos instalados (memoria + archivo en disco): la próxima consulta re-escanea los launchers.</summary>
     void ClearCache();
 }

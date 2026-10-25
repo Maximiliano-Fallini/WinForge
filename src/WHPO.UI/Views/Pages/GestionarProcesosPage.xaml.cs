@@ -18,6 +18,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Polygon = Microsoft.UI.Xaml.Shapes.Polygon;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using WHPO.Core.Services;
@@ -49,6 +50,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // Estilo de las cards de la biblioteca: false = vanilla (banners planos, lo de
     // siempre), true = 3D (cartuchos con profundidad, estilo Carthage). Persistido.
     private bool _cards3D;
+    // Inclinación de las cards 3D al hover (Configuración → Apariencia). Activada de
+    // fábrica; se relee en cada visita porque la página queda en caché.
+    private bool _cards3DTilt = true;
     // ===== Modo 3D (modelo de cartucho) =====
     // Alto del cartucho por unidad de ancho (relación 1,4 del propio modelo): la card
     // 3D es vertical y el objeto entra completo, sin deformarse.
@@ -112,8 +116,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // biblioteca (como los juegos reales) mientras se escanea. El pulso replica el
     // patrón de SistemaPage: un Storyboard suave (1.0 → 0.35 en 900 ms, auto-reverse)
     // por bloque de cada card, y un mínimo visible para que el efecto se aprecie.
-    private readonly List<(Border Card, Border Banner, Border[] Blocks)> _skeletonCards = new();
+    private readonly List<(Border Card, FrameworkElement Body, FrameworkElement[] Blocks)> _skeletonCards = new();
     private readonly List<Storyboard> _skeletonStoryboards = new();
+    // Columnas con las que se acomodaron las filas del skeleton y modo (2D/3D) con el
+    // que se construyeron: si cambia el ancho o el estilo, se reflujan/reconstruyen.
+    private int _skeletonGridCols;
+    private bool _skeletonCards3D;
+    // Última versión de caché vista: limpiar la caché desde Configuración la cambia
+    // y la próxima visita fuerza skeleton + re-escaneo, aunque otro servicio ya la
+    // haya vuelto a llenar mientras tanto.
+    private int _seenCacheClearVersion;
     private bool _skeletonActive;
     private long _skeletonShownAtMs;
     private const int MinSkeletonVisibleMs = 550;
@@ -173,6 +185,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // hace Clear()+Add del host (la card parpadea: aparece y desaparece). Con el
     // flag se colapsa todo en UN solo rebuild por tick del dispatcher.
     private bool _dockUpdatePending;
+    // Paleta con la que se armó el dock VIVO: si Apariencia cambia el color de la
+    // carcasa, el early-out de GameBoostCardSettledInDock tiene que dejar de saltear
+    // el rebuild (si no, la consola se quedaría con el plástico viejo).
+    private string? _dockSkinKey;
     // Generación de navegación: invalida el dispatcher diferido de una visita
     // anterior (OnNavigatedFrom la incrementa). Sin esto, el callback diferido
     // de la visita N podía reconstruir el dock durante la visita N+1 y pisar el
@@ -276,6 +292,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // Apariencia (el header de la biblioteca ya no tiene switch) y se relee acá en
         // cada visita: por defecto, cartuchos 3D.
         _cards3D = _settings.Get("biblioteca.cards3D", true);
+        _cards3DTilt = _settings.Get("biblioteca.cards3D.tilt", true);
+        // Paleta de la apariencia 3D (cartucho + consola): se refresca acá, en la UI,
+        // porque el acento del tema vive en recursos de XAML y los pintores corren en
+        // segundo plano. Al volver de Configuración → Apariencia ya toma el color nuevo.
+        CardSkin.Refresh();
         // UN solo rebuild coalescado por visita: RequestCartridgeDockUpdate hace
         // early-out solo si la card ya vive en el dock armado
         // (GameBoostCardSettledInDock). La generación invalida el callback
@@ -293,8 +314,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         // La biblioteca viene cacheada (InstalledGamesService): la primera vez se
         // escanea y se guarda, y las siguientes aperturas la leen sin re-escannear.
-        // El skeleton cubre solo la primera carga real (cuando todavía no hay caché).
-        _ = RefreshAsync(showSkeleton: !_installedGamesService.HasCachedResult);
+        // El skeleton cubre la primera carga real (sin caché) y también la visita
+        // posterior a "Limpiar caché": esa operación sube CacheClearVersion, así que
+        // aunque otro servicio haya repoblado la caché en el medio, se vuelve a
+        // escanear y se muestra el skeleton.
+        int cacheClearVersion = _installedGamesService.CacheClearVersion;
+        bool cacheCleared = cacheClearVersion != _seenCacheClearVersion;
+        _seenCacheClearVersion = cacheClearVersion;
+        _ = RefreshAsync(
+            showSkeleton: cacheCleared || !_installedGamesService.HasCachedResult,
+            refreshCache: cacheCleared);
         I18n.LanguageChanged += OnLanguageChanged;
         // Estado en vivo de los juegos (badge "En ejecución"): los eventos WMI
         // publican un snapshot sin polling; acá solo se refleja en las cards.
@@ -3369,6 +3398,17 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             StatusText.Visibility = Visibility.Visible;
             InstalledCountText.Visibility = Visibility.Collapsed;
             _counterStatusVisible = false;
+            // El skeleton reemplazó la grilla anterior: si el escaneo falla no se
+            // puede dejar la biblioteca en blanco. Se reconstruye con la última
+            // lista conocida (y el estado vacío si tampoco había juegos).
+            if (showSkeleton)
+            {
+                try { RebuildCards(); }
+                catch (Exception rebuildEx)
+                {
+                    _loggingService.LogWarning($"GestionarProcesosPage: restaurar grilla tras fallo de escaneo: {rebuildEx.Message}");
+                }
+            }
         }
         finally
         {
@@ -3462,45 +3502,91 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         if (_skeletonActive) return;
         _skeletonActive = true;
         _skeletonShownAtMs = Environment.TickCount64;
-        int per = GridColumns;
+
+        // La página queda cacheada: al limpiar la caché desde Configuración y volver,
+        // la grilla todavía tiene las cards de la visita anterior. El skeleton tiene
+        // que REEMPLAZARLAS; si solo se agrega al final del LibraryPanel queda debajo
+        // de todas las cards, fuera de vista, y la carga no se percibe. Se limpia lo
+        // mismo que limpia RebuildCards antes de armar la grilla nueva.
+        if (LibraryPanel.Children.Count > 0)
+        {
+            CancelCartridgeDragImmediate();
+            _cartridgeVisuals.Clear();
+            LibraryPanel.Children.Clear();
+            _cards.Clear();
+            _wrapSectionGroups.Clear();
+            _launcherButtons.Clear();
+            _gameLaunchButtons.Clear();
+            _orderedLibraryGames.Clear();
+            _skeletonPanel = null;
+        }
+        EmptyStatePanel.Visibility = Visibility.Collapsed;
+
+        // Si se guardó entre corridas con el otro estilo de card, la silueta y el
+        // alto ya no sirven: se descarta y se reconstruye con el modo actual.
+        if (_skeletonCards.Count > 0 && _skeletonCards3D != _cards3D)
+        {
+            foreach (var (card, _, _) in _skeletonCards)
+                if (card.Parent is Panel parent)
+                    parent.Children.Remove(card);
+            _skeletonCards.Clear();
+        }
+
         if (_skeletonCards.Count == 0)
         {
-            _skeletonPanel = new StackPanel { Spacing = 12 };
-            LibraryPanel.Children.Add(_skeletonPanel);
-            var row1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-            var row2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-            _skeletonPanel.Children.Add(row1);
-            _skeletonPanel.Children.Add(row2);
-            for (int i = 0; i < 6; i++)
+            _skeletonCards3D = _cards3D;
+            // Dos filas completas con las columnas REALES de la vista: 5 en modo 3D
+            // y 3 en clásico. Antes eran siempre 3 placeholders por fila, así que
+            // en 3D la primera fila ocupaba solo 3/5 del ancho y no coincidía con
+            // la grilla de cartuchos.
+            int count = Math.Clamp(GetEffectiveColumns() * 2, 6, 12);
+            for (int i = 0; i < count; i++)
             {
-                var (card, banner, blocks) = BuildSkeletonCard();
-                _skeletonCards.Add((card, banner, blocks));
-                (i < per ? row1 : row2).Children.Add(card);
+                var (card, body, blocks) = BuildSkeletonCard(_cards3D);
+                _skeletonCards.Add((card, body, blocks));
             }
         }
-        else if (_skeletonPanel == null)
+
+        if (_skeletonPanel == null)
         {
             // Re-mostrar skeletons ya construidos (el panel se limpió en RebuildCards).
-            _skeletonPanel = new StackPanel { Spacing = 12 };
+            _skeletonPanel = new StackPanel { Spacing = GridCardSpacing };
             LibraryPanel.Children.Add(_skeletonPanel);
-            var row1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-            var row2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-            _skeletonPanel.Children.Add(row1);
-            _skeletonPanel.Children.Add(row2);
-            for (int i = 0; i < _skeletonCards.Count; i++)
-            {
-                // Las cards se guardan entre corridas (no se vuelven a construir), así que
-                // hay que desengancharlas de la fila a la que pertenecían antes de
-                // re-colgarlas: sin esto el árbol tira "Element is already the child of
-                // another element" y el re-escaneo se lleva puesta la app.
-                var card = _skeletonCards[i].Card;
-                if (card.Parent is Panel previous)
-                    previous.Children.Remove(card);
-                (i < per ? row1 : row2).Children.Add(card);
-            }
         }
+        // Mismo espaciado y mismas columnas que la grilla real. ReflowSkeleton
+        // desengancha las cards de su fila anterior antes de re-colgarlas: sin eso
+        // el árbol tira "Element is already the child of another element".
+        ReflowSkeleton(GetEffectiveColumns());
         UpdateCardWidth();
         StartSkeletonPulse();
+    }
+
+    /// <summary>
+    /// Acomoda las cards del skeleton en filas de N columnas, igual que
+    /// <see cref="ReflowWrapSection"/>. Se llama al mostrarlo y cada vez que cambia
+    /// el ancho disponible (la cantidad de columnas puede cambiar al maximizar).
+    /// </summary>
+    private void ReflowSkeleton(int perRow)
+    {
+        if (_skeletonPanel == null) return;
+        perRow = Math.Max(1, perRow);
+        _skeletonGridCols = perRow;
+        foreach (var child in _skeletonPanel.Children)
+            if (child is Panel oldRow)
+                oldRow.Children.Clear();
+        _skeletonPanel.Children.Clear();
+        for (int i = 0; i < _skeletonCards.Count; i += perRow)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = GridCardSpacing };
+            for (int j = i; j < Math.Min(i + perRow, _skeletonCards.Count); j++)
+            {
+                var card = _skeletonCards[j].Card;
+                if (card.Parent is Panel previous)
+                    previous.Children.Remove(card);
+                row.Children.Add(card);
+            }
+            _skeletonPanel.Children.Add(row);
+        }
     }
 
     private void HideSkeleton()
@@ -3575,17 +3661,113 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// Card placeholder del skeleton, espejo de la card real (estilo GearUpBooster):
-    /// la card es SOLO el banner panorámico (460:215) con el título al pie (los botones de acción
-    /// viven en el overlay al hover, no hay botón fijo debajo). El skeleton replica
-    /// esa geometría: banner redondeado en las 4 esquinas + barra de título simulada
-    /// al pie. UpdateCardWidth lo dimensiona igual que a las cards reales.
+    /// Card placeholder del skeleton, espejo de la card real. En 2D replica el banner
+    /// panorámico (460:215) con la barra de título al pie; en 3D replica el CARTUCHO:
+    /// misma silueta con esquinas redondeadas y muescas, mismo padding de 4 px y misma
+    /// relación de alto (600×878) que la card real. UpdateCardWidth le da el tamaño
+    /// exacto de la grilla.
     /// </summary>
-    private static (Border Card, Border Banner, Border[] Blocks) BuildSkeletonCard()
+    private static (Border Card, FrameworkElement Body, FrameworkElement[] Blocks) BuildSkeletonCard(bool cards3D)
     {
         // Mismo pincel que los bloques del skeleton de SistemaPage
         // (ControlFillColorSecondaryBrush): el gris clásico de carga.
         var skeletonBrush = ThemeBrushes.Get("ControlFillColorSecondaryBrush");
+
+        if (cards3D)
+        {
+            // Silueta idéntica a la del cartucho real: esquinas de 36/600 y muescas
+            // laterales. El Polygon se recalcula en SizeChanged, así el contorno
+            // acompaña cualquier ancho de columna.
+            var shell = new Polygon
+            {
+                Fill = skeletonBrush,
+                IsHitTestVisible = false
+            };
+            // Pozo oscuro de la etiqueta: el mismo contraste que el arte real sobre
+            // el plástico, para que el placeholder se lea como cartucho y no como
+            // un rectángulo gris.
+            var sticker = new Grid { Margin = new Thickness(14, 16, 14, 24) };
+            var well = new Border
+            {
+                Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
+                CornerRadius = new CornerRadius(10),
+                Opacity = 0.92
+            };
+            Grid.SetRowSpan(well, 3);
+            sticker.Children.Add(well);
+            sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.22, GridUnitType.Star) });
+            sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.16, GridUnitType.Star) });
+
+            var header = new Border
+            {
+                Background = skeletonBrush,
+                CornerRadius = new CornerRadius(5),
+                Margin = new Thickness(7, 7, 7, 5)
+            };
+            var art = new Border
+            {
+                Background = skeletonBrush,
+                CornerRadius = new CornerRadius(8),
+                Margin = new Thickness(7, 3, 7, 3)
+            };
+            var code = new Border
+            {
+                Background = skeletonBrush,
+                Width = 56,
+                Height = 6,
+                CornerRadius = new CornerRadius(3),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetRow(header, 0);
+            Grid.SetRow(art, 1);
+            Grid.SetRow(code, 2);
+            sticker.Children.Add(header);
+            sticker.Children.Add(art);
+            sticker.Children.Add(code);
+
+            // Pestaña superior hundida, el mismo detalle del cartucho real.
+            var tab = new Border
+            {
+                Width = 22,
+                Height = 4,
+                CornerRadius = new CornerRadius(2),
+                Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            var body = new Grid
+            {
+                // Tamaño intrínseco para la primera apertura; UpdateCardWidth lo
+                // ajusta a (ancho de card - 8) × Aspect, igual que el cartucho real.
+                Height = 260
+            };
+            body.Children.Add(shell);
+            body.Children.Add(sticker);
+            body.Children.Add(tab);
+            body.SizeChanged += (_, e) =>
+                shell.Points = CartridgeTile.BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height);
+
+            var card3D = new Border
+            {
+                // Mismo chasis que BuildGameCard3D: 4 px de padding y fondo
+                // transparente; el volumen y la forma los da la silueta.
+                Padding = new Thickness(4),
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                CornerRadius = new CornerRadius(10),
+                Tag = "no-reveal",
+                Margin = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Child = body
+            };
+            // El chasis queda fijo y los bloques internos pulsan: el placeholder no
+            // pierde su forma de cartucho durante la animación.
+            return (card3D, body, new FrameworkElement[] { header, art, code });
+        }
+
         var banner = new Border
         {
             Background = skeletonBrush,
@@ -3618,15 +3800,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // "no-reveal": excluye la card del efecto reveal global (RevealEffect);
             // los juegos ya tienen su propio hover (elevación + overlay de lanzar).
             Tag = "no-reveal",
-            // Sin margin: el Spacing de los StackPanel (horizontal y vertical)
-            // maneja todo el espaciado para que sea uniforme (12 px) en ambas
-            // direcciones, entre cards de la misma fila y entre filas.
             Margin = new Thickness(0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = bannerGrid
         };
         // Los bloques animables: banner y barra de título (cada uno con su pulso).
-        return (card, banner, new[] { banner, titleBar });
+        return (card, banner, new FrameworkElement[] { banner, titleBar });
     }
 
     // Re-detectar: re-escanea los launchers a propósito y actualiza la caché
@@ -4933,6 +5112,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         var tile = new CartridgeTile(name, launcher)
         {
+            GameExe = exe,
+            HoverTiltEnabled = _cards3DTilt,
             CoordinateRoot = RootGrid,
             CanInteract = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
                 && !string.Equals(_connectedCartridge?.Exe, exe, StringComparison.OrdinalIgnoreCase)
@@ -4961,13 +5142,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // Sin tooltip en las cards 3D: el cartel al hover se pidió quitar.
 
         // Renderiza y cachea la imagen completa del cartucho (con banner/ícono cuando esté listo)
-        _ = LoadCartridgeGridImageAsync(tile.Artwork, game, name, launcher, code, iconPath2);
+        _ = LoadCartridgeGridImageAsync(tile.Artwork, game, name, launcher, code, iconPath2, exe);
 
         _cards.Add((card, tile));
         return card;
     }
 
-    private static string GridShellCacheDir => Path.Combine(WHPO.Core.AppPaths.RootDir, "cartshells-v7");
+    private static string GridShellCacheDir => Path.Combine(WHPO.Core.AppPaths.RootDir, "cartshells-v8");
 
     /// <summary>
     /// Asegura el archivo de arte (banner de Steam/Epic o ícono del ejecutable) y
@@ -4975,14 +5156,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// en segundo plano, guardándola en caché para que la grilla cargue al instante.
     /// </summary>
     private async Task LoadCartridgeGridImageAsync(
-        Image target, InstalledGame? game, string title, string launcher, string code, string? iconPath)
+        Image target, InstalledGame? game, string title, string launcher, string code, string? iconPath, string exe)
     {
         try
         {
             // Publish a solid cartridge FIRST. Network art must never gate the shell.
-            string? localArt = ResolveBannerFile(game, iconPath);
+            string? localArt = ResolveBannerFile(game, iconPath, exe);
             await PaintAndLoadAsync(localArt);
-            string? artFile = await EnsureGameArtFileAsync(game, iconPath);
+            string? artFile = await EnsureGameArtFileAsync(game, iconPath, exe);
             if (!string.Equals(artFile, localArt, StringComparison.OrdinalIgnoreCase))
                 await PaintAndLoadAsync(artFile);
         }
@@ -4999,7 +5180,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 var fi = new FileInfo(artFile);
                 stamp = $"{Path.GetFileName(artFile)}-{fi.Length}-{fi.LastWriteTimeUtc.Ticks}";
             }
-            string hash = HashString($"v7|{title}|{launcher}|{code}|{stamp}");
+            GameHeader header = GameLook.Header(exe);
+            string hash = HashString($"v8|{title}|{launcher}|{code}|{stamp}|{CardSkin.Current.Key}|{header.Signature}");
             string cachedPng = Path.Combine(GridShellCacheDir, $"shell-{hash}.png");
 
             if (!File.Exists(cachedPng) || !IsValidImageFile(cachedPng))
@@ -5008,7 +5190,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 {
                     Directory.CreateDirectory(GridShellCacheDir);
                     var plastic = CartridgeModel.PlasticColor(title, artFile);
-                    using var bmp = CartridgeModel.PaintFace(title, launcher, code, artFile, plastic, flat: false);
+                    using var bmp = CartridgeModel.PaintFace(title, launcher, code, artFile, plastic, flat: false, header: header);
                     string temp = cachedPng + "." + Guid.NewGuid().ToString("N") + ".tmp";
                     try
                     {
@@ -5038,10 +5220,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// banner del catálogo de Epic o ícono extraído del ejecutable) para alimentar tanto
     /// el cartucho de la grilla como el modelo 3D.
     /// </summary>
-    private static async Task<string?> EnsureGameArtFileAsync(InstalledGame? game, string? exePath)
+    private static async Task<string?> EnsureGameArtFileAsync(InstalledGame? game, string? exePath, string? exe = null)
     {
         try
         {
+            // La carátula propia manda sobre el banner de la tienda y el ícono del exe.
+            string? custom = GameLook.CustomArt(exe ?? game?.ExeFileName
+                ?? (string.IsNullOrWhiteSpace(exePath) ? null : Path.GetFileName(exePath)));
+            if (custom != null) return custom;
+
             if (game != null && !string.IsNullOrEmpty(game.AppId))
             {
                 if (!string.IsNullOrEmpty(game.BannerUrl))
@@ -5156,7 +5343,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             }
         }
         catch { }
-        return ResolveBannerFile(game, exePath);
+        return ResolveBannerFile(game, exePath, exe);
     }
 
     /// <summary>
@@ -5234,10 +5421,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// Devuelve null si todavía no hay banner en disco (el cartucho muestra el plástico).
     /// Misma convención que LoadBannerAsync/LoadEpicBannerAsync.
     /// </summary>
-    private static string? ResolveBannerFile(InstalledGame? game, string? exePath = null)
+    private static string? ResolveBannerFile(InstalledGame? game, string? exePath = null, string? exe = null)
     {
         try
         {
+            // Carátula elegida por el usuario: se resuelve antes que cualquier arte de tienda.
+            string? custom = GameLook.CustomArt(exe ?? game?.ExeFileName
+                ?? (string.IsNullOrWhiteSpace(exePath) ? null : Path.GetFileName(exePath)));
+            if (custom != null) return custom;
+
             if (game != null)
             {
                 if (!string.IsNullOrEmpty(game.BannerUrl) && !string.IsNullOrEmpty(game.AppId))
@@ -6236,6 +6428,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         if (CartridgeDockHost.Children.Count == 0) return false;
         if (CartridgeDockHost.Visibility != Visibility.Visible) return false;
         if (GameBoostCard.Parent == HeaderPanel) return false;
+        if (!string.Equals(_dockSkinKey, CardSkin.Current.Key, StringComparison.Ordinal)) return false;
         return GameBoostCardInLiveTree();
     }
 
@@ -6500,6 +6693,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // al header.
         CartridgeDockHost.Children.Clear();
         CartridgeDockHost.Children.Add(dockLayout);
+        _dockSkinKey = CardSkin.Current.Key;
         // Estado vigente de la regla en el texto del footer (si hay una partida
         // con regla enganchada, manda ese mensaje sobre el texto base).
         UpdateDockStatusText();
@@ -6554,18 +6748,18 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             HorizontalAlignment = HorizontalAlignment.Center
         };
         cartridge.Logger = m => _loggingService.LogInfo($"Cartridge3D[{name}]: {m}");
-        string? initialCover = ResolveBannerFile(game, iconPath);
-        cartridge.SetCard(name, launcherDetalle, code, initialCover);
+        string? initialCover = ResolveBannerFile(game, iconPath, exe);
+        cartridge.SetCard(name, launcherDetalle, code, initialCover, header: GameLook.Header(exe));
         // Entrada con giro: el cartucho se pone en su lugar girando 180° (dorso → frente).
         cartridge.PlayIntro();
         // Si el arte todavía no estaba descargado en disco, asegurarlo y refrescar el 3D
         _ = Task.Run(async () =>
         {
-            string? ensured = await EnsureGameArtFileAsync(game, iconPath);
+            string? ensured = await EnsureGameArtFileAsync(game, iconPath, exe);
             if (!string.IsNullOrEmpty(ensured) && ensured != initialCover)
             {
                 DispatcherQueue.TryEnqueue(() =>
-                    cartridge.SetCard(name, launcherDetalle, code, ensured));
+                    cartridge.SetCard(name, launcherDetalle, code, ensured, header: GameLook.Header(exe)));
             }
         });
 
@@ -6575,8 +6769,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Padding = new Thickness(12, 6, 12, 6),
             HorizontalAlignment = HorizontalAlignment.Center,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 0, 0, 0)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(55, 255, 255, 255)),
-            BorderThickness = new Thickness(1),
+            // Sin reborde claro, igual que el resto de botones de la inspección 3D.
+            BorderThickness = new Thickness(0),
             Content = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
@@ -6716,8 +6910,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Height = 42,
             CornerRadius = new CornerRadius(8),
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(90, 0, 0, 0)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(50, 255, 255, 255)),
-            BorderThickness = new Thickness(1)
+            // Sin reborde, igual que los botones de carátula y etiqueta.
+            BorderThickness = new Thickness(0)
         };
         ToolTipService.SetToolTip(favBtn, I18n.T(fav ? "Quitar de favoritos" : "Marcar como favorito"));
         favBtn.Click += (s, e) =>
@@ -6747,6 +6941,128 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Visibility = Visibility.Collapsed,
             TextWrapping = TextWrapping.Wrap
         };
+
+        // ── Personalización del cartucho: carátula propia y encabezado de la etiqueta ──
+        // Se guarda por ejecutable (GameLook) y se aplica a la card de la grilla, al 3D
+        // de la inspección y al cartucho conectado en el dock.
+        Button BuildLookButton(string glyph, string label, string tooltip)
+        {
+            var button = new Button
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 7, 10, 7),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(70, 0, 0, 0)),
+                // Sin reborde: el contorno claro de 1 px se leía como un borde blanco
+                // sobre el panel oscuro de la inspección.
+                BorderThickness = new Thickness(0),
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children =
+                    {
+                        new FontIcon { Glyph = glyph, FontSize = 13 },
+                        new TextBlock
+                        {
+                            Text = I18n.T(label), FontSize = 12,
+                            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                        }
+                    }
+                }
+            };
+            ApplyCardButtonHover(button, accent: false);
+            ToolTipService.SetToolTip(button, I18n.T(tooltip));
+            return button;
+        }
+
+        async Task RefreshLookAsync()
+        {
+            string? art = GameLook.CustomArt(exe)
+                ?? await EnsureGameArtFileAsync(game, iconPath, exe)
+                ?? ResolveBannerFile(game, iconPath, exe);
+            cartridge.SetCard(name, launcherDetalle, code, art, header: GameLook.Header(exe));
+
+            var tile = _cards
+                .Select(c => c.Body)
+                .OfType<CartridgeTile>()
+                .FirstOrDefault(t => string.Equals(t.GameExe, exe, StringComparison.OrdinalIgnoreCase));
+            if (tile == null) return;
+
+            await LoadCartridgeGridImageAsync(tile.Artwork, game, name, launcherDetalle, code, iconPath, exe);
+            if (_connectedCartridge != null &&
+                string.Equals(_connectedCartridge.Exe, exe, StringComparison.OrdinalIgnoreCase))
+            {
+                _connectedCartridge.Artwork = tile.Artwork.Source;
+                UpdateCartridgeDock();
+            }
+        }
+
+        var coverBtn = BuildLookButton("\uE91B", "Carátula…",
+            "Elegir una imagen y ajustar el recorte que se ve en el cartucho");
+        coverBtn.Click += async (s, e) =>
+        {
+            try
+            {
+                string? initial = GameLook.ArtSource(exe) ?? GameLook.CustomArt(exe)
+                    ?? ResolveBannerFile(game, iconPath, exe);
+                // Sin arte previo (ni banner ni ícono), el primer paso es elegir la imagen.
+                if (initial == null) initial = BrowseForImage();
+                if (initial == null) return;
+                bool hasCustom = GameLook.CustomArt(exe) != null;
+                var dialog = new ArtCropDialog(exe, name, initial, hasCustom, BrowseForImage)
+                {
+                    XamlRoot = XamlRoot
+                };
+                await dialog.LoadInitialAsync();
+                var result = await dialog.ShowAsync();
+                if (result == ContentDialogResult.Primary && !string.IsNullOrEmpty(dialog.OutputPath))
+                {
+                    // Copia local de la fuente para poder reajustar el recorte más adelante
+                    // aunque el archivo original se mueva o se borre.
+                    string? localSource = CopyArtSource(exe, dialog.SourcePath);
+                    GameLook.SetArt(exe, dialog.OutputPath!, localSource ?? dialog.SourcePath);
+                }
+                else if (result == ContentDialogResult.Secondary)
+                {
+                    GameLook.ClearArt(exe);
+                }
+                else return;
+
+                await RefreshLookAsync();
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"Biblioteca: carátula personalizada de '{name}': {ex.Message}");
+            }
+        };
+
+        var headerBtn = BuildLookButton("\uE70F", "Etiqueta…",
+            "Elegir el texto del encabezado de la etiqueta del cartucho");
+        headerBtn.Click += async (s, e) =>
+        {
+            try
+            {
+                var dialog = BuildHeaderDialog(exe, name);
+                if (dialog == null) return;
+                var result = await dialog.ShowAsync();
+                if (result is not (ContentDialogResult.Primary or ContentDialogResult.Secondary)) return;
+                await RefreshLookAsync();
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"Biblioteca: etiqueta personalizada de '{name}': {ex.Message}");
+            }
+        };
+
+        var lookRow = new Grid { ColumnSpacing = 10 };
+        lookRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        lookRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(coverBtn, 0);
+        Grid.SetColumn(headerBtn, 1);
+        lookRow.Children.Add(coverBtn);
+        lookRow.Children.Add(headerBtn);
 
         // ── Controles de parámetros (Prioridad CPU, Prioridad GPU, Prioridad E/S, Afinidad, Plan de energía, Defender, CFG) ──
         var rules = _processService.GetRulesCached();
@@ -6847,6 +7163,74 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         for (int r = 0; r < coreRows; r++)
             coresWrap.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
+        // Afinidad como desplegable: con CPUs de 16, 24 o 32 núcleos la grilla de
+        // checks ocupa varias filas y empujaba el pie del panel fuera de la vista
+        // (MaxHeight 380). Mismo patrón de header-botón que las secciones de la
+        // biblioteca —chevron + título, transparente en todos los estados— y a la
+        // derecha el resumen de la selección, para leerla sin desplegar.
+        coresWrap.Visibility = Visibility.Collapsed;
+        coresWrap.Margin = new Thickness(2, 2, 0, 0);
+
+        var affChevron = new FontIcon
+        {
+            Glyph = "\uE76C", // cerrado: apunta a la derecha
+            FontSize = 11,
+            Foreground = ThemeBrushes.Get("MutedBrush"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var affSummary = new TextBlock
+        {
+            Text = string.Empty,
+            FontSize = 11,
+            Foreground = ThemeBrushes.Get("MutedBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+
+        var affLabelRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                affChevron,
+                new TextBlock
+                {
+                    Text = I18n.T("Afinidad de CPU"),
+                    FontSize = 12,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            }
+        };
+        var affHeaderGrid = new Grid { ColumnSpacing = 8 };
+        affHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        affHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(affLabelRow, 0);
+        Grid.SetColumn(affSummary, 1);
+        affHeaderGrid.Children.Add(affLabelRow);
+        affHeaderGrid.Children.Add(affSummary);
+
+        var affToggle = new Button
+        {
+            Content = affHeaderGrid,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(2, 4, 2, 4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        // El header no se pinta en ningún estado: es solo el título con chevron.
+        foreach (var stateKey in new[]
+                 {
+                     "ButtonBackground", "ButtonBackgroundPointerOver", "ButtonBackgroundPressed",
+                     "ButtonBorderBrush", "ButtonBorderBrushPointerOver", "ButtonBorderBrushPressed"
+                 })
+            affToggle.Resources[stateKey] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+
         bool syncingUi = false;
 
         for (int i = 0; i < procCount; i++)
@@ -6867,9 +7251,30 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             coresWrap.Children.Add(cb);
         }
 
+        void UpdateAffinitySummary()
+        {
+            int on = 0;
+            foreach (var cb in coreCheckBoxes)
+                if (cb.IsChecked == true) on++;
+            affSummary.Text = on == 0 || on >= coreCheckBoxes.Count
+                ? I18n.T("Todos los núcleos")
+                : I18n.T("{0} de {1} núcleos", on, coreCheckBoxes.Count);
+        }
+
+        bool affOpen = false;
+        void SetAffinityOpen(bool open)
+        {
+            affOpen = open;
+            coresWrap.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            affChevron.Glyph = open ? "\uE70D" : "\uE76C";
+        }
+        affToggle.Click += (s, e) => SetAffinityOpen(!affOpen);
+        UpdateAffinitySummary();
+
         void OnCoreAffinityToggled()
         {
             if (syncingUi) return;
+            UpdateAffinitySummary();
             long m = 0;
             for (int k = 0; k < coreCheckBoxes.Count; k++)
                 if (coreCheckBoxes[k].IsChecked == true)
@@ -6921,6 +7326,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             }
             planCombo.SelectedIndex = planIdx;
             syncingUi = false;
+            UpdateAffinitySummary();
         }
 
         scopeAlwaysBtn.Click += (s, e) => { scopeAlways = true; SyncControlsFromScope(); };
@@ -7188,7 +7594,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             {
                 scopeRow,
                 prioGrid,
-                BuildLabeledField(I18n.T("Afinidad de CPU"), coresWrap),
+                new StackPanel { Spacing = 4, Children = { affToggle, coresWrap } },
                 sysGrid,
                 bottomActionsRow,
                 detailStatus
@@ -7229,6 +7635,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             {
                 titleHeaderGrid,
                 actionRow,
+                lookRow,
                 new Border
                 {
                     Height = 1,
@@ -7287,8 +7694,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 Height = 48,
                 CornerRadius = new CornerRadius(24),
                 Background = new SolidColorBrush(Windows.UI.Color.FromArgb(135, 18, 18, 18)),
-                BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(65, 255, 255, 255)),
-                BorderThickness = new Thickness(1),
+                // Sin reborde claro: mismo criterio que los botones de carátula/etiqueta.
+                BorderThickness = new Thickness(0),
                 HorizontalAlignment = align,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(28, 0, 28, 0),
@@ -8089,6 +8496,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 ReflowWrapSection(host, sectionCards, cols);
             if (_cards3D) SchedulePaintVisible3D();
         }
+        // El skeleton sigue la misma cantidad de columnas: si se maximiza mientras
+        // carga, sus filas no pueden quedar con el ancho viejo.
+        if (_skeletonActive && _skeletonPanel != null && cols != _skeletonGridCols)
+            ReflowSkeleton(cols);
         double avail = w - reserve;
         double maxCardW = _cards3D ? MaxCardWidth3D : MaxCardWidthVanilla;
         double minCardW = _cards3D ? MinCardWidth3D : MinCardWidthVanilla;
@@ -8115,13 +8526,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 ? (cardWidth - 8) * CartridgeHeightRatio
                 : bannerWidth * BannerHeightRatio;
         }
-        // Misma geometría para el skeleton (si está visible en la grilla).
-        foreach (var (card, banner, _) in _skeletonCards)
+        // Misma geometría para el skeleton (si está visible en la grilla). En 3D el
+        // cuerpo mide lo mismo que el cartucho real: ancho de card menos el padding
+        // de 4 px por lado, multiplicado por el Aspect del modelo.
+        foreach (var (card, body, _) in _skeletonCards)
         {
             card.Width = cardWidth;
-            banner.Height = Math.Max(bannerMin, _cards3D
-                ? cardWidth * CartridgeHeightRatio
-                : bannerWidth * BannerHeightRatio);
+            body.Height = _cards3D
+                ? Math.Max(bannerMin, (cardWidth - 8) * CartridgeHeightRatio)
+                : Math.Max(bannerMin, bannerWidth * BannerHeightRatio);
         }
     }
 
@@ -8831,5 +9244,153 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 StatusText.Foreground = kind == LaunchStatusKind.Warning ? Feedback.WarningBrush : Feedback.MutedBrush;
                 StatusText.Visibility = Visibility.Visible;
             });
+
+    /// <summary>
+    /// Diálogo del encabezado de la etiqueta: logo + plataforma (de fábrica), solo la
+    /// plataforma, el nombre del juego, un texto libre o la etiqueta en blanco. Al
+    /// aplicar escribe GameLook; el refresco del cartucho lo hace el llamador.
+    /// </summary>
+    private ContentDialog? BuildHeaderDialog(string exe, string name)
+    {
+        if (XamlRoot == null) return null;
+        GameHeader current = GameLook.Header(exe);
+
+        (string Mode, string Label)[] modes =
+        {
+            (GameLook.HeaderPlatform, "Logotipo y plataforma"),
+            (GameLook.HeaderPlatformText, "Solo la plataforma"),
+            (GameLook.HeaderTitle, "Nombre del juego"),
+            (GameLook.HeaderCustom, "Texto personalizado"),
+            (GameLook.HeaderNone, "Sin texto")
+        };
+
+        var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        int selected = 0;
+        for (int i = 0; i < modes.Length; i++)
+        {
+            combo.Items.Add(new ComboBoxItem { Content = I18n.T(modes[i].Label), Tag = modes[i].Mode });
+            if (string.Equals(modes[i].Mode, current.Mode, StringComparison.Ordinal)) selected = i;
+        }
+        combo.SelectedIndex = selected;
+
+        var box = new TextBox
+        {
+            Text = current.Text,
+            PlaceholderText = I18n.T("Texto de la etiqueta"),
+            MaxLength = 40
+        };
+
+        var error = new TextBlock
+        {
+            Text = I18n.T("Escribí un texto para la etiqueta."),
+            FontSize = 12,
+            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0x7A, 0x7A)),
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+
+        void SyncBox()
+        {
+            box.IsEnabled = string.Equals(
+                (combo.SelectedItem as ComboBoxItem)?.Tag as string,
+                GameLook.HeaderCustom, StringComparison.Ordinal);
+            error.Visibility = Visibility.Collapsed;
+        }
+        combo.SelectionChanged += (_, _) => SyncBox();
+        SyncBox();
+
+        var panel = new StackPanel
+        {
+            Width = 380,
+            Spacing = 10,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = I18n.T("Encabezado de la etiqueta"),
+                    FontSize = 13,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                },
+                combo,
+                box,
+                new TextBlock
+                {
+                    Text = I18n.T("El encabezado se ve en la card de la biblioteca y en el cartucho del dock. Los textos largos se achican solos para entrar en la etiqueta."),
+                    FontSize = 12,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = ThemeBrushes.Get("SecondaryTextBrush")
+                },
+                error
+            }
+        };
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("Etiqueta de {0}", name),
+            PrimaryButtonText = I18n.T("Aplicar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Primary,
+            Content = panel
+        };
+        if (!current.IsDefault) dialog.SecondaryButtonText = I18n.T("Restaurar");
+
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            string mode = (combo.SelectedItem as ComboBoxItem)?.Tag as string ?? GameLook.HeaderPlatform;
+            if (string.Equals(mode, GameLook.HeaderCustom, StringComparison.Ordinal)
+                && string.IsNullOrWhiteSpace(box.Text))
+            {
+                error.Visibility = Visibility.Visible;
+                args.Cancel = true;
+                return;
+            }
+            GameLook.SetHeader(exe, mode, box.Text);
+        };
+        dialog.SecondaryButtonClick += (_, _) =>
+            GameLook.SetHeader(exe, GameLook.HeaderPlatform, "");
+
+        return dialog;
+    }
+
+    /// <summary>Copia la imagen elegida a la carpeta de personalizaciones para que el
+    /// reajuste del recorte no dependa de un archivo externo.</summary>
+    private static string? CopyArtSource(string exe, string? source)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(source) || !File.Exists(source)) return null;
+            string target = GameLook.SourceArtPath(exe, Path.GetExtension(source));
+            if (!string.Equals(Path.GetFullPath(source), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
+                File.Copy(source, target, overwrite: true);
+            return target;
+        }
+        catch { return source; }
+    }
+
+    /// <summary>Selector nativo de imagen. WinRT FileOpenPicker no funciona en una app
+    /// elevada, así que se usa el diálogo de WinForms con la ventana como dueño.</summary>
+    private static string? BrowseForImage()
+    {
+        try
+        {
+            using var dlg = new System.Windows.Forms.OpenFileDialog
+            {
+                Title = I18n.T("Elegir carátula"),
+                Filter = $"{I18n.T("Imágenes")}|*.png;*.jpg;*.jpeg;*.bmp",
+                CheckFileExists = true,
+                Multiselect = false
+            };
+            if (App.MainWindowInstance != null)
+            {
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance);
+                var owner = System.Windows.Forms.NativeWindow.FromHandle(hwnd);
+                if (dlg.ShowDialog(owner) == System.Windows.Forms.DialogResult.OK)
+                    return dlg.FileName;
+            }
+        }
+        catch { }
+        return null;
+    }
 
 }
