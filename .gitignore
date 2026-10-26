@@ -16,13 +16,19 @@
 #                           el flujo que necesita un clon: compilar la app y
 #                           publicar sus contenidos
 #   README.md · LICENSE
+#   installer/              fuentes del instalador (Product.wxs, UI.wxs,
+#                           harvest.ps1, PostUpdateCA y build-installer.ps1).
+#                           Sin ellas un clon no puede armar el MSI, y el build
+#                           de release en GitHub Actions (el que firma SignPath)
+#                           no tendría qué compilar.
 #
 # NO SE VERSIONA
 #   Salidas de compilación y distribución (bin, obj, publish, MSI, packs JSON),
-#   el generador del instalador (installer/), las herramientas de trabajo
-#   (dedupe-translations, xaml-scan, validate-language-packs), las sondas
-#   temporales y las notas de trabajo, la web de difusión, el scratch (tools/)
-#   y todo lo binario o descargable (drivers del filtro, paquetes comprimidos).
+#   lo que produce el instalador (publish/, Files.wxs, los .wxs archivados por
+#   versión), las herramientas de trabajo (dedupe-translations, xaml-scan,
+#   validate-language-packs), las sondas temporales y las notas de trabajo, la
+#   web de difusión, el scratch (tools/) y todo lo binario o descargable
+#   (drivers del filtro, paquetes comprimidos).
 # ============================================================================
 
 # ===== .NET: salidas de compilación =====
@@ -77,9 +83,11 @@ _ReSharper*/
 *_wpftmp.csproj
 
 # ===== Paquetes e instalador =====
-# El generador del instalador es tooling local del desarrollador: no se versiona
-# (.wxs, harvest, el CustomAction y el script que arma el MSI). Tampoco lo que
-# produce: el MSI, el publish y el fragmento harvest.
+# Las FUENTES del instalador sí se versionan (ver installer/): el .wxs del producto,
+# los diálogos, el harvest, el CustomAction y el script que arma el MSI son código,
+# y sin ellos no se puede reconstruir el instalador desde un clon.
+# Lo que NO se versiona es lo que producen: el publish, el fragmento harvest
+# generado, los .wxs archivados de versiones viejas y el MSI.
 *.appx
 *.appxbundle
 *.appxupload
@@ -91,7 +99,9 @@ _ReSharper*/
 *.wixpdb
 .wix/
 .tools/
-/installer/
+/installer/publish/
+/installer/Files.wxs
+/installer/WinForge-*.wxs
 
 # ===== Driver del filtro y paquetes descargados =====
 # El componente de Overclock USB (hidusbf) y los paquetes del autor: binarios de
