@@ -175,15 +175,19 @@ public static class LanguagePacks
     }
 
     /// <summary>
-    /// Re-descarga los packs instalados cuyo sourceHash quedó viejo respecto de la
-    /// app en ejecución. Es el cierre del circuito que el arranque siempre prometió
-    /// ("los packs se refrescan solos"): con una app nueva, el pack viejo degradaba
-    /// a la tabla embebida para siempre porque el chequeo de desactualización solo
-    /// escribía en el log. Solo actúa si el catálogo publica una versión MÁS NUEVA
-    /// que la instalada (si el pack de turno no cambió, re-bajarlo sería en vano y
-    /// repetiría en cada arranque). Se corre junto al chequeo de actualizaciones de
-    /// la app: un solo flujo de actualización al abrir, todo silencioso. Si no hay
-    /// red, no hace nada y queda para el próximo arranque.
+    /// Re-descarga los packs instalados que están atrás de lo publicado en el
+    /// catálogo. Es el cierre del circuito que el arranque siempre prometió ("los
+    /// packs se refrescan solos"): con una app nueva, el pack viejo degradaba a la
+    /// tabla embebida para siempre porque el chequeo de desactualización solo
+    /// escribía en el log. La autoridad es la VERSIÓN del catálogo: se re-baja si el
+    /// catálogo publica una versión más nueva que la instalada, sin importar el
+    /// sourceHash. El hash sólo detecta que cambiaron los textos en español, y un
+    /// pack se puede republicar sin que eso pase —por ejemplo cuando se completan
+    /// traducciones que faltaban—: atarse al hash dejaba a esos usuarios con el pack
+    /// incompleto para siempre. Si la versión instalada ya es la publicada no se
+    /// baja nada, así que el arranque no repite la descarga. Se corre junto al
+    /// chequeo de actualizaciones de la app: un solo flujo de actualización al abrir,
+    /// todo silencioso. Si no hay red, no hace nada y queda para el próximo arranque.
     ///
     /// No se pisa con la recuperación del idioma guardado: esa cubre idiomas SIN
     /// pack instalado; acá solo se miran packs ya instalados (conjuntos disjuntos).
@@ -204,7 +208,6 @@ public static class LanguagePacks
         {
             foreach (var record in Installed)
             {
-                if (!LanguagePackService.IsOutdated(record.SourceHash, Translations.SourceHash)) continue;
                 var entry = catalog.Languages.FirstOrDefault(l => !l.Builtin
                     && string.Equals(l.Code, record.Code, StringComparison.OrdinalIgnoreCase));
                 if (entry == null) continue;
