@@ -1,0 +1,99 @@
+# Compila el instalador (WinForge-<version>.msi) en un runner hospedado por GitHub.
+#
+# Por qué vive acá y no solo en el disco del desarrollador: SignPath Foundation
+# firma únicamente artefactos construidos en un "trusted build system" (GitHub
+# Actions sobre runners de GitHub). El MSI que se publica firmado tiene que salir
+# de una run de este workflow; uno compilado a mano no tiene origen verificable y
+# no se puede firmar.
+#
+# El workflow no publica nada por su cuenta: deja el MSI (y su SHA-256) como
+# artifact de la run, que es lo que después consume el paso de firma.
+
+name: Build installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  msi:
+    name: MSI (x64)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: .NET SDK 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      # La versión de WiX está fijada a propósito: un cambio de major cambia el
+      # esquema de los .wxs y la ruta donde el script busca la extensión de UI.
+      # El tool y la extensión quedan en .tools/ y .wix/ (ignorados por git, en
+      # el workspace del runner), que es exactamente donde los espera el script.
+      - name: WiX 7 + extensión de UI
+        shell: pwsh
+        run: |
+          dotnet tool install wix --version 7.0.0 --tool-path .tools\wix
+          .\.tools\wix\wix.exe extension add WixToolset.UI.wixext/7.0.0
+
+      # Regla de oro 2 del proyecto: la versión va en los mismo número en los dos
+      # csproj, en Product.wxs y en build-installer.ps1. Si no coincide, el MSI
+      # sale con un número distinto al que reporta la app y el actualizador
+      # integrado deja de ofrecer la actualización. Falla temprano y con el
+      # detalle de cada archivo en vez de romper en medio del empaquetado.
+      - name: Verificar coherencia de versión
+        shell: pwsh
+        run: |
+          $core = [regex]::Match((Get-Content 'src/WHPO.Core/WHPO.Core.csproj' -Raw), '<Version>([^<]+)').Groups[1].Value
+          $ui   = [regex]::Match((Get-Content 'src/WHPO.UI/WHPO.UI.csproj' -Raw), '<Version>([^<]+)').Groups[1].Value
+          $wxs  = [regex]::Match((Get-Content 'installer/Product.wxs' -Raw), '<Package[^>]*?Version="([^"]+)"').Groups[1].Value
+          $inst = [regex]::Match((Get-Content 'installer/build-installer.ps1' -Raw), "version\s*=\s*'([^']+)'").Groups[1].Value
+          Write-Host "WHPO.Core=$core  WHPO.UI=$ui  Product.wxs=$wxs  build-installer=$inst"
+          if (-not $core) { throw 'No se pudo leer la versión de WHPO.Core.csproj' }
+          $distintas = @($core, $ui, $wxs, $inst) | Sort-Object -Unique
+          if ($distintas.Count -ne 1) {
+            throw "Versiones desincronizadas (regla de oro 2): $($distintas -join ', ')"
+          }
+          "Versión a compilar: $core"
+          "APP_VERSION=$core" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # publish de la app + sincronización del build output + harvest + MSI.
+      # El script toma sus propias decisiones (publish determinista, GUIDs
+      # estables de los componentes, validación del MSI) y por eso no se
+      # reimplementa acá: si se cambia el empaquetado, se cambia en un lugar.
+      - name: Compilar instalador
+        shell: pwsh
+        run: ./installer/build-installer.ps1
+
+      # El SHA-256 se publica junto al MSI para que quien descarga pueda verificar
+      # que el archivo no cambió, y para contrastarlo con el del artefacto firmado.
+      - name: Calcular SHA-256
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem 'installer/WinForge-*.msi' | Select-Object -First 1
+          if (-not $msi) { throw 'No se generó ningún MSI.' }
+          $hash = (Get-FileHash $msi.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($msi.Name)" | Out-File -FilePath "$($msi.FullName).sha256" -Encoding ascii
+          Write-Host "$($msi.Name) · $([math]::Round($msi.Length / 1MB, 1)) MB · $hash"
+
+      - name: Subir artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinForge-msi
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            installer/WinForge-*.msi
+            installer/WinForge-*.msi.sha256
