@@ -5148,7 +5148,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         return card;
     }
 
-    private static string GridShellCacheDir => Path.Combine(WHPO.Core.AppPaths.RootDir, "cartshells-v8");
+    /// <summary>
+    /// Versión del pintado de los cartuchos de la grilla. Es parte del nombre de la carpeta
+    /// y de la clave de caché: al tocar `CartridgeModel` hay que subirla, si no la grilla
+    /// sigue sirviendo los PNG viejos y el cambio no se ve hasta borrar la caché a mano.
+    /// </summary>
+    private const string GridShellCacheVersion = "v9";
+
+    private static string GridShellCacheDir =>
+        Path.Combine(WHPO.Core.AppPaths.RootDir, $"cartshells-{GridShellCacheVersion}");
 
     /// <summary>
     /// Asegura el archivo de arte (banner de Steam/Epic o ícono del ejecutable) y
@@ -5181,7 +5189,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 stamp = $"{Path.GetFileName(artFile)}-{fi.Length}-{fi.LastWriteTimeUtc.Ticks}";
             }
             GameHeader header = GameLook.Header(exe);
-            string hash = HashString($"v8|{title}|{launcher}|{code}|{stamp}|{CardSkin.Current.Key}|{header.Signature}");
+            string hash = HashString($"{GridShellCacheVersion}|{title}|{launcher}|{code}|{stamp}|{CardSkin.Current.Key}|{header.Signature}");
             string cachedPng = Path.Combine(GridShellCacheDir, $"shell-{hash}.png");
 
             if (!File.Exists(cachedPng) || !IsValidImageFile(cachedPng))
@@ -6719,6 +6727,23 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         bool panelAbierto = _detail3DPanel != null;
         if (_detail3DPanel != null) CloseGame3DDetail();
 
+        // El panel de inspección es una superficie OSCURA en los dos temas (velo de blur
+        // sobre negro). Si tomara los pinceles del tema, en la apariencia Claro el título
+        // y las etiquetas salían en negro sobre negro y los combos se veían como islas
+        // grises flotando en el velo. Este traductor devuelve la tinta clara del panel
+        // para los textos y deja pasar el acento tal cual, que ya funciona sobre oscuro.
+        SolidColorBrush DetailBrush(string key) => key switch
+        {
+            "PrimaryTextBrush" => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xF3, 0xF6, 0xFB)),
+            "SecondaryTextBrush" => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xA6, 0xAE, 0xBA)),
+            "MutedBrush" => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x8B, 0x93, 0x9F)),
+            // Los avisos del panel también vienen del tema: el verde y el rojo de la
+            // apariencia Claro son demasiado oscuros para el velo. Versiones aclaradas.
+            "SuccessBrush" => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x7F, 0xE0, 0xA4)),
+            "ErrorBrush" => new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0x8C, 0x7B)),
+            _ => ThemeBrushes.Get(key)
+        };
+
         string cacheKey = (installPath ?? "") + "|" + exe;
         if (!_exeCache.TryGetValue(cacheKey, out var cached))
         {
@@ -6793,7 +6818,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             Text = I18n.T("Arrastrá para girar 360° · clic en el cartucho para voltear · rueda para acercar"),
             FontSize = 11,
-            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            Foreground = DetailBrush("SecondaryTextBrush"),
             HorizontalAlignment = HorizontalAlignment.Center,
             TextAlignment = TextAlignment.Center,
             TextWrapping = TextWrapping.Wrap,
@@ -6820,7 +6845,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Text = $"{launcherDetalle.ToUpperInvariant()} · {code}",
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Foreground = ThemeBrushes.Get("AccentBrush"),
+            Foreground = DetailBrush("AccentBrush"),
             CharacterSpacing = 80
         };
 
@@ -6829,7 +6854,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Text = name,
             FontSize = 26,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Foreground = ThemeBrushes.Get("PrimaryTextBrush"),
+            Foreground = DetailBrush("PrimaryTextBrush"),
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextWrapping = TextWrapping.Wrap,
             MaxLines = 2
@@ -6869,8 +6894,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Padding = new Thickness(20, 10, 20, 10),
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Background = ThemeBrushes.Get("AccentBrush"),
-            Foreground = ThemeBrushes.Get("AccentForegroundBrush"),
+            Background = DetailBrush("AccentBrush"),
+            Foreground = DetailBrush("AccentForegroundBrush"),
             IsEnabled = spec.CanLaunch && !isRunningNow
         };
         ApplyCardButtonHover(playBtn, accent: true);
@@ -6901,7 +6926,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             FontSize = 16,
             Foreground = fav
                 ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07))
-                : (Brush)ThemeBrushes.Get("PrimaryTextBrush")
+                : (Brush)DetailBrush("PrimaryTextBrush")
         };
         var favBtn = new Button
         {
@@ -6921,7 +6946,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             favIcon.Glyph = fav ? "\uE735" : "\uE734";
             favIcon.Foreground = fav
                 ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xC1, 0x07))
-                : (Brush)ThemeBrushes.Get("PrimaryTextBrush");
+                : (Brush)DetailBrush("PrimaryTextBrush");
             ToolTipService.SetToolTip(favBtn, I18n.T(fav ? "Quitar de favoritos" : "Marcar como favorito"));
             RebuildCards();
         };
@@ -7091,7 +7116,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 detailStatus.Text = sessionScope
                     ? I18n.T("Reglas de sesión listas. Se aplicarán cuando el juego se abra.")
                     : I18n.T("Reglas guardadas. Se aplicarán cuando el juego esté en ejecución.");
-                detailStatus.Foreground = Feedback.SuccessBrush;
+                detailStatus.Foreground = DetailBrush("SuccessBrush");
                 detailStatus.Visibility = Visibility.Visible;
                 return;
             }
@@ -7115,7 +7140,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             detailStatus.Text = sessionScope
                 ? I18n.T("Reglas de sesión aplicadas a {0}", exe)
                 : I18n.T("Reglas aplicadas a {0}", exe);
-            detailStatus.Foreground = Feedback.SuccessBrush;
+            detailStatus.Foreground = DetailBrush("SuccessBrush");
             detailStatus.Visibility = Visibility.Visible;
         }
 
@@ -7175,14 +7200,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             Glyph = "\uE76C", // cerrado: apunta a la derecha
             FontSize = 11,
-            Foreground = ThemeBrushes.Get("MutedBrush"),
+            Foreground = DetailBrush("MutedBrush"),
             VerticalAlignment = VerticalAlignment.Center
         };
         var affSummary = new TextBlock
         {
             Text = string.Empty,
             FontSize = 11,
-            Foreground = ThemeBrushes.Get("MutedBrush"),
+            Foreground = DetailBrush("MutedBrush"),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Right
@@ -7201,7 +7226,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     Text = I18n.T("Afinidad de CPU"),
                     FontSize = 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+                    Foreground = DetailBrush("SecondaryTextBrush"),
                     VerticalAlignment = VerticalAlignment.Center
                 }
             }
@@ -7292,10 +7317,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             syncingUi = true;
             var activeRule = scopeAlways ? rule : sessionRule;
 
-            scopeAlwaysBtn.Background = scopeAlways ? ThemeBrushes.Get("AccentBrush") : new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
-            scopeAlwaysBtn.Foreground = scopeAlways ? ThemeBrushes.Get("AccentForegroundBrush") : ThemeBrushes.Get("PrimaryTextBrush");
-            scopeSessionBtn.Background = !scopeAlways ? ThemeBrushes.Get("AccentBrush") : new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
-            scopeSessionBtn.Foreground = !scopeAlways ? ThemeBrushes.Get("AccentForegroundBrush") : ThemeBrushes.Get("PrimaryTextBrush");
+            scopeAlwaysBtn.Background = scopeAlways ? DetailBrush("AccentBrush") : new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
+            scopeAlwaysBtn.Foreground = scopeAlways ? DetailBrush("AccentForegroundBrush") : DetailBrush("PrimaryTextBrush");
+            scopeSessionBtn.Background = !scopeAlways ? DetailBrush("AccentBrush") : new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
+            scopeSessionBtn.Foreground = !scopeAlways ? DetailBrush("AccentForegroundBrush") : DetailBrush("PrimaryTextBrush");
 
             int cpuIdx = activeRule.CpuPriority is int cp ? Array.IndexOf(CpuPriorityValues, cp) + 1 : 0;
             cpuCombo.SelectedIndex = Math.Clamp(cpuIdx, 0, cpuNames.Length - 1);
@@ -7433,7 +7458,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     bool nowEx = !ex;
                     defenderBtn.Content = I18n.T(nowEx ? "Quitar exclusión de Windows Defender" : "Excluir de Windows Defender");
                     detailStatus.Text = I18n.T(nowEx ? "Excepción de Windows Defender agregada" : "Excepción de Windows Defender quitada");
-                    detailStatus.Foreground = Feedback.SuccessBrush;
+                    detailStatus.Foreground = DetailBrush("SuccessBrush");
                     detailStatus.Visibility = Visibility.Visible;
                 }
             };
@@ -7466,7 +7491,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     bool nowDis = !dis;
                     cfgBtn.Content = I18n.T(nowDis ? "Activar Control Flow Guard" : "Desactivar Control Flow Guard");
                     detailStatus.Text = I18n.T(nowDis ? "Control Flow Guard desactivado para {0}" : "Control Flow Guard activado para {0}", cfgTarget);
-                    detailStatus.Foreground = Feedback.SuccessBrush;
+                    detailStatus.Foreground = DetailBrush("SuccessBrush");
                     detailStatus.Visibility = Visibility.Visible;
                 }
             };
@@ -7479,7 +7504,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(12, 6, 12, 6),
             FontSize = 12,
-            Foreground = Feedback.ErrorBrush // acción destructiva: en rojo
+            Foreground = DetailBrush("ErrorBrush") // acción destructiva: en rojo
         };
         resetRulesBtn.Click += (s, e) =>
         {
@@ -7489,7 +7514,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             sessionRule = new ProcessRule(null, null, null);
             SyncControlsFromScope();
             detailStatus.Text = I18n.T("Reglas eliminadas para {0}", exe);
-            detailStatus.Foreground = Feedback.MutedBrush;
+            detailStatus.Foreground = DetailBrush("MutedBrush");
             detailStatus.Visibility = Visibility.Visible;
         };
 
@@ -7519,7 +7544,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     Text = labelText,
                     FontSize = 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = ThemeBrushes.Get("SecondaryTextBrush")
+                    Foreground = DetailBrush("SecondaryTextBrush")
                 },
                 control
             }
@@ -7565,7 +7590,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     Text = I18n.T("Alcance de reglas:"),
                     FontSize = 12,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+                    Foreground = DetailBrush("SecondaryTextBrush"),
                     VerticalAlignment = VerticalAlignment.Center
                 },
                 scopeAlwaysBtn,
@@ -7732,7 +7757,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             Tag = "no-reveal",
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            Child = new Grid { Children = { bodyLayout, prevBtn, nextBtn } }
+            Child = new Grid { Children = { bodyLayout, prevBtn, nextBtn } },
+            // Los controles estándar (combos, botones sin estilo propio) heredan el tema
+            // forzado del panel: así en la apariencia Claro no quedan grises con texto
+            // negro sobre el velo oscuro.
+            RequestedTheme = Microsoft.UI.Xaml.ElementTheme.Dark
         };
         var backdrop = new Grid { Children = { veil, contentHost } };
         Canvas.SetZIndex(backdrop, 50);

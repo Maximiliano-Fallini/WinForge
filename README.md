@@ -104,6 +104,7 @@ WinForge no reinventa la rueda: cada función nació de estudiar (y a veces de i
 | **[MacroGamer](https://www.macrogamer.com/)** | Macros de teclado y mouse con atajo global |
 | **[FilterKeys Setter](https://github.com/HQJaTu/Filterkeys-setter)** | Repetición del teclado en milisegundos, más allá del panel de control |
 | **[hidusbf](https://github.com/LordOfMice/hidusbf)** | Polling rate de mouses, teclados y mandos por filtro kernel |
+| **[Carthage](https://github.com/lopiksaa/carthage)** | Biblioteca de juegos con cartuchos 3D, consola inferior y etiquetas impresas |
 
 WinForge no está afiliado a ninguno de ellos: son referencias que marcaron el camino y cada marca pertenece a sus autores.
 

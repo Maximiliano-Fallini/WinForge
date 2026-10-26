@@ -110,6 +110,7 @@ public sealed partial class ConfiguracionPage : Page
         LaunchAtStartupToggle.Toggled += OnLaunchAtStartupToggled;
         StartMinimizedToggle.Toggled += OnStartMinimizedToggled;
         CardTiltToggle.Toggled += OnCardTiltToggled;
+        CardSkinCustomButton.Click += CardSkinCustomButton_Click;
         // Selector 2D / 3D de las cards: toda la tarjeta es un RadioButton lookless
         // (ver LibraryStyleTile), así que el cambio llega por Checked.
         AttachPickerTileHover(LibraryStyle2DTile);
@@ -482,6 +483,127 @@ public sealed partial class ConfiguracionPage : Page
         }
 
         UpdateCardSkinSelection();
+        UpdateCardSkinCustomRow();
+    }
+
+    /// <summary>
+    /// Refresca la fila de color exacto: la muestra chica y el texto muestran el color
+    /// vigente. Si el ajuste es un color a mano se marca con el aro de acento, igual que
+    /// las muestras; si no, queda el color que está usando la carcasa ahora.
+    /// </summary>
+    private void UpdateCardSkinCustomRow()
+    {
+        if (CardSkinCustomSwatch == null) return;
+        var palette = WHPO_UI.Controls.CardSkin.Current;
+        bool custom = WHPO_UI.Controls.CardSkin.TryParseCustom(palette.Id, out var parsed);
+        CardSkinCustomSwatch.Background = new SolidColorBrush(
+            WHPO_UI.Controls.CardSkin.ToUi(custom ? parsed : palette.Plastic));
+        CardSkinCustomSwatch.BorderBrush = custom
+            ? WHPO_UI.ThemeBrushes.Get("AccentBrush")
+            : WHPO_UI.ThemeBrushes.Get("SensorGridLineBrush");
+        if (CardSkinCustomHint != null)
+            CardSkinCustomHint.Text = custom
+                ? WHPO_UI.Controls.CardSkin.FormatCustom(parsed).Replace(
+                    WHPO_UI.Controls.CardSkin.CustomPrefix, "#", StringComparison.OrdinalIgnoreCase)
+                : I18n.T("Elegí cualquier color, además de las muestras de arriba.");
+    }
+
+    /// <summary>
+    /// Selector de color exacto del plástico de los cartuchos y la consola. Se aplica al
+    /// confirmar, con el mismo camino que un preset: se guarda, se relee la paleta y se
+    /// repintan la vista previa y las miniaturas.
+    /// </summary>
+    private async void CardSkinCustomButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var palette = WHPO_UI.Controls.CardSkin.Current;
+            var seed = WHPO_UI.Controls.CardSkin.TryParseCustom(palette.Id, out var current)
+                ? current
+                : palette.Plastic;
+            var picker = new ColorPicker
+            {
+                Color = WHPO_UI.Controls.CardSkin.ToUi(seed),
+                ColorSpectrumShape = ColorSpectrumShape.Box,
+                IsColorSpectrumVisible = true,
+                IsColorPreviewVisible = true,
+                IsAlphaEnabled = false,
+                IsAlphaSliderVisible = false,
+                IsAlphaTextInputVisible = false,
+                IsColorSliderVisible = true,
+                IsColorChannelTextInputVisible = true,
+                IsHexInputVisible = true,
+                IsMoreButtonVisible = false,
+                MinWidth = 320,
+                MinHeight = 340
+            };
+            // Vista previa EN VIVO: cada movimiento del selector publica una paleta solo
+            // en memoria y repinta la muestra y la consola con el mismo código que dibuja
+            // la biblioteca, así se ve exactamente cómo van a quedar. Se coalescen los
+            // cambios para no rearmar el chasis en cada pixel de arrastre.
+            picker.ColorChanged += (_, args) =>
+            {
+                WHPO_UI.Controls.CardSkin.Preview(WHPO_UI.Controls.CardSkin.FromUi(args.NewColor));
+                QueueCardSkinPreviewPaint();
+            };
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = I18n.T("Color de los cartuchos y la consola"),
+                Content = picker,
+                PrimaryButtonText = I18n.T("Aplicar"),
+                CloseButtonText = I18n.T("Cancelar"),
+                DefaultButton = ContentDialogButton.Primary
+            };
+            bool apply = await dialog.ShowAsync() == ContentDialogResult.Primary;
+            if (apply)
+                WHPO_UI.Controls.CardSkin.SetCustom(WHPO_UI.Controls.CardSkin.FromUi(picker.Color));
+
+            // Refresh relee el ajuste guardado: si se aplicó toma el color nuevo y, si se
+            // canceló, descarta la vista previa y vuelve al que estaba.
+            WHPO_UI.Controls.CardSkin.Refresh();
+            _customPreviewTimer?.Stop();
+            _customPreviewClock.Reset();
+            UpdateCardSkinSelection();
+            UpdateCardSkinCustomRow();
+            _sampleCartridge = null;
+            PaintLibraryStylePreviews();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Configuración: color exacto de los cartuchos: {ex.Message}");
+        }
+    }
+
+    // Repintado de la vista previa del color exacto. El selector dispara ColorChanged en
+    // cada pixel de arrastre y rearmar el chasis (bitmap + PNG) no es gratis, así que se
+    // combinan dos cosas: un refresco inmediato como máximo cada 55 ms (feedback mientras
+    // se arrastra) y un cierre diferido 70 ms después del último cambio, para que el color
+    // final también se vea aunque el arrastre termine dentro de la ventana.
+    private readonly Stopwatch _customPreviewClock = new();
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _customPreviewTimer;
+
+    private void QueueCardSkinPreviewPaint()
+    {
+        if (!_customPreviewClock.IsRunning || _customPreviewClock.ElapsedMilliseconds >= 55)
+            PaintCustomPreviewNow();
+
+        if (_customPreviewTimer == null)
+        {
+            _customPreviewTimer = DispatcherQueue.CreateTimer();
+            _customPreviewTimer.Interval = TimeSpan.FromMilliseconds(70);
+            _customPreviewTimer.IsRepeating = false;
+            _customPreviewTimer.Tick += (_, _) => PaintCustomPreviewNow();
+        }
+        _customPreviewTimer.Stop();
+        _customPreviewTimer.Start();
+    }
+
+    private void PaintCustomPreviewNow()
+    {
+        _customPreviewClock.Restart();
+        PaintLibraryStylePreviews();
     }
 
     /// <summary>Marca la muestra del preset vigente con el aro de acento y el tilde.</summary>

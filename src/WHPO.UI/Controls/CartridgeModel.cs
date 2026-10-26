@@ -435,46 +435,124 @@ float4 PSMain(VSOut i) : SV_TARGET
     }
 
     /// <summary>
-    /// Pinta una hendidura moldeada en el plástico (como `_groove` en Carthage):
-    /// fondo oscuro, sombra interna arriba-izquierda y labio iluminado abajo-derecha.
+    /// Pinta un HUECO moldeado en el plástico: el pozo donde vive la etiqueta y la ventana
+    /// de los contactos del dorso.
+    ///
+    /// Tres capas, en este orden y por una razón:
+    ///   1. piso oscuro — al fondo del hueco no llega la luz, así que arranca más oscuro
+    ///      que el plástico que lo rodea (y tapa el antialias del borde);
+    ///   2. oclusión ambiental — un degradado radial que oscurece MÁS el borde que mira a
+    ///      la luz (arriba-izquierda) que el opuesto, con el foco corrido hacia
+    ///      abajo-derecha;
+    ///   3. canto del molde — la pared vertical y el labio iluminado del lado en sombra.
+    ///
+    /// Las capas 2 y 3 se dibujan con el clip puesto, así que caen ENCIMA del contenido:
+    /// eso es lo que hace que el rectángulo se lea hundido y no pegado sobre la carcasa.
     /// </summary>
-    private static void DrawGroove(Graphics g, GraphicsPath path, float depth, Color fill, Color hi, Color lo)
+    private static void DrawRecess(Graphics g, GraphicsPath path, Rectangle bounds, Color plastic, float depth, bool paintFloor)
     {
-        if (fill.A > 0)
+        if (path.PointCount < 3 || bounds.Width < 4 || bounds.Height < 4) return;
+
+        if (paintFloor)
         {
-            using var fillBrush = new SolidBrush(fill);
-            g.FillPath(fillBrush, path);
+            using var floorBrush = new SolidBrush(Mix(plastic, Color.Black, 0.66f));
+            g.FillPath(floorBrush, path);
         }
 
-        // Sombra interna en el borde superior-izquierdo
         var state = g.Save();
         g.SetClip(path, CombineMode.Intersect);
-        using (var shadowPen = new Pen(lo, depth * 2.2f))
-        {
-            using var shifted = (GraphicsPath)path.Clone();
-            using var m = new Matrix();
-            m.Translate(depth * 0.8f, depth * 1.0f);
-            shifted.Transform(m);
-            g.DrawPath(shadowPen, shifted);
-        }
-        g.Restore(state);
 
-        // Labio iluminado en el borde inferior-derecho
-        var bounds = path.GetBounds();
-        if (bounds.Width > 2 && bounds.Height > 2)
+        // Oclusión ambiental en anillos, no en un solo degradado radial: cada anillo es un
+        // trazo grueso centrado en el borde (el clip deja ver solo su mitad interior), y la
+        // suma de anillos con alfa decreciente hace que la sombra nazca casi negra contra la
+        // pared y se apague hacia el centro. Un degradado único teñía de parejo todo el
+        // contenido y el pozo se veía plano.
+        var tl = new PointF(bounds.Left, bounds.Top);
+        var br = new PointF(bounds.Right, bounds.Bottom);
+        float maxAlpha = Math.Clamp(depth * 30f, 46f, 190f);
+        const int Anillos = 9;
+        for (int i = 0; i < Anillos; i++)
         {
-            using var lipGrad = new LinearGradientBrush(
-                new PointF(bounds.Left, bounds.Top),
-                new PointF(bounds.Right, bounds.Bottom),
-                Color.FromArgb(0, 255, 255, 255), hi);
-            var cb = new ColorBlend(3)
+            float t = i / (float)(Anillos - 1);
+            int alpha = (int)(maxAlpha * (1f - t) * (1f - t));
+            if (alpha <= 2) continue;
+            using var penumbra = new LinearGradientBrush(
+                tl, br,
+                Color.FromArgb(alpha, 0, 0, 0),
+                Color.FromArgb(0, 0, 0, 0));
+            using var anillo = new Pen(penumbra, 2f + i * 4f);
+            g.DrawPath(anillo, path);
+        }
+
+        // Pared del molde: el canto vertical entre el plástico y el contenido. Con el clip
+        // puesto solo asoma la mitad interior del trazo, así queda pegada al borde.
+        using (var wallPen = new Pen(Mix(plastic, Color.Black, 0.52f), Math.Max(1.6f, depth * 0.55f)))
+        {
+            g.DrawPath(wallPen, path);
+        }
+
+        // Canto del hueco: el labio inferior-derecho recibe la luz, el resto queda en sombra.
+        // Es el único elemento claro del conjunto, así que carga con casi toda la lectura
+        // del relieve: sobre un contenido oscuro es lo que separa el pozo de la carcasa.
+        using (var lip = new LinearGradientBrush(
+            new PointF(bounds.Left, bounds.Top),
+            new PointF(bounds.Right, bounds.Bottom),
+            Color.Black, Color.Black))
+        {
+            lip.InterpolationColors = new ColorBlend
             {
-                Colors = new[] { Color.FromArgb(0, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), hi },
-                Positions = new[] { 0f, 0.55f, 1f }
+                Colors = new[] { ToAlpha(Color.White, 0), ToAlpha(Color.White, 0), ToAlpha(Color.White, 168) },
+                Positions = new[] { 0f, 0.58f, 1f }
             };
-            lipGrad.InterpolationColors = cb;
-            using var lipPen = new Pen(lipGrad, 1.5f);
+            using var lipPen = new Pen(lip, Math.Max(1.6f, depth * 0.55f));
             g.DrawPath(lipPen, path);
+        }
+
+        g.Restore(state);
+    }
+
+    /// <summary>
+    /// Pinta una pieza moldeada en RELIEVE sobre el plástico: la pestaña superior, la flecha
+    /// del dock, cualquier detalle que tenga que sobresalir.
+    ///
+    /// La cara lleva un degradado que va del tono iluminado (arriba-izquierda) al tono en
+    /// sombra (abajo-derecha), el canto que mira a la luz se subraya en blanco y el opuesto
+    /// en negro, y detrás se proyecta una sombra corta. Esa sombra —y no un contorno duro—
+    /// es lo que separa la pieza de la carcasa y le da volumen.
+    /// </summary>
+    private static void DrawRelief(Graphics g, GraphicsPath path, Rectangle bounds, Color plastic, float lift)
+    {
+        if (bounds.Width < 3 || bounds.Height < 3) return;
+
+        if (lift > 0.5f)
+        {
+            var estado = g.Save();
+            g.TranslateTransform(lift * 0.45f, lift * 0.7f);
+            using (var drop = new SolidBrush(Color.FromArgb(66, 0, 0, 0)))
+                g.FillPath(drop, path);
+            g.Restore(estado);
+        }
+
+        using (var cara = new LinearGradientBrush(
+            new PointF(bounds.Left, bounds.Top),
+            new PointF(bounds.Right, bounds.Bottom),
+            Lighten(plastic, 0.15f), Darken(plastic, 0.24f)))
+        {
+            g.FillPath(cara, path);
+        }
+
+        using (var canto = new LinearGradientBrush(
+            new PointF(bounds.Left, bounds.Top),
+            new PointF(bounds.Right, bounds.Bottom),
+            Color.Black, Color.Black))
+        {
+            canto.InterpolationColors = new ColorBlend
+            {
+                Colors = new[] { ToAlpha(Color.White, 124), ToAlpha(Color.White, 0), Color.FromArgb(112, 0, 0, 0) },
+                Positions = new[] { 0f, 0.56f, 1f }
+            };
+            using var cantoPen = new Pen(canto, 1.4f);
+            g.DrawPath(cantoPen, path);
         }
     }
 
@@ -493,20 +571,42 @@ float4 PSMain(VSOut i) : SV_TARGET
 
         DrawShellBody(g, plastic, flat);
 
-        // 1) Pestaña superior hundida (unida arriba de la etiqueta, como en Carthage).
-        // Sin sombra pintada: solo el grabado suave del plástico.
+        // 1) Pestaña superior en relieve: la traba donde el cartucho se engancha.
         var tabRect = new Rectangle(TabX, TabY, TabW, TabH);
         using (var tabPath = RoundPath(tabRect, TabR))
-        {
-            using var tabFill = new SolidBrush(Darken(plastic, 0.14f));
-            g.FillPath(tabFill, tabPath);
-            using var tabEdge = new Pen(Color.FromArgb(45, 0, 0, 0), 1f);
-            g.DrawPath(tabEdge, tabPath);
-        }
+            DrawRelief(g, tabPath, tabRect, plastic, 4f);
 
         // 2) Etiqueta redondeada (clip de cabecera + carátula + franja de código)
         var stickerRect = new Rectangle(StickerX, StickerY, StickerW, StickerH);
         using var stickerPath = RoundPath(stickerRect, StickerR);
+
+        // Marco del molde: el canto de plástico que rodea el hueco, más ancho que el borde
+        // porque la mitad interior la tapa el piso del pozo. Recibe luz en el lado que mira
+        // a la luz y sombra en el opuesto; es lo que hace que el rectángulo parezca estar
+        // dentro de la carcasa y no apoyado arriba.
+        using (var frame = new LinearGradientBrush(
+            new PointF(stickerRect.Left, stickerRect.Top),
+            new PointF(stickerRect.Right, stickerRect.Bottom),
+            Color.Black, Color.Black))
+        {
+            frame.InterpolationColors = new ColorBlend
+            {
+                Colors = new[]
+                {
+                    Color.FromArgb(150, 0, 0, 0),
+                    Color.FromArgb(0, 0, 0, 0),
+                    ToAlpha(Lighten(plastic, 0.32f), 195)
+                },
+                Positions = new[] { 0f, 0.52f, 1f }
+            };
+            using var framePen = new Pen(frame, 10f);
+            g.DrawPath(framePen, stickerPath);
+        }
+
+        // Piso del pozo: queda debajo del contenido, así el antialias del borde no deja
+        // asomar el plástico claro y el rectángulo arranca ya hundido.
+        using (var pocketFloor = new SolidBrush(Mix(plastic, Color.Black, 0.62f)))
+            g.FillPath(pocketFloor, stickerPath);
 
         var prevClip = g.Clip;
         g.SetClip(stickerPath, CombineMode.Intersect);
@@ -545,11 +645,13 @@ float4 PSMain(VSOut i) : SV_TARGET
 
         g.Clip = prevClip;
 
-        // Hairline tenue alrededor de la etiqueta (define el borde sin parecer sombra)
-        using (var edgePen = new Pen(Color.FromArgb(55, 0, 0, 0), 1f))
-            g.DrawPath(edgePen, stickerPath);
+        // El pozo de la etiqueta: oclusión ambiental y canto del molde ENCIMA del
+        // contenido. Es la capa que hace que todo el rectángulo se vea metido hacia
+        // adentro en vez de apoyado en la carcasa.
+        DrawRecess(g, stickerPath, stickerRect, plastic, 6f, paintFloor: false);
 
-        // 3) Flecha inferior (apunta hacia abajo, hacia el dock): marca plana, sin sombra
+        // 3) Flecha inferior en relieve (apunta al dock): la misma pieza moldeada que la pestaña
+        var arrowRect = new Rectangle(ArrowX, ArrowY, ArrowW, ArrowH);
         using (var arrowPath = new GraphicsPath())
         {
             arrowPath.AddPolygon(new[]
@@ -559,10 +661,7 @@ float4 PSMain(VSOut i) : SV_TARGET
                 new PointF(ArrowX + ArrowW * 0.5f, ArrowY + ArrowH)
             });
             arrowPath.CloseFigure();
-            using var arrowFill = new SolidBrush(Darken(plastic, 0.16f));
-            g.FillPath(arrowFill, arrowPath);
-            using var arrowEdge = new Pen(Color.FromArgb(45, 0, 0, 0), 1f);
-            g.DrawPath(arrowEdge, arrowPath);
+            DrawRelief(g, arrowPath, arrowRect, plastic, 4f);
         }
 
         return bmp;
@@ -880,9 +979,7 @@ float4 PSMain(VSOut i) : SV_TARGET
         const int WinX = 128, WinY = 690, WinW = 344, WinH = 96;
         var winRect = new Rectangle(WinX, WinY, WinW, WinH);
         using (var winPath = RoundPath(winRect, 14))
-        {
-            DrawGroove(g, winPath, 4.0f, Color.FromArgb(16, 16, 18), shellHi, Color.FromArgb(195, 0, 0, 0));
-        }
+            DrawRecess(g, winPath, winRect, plastic, 5f, paintFloor: true);
 
         // 11 contactos dorados (width=20, gap=9.6, height=64)
         const int Pads = 11;
@@ -1072,4 +1169,10 @@ float4 PSMain(VSOut i) : SV_TARGET
         (int)(c.R * (1f - amount)), (int)(c.G * (1f - amount)), (int)(c.B * (1f - amount)));
 
     private static Color ToAlpha(Color c, int a) => Color.FromArgb(a, c.R, c.G, c.B);
+
+    /// <summary>Mezcla lineal de dos colores (<paramref name="t"/> = 0 → <paramref name="a"/>).</summary>
+    private static Color Mix(Color a, Color b, float t) => Color.FromArgb(
+        (int)Math.Clamp(a.R + (b.R - a.R) * t, 0, 255),
+        (int)Math.Clamp(a.G + (b.G - a.G) * t, 0, 255),
+        (int)Math.Clamp(a.B + (b.B - a.B) * t, 0, 255));
 }

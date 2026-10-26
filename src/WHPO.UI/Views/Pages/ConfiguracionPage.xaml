@@ -548,6 +548,33 @@
                             <StackPanel x:Name="CardSkinHost" Orientation="Horizontal" Spacing="2"
                                         Margin="0,12,0,0" HorizontalAlignment="Left"/>
 
+                            <!-- Color exacto: además de las muestras, cualquier color del
+                                 selector de Windows. La muestra chica adelanta el color
+                                 vigente y el botón abre el selector; se aplica al confirmar. -->
+                            <Grid ColumnSpacing="12" Margin="0,14,0,0" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border x:Name="CardSkinCustomSwatch"
+                                        Width="28" Height="28" CornerRadius="14"
+                                        BorderThickness="2"
+                                        BorderBrush="{ThemeResource SensorGridLineBrush}"
+                                        VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Color exacto" FontSize="14" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="CardSkinCustomHint"
+                                               FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button x:Name="CardSkinCustomButton" Grid.Column="2"
+                                        Content="Elegir color…"
+                                        CornerRadius="6" Padding="14,6"
+                                        VerticalAlignment="Center"/>
+                            </Grid>
+
                             <!-- Inclinación al hover: es una preferencia de las cards 3D, por eso
                                  vive acá y no en la pestaña de navegación. Por defecto, activada. -->
                             <Grid ColumnSpacing="16" Margin="0,16,0,0">

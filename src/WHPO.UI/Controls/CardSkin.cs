@@ -14,8 +14,8 @@ namespace WHPO_UI.Controls;
 ///
 /// El valor por defecto es <c>theme</c>: el plástico sale del color de identidad del
 /// tema activo, apagado y oscurecido para que se lea como carcasa y no como un color
-/// de interfaz. Los temas con paleta propia (Marea, Brasa, Rosa/Blanco…) siguen su
-/// acento; los clásicos Oscuro y Claro usan su plástico neutro, porque el azul de la
+/// de interfaz. Los temas con paleta propia (Marea, Brasa, Rosa/Blanco…) tienen un
+/// color de carcasa propio y curado; los clásicos Oscuro y Claro usan su plástico neutro, porque el azul de la
 /// app es el acento de la UI, no el color de su carcasa. Los presets son colores
 /// fijos, por si se quiere una bandeja que no siga al tema. <see cref="Refresh"/> toma
 /// una foto (inmutable) del ajuste, del acento y del tema: se llama solo desde la UI
@@ -30,6 +30,13 @@ public static class CardSkin
 
     /// <summary>Preset por defecto: la carcasa acompaña a la apariencia de la app.</summary>
     public const string ThemeId = "theme";
+
+    /// <summary>
+    /// Prefijo del ajuste cuando el color se elige a mano con el selector: el valor
+    /// guardado queda como <c>custom:RRGGBB</c>. Así el color exacto convive con los
+    /// presets sin agregar claves nuevas al archivo de settings.
+    /// </summary>
+    public const string CustomPrefix = "custom:";
 
     /// <summary>Grafito de Carthage: el color que tenía la biblioteca antes de este ajuste.</summary>
     private static readonly Color Graphite = Color.FromArgb(0x30, 0x30, 0x36);
@@ -64,17 +71,52 @@ public static class CardSkin
     /// de apariencia: cada tema estrena su propio plástico y no se arrastra el color
     /// fijo que se hubiera elegido con el tema anterior.
     /// </summary>
-    public static void ResetToTheme()
+    public static void ResetToTheme() => Persist(ThemeId);
+
+    /// <summary>
+    /// Fija un color exacto elegido con el selector y lo persiste. La UI llama después
+    /// a <see cref="Refresh"/> y repinta las vistas previas, igual que con un preset.
+    /// </summary>
+    public static void SetCustom(Color color) => Persist(FormatCustom(color));
+
+    /// <summary>
+    /// Publica una paleta SOLO en memoria, sin tocar el ajuste guardado: la usa el
+    /// selector de color exacto para mostrar en vivo cómo quedan los cartuchos y la
+    /// consola mientras se mueve el color. Se deshace con <see cref="Refresh"/>, que
+    /// vuelve a leer el valor persistido.
+    /// </summary>
+    public static void Preview(Color color) =>
+        Volatile.Write(ref _current, new Palette(FormatCustom(color), color));
+
+    private static void Persist(string id)
     {
         try
         {
             if (WHPO_UI.App.Services?.GetService(typeof(ISettingsService)) is ISettingsService settings)
             {
-                settings.Set(SettingKey, ThemeId);
+                settings.Set(SettingKey, id);
                 settings.Save();
             }
         }
         catch { }
+    }
+
+    /// <summary>Id canónico de un color exacto: <c>custom:RRGGBB</c>, en mayúsculas.</summary>
+    public static string FormatCustom(Color color) => $"{CustomPrefix}{color.R:X2}{color.G:X2}{color.B:X2}";
+
+    /// <summary>
+    /// ¿El ajuste es un color exacto? Devuelve el color parseado. Se valida el formato
+    /// porque el settings es un JSON que también se puede editar a mano.
+    /// </summary>
+    public static bool TryParseCustom(string? id, out Color color)
+    {
+        color = default;
+        if (id == null || !id.StartsWith(CustomPrefix, StringComparison.OrdinalIgnoreCase)) return false;
+        string hex = id[CustomPrefix.Length..].TrimStart('#');
+        if (hex.Length != 6) return false;
+        if (!int.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out int rgb)) return false;
+        color = Color.FromArgb(255, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+        return true;
     }
 
     /// <summary>
@@ -133,6 +175,10 @@ public static class CardSkin
         if (id == ThemeId)
             return new Palette(ThemeId, ThemePlastic(theme, accent));
 
+        // Color elegido a mano: manda sobre los presets y sobre el tema.
+        if (TryParseCustom(id, out var custom))
+            return new Palette(FormatCustom(custom), custom);
+
         foreach (var option in Options)
         {
             if (string.Equals(option.Id, id, StringComparison.OrdinalIgnoreCase) && option.Color is { } color)
@@ -143,19 +189,40 @@ public static class CardSkin
     }
 
     /// <summary>
-    /// Plástico asignado a cada tema. Los temas con paleta propia siguen su acento
-    /// atenuado; Oscuro y Claro no tienen acento de identidad (usan el azul de la app),
-    /// así que conservan un plástico neutro: negro y claro respectivamente. Así
-    /// «Del tema» en Oscuro no pinta los cartuchos de azul ni de grafito.
+    /// Plástico asignado a cada tema. Los temas con paleta propia tienen un color de
+    /// carcasa curado a mano (no derivado del acento): es su «Del tema». Oscuro y Claro
+    /// no tienen acento de identidad —usan el azul de la app—, así que conservan un
+    /// plástico neutro: negro y claro respectivamente. Así «Del tema» en Oscuro no pinta
+    /// los cartuchos de azul ni de grafito.
     /// </summary>
     private static Color ThemePlastic(AppTheme theme, Color? accent)
     {
         if (theme == AppTheme.Dark) return BlackPlastic;
         if (theme == AppTheme.Light) return Color.FromArgb(0xDD, 0xE0, 0xE6);
+
+        // Carcasa por tema, elegida a mano. Un tema nuevo sin entrada acá sigue cayendo
+        // en el acento atenuado de antes, así que esto no rompe a los que vengan después.
+        Color? curated = theme switch
+        {
+            AppTheme.Tide => Rgb(0x40, 0x7A, 0x8A),        // Marea
+            AppTheme.Aurora => Rgb(0x21, 0x42, 0x46),      // Aurora
+            AppTheme.Brasa => Rgb(0x4D, 0x11, 0x08),       // Brasa
+            AppTheme.Metal => Rgb(0x38, 0x40, 0x45),       // Metal
+            AppTheme.Amatista => Rgb(0x3B, 0x29, 0x5C),    // Amatista
+            AppTheme.CristalAzul => Rgb(0x1E, 0x32, 0x82), // Cristal Azul
+            AppTheme.Twilight => Rgb(0x32, 0x10, 0x4D),    // Crepúsculo
+            AppTheme.PinkLight => Rgb(0xFB, 0xCA, 0xFF),   // Rosa / Blanco
+            AppTheme.BlueBlack => Rgb(0x00, 0x14, 0x2E),   // Negro / Azul
+            _ => null
+        };
+        if (curated is { } plastic) return plastic;
+
         if (WHPO_UI.ThemeCatalog.Find(theme) != null && accent is { } a)
             return MutedAccent(a);
         return Graphite;
     }
+
+    private static Color Rgb(byte r, byte g, byte b) => Color.FromArgb(255, r, g, b);
 
     /// <summary>
     /// Acento del tema convertido en plástico: mismo tono, saturación recortada y
@@ -213,6 +280,9 @@ public static class CardSkin
 
     private static Color ToDrawing(Windows.UI.Color c) => Color.FromArgb(c.A, c.R, c.G, c.B);
 
+    /// <summary>Windows.UI.Color → System.Drawing.Color (color exacto del selector).</summary>
+    public static Color FromUi(Windows.UI.Color c) => ToDrawing(c);
+
     public static Windows.UI.Color ToUi(Color c) => Windows.UI.Color.FromArgb(c.A, c.R, c.G, c.B);
 
     /// <summary>Una opción del selector: id persistido, etiqueta en español (la traduce I18n) y color de muestra.</summary>
@@ -228,7 +298,8 @@ public static class CardSkin
         {
             Id = id;
             Plastic = plastic;
-            IsLight = Luminance(plastic) > 150;
+            Luminance = ToLuminance(plastic);
+            IsLight = Luminance > 150;
             Key = $"{id}:{plastic.R:X2}{plastic.G:X2}{plastic.B:X2}";
         }
 
@@ -242,6 +313,13 @@ public static class CardSkin
 
         /// <summary>El plástico es claro: el texto del dock y los relieves van en oscuro.</summary>
         public bool IsLight { get; }
+
+        /// <summary>
+        /// Luminancia del plástico (0..255). La usan los pintores del chasis para decidir
+        /// cuánto puede aclararse una pieza: un negro tolera un 5 % de aclarado sin dejar
+        /// de ser negro, un blanco necesita el triple para mostrar el mismo relieve.
+        /// </summary>
+        public float Luminance { get; }
 
         /// <summary>Muestra del selector (el propio plástico).</summary>
         public Windows.UI.Color Swatch => ToUi(Plastic);
@@ -258,6 +336,6 @@ public static class CardSkin
             (int)Math.Clamp(Plastic.G + (255 - Plastic.G) * amount, 0, 255),
             (int)Math.Clamp(Plastic.B + (255 - Plastic.B) * amount, 0, 255));
 
-        private static float Luminance(Color c) => 0.299f * c.R + 0.587f * c.G + 0.114f * c.B;
+        private static float ToLuminance(Color c) => 0.299f * c.R + 0.587f * c.G + 0.114f * c.B;
     }
 }

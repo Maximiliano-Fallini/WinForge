@@ -132,7 +132,7 @@ public static class CartridgeDock
         return new Border
         {
             Width = width, Height = 26, CornerRadius = new CornerRadius(5),
-            Background = Gradient((0, skin.Dark(0.78f)), (0.45, skin.Dark(0.22f)), (1, skin.Light(0.12f))),
+            Background = Gradient((0, skin.Dark(0.78f)), (0.45, skin.Dark(0.22f)), (1, skin.Light(Sheen(skin) * 0.9f))),
             BorderBrush = Brush("#FF090B10"),
             BorderThickness = new Thickness(1), Child = well,
             VerticalAlignment = VerticalAlignment.Top
@@ -171,7 +171,7 @@ public static class CartridgeDock
                     Height = 8,
                     VerticalAlignment = VerticalAlignment.Bottom,
                     CornerRadius = new CornerRadius(0, 0, 5, 5),
-                    Background = Gradient((0, skin.Light(0.15f)), (0.28, skin.Dark(0.02f)), (1, skin.Dark(0.55f))),
+                    Background = Gradient((0, skin.Light(Sheen(skin) * 1.1f)), (0.28, skin.Dark(0.02f)), (1, skin.Dark(0.55f))),
                     BorderBrush = Brush("#FF090B10"),
                     BorderThickness = new Thickness(1, 1, 1, 1),
                     Child = new Border
@@ -472,6 +472,24 @@ public static class CartridgeDock
         return brush;
     }
 
+    /// <summary>
+    /// Aclarado del canto superior del chasis, proporcional al plástico: un negro
+    /// (luminancia ~27) se aclara apenas un 5 %, un blanco (~223) el ~13 % de siempre.
+    /// Antes era un 14 % fijo y en la apariencia Oscura la consola salía gris plateada
+    /// —ni el negro de las cards ni el del fondo—, como si fuera de otro material:
+    /// un negro anodizado tiene brillo de CANTO, no de superficie.
+    /// </summary>
+    private static float Sheen(CardSkin.Palette skin) => 0.04f + 0.10f * (skin.Luminance / 255f);
+
+    /// <summary>Profundidad del degradé del chasis: cuanto más oscuro el plástico, más negro abajo.</summary>
+    private static float Depth(CardSkin.Palette skin) => 0.55f + 0.15f * (1f - skin.Luminance / 255f);
+
+    /// <summary>Opacidad del filo iluminado del borde superior (0..255): un negro solo insinúa el brillo.</summary>
+    private static int RimAlpha(CardSkin.Palette skin) => (int)(30 + 70 * (skin.Luminance / 255f));
+
+    /// <summary>Opacidad del reflejo de los cantos laterales (0..255).</summary>
+    private static int SideGlowAlpha(CardSkin.Palette skin) => (int)(14 + 24 * (skin.Luminance / 255f));
+
     private static Bitmap PaintShell(int pixelWidth, int pixelHeight, double portWidth)
     {
         // Paint in 66-DIP reference coordinates, rasterized at the window's DPI.
@@ -485,7 +503,7 @@ public static class CartridgeDock
         var skin = CardSkin.Current;
         using var silhouette = TopRounded(new RectangleF(0.5f, 1, width - 1, 65), 11);
         using (var body = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(0, 0, width, 66),
-            skin.Light(0.14f), skin.Dark(0.55f), 90f))
+            skin.Light(Sheen(skin)), skin.Dark(Depth(skin)), 90f))
             g.FillPath(body, silhouette);
         var state = g.Save();
         g.SetClip(silhouette);
@@ -498,7 +516,7 @@ public static class CartridgeDock
                 (float)random.NextDouble() * width, (float)random.NextDouble() * 65, 0.6f, 0.6f);
         // Lower moulded face: depth, seam and a narrow reflected bevel anchored to the bottom.
         using (var face = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(0, 48, width, 18),
-            skin.Dark(0.08f), skin.Dark(0.62f), 90f))
+            skin.Dark(0.08f), skin.Dark(Math.Min(0.9f, Depth(skin) + 0.10f)), 90f))
             g.FillRectangle(face, 0, 49, width, 18);
         using (var seam = new Pen(Color.FromArgb(190, 8, 10, 14), 1)) g.DrawLine(seam, 7, 49, width - 7, 49);
         using (var faceLight = new Pen(Color.FromArgb(50, 164, 175, 193), 1)) g.DrawLine(faceLight, 10, 50, width - 10, 50);
@@ -507,7 +525,7 @@ public static class CartridgeDock
         float recessW = (float)Math.Max(96, portWidth) + 22f;
         using var portPath = Rounded(new RectangleF(width * 0.5f - recessW * 0.5f, 5, recessW, 31), 6);
         using (var bevel = new System.Drawing.Drawing2D.LinearGradientBrush(new RectangleF(0, 5, 1, 31),
-            skin.Dark(0.70f), skin.Light(0.22f), 90f))
+            skin.Dark(0.70f), skin.Light(Sheen(skin) * 1.5f), 90f))
             g.FillPath(bevel, portPath);
         using (var groove = new Pen(Color.FromArgb(205, 9, 11, 16), 1)) g.DrawPath(groove, portPath);
         float insetW = (float)Math.Max(88, portWidth) - 4f;
@@ -544,9 +562,9 @@ public static class CartridgeDock
         }
         g.Restore(state);
         using (var edge = new Pen(Color.FromArgb(205, 10, 12, 17), 1)) g.DrawPath(edge, silhouette);
-        using (var topLight = new Pen(Color.FromArgb(100, 170, 181, 199), 1)) g.DrawLine(topLight, 15, 2, width - 15, 2);
+        using (var topLight = new Pen(Color.FromArgb(RimAlpha(skin), 170, 181, 199), 1)) g.DrawLine(topLight, 15, 2, width - 15, 2);
         // A second shoulder bevel avoids the appearance of a flat rounded rectangle.
-        using (var bevelLight = new Pen(Color.FromArgb(38, 216, 226, 244), 1))
+        using (var bevelLight = new Pen(Color.FromArgb(SideGlowAlpha(skin), 216, 226, 244), 1))
         {
             g.DrawLine(bevelLight, 3, 12, 3, 65);
             g.DrawLine(bevelLight, width - 3, 12, width - 3, 65);
