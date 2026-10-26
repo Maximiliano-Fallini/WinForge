@@ -63,7 +63,7 @@ WinForge reúne en una sola app lo que normalmente está repartido entre media d
   <sub>⭐ Beta — ¿encontraste un problema? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Reportalo en Issues</a></sub>
 </p>
 
-El instalador es self-contained (no requiere .NET ni el Windows App SDK) y la app se actualiza desde **Configuración → Actualizaciones**.
+El instalador es self-contained (no requiere .NET ni el Windows App SDK) y la app se actualiza desde **Configuración → Actualizaciones**. Cada release se construye en CI (GitHub Actions) desde el código de este repo: el detalle de qué se firma y cómo verificarlo está en [CODE_SIGNING.md](CODE_SIGNING.md).
 
 ## ⭐ Apoyá el proyecto
 
