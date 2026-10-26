@@ -80,6 +80,12 @@ $Known = [ordered]@{
     "zh-CN" = @{ endonym = "简体中文";           englishName = "Chinese (Simplified)"; builtin = $false }
     "ru-RU" = @{ endonym = "Русский";             englishName = "Russian";             builtin = $false }
     "pl-PL" = @{ endonym = "Polski";              englishName = "Polish";              builtin = $false }
+    "id-ID" = @{ endonym = "Bahasa Indonesia";     englishName = "Indonesian";           builtin = $false }
+    "tr-TR" = @{ endonym = "Türkçe";              englishName = "Turkish";              builtin = $false }
+    "vi-VN" = @{ endonym = "Tiếng Việt";          englishName = "Vietnamese";           builtin = $false }
+    "it-IT" = @{ endonym = "Italiano";            englishName = "Italian";              builtin = $false }
+    "ja-JP" = @{ endonym = "日本語";               englishName = "Japanese";             builtin = $false }
+    "ko-KR" = @{ endonym = "한국어";               englishName = "Korean";               builtin = $false }
 }
 
 # ---------------------------------------------------------------------------

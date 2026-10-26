@@ -106,6 +106,84 @@
       "keyCount": 2324,
       "completion": 100,
       "minAppVersion": ""
+    },
+    {
+      "code": "id-ID",
+      "endonym": "Bahasa Indonesia",
+      "englishName": "Indonesian",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/id-ID-1.0.0.json",
+      "sha256": "b1f3f8bcbe600b51dcb3a785ea7f7029b186e4fd447bcc600007e13e23ea240d",
+      "sizeBytes": 236502,
+      "keyCount": 2324,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "tr-TR",
+      "endonym": "Türkçe",
+      "englishName": "Turkish",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/tr-TR-1.0.0.json",
+      "sha256": "6506674f6f67cbb2c500fc623562de3d956510300c00e3020d45a7c0f2c3e68f",
+      "sizeBytes": 244480,
+      "keyCount": 2324,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "vi-VN",
+      "endonym": "Tiếng Việt",
+      "englishName": "Vietnamese",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/vi-VN-1.0.0.json",
+      "sha256": "48c0914c245c4a3130c0313eb90384a3273f9ed3ef3af522bcd60ea88d3f3da9",
+      "sizeBytes": 257975,
+      "keyCount": 2324,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "it-IT",
+      "endonym": "Italiano",
+      "englishName": "Italian",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/it-IT-1.0.0.json",
+      "sha256": "c5be419fc6ad28672699ef05a1d2dd548f8920cb86a8642fa80c46544ce5f95e",
+      "sizeBytes": 243956,
+      "keyCount": 2324,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "ja-JP",
+      "endonym": "日本語",
+      "englishName": "Japanese",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/ja-JP-1.0.0.json",
+      "sha256": "7387dfc6a63ea00ac40d0b503925d1c2738537af0e21e180d7d841f73bb82bae",
+      "sizeBytes": 274392,
+      "keyCount": 2324,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "ko-KR",
+      "endonym": "한국어",
+      "englishName": "Korean",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/ko-KR-1.0.0.json",
+      "sha256": "5b22d653cb9914a23eaa9513c5aaedcafc7683dd89770764102c2d8a6e618973",
+      "sizeBytes": 252549,
+      "keyCount": 2324,
+      "completion": 100,
+      "minAppVersion": ""
     }
   ]
 }
