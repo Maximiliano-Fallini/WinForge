@@ -1129,6 +1129,58 @@
                                                                       "El dispositivo gráfico se perdió durante la corrida.":  "运行期间图形设备丢失。",
                                                                       "La corrida no respondió dentro del tiempo límite (posible cuelgue del driver): se canceló desde la interfaz.":  "运行未在时限内响应（可能驱动挂起）：已从界面取消。"
                                                                   }
+                                                  },
+                                        "pl-PL":  {
+                                                      "name":  "Benchmark scen 3D",
+                                                      "description":  "Własne sceny 3D do pomiaru karty graficznej i całego komputera, z metrykami na żywo i porównywalnym raportem (bez punktacji)."
+                                                  },
+                                        "id-ID":  {
+                                                      "name":  "Benchmark adegan 3D",
+                                                      "description":  "Adegan 3D buatan sendiri untuk mengukur kartu grafis dan seluruh sistem, dengan metrik langsung dan laporan yang bisa dibandingkan (tanpa skor)."
+                                                  },
+                                        "tr-TR":  {
+                                                      "name":  "3D sahne karşılaştırma testi",
+                                                      "description":  "Ekran kartını ve tüm sistemi ölçmek için kendi 3D sahnelerimiz: canlı metrikler ve karşılaştırılabilir bir rapor (puan yok)."
+                                                  },
+                                        "vi-VN":  {
+                                                      "name":  "Bài đo cảnh 3D",
+                                                      "description":  "Cảnh 3D riêng để đo card đồ họa và cả máy, với số liệu trực tiếp và báo cáo có thể so sánh (không chấm điểm)."
+                                                  },
+                                        "it-IT":  {
+                                                      "name":  "Benchmark di scene 3D",
+                                                      "description":  "Scene 3D nostre per misurare la scheda grafica e il sistema, con metriche in tempo reale e un report confrontabile (senza punteggio)."
+                                                  },
+                                        "ja-JP":  {
+                                                      "name":  "3Dシーンベンチマーク",
+                                                      "description":  "独自の3Dシーンでグラフィックボードとマシン全体を計測。リアルタイムの指標と比較できるレポート付き（スコアなし）。"
+                                                  },
+                                        "ko-KR":  {
+                                                      "name":  "3D 장면 벤치마크",
+                                                      "description":  "그래픽 카드와 시스템 전체를 측정하는 자체 3D 장면. 실시간 지표와 비교 가능한 보고서 제공(점수 없음)."
+                                                  },
+                                        "zh-TW":  {
+                                                      "name":  "3D 場景基準測試",
+                                                      "description":  "自研 3D 場景，測量顯示卡與整機：即時指標與可比較的報告（不評分）。"
+                                                  },
+                                        "uk-UA":  {
+                                                      "name":  "Тест 3D-сцен",
+                                                      "description":  "Власні 3D-сцени для вимірювання відеокарти й системи: метрики в реальному часі та порівнюваний звіт (без балів)."
+                                                  },
+                                        "th-TH":  {
+                                                      "name":  "การทดสอบฉาก 3D",
+                                                      "description":  "ฉาก 3D ของเราเองสำหรับวัดการ์ดจอและเครื่องทั้งหมด พร้อมตัวชี้วัดแบบเรียลไทม์และรายงานที่เปรียบเทียบได้ (ไม่มีคะแนน)"
+                                                  },
+                                        "cs-CZ":  {
+                                                      "name":  "Benchmark 3D scén",
+                                                      "description":  "Vlastní 3D scény pro měření grafické karty i celého počítače, s živými metrikami a srovnatelným reportem (bez skóre)."
+                                                  },
+                                        "nl-NL":  {
+                                                      "name":  "3D-scènebenchmark",
+                                                      "description":  "Eigen 3D-scènes om de grafische kaart en het hele systeem te meten, met live statistieken en een vergelijkbaar rapport (zonder score)."
+                                                  },
+                                        "pt-PT":  {
+                                                      "name":  "Benchmark de cenas 3D",
+                                                      "description":  "Cenas 3D próprias para medir a placa gráfica e o sistema, com métricas ao vivo e um relatório comparável (sem pontuação)."
                                                   }
                                     }
                        }
