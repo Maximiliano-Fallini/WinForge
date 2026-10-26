@@ -87,10 +87,21 @@ public static class LanguagePacks
     /// <summary>
     /// Catálogo de idiomas disponibles. Se cachea en memoria (y en disco el
     /// servicio) para que el selector y el onboarding no pidan la red dos veces.
+    ///
+    /// La copia en memoria vence a los <see cref="CatalogTtl"/>: sin eso la lista
+    /// quedaba congelada mientras la app estuviera abierta, y un idioma publicado
+    /// después de abrirla no aparecía hasta reiniciar el programa. El vencimiento
+    /// es generoso a propósito: el menú se abre seguido y no queremos una petición
+    /// de red por cada apertura.
     /// </summary>
+    private static readonly TimeSpan CatalogTtl = TimeSpan.FromMinutes(15);
+    private static DateTime _catalogFetchedAt = DateTime.MinValue;
+
     public static async Task<LanguageCatalog?> GetCatalogAsync(ILoggingService? logging = null, bool force = false, CancellationToken ct = default)
     {
-        if (_catalog != null && !force) return _catalog;
+        // Con la copia vencida hay que volver a pedirla (force no hace falta: el
+        // vencimiento ya dispara el refetch).
+        if (_catalog != null && !force && DateTime.UtcNow - _catalogFetchedAt < CatalogTtl) return _catalog;
         if (_service == null) return null;
         try
         {
@@ -98,6 +109,9 @@ public static class LanguagePacks
             if (result.Catalog != null)
             {
                 _catalog = result.Catalog;
+                // Se marca también cuando vino de la copia local: si no, sin red
+                // se reintentaría en cada apertura del menú.
+                _catalogFetchedAt = DateTime.UtcNow;
                 if (result.FromCache)
                     logging?.LogInfo($"Idiomas: catálogo desde la copia local ({result.CachedAt:g}).");
             }
@@ -111,6 +125,9 @@ public static class LanguagePacks
 
     /// <summary>True si el catálogo ya se trajo (para no volver a pedirlo).</summary>
     public static bool CatalogLoaded => _catalog != null;
+
+    /// <summary>True si no hay catálogo o la copia en memoria ya venció.</summary>
+    public static bool CatalogStale => _catalog == null || DateTime.UtcNow - _catalogFetchedAt >= CatalogTtl;
 
     /// <summary>
     /// Nombre para mostrar de un idioma: el endónimo del catálogo (Deutsch,

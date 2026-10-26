@@ -349,7 +349,7 @@ public partial class OnboardingWindow : Window
         // que se vuelve a entrar a la fase.
         if (_phase == LanguagePhase)
         {
-            if (!LanguagePacks.CatalogLoaded && !_languageCatalogRequested)
+            if (LanguagePacks.CatalogStale && !_languageCatalogRequested)
             {
                 _languageCatalogRequested = true;
                 _ = LoadLanguageCatalogAsync();

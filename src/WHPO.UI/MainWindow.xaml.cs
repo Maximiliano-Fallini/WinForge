@@ -3290,8 +3290,9 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private async Task ShowLanguageMenuAsync()
     {
-        if (!LanguagePacks.CatalogLoaded)
-            await LanguagePacks.GetCatalogAsync(_loggingService);
+        // Siempre: con la copia en memoria vencida vuelve a pedir el catálogo, así un
+        // idioma recién publicado aparece sin reiniciar la app.
+        await LanguagePacks.GetCatalogAsync(_loggingService);
 
         // TODOS los idiomas con la misma fila: bandera + nombre, y a la derecha la acción que
         // corresponda (✓ activo · X quitar · descarga con spinner). Los descargables ya no son
