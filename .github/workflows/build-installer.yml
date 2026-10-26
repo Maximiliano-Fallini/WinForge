@@ -46,6 +46,11 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install wix --version 7.0.0 --tool-path .tools\wix
+          # WiX 7 rechaza cualquier comando hasta que se acepte el EULA de OSMF.
+          # En la máquina del desarrollador ya está aceptado (el archivo
+          # %USERPROFILE%\.wix\wix7-osmf-eula.txt existe), pero un runner arranca
+          # limpio: sin esto el build falla con WIX7015 en el primer comando.
+          .\.tools\wix\wix.exe eula accept wix7
           .\.tools\wix\wix.exe extension add WixToolset.UI.wixext/7.0.0
 
       # Regla de oro 2 del proyecto: la versión va en los mismo número en los dos
