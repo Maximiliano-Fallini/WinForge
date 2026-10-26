@@ -6,7 +6,7 @@
   <Package Name="WinForge"
            Manufacturer="WinForge"
            Version="0.6.1"
-           ProductCode="{68747C6A-AE93-46DF-9BF7-DB07773E21D0}"
+           ProductCode="{C78ED3B7-91C4-439B-9B82-6DA387AE4261}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"

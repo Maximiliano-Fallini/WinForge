@@ -224,7 +224,9 @@
      llevan para no interferir. -->
                         <Grid Width="32" Height="32"
                               HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Border CornerRadius="16" Background="#FF17171B" BorderThickness="1" BorderBrush="#80000000"/>
+                            <!-- Nombre para que el pie de la biblioteca retinte el dial con el
+                                 plástico del chasis (CartridgeDock.StyleSwitch). -->
+                            <Border x:Name="DialRing" CornerRadius="16" Background="#FF17171B" BorderThickness="1" BorderBrush="#80000000"/>
                             <Border CornerRadius="15" Margin="1">
                                 <Border.Background>
                                     <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">

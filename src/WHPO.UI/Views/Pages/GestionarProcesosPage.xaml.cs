@@ -480,7 +480,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     {
         bool inDock = _cards3D && GameBoostCard.Parent != null && GameBoostCard.Parent != HeaderPanel;
         GameBoostLabel.Inlines.Clear();
-        GameBoostLabel.Text = I18n.T("Modo rendimiento");
+        // En el pie va en mayúsculas, como el resto de lo grabado en la consola; en el
+        // header conserva la capitalización normal del título.
+        GameBoostLabel.Text = inDock
+            ? I18n.T("Modo rendimiento").ToUpperInvariant()
+            : I18n.T("Modo rendimiento");
         // El switch ya no es un ToggleSwitch con On/OffContent: nombrarlo para los
         // lectores de pantalla (el estilo del mock lleva el Off/On en el template).
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(GameBoostSwitch, I18n.T("Modo rendimiento"));
@@ -5153,7 +5157,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// y de la clave de caché: al tocar `CartridgeModel` hay que subirla, si no la grilla
     /// sigue sirviendo los PNG viejos y el cambio no se ve hasta borrar la caché a mano.
     /// </summary>
-    private const string GridShellCacheVersion = "v9";
+    private const string GridShellCacheVersion = "v11";
 
     private static string GridShellCacheDir =>
         Path.Combine(WHPO.Core.AppPaths.RootDir, $"cartshells-{GridShellCacheVersion}");
@@ -5509,6 +5513,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private string? _dockMessage;
     private Border? _dockSlotBorder;
     private Canvas? _dockCartridgeBay;
+    // Gesto de la zona transparente que cubre el cartucho montado (ver BuildDockHitZone).
+    private uint? _dockGrabPointerId;
+    private bool _dockGrabDragging;
+    private Windows.Foundation.Point _dockGrabPress;
+    private Windows.Foundation.Point _dockGrabFraction;
     // All insertion positions share the same mouth coordinate. The cartridge can
     // protrude above the footer without reserving an empty row in the library.
     private const double DockFooterHeight = 66;
@@ -5983,6 +5992,127 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             fromDock: true);
     }
 
+    /// <summary>
+    /// Se puede agarrar (y retirar) el cartucho montado: juego cerrado y consola libre.
+    /// Es la misma condición que el manito del asiento.
+    /// </summary>
+    private bool CanGrabDockCartridge() =>
+        _activeDrag == null && !_cartridgeFlight && !_dockLaunching
+        && _connectedCartridge is { } c && !_runningExes.Contains(c.Exe);
+
+    /// <summary>
+    /// Zona de agarre del cartucho montado: una capa transparente que cubre toda la
+    /// silueta visible (la torre que asoma sobre el chasis + la boca del pozo) para que
+    /// el cartucho se pueda tomar desde cualquier punto, no solo desde la franja baja.
+    /// Conduce el MISMO gesto que el asiento: pasar el umbral la arranca con
+    /// <see cref="BeginDockCartridgePull"/>, soltar afuera lo retira y un clic (sin
+    /// arrastre) abre la inspección.
+    /// </summary>
+    private CartridgeHitZone BuildDockHitZone(CartridgeTile seat, Action inspect)
+    {
+        var zone = new CartridgeHitZone
+        {
+            Width = DockCardWidth,
+            // La parte visible del cartucho empieza en la boca (DockMouthY) y termina en
+            // el fondo de la bahía: boca (lo que entra en el pozo) + torre que asoma.
+            Height = DockSlotDepth + DockProtrusion,
+            Margin = new Thickness(0, DockMouthY, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
+        };
+        ToolTipService.SetToolTip(zone, I18n.T("Clic para inspeccionar y configurar · arrastrá hacia afuera para retirar"));
+
+        // Estado del gesto limpio ANTES de soltar la captura: ReleasePointerCapture
+        // dispara PointerCaptureLost en el acto.
+        void ResetGrab(out bool wasDragging)
+        {
+            wasDragging = _dockGrabDragging;
+            _dockGrabPointerId = null;
+            _dockGrabDragging = false;
+        }
+
+        zone.PointerEntered += (_, _) => zone.SetHandCursor(CanGrabDockCartridge());
+        zone.PointerExited += (_, _) => zone.SetHandCursor(false);
+
+        zone.PointerPressed += (_, e) =>
+        {
+            if (_dockGrabPointerId != null || _activeDrag != null || _cartridgeFlight || _dockLaunching) return;
+            var press = e.GetCurrentPoint(zone);
+            if (!press.Properties.IsLeftButtonPressed) return;
+            // Capturar YA: si no, el ScrollViewer / la card de atrás se queda el gesto.
+            if (!zone.CapturePointer(e.Pointer)) return;
+            _dockGrabPointerId = e.Pointer.PointerId;
+            _dockGrabDragging = false;
+            _dockGrabPress = e.GetCurrentPoint(RootGrid).Position;
+            // Fracción del cartucho bajo el puntero, relativa a la silueta completa: la
+            // esquina superior de la zona ES la esquina superior del cartucho.
+            var origin = zone.TransformToVisual(RootGrid).TransformPoint(new Windows.Foundation.Point(0, 0));
+            _dockGrabFraction = new Windows.Foundation.Point(
+                Math.Clamp((_dockGrabPress.X - origin.X) / Math.Max(1, DockCardWidth), 0, 1),
+                Math.Clamp((_dockGrabPress.Y - origin.Y) / Math.Max(1, DockCardHeight), 0, 1));
+            e.Handled = true;
+        };
+
+        zone.PointerMoved += (_, e) =>
+        {
+            if (_dockGrabPointerId != e.Pointer.PointerId) return;
+            var now = e.GetCurrentPoint(RootGrid).Position;
+            if (!_dockGrabDragging)
+            {
+                double dx = now.X - _dockGrabPress.X, dy = now.Y - _dockGrabPress.Y;
+                if (dx * dx + dy * dy < 64) return;
+                // Con el juego abierto el cartucho queda clavado: sin arrastre.
+                if (!CanGrabDockCartridge()) return;
+                _dockGrabDragging = true;
+                BeginDockCartridgePull(seat, _dockGrabPress, _dockGrabFraction);
+                if (_activeDrag == null) { _dockGrabDragging = false; return; }
+            }
+            MoveCartridgeDrag(now);
+            e.Handled = true;
+        };
+
+        zone.PointerReleased += (_, e) =>
+        {
+            if (_dockGrabPointerId != e.Pointer.PointerId) return;
+            var point = e.GetCurrentPoint(RootGrid).Position;
+            ResetGrab(out bool dragged);
+            zone.ReleasePointerCapture(e.Pointer);
+            if (dragged) EndCartridgeDrag(point);
+            else inspect();
+            e.Handled = true;
+        };
+
+        void Cancel()
+        {
+            if (_dockGrabPointerId == null) return;
+            ResetGrab(out bool dragged);
+            if (dragged) EndCartridgeDrag(null);
+        }
+        zone.PointerCaptureLost += (_, _) => Cancel();
+        zone.PointerCanceled += (_, _) => Cancel();
+
+        return zone;
+    }
+
+    /// <summary>
+    /// Capa transparente con manito propio: el asiento queda debajo, así que la zona
+    /// hereda el cursor de agarre que el <see cref="CartridgeTile"/> pondría por su cuenta.
+    /// </summary>
+    private sealed class CartridgeHitZone : Grid
+    {
+        public void SetHandCursor(bool hand)
+        {
+            try
+            {
+                ProtectedCursor = hand
+                    ? Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand)
+                    : null;
+            }
+            catch { }
+        }
+    }
+
     private void CancelCartridgeDragImmediate()
     {
         var drag = _activeDrag;
@@ -6204,7 +6334,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 // de la consola (sin div/card encima): etiqueta + "?" (tooltip) + tuerca + switch.
                 GameBoostIcon.Visibility = Visibility.Collapsed;
 
-                GameBoostLabel.FontSize = 11.5;
+                // Etiqueta grabada en el chasis, como "WINFORGE / …": sin partir en dos
+                // líneas, con tracking abierto y un punto más chica que en el header.
+                GameBoostLabel.FontSize = 10.5;
+                GameBoostLabel.CharacterSpacing = 90;
                 GameBoostLabel.TextWrapping = TextWrapping.NoWrap;
                 GameBoostLabel.Foreground = CartridgeDock.TextBrush();
                 GameBoostLabel.Visibility = compactDock ? Visibility.Collapsed : Visibility.Visible;
@@ -6215,6 +6348,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 GameBoostInfoButton.Padding = new Thickness(0);
                 GameBoostInfoIcon.FontSize = 11;
                 GameBoostInfoButton.Visibility = Visibility.Visible;
+
+                // El dial también es una pieza del chasis: perilla del plástico del pie
+                // (no el disco grafito del header), tick en el acento y etiquetas Off/On
+                // con la tinta del dock.
+                CartridgeDock.StyleSwitch(GameBoostSwitch);
 
                 CartridgeDock.StyleButton(GameBoostSettingsButton);
                 GameBoostSettingsButton.Width = 24;
@@ -6240,9 +6378,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 GameBoostIcon.Visibility = Visibility.Visible;
 
                 GameBoostLabel.FontSize = 13;
+                GameBoostLabel.CharacterSpacing = 0;
                 GameBoostLabel.TextWrapping = TextWrapping.Wrap;
                 GameBoostLabel.Visibility = Visibility.Visible;
                 GameBoostLabel.ClearValue(TextBlock.ForegroundProperty);
+
+                CartridgeDock.ResetSwitch(GameBoostSwitch);
 
                 CartridgeDock.ClearDockResources(GameBoostInfoButton);
                 GameBoostInfoButton.Visibility = Visibility.Visible;
@@ -6557,8 +6698,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // (ruido: el cartucho a la vista ya lo dice). Con cartucho puesto y sin
         // actividad queda solo "WINFORGE". Lleva el estilo grande que antes tenía
         // la línea de abajo (intercambio pedido).
+        // Sin cartucho puesto no se anuncia nada: el pie queda en "WINFORGE" a secas.
+        // El aviso "Consola lista" era ruido permanente en la esquina.
         string dockState = _dockLaunchFailed ? I18n.T("No se pudo iniciar") : hasRunning ? I18n.T("En ejecución")
-            : _dockLaunching ? I18n.T("Cartucho conectado · iniciando") : hasConnected ? "" : I18n.T("Consola lista");
+            : _dockLaunching ? I18n.T("Cartucho conectado · iniciando") : "";
         var statusLine1 = new TextBlock
         {
             Text = string.IsNullOrEmpty(dockState) ? "WINFORGE" : "WINFORGE  /  " + dockState.ToUpperInvariant(),
@@ -6593,10 +6736,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Children = { statusLine1, statusLine2 }
         };
 
+        // Centrado en la CARA SUPERIOR del chasis, no en el alto total. El pie mide 66 DIP
+        // y el separador moldeado está en y=49 (PaintShell), así que el centro real del área
+        // útil es 24,5. El contenedor va de 7 a 56 por el padding del chasis, y centrar ahí
+        // dejaba la luz y el texto 7 DIP abajo; el margen inferior corre el bloque justo a
+        // ese centro (7..42 → 24,5).
         var leftWing = new Grid
         {
             ColumnSpacing = 12,
             VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 14),
             Children = { _dockLedHost, statusText }
         };
         leftWing.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -6608,12 +6757,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _dockCartridgeBay = new Canvas
         {
             Width = DockBayWidth, Height = DockBayHeight,
-            Margin = new Thickness(0, (DockMouthY + DockSlotDepth) - DockBayHeight, 0, 0),
+            // Anclado al FONDO, no al techo: el chasis reserva por arriba el alto de la
+            // torre que asoma (ver CartridgeDockHost.Height). Con un margen superior sobre
+            // un contenedor más alto, la boca del pozo se iba con el contenedor.
+            Margin = new Thickness(0, 0, 0, DockFooterHeight - (DockMouthY + DockSlotDepth)),
             Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, DockBayWidth, DockBayHeight) },
             // El asiento del cartucho recibe el puntero: un clic abre la inspección y,
             // con el juego cerrado, se puede arrastrar el cartucho hacia afuera.
             IsHitTestVisible = true
         };
+        CartridgeHitZone? cartridgeHitZone = null;
         if (hasConnected && _connectedCartridge is { } connected)
         {
             // Asiento INTERACTIVO (mismo CartridgeTile que las cards de la biblioteca,
@@ -6642,6 +6795,17 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Canvas.SetLeft(seat, DockCardLeft);
             Canvas.SetTop(seat, DockSeatedTop);
             _dockCartridgeBay.Children.Add(seat);
+
+            // ── Zona de agarre del cartucho montado ──────────────────────────
+            // El asiento vive dentro de la bahía recortada: solo su parte visible
+            // entra en el hit-test y la torre quedaba "muerta" al puntero, así que
+            // había que agarrarla desde la franja de abajo. Esta capa transparente
+            // cubre TODA la silueta visible (torre + boca del pozo) y conduce el
+            // mismo gesto que el asiento: arrastrar hacia afuera lo retira, un clic
+            // lo inspecciona. La geometría sale de las mismas constantes del dock:
+            // la parte visible empieza en DockMouthY y mide boca + torre.
+            cartridgeHitZone = BuildDockHitZone(seat,
+                () => ShowGame3DDetail(activeGame, activeExe!, activeName!, activeInstallPath, activeIsManual));
         }
 
 
@@ -6651,17 +6815,18 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_dockSlotBorder, I18n.T("Ranura de cartucho"));
         // Ala derecha: la card del Modo rendimiento (mudada desde el header). Es el
         // único control del ala: los botones de acción sobre el cartucho se sacaron.
-        // Alineada ARRIBA con un desfase de −2: centrada en la fila (45 DIP), la
-        // perilla de 32 px terminaba justo sobre la costura moldeada del chasis, que
-        // se pinta en y=49 de los 66 DIP del dock (PaintShell: "seam"). Con la perilla
-        // de 38 px de alto desde y=9, el borde inferior del dial queda en y=44 y la
-        // costura respira (5 DIP de aire) sin descolgar el switch de la ranura.
+        // Centrada en la MISMA línea que la luz y el texto del ala izquierda: el pie mide
+        // 66 DIP y el separador moldeado está en y=49 (PaintShell: "seam"), así que el
+        // centro del área útil es 24,5. El contenedor del chasis va de 7 a 56 por el
+        // padding; con el margen inferior de 14 el bloque se centra en 7..42 = 24,5.
+        // Con la perilla de 38 px, el dial queda en 5,5..43,5: 5,5 DIP de aire sobre la
+        // costura, igual que antes, y ahora comparte eje con el ala izquierda.
         var rightWing = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, -2, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 14),
             HorizontalAlignment = HorizontalAlignment.Right
         };
 
@@ -6683,10 +6848,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         dockRow.Children.Add(rightWing);
 
         var dockShell = CartridgeDock.CreateShell(dockRow, DockFooterHeight, DockPortWidth);
+        // El chasis se pega al fondo: arriba queda el aire donde entra la torre del cartucho.
+        dockShell.VerticalAlignment = VerticalAlignment.Bottom;
         var frontLip = CartridgeDock.CreatePortFrontLip(hasConnected, DockPortWidth);
-        frontLip.Margin = new Thickness(0, DockMouthY, 0, 0);
+        frontLip.VerticalAlignment = VerticalAlignment.Bottom;
+        frontLip.Margin = new Thickness(0, 0, 0, DockFooterHeight - DockMouthY - 26);
 
-        CartridgeDockHost.Height = DockFooterHeight;
+        // El chasis reserva también el alto de la torre que asoma por encima del pie. Sin
+        // eso el cartucho se dibujaba fuera de los límites de su contenedor: se veía, pero
+        // el puntero no lo alcanzaba y había que agarrarlo desde la franja de abajo.
+        CartridgeDockHost.Height = DockFooterHeight + DockProtrusion;
         UpdateCartridgeDockWidth();
         // Orden de capas reales de la ranura:
         // 1) dockShell (consola + pozo trasero del conector)
@@ -6694,7 +6865,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // 3) frontLip (labio frontal y guías laterales del conector que abrazan al cartucho por delante)
         var dockLayout = new Grid { Children = { dockShell, _dockCartridgeBay, frontLip } };
         _dockCartridgeBay.HorizontalAlignment = HorizontalAlignment.Center;
-        _dockCartridgeBay.VerticalAlignment = VerticalAlignment.Top;
+        _dockCartridgeBay.VerticalAlignment = VerticalAlignment.Bottom;
+        // La zona de agarre va ÚLTIMA: por encima del labio frontal, así el cartucho se
+        // agarra también en la franja que el labio tapa por delante.
+        if (cartridgeHitZone != null) dockLayout.Children.Add(cartridgeHitZone);
         // Swap final: recién acá se descarta el dock viejo. La card ya vive en
         // el rightWing nuevo (SafeMoveGameBoostCardTo de arriba); si algo de la
         // construcción falló, el host viejo sigue intacto y el catch la devuelve
@@ -8537,9 +8711,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // Aire perimetral para que el tilt y la elevación de las cards en la primera/
         // última columna y en la primera/última fila no queden cortados por el borde de
         // LibraryContentGrid ni por el viewport del scroll.
+        // Aire inferior: el pie va SUPERPUESTO a la biblioteca, así que el scroll tiene
+        // que poder correr por debajo de él. Con el alto completo del dock
+        // (chasis + torre) + 18, la última fila siempre queda entera por encima de la
+        // consola; sin esto la card se cortaba contra el chasis y nunca aparecía.
         if (LibraryPanel != null)
             LibraryPanel.Margin = new Thickness(sidePad, _cards3D ? 18 : 8, ScrollBarReserve + sidePad,
-                _cards3D ? DockProtrusion + 18 : 8);
+                _cards3D ? DockFooterHeight + DockProtrusion + 18 : 8);
         if (LibraryContentGrid != null)
             LibraryContentGrid.Margin = new Thickness(0);
         double bannerMin = 100;

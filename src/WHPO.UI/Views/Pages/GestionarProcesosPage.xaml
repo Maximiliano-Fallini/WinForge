@@ -324,8 +324,15 @@
                  de la biblioteca). Ahora el cartucho entra en la ranura ADELANTE del
                  contenido, como en la consola real; el viewport del scroll termina
                  justo en el borde superior del chasis, así que nada más queda tapado. -->
+            <!-- Va en la MISMA fila que la biblioteca y superpuesto (z 25), no en una
+                 fila propia: con fila propia el alto del host (chasis + torre) o su
+                 recorte definían dónde terminaba el scroll, y el cartucho se cortaba
+                 arriba o las cards antes de llegar al chasis. Como capa, el pie se
+                 dibuja sobre el contenido y la biblioteca scrollea por debajo; su
+                 margen inferior (DockFooterHeight + torre) es el que la mantiene
+                 afuera del chasis. -->
             <Grid x:Name="CartridgeDockHost"
-                  Grid.Row="3"
+                  Grid.Row="1"
                   HorizontalAlignment="Stretch"
                   VerticalAlignment="Bottom"
                   Margin="0"

@@ -1,7 +1,7 @@
 {
   "catalogVersion": 1,
-  "sourceHash": "7045bb28bdc471f473445ab7f29a1a31bc1e9932fcb725505c9a50ef9e4eec37",
-  "generatedAt": "2026-10-06",
+  "sourceHash": "03b98cb6fe2df7ceeaa3466af18bbd2360238f10c6a95b6ab35d3a15365f4718",
+  "generatedAt": "2026-10-26",
   "languages": [
     {
       "code": "es-AR",
@@ -12,7 +12,7 @@
       "url": "",
       "sha256": "",
       "sizeBytes": 0,
-      "keyCount": 2056,
+      "keyCount": 2324,
       "completion": 100,
       "minAppVersion": ""
     },
@@ -25,7 +25,7 @@
       "url": "",
       "sha256": "",
       "sizeBytes": 0,
-      "keyCount": 2056,
+      "keyCount": 2324,
       "completion": 100,
       "minAppVersion": ""
     },
@@ -91,6 +91,19 @@
       "sha256": "81ebe89db768d94f619f38238c48c276b6023dc90506dfe973cfa32523db6f98",
       "sizeBytes": 279779,
       "keyCount": 2056,
+      "completion": 100,
+      "minAppVersion": ""
+    },
+    {
+      "code": "pl-PL",
+      "endonym": "Polski",
+      "englishName": "Polish",
+      "builtin": false,
+      "version": "1.0.0",
+      "url": "https://github.com/Maximiliano-Fallini/WinForge/releases/download/languages/pl-PL-1.0.0.json",
+      "sha256": "236a893fc3092b8f02612c35a74e85f4a985b853bdd1065c2fca72c61509dec7",
+      "sizeBytes": 243264,
+      "keyCount": 2324,
       "completion": 100,
       "minAppVersion": ""
     }

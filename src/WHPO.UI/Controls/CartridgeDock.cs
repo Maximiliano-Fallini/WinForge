@@ -3,6 +3,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using WHPO.Core.Services.Interfaces;
@@ -25,7 +26,11 @@ public static class CartridgeDock
     // Luz del dock: apagada mantiene el tamaño de siempre; encendida crece un poco
     // (LED completo, bisel incluido) para que el ojo la registre de reojo sin que
     // deje de ser un LED de consola.
-    private const double LedSize = 16;
+    /// <summary>
+    /// Tamaño ÚNICO del LED. Antes el apagado medía 16 y el encendido 20, así que la luz
+    /// crecía al encenderse y empujaba el texto del pie 4 px. Lo que cambia es el color,
+    /// no el tamaño.
+    /// </summary>
     private const double LitLedSize = 20;
 
     /// <summary>
@@ -213,10 +218,9 @@ public static class CartridgeDock
     {
         // Verde en cuanto hay un cartucho puesto (insertado o ya corriendo): es la señal de
         // "la consola tiene un juego". Gris en espera y rojo si el último lanzamiento falló.
-        bool lit = connected || running || failed;
         string core = failed ? "#FFE07059" : running || connected ? "#FF83E8AE" : "#FF62746B";
         string shade = failed ? "#FF4B211C" : running || connected ? "#FF1E4A38" : "#FF213C32";
-        return BuildLed(core, shade, lit ? LitLedSize : LedSize);
+        return BuildLed(core, shade, LitLedSize);
     }
 
     /// <summary>
@@ -281,19 +285,99 @@ public static class CartridgeDock
         };
     }
 
+    /// <summary>
+    /// Botón del pie: una pieza moldeada del MISMO plástico del chasis, un escalón más
+    /// oscura que la cara donde apoya para leerse como tecla empotrada. Antes era un
+    /// degradé grafito fijo, así que en cualquier apariencia que no fuera la Oscura el
+    /// botón quedaba como un chip de otro material encima de la consola.
+    /// </summary>
     public static void StyleButton(Button button, bool eject = false)
     {
+        var skin = CardSkin.Current;
+        float sheen = Sheen(skin);
+        bool light = skin.IsLight;
+
+        SolidColorBrush Solid(Color color) => new(CardSkin.ToUi(color));
+
         button.CornerRadius = new CornerRadius(5);
-        button.Background = Gradient((0, "#FF414651"), (0.15, "#FF303540"), (1, "#FF1B1F27"));
-        button.BorderBrush = Gradient((0, "#FF69717D"), (0.3, "#FF383E48"), (1, "#FF0D1015"));
+        // Cara de la tecla: arriba el plástico casi puro (brillo de canto), abajo hundido.
+        button.Background = Gradient(
+            (0, light ? skin.Dark(0.05f) : skin.Light(sheen * 1.15f)),
+            (0.55, light ? skin.Dark(0.12f) : skin.Dark(0.20f)),
+            (1, light ? skin.Dark(0.20f) : skin.Dark(0.46f)));
+        // Filo: aclarado arriba, sombra abajo (el borde inferior de 2 px es el que da el relieve).
+        button.BorderBrush = Gradient(
+            (0, light ? skin.Dark(0.28f) : skin.Light(sheen * 1.9f)),
+            (1, light ? skin.Dark(0.46f) : skin.Dark(0.66f)));
         button.BorderThickness = new Thickness(1, 1, 1, 2);
-        button.Foreground = Brush(eject ? "#FFE9C2AC" : "#FFDCE2EA");
-        button.Resources["ButtonBackgroundPointerOver"] = Gradient((0, "#FF4C5461"), (1, "#FF252B35"));
-        button.Resources["ButtonBackgroundPressed"] = Gradient((0, "#FF10141B"), (1, "#FF292F39"));
-        button.Resources["ButtonBorderBrushPointerOver"] = Brush("#FF8A94A3");
-        button.Resources["ButtonBorderBrushPressed"] = Brush("#FF13171F");
-        button.Resources["ButtonForegroundPointerOver"] = Brush("#FFF2F5FA");
-        button.Resources["ButtonForegroundPressed"] = Brush("#FFC5CDDA");
+        button.Foreground = TextBrush(secondary: eject);
+        button.Resources["ButtonBackgroundPointerOver"] = Gradient(
+            (0, light ? skin.Dark(0.03f) : skin.Light(sheen * 2.1f)),
+            (1, light ? skin.Dark(0.16f) : skin.Dark(0.32f)));
+        button.Resources["ButtonBackgroundPressed"] = Gradient(
+            (0, light ? skin.Dark(0.24f) : skin.Dark(0.62f)),
+            (1, light ? skin.Dark(0.15f) : skin.Dark(0.34f)));
+        button.Resources["ButtonBorderBrushPointerOver"] = Solid(light ? skin.Dark(0.42f) : skin.Light(sheen * 2.6f));
+        button.Resources["ButtonBorderBrushPressed"] = Solid(light ? skin.Dark(0.55f) : skin.Dark(0.75f));
+        button.Resources["ButtonForegroundPointerOver"] = TextBrush();
+        button.Resources["ButtonForegroundPressed"] = TextBrush();
+    }
+
+    /// <summary>
+    /// Dial "Modo rendimiento" cuando vive en el pie: la perilla se pinta con el
+    /// plástico del chasis (antes era un disco grafito fijo en cualquier apariencia),
+    /// el tick pasa al acento del tema y las etiquetas Off/On usan la tinta del dock
+    /// en vez de la del tema —necesario con un color exacto claro, donde la tinta
+    /// clara del tema quedaba invisible sobre el plástico—.
+    /// Los nombres son los del template (PerformanceSwitchStyle en Toggles.xaml).
+    /// </summary>
+    public static void StyleSwitch(ToggleButton dial)
+    {
+        // El template puede no estar instanciado si la card se mueve al pie antes del
+        // primer layout (arranque directo en modo 3D): ApplyTemplate lo resuelve sin
+        // esperar a que la ventana mida.
+        dial.ApplyTemplate();
+        var skin = CardSkin.Current;
+        bool light = skin.IsLight;
+        float sheen = Sheen(skin);
+
+        if (FindPart(dial, "DialRing") is Border ring)
+            ring.Background = new SolidColorBrush(CardSkin.ToUi(skin.Dark(light ? 0.55f : 0.80f)));
+        if (FindPart(dial, "Face") is Border face)
+            face.Background = Gradient(
+                (0, light ? skin.Dark(0.12f) : skin.Light(sheen * 1.55f)),
+                (1, light ? skin.Dark(0.40f) : skin.Dark(0.55f)));
+        if (FindPart(dial, "Indicator") is Border tick)
+            tick.Background = ThemeBrushes.Get("AccentBrush");
+        if (FindPart(dial, "OffLabel") is TextBlock off) off.Foreground = TextBrush();
+        if (FindPart(dial, "OnLabel") is TextBlock on) on.Foreground = TextBrush();
+    }
+
+    /// <summary>Devuelve el dial a los colores del mock (header): mismo código que el template.</summary>
+    public static void ResetSwitch(ToggleButton dial)
+    {
+        dial.ApplyTemplate();
+        if (FindPart(dial, "DialRing") is Border ring)
+            ring.Background = Brush("#FF17171B");
+        if (FindPart(dial, "Face") is Border face)
+            face.Background = Gradient((0, "#FF3A3A3E"), (1, "#FF1D1D20"));
+        if (FindPart(dial, "Indicator") is Border tick)
+            tick.Background = Brush("#FF3B7FAA");
+        if (FindPart(dial, "OffLabel") is TextBlock off) off.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
+        if (FindPart(dial, "OnLabel") is TextBlock on) on.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
+    }
+
+    /// <summary>Busca una parte del template por x:Name en el árbol visual ya aplicado.</summary>
+    private static FrameworkElement? FindPart(DependencyObject root, string name)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement element && element.Name == name) return element;
+            if (FindPart(child, name) is { } nested) return nested;
+        }
+        return null;
     }
 
     public static void StyleWell(Border well)

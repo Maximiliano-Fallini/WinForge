@@ -65,6 +65,15 @@ public static class CartridgeModel
     public const int LabelX = 44, LabelY = 686, LabelW = 512, LabelH = 88;
     public const int ArrowX = 248, ArrowY = 798, ArrowW = 104, ArrowH = 42;
 
+    /// <summary>
+    /// Profundidad REAL del pozo de la etiqueta, en unidades de ancho de cara (18 px del
+    /// canvas de 600, ≈3% del ancho, como el hundido de una etiqueta en un cartucho de
+    /// verdad). No es un dato de pintura: la malla hunde el fondo y modela las paredes, así
+    /// que el espesor se ve al girar el cartucho. Tiene que quedar por debajo del
+    /// semiespesor (23 px) para no atravesar el dorso.
+    /// </summary>
+    public const float PocketDepth = 18f / FaceWidth;
+
     // Compatibilidad
     public const int HeroH = ArtH, CodeH = LabelH;
 
@@ -106,24 +115,31 @@ VSOut VSMain(VSIn i)
 }
 Texture2D face : register(t0);
 Texture2D back : register(t1);
-SamplerState samp : register(s0);
-float4 PSMain(VSOut i) : SV_TARGET
+SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
 {
     float3 n = normalize(i.Nrm);
     float3 clave = normalize(float3(-0.32f, 0.44f, 0.84f));
     float3 relleno = normalize(float3(0.38f, -0.42f, 0.62f));
-    // En las caras planas (frente y dorso, mask=1) se preserva al 100% el color exacto de
-    // la textura pintada para que luzca idéntica a la card de la biblioteca; en el canto
-    // (mask=0) el espesor tiene el tono oscuro de la pared inferior (0.86 del plástico)
-    // con una variación sutil al girarlo.
+    // El canal alfa del tinte dice qué clase de vértice es: 1 cara, 2 dorso, 0 canto del
+    // cartucho y 3 pared del pozo. Con eso cada superficie elige su propia iluminación.
+    float canal = i.Tint.a;
+    float esFrente = saturate(1.0f - abs(canal - 1.0f));
+    float esDorso = saturate(1.0f - abs(canal - 2.0f));
+    float esPozo = saturate(1.0f - abs(canal - 3.0f));
+    float esTextura = max(esFrente, esDorso);
+    // Oclusión por vértice: 1 en la cara, menos adentro del pozo (la luz no llega igual).
+    float ocl = i.Tint.r;
+    // En las caras texturadas se preserva al 100% el color de la textura pintada, para que
+    // el cartucho luzca idéntico a la card de la biblioteca. El canto del cartucho mantiene
+    // su tono parejo y las paredes del pozo tienen un rango mucho más amplio: el giro del
+    // modelo sobre las luces es lo que las hace cambiar de claro a oscuro.
     float luzCanto = 0.84f + 0.08f * saturate(dot(n, clave)) + 0.04f * saturate(dot(n, relleno));
+    float luzPozo = 0.30f + 0.70f * saturate(dot(n, clave)) + 0.22f * saturate(dot(n, relleno));
     float4 arteFrente = face.Sample(samp, i.Uv);
     float4 arteDorso = back.Sample(samp, i.Uv);
-    float4 arte = lerp(arteFrente, arteDorso, step(1.5f, i.Tint.a));
-    float mask = step(0.5f, i.Tint.a);
-    float3 colorCanto = Plastic.rgb * luzCanto;
-    float3 colorCara = arte.rgb;
-    float3 finalRgb = saturate(lerp(colorCanto, colorCara, mask));
+    float4 arte = lerp(arteFrente, arteDorso, esDorso);
+    float3 colorCanto = Plastic.rgb * lerp(luzCanto, luzPozo, esPozo) * lerp(1.0f, ocl, esPozo);
+    float3 finalRgb = saturate(lerp(colorCanto, arte.rgb, esTextura));
     return float4(finalRgb, 1.0f);
 }";
 
@@ -206,6 +222,64 @@ float4 PSMain(VSOut i) : SV_TARGET
         }
     }
 
+    /// <summary>
+    /// Rectángulo redondeado del canvas 600×878 pasado a coordenadas de la malla (x a la
+    /// derecha, y arriba). El recorrido sigue el del canvas: no importa el sentido, porque
+    /// las normales de las paredes salen del área con signo.
+    /// </summary>
+    private static List<Vector2> BuildRoundedRectOutline(float cx0, float cy0, float cx1, float cy1, float radio, int porArco = 6)
+    {
+        var pts = new List<Vector2>();
+        void Arco(float cx, float cy, float desde, float hasta)
+        {
+            for (int i = 0; i <= porArco; i++)
+            {
+                float a = (desde + (hasta - desde) * i / porArco) * MathF.PI / 180f;
+                pts.Add(ToModel(cx + radio * MathF.Cos(a), cy + radio * MathF.Sin(a)));
+            }
+        }
+
+        Arco(cx0 + radio, cy0 + radio, 180f, 270f);
+        Arco(cx1 - radio, cy0 + radio, 270f, 360f);
+        Arco(cx1 - radio, cy1 - radio, 0f, 90f);
+        Arco(cx0 + radio, cy1 - radio, 90f, 180f);
+        return pts;
+    }
+
+    /// <summary>Punto del canvas (600×878, y hacia abajo) a coordenadas de la malla (y arriba).</summary>
+    private static Vector2 ToModel(float cx, float cy) =>
+        new((cx - FaceWidth * 0.5f) / FaceWidth, (FaceHeight * 0.5f - cy) / FaceWidth);
+
+    /// <summary>Contorno del pozo de la etiqueta en coordenadas de la malla.</summary>
+    private static List<Vector2> BuildPocketOutline() =>
+        BuildRoundedRectOutline(StickerX, StickerY, StickerX + StickerW, StickerY + StickerH, StickerR);
+
+    /// <summary>
+    /// Punto donde el rayo que sale del origen corta el contorno cerrado <paramref name="polygon"/>.
+    /// El origen se asume adentro del contorno, así que se toma el corte más lejano.
+    /// </summary>
+    private static Vector2 RayToPolygon(Vector2 dir, List<Vector2> polygon)
+    {
+        float mejor = -1f;
+        var punto = dir;
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            var a = polygon[i];
+            var b = polygon[(i + 1) % polygon.Count];
+            float ex = b.X - a.X, ey = b.Y - a.Y;
+            float det = -dir.X * ey + ex * dir.Y;
+            if (MathF.Abs(det) < 1e-9f) continue;
+            float s = (-a.X * ey + ex * a.Y) / det;
+            float u = (dir.X * a.Y - dir.Y * a.X) / det;
+            if (s > 0f && u >= -0.001f && u <= 1.001f && s > mejor)
+            {
+                mejor = s;
+                punto = dir * s;
+            }
+        }
+        return punto;
+    }
+
     public static (Vertex[] Vertices, ushort[] Indices) BuildMesh()
     {
         var outline = BuildOutline();
@@ -283,7 +357,104 @@ float4 PSMain(VSOut i) : SV_TARGET
                 else { idx.Add(ring[i]); idx.Add(ring[j]); }
             }
         }
-        AddCara(frente[^1], t, false);
+        // Pozo real de la etiqueta. La cara ya no es una tapa plana: del borde del bisel
+        // sale un anillo plano hasta el labio del pozo, de ahí bajan las paredes y el fondo
+        // queda hundido PocketDepth. Es lo único que da profundidad de verdad: al girar el
+        // cartucho aparece el espesor de la pared, cosa que ningún sombreado pintado puede
+        // falsear.
+        void AddPocket(ushort[] bordeCara)
+        {
+            var contorno = BuildPocketOutline();
+            int n = bordeCara.Length;
+
+            // Labio: cada vértice del contorno se proyecta hasta el rectángulo de la
+            // etiqueta. Así el anillo de la cara y la pared comparten exactamente los
+            // mismos puntos y no queda ninguna costura entre los dos.
+            var labioXY = new Vector2[n];
+            var labio = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                var p = verts[bordeCara[i]].Position;
+                var dir = new Vector2(p.X, p.Y);
+                if (dir.LengthSquared() < 1e-9f) dir = Vector2.UnitX;
+                labioXY[i] = RayToPolygon(Vector2.Normalize(dir), contorno);
+                labio[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(
+                    new Vector3(labioXY[i].X, labioXY[i].Y, t),
+                    Vector3.UnitZ,
+                    UvFrente(labioXY[i]),
+                    new Vector4(1f, 1f, 1f, 1f)));
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                idx.Add(labio[i]); idx.Add(bordeCara[i]); idx.Add(bordeCara[j]);
+                idx.Add(labio[i]); idx.Add(bordeCara[j]); idx.Add(labio[j]);
+            }
+
+            // Normal hacia adentro del pozo, que es el lado desde el que se ven las paredes.
+            // Se deduce del área con signo para no depender del sentido de recorrido.
+            float area = 0f;
+            for (int i = 0; i < n; i++)
+            {
+                var a = labioXY[i];
+                var b = labioXY[(i + 1) % n];
+                area += a.X * b.Y - b.X * a.Y;
+            }
+            float signo = area >= 0f ? 1f : -1f;
+
+            float fondo = t - PocketDepth;
+            var arriba = new ushort[n];
+            var abajo = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                var tan = labioXY[(i + 1) % n] - labioXY[(i - 1 + n) % n];
+                var nrm = new Vector3(-tan.Y * signo, tan.X * signo, 0f);
+                nrm = nrm.LengthSquared() < 1e-12f ? Vector3.UnitZ : Vector3.Normalize(nrm);
+                arriba[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(labioXY[i].X, labioXY[i].Y, t), nrm,
+                    UvFrente(labioXY[i]), new Vector4(0.90f, 1f, 1f, 3f)));
+                abajo[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(labioXY[i].X, labioXY[i].Y, fondo), nrm,
+                    UvFrente(labioXY[i]), new Vector4(0.55f, 1f, 1f, 3f)));
+            }
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                idx.Add(arriba[i]); idx.Add(abajo[i]); idx.Add(abajo[j]);
+                idx.Add(arriba[i]); idx.Add(abajo[j]); idx.Add(arriba[j]);
+            }
+
+            // Fondo: la etiqueta misma, mapeada con las mismas UV que el labio. La oclusión
+            // ambiental ya viene pintada en la textura, así que acá no hay que inventar nada.
+            //
+            // Necesita su PROPIO anillo: los vértices de la pared llevan canal 3 y, al
+            // interpolarse sobre el fondo, el alfa pasaba por 2 en el medio de cada
+            // triángulo y el shader muestreaba la textura del DORSO — se veían los contactos
+            // dorados a través de la etiqueta.
+            ushort centroPozo = (ushort)verts.Count;
+            verts.Add(new Vertex(new Vector3(0f, 0f, fondo), Vector3.UnitZ,
+                UvFrente(Vector2.Zero), new Vector4(1f, 1f, 1f, 1f)));
+            var fondoAnillo = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                fondoAnillo[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(labioXY[i].X, labioXY[i].Y, fondo), Vector3.UnitZ,
+                    UvFrente(labioXY[i]), new Vector4(1f, 1f, 1f, 1f)));
+            }
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                idx.Add(centroPozo); idx.Add(fondoAnillo[i]); idx.Add(fondoAnillo[j]);
+            }
+        }
+
+        // La pestaña y la flecha NO llevan geometría: van hundidas en la pintura. Hacerlas
+        // sobresalir de la cara las volvía una placa pegada al frente —y la pintura ya
+        // traía su propio sombreado, así que el detalle se veía doble—; además iban hacia
+        // afuera cuando el resto del cartucho está moldeado hacia adentro.
+        AddPocket(frente[^1]);
         AddCara(dorso[0], -t, true);
 
         return (verts.ToArray(), idx.ToArray());
@@ -449,7 +620,7 @@ float4 PSMain(VSOut i) : SV_TARGET
     /// Las capas 2 y 3 se dibujan con el clip puesto, así que caen ENCIMA del contenido:
     /// eso es lo que hace que el rectángulo se lea hundido y no pegado sobre la carcasa.
     /// </summary>
-    private static void DrawRecess(Graphics g, GraphicsPath path, Rectangle bounds, Color plastic, float depth, bool paintFloor)
+    private static void DrawRecess(Graphics g, GraphicsPath path, Rectangle bounds, Color plastic, float depth, bool paintFloor, float escala = 1f)
     {
         if (path.PointCount < 3 || bounds.Width < 4 || bounds.Height < 4) return;
 
@@ -480,7 +651,7 @@ float4 PSMain(VSOut i) : SV_TARGET
                 tl, br,
                 Color.FromArgb(alpha, 0, 0, 0),
                 Color.FromArgb(0, 0, 0, 0));
-            using var anillo = new Pen(penumbra, 2f + i * 4f);
+            using var anillo = new Pen(penumbra, 2f + i * 4f * escala);
             g.DrawPath(anillo, path);
         }
 
@@ -512,51 +683,6 @@ float4 PSMain(VSOut i) : SV_TARGET
     }
 
     /// <summary>
-    /// Pinta una pieza moldeada en RELIEVE sobre el plástico: la pestaña superior, la flecha
-    /// del dock, cualquier detalle que tenga que sobresalir.
-    ///
-    /// La cara lleva un degradado que va del tono iluminado (arriba-izquierda) al tono en
-    /// sombra (abajo-derecha), el canto que mira a la luz se subraya en blanco y el opuesto
-    /// en negro, y detrás se proyecta una sombra corta. Esa sombra —y no un contorno duro—
-    /// es lo que separa la pieza de la carcasa y le da volumen.
-    /// </summary>
-    private static void DrawRelief(Graphics g, GraphicsPath path, Rectangle bounds, Color plastic, float lift)
-    {
-        if (bounds.Width < 3 || bounds.Height < 3) return;
-
-        if (lift > 0.5f)
-        {
-            var estado = g.Save();
-            g.TranslateTransform(lift * 0.45f, lift * 0.7f);
-            using (var drop = new SolidBrush(Color.FromArgb(66, 0, 0, 0)))
-                g.FillPath(drop, path);
-            g.Restore(estado);
-        }
-
-        using (var cara = new LinearGradientBrush(
-            new PointF(bounds.Left, bounds.Top),
-            new PointF(bounds.Right, bounds.Bottom),
-            Lighten(plastic, 0.15f), Darken(plastic, 0.24f)))
-        {
-            g.FillPath(cara, path);
-        }
-
-        using (var canto = new LinearGradientBrush(
-            new PointF(bounds.Left, bounds.Top),
-            new PointF(bounds.Right, bounds.Bottom),
-            Color.Black, Color.Black))
-        {
-            canto.InterpolationColors = new ColorBlend
-            {
-                Colors = new[] { ToAlpha(Color.White, 124), ToAlpha(Color.White, 0), Color.FromArgb(112, 0, 0, 0) },
-                Positions = new[] { 0f, 0.56f, 1f }
-            };
-            using var cantoPen = new Pen(canto, 1.4f);
-            g.DrawPath(cantoPen, path);
-        }
-    }
-
-    /// <summary>
     /// Cara frontal del cartucho: carcasa, pestaña superior hundida, pozo, etiqueta con
     /// cabecera del launcher, ventana de carátula, franja inferior de código y flecha inferior.
     /// </summary>
@@ -571,49 +697,38 @@ float4 PSMain(VSOut i) : SV_TARGET
 
         DrawShellBody(g, plastic, flat);
 
-        // 1) Pestaña superior en relieve: la traba donde el cartucho se engancha.
+        // 1) Pestaña superior: la traba donde el cartucho se engancha. Va HUNDIDA en el
+        // plástico, igual que la etiqueta: pozo chico, pared en sombra contra la luz y
+        // labio iluminado del lado opuesto.
         var tabRect = new Rectangle(TabX, TabY, TabW, TabH);
         using (var tabPath = RoundPath(tabRect, TabR))
-            DrawRelief(g, tabPath, tabRect, plastic, 4f);
+        {
+            using (var tabFill = new SolidBrush(Darken(plastic, 0.12f)))
+                g.FillPath(tabFill, tabPath);
+            DrawRecess(g, tabPath, tabRect, plastic, 3.5f, paintFloor: false, escala: 0.25f);
+        }
 
         // 2) Etiqueta redondeada (clip de cabecera + carátula + franja de código)
         var stickerRect = new Rectangle(StickerX, StickerY, StickerW, StickerH);
         using var stickerPath = RoundPath(stickerRect, StickerR);
 
-        // Marco del molde: el canto de plástico que rodea el hueco, más ancho que el borde
-        // porque la mitad interior la tapa el piso del pozo. Recibe luz en el lado que mira
-        // a la luz y sombra en el opuesto; es lo que hace que el rectángulo parezca estar
-        // dentro de la carcasa y no apoyado arriba.
-        using (var frame = new LinearGradientBrush(
-            new PointF(stickerRect.Left, stickerRect.Top),
-            new PointF(stickerRect.Right, stickerRect.Bottom),
-            Color.Black, Color.Black))
-        {
-            frame.InterpolationColors = new ColorBlend
-            {
-                Colors = new[]
-                {
-                    Color.FromArgb(150, 0, 0, 0),
-                    Color.FromArgb(0, 0, 0, 0),
-                    ToAlpha(Lighten(plastic, 0.32f), 195)
-                },
-                Positions = new[] { 0f, 0.52f, 1f }
-            };
-            using var framePen = new Pen(frame, 10f);
-            g.DrawPath(framePen, stickerPath);
-        }
-
-        // Piso del pozo: queda debajo del contenido, así el antialias del borde no deja
-        // asomar el plástico claro y el rectángulo arranca ya hundido.
-        using (var pocketFloor = new SolidBrush(Mix(plastic, Color.Black, 0.62f)))
+        // Piso del pozo, debajo del contenido. No se pinta ningún marco alrededor de la
+        // etiqueta: en el 3D esa pared ya existe como geometría y pintarla también la hacía
+        // ver doble. En la grilla 2D el borde lo resuelven la oclusión y el labio de abajo.
+        using (var pocketFloor = new SolidBrush(Mix(plastic, Color.Black, 0.45f)))
             g.FillPath(pocketFloor, stickerPath);
 
         var prevClip = g.Clip;
         g.SetClip(stickerPath, CombineMode.Intersect);
 
-        var headerRect = new Rectangle(HeaderX, HeaderY, HeaderW, HeaderH + 1);
-        var artRect = new Rectangle(ArtX, ArtY, ArtW, ArtH);
-        var labelRect = new Rectangle(LabelX, LabelY, LabelW, LabelH + 1);
+        // Margen del pozo: el contenido impreso NO llega al borde de la etiqueta, deja una
+        // franja del piso del hueco. Sin eso la carátula y la franja de código tocan la
+        // pared, su brillo se come el canto y todo parece pegado ENCIMA de la carcasa en
+        // vez de hundido dentro de ella.
+        const int Margen = 10;
+        var headerRect = new Rectangle(HeaderX + Margen, HeaderY + Margen, HeaderW - Margen * 2, HeaderH - Margen + 1);
+        var artRect = new Rectangle(ArtX + Margen, ArtY, ArtW - Margen * 2, ArtH);
+        var labelRect = new Rectangle(LabelX + Margen, LabelY, LabelW - Margen * 2, LabelH - Margen + 1);
 
         // Fondo de la cabecera (#1c1c1f)
         using (var headBrush = new SolidBrush(Color.FromArgb(28, 28, 32)))
@@ -650,7 +765,7 @@ float4 PSMain(VSOut i) : SV_TARGET
         // adentro en vez de apoyado en la carcasa.
         DrawRecess(g, stickerPath, stickerRect, plastic, 6f, paintFloor: false);
 
-        // 3) Flecha inferior en relieve (apunta al dock): la misma pieza moldeada que la pestaña
+        // 3) Flecha inferior (apunta al dock): mismo molde hundido que la pestaña.
         var arrowRect = new Rectangle(ArrowX, ArrowY, ArrowW, ArrowH);
         using (var arrowPath = new GraphicsPath())
         {
@@ -661,7 +776,9 @@ float4 PSMain(VSOut i) : SV_TARGET
                 new PointF(ArrowX + ArrowW * 0.5f, ArrowY + ArrowH)
             });
             arrowPath.CloseFigure();
-            DrawRelief(g, arrowPath, arrowRect, plastic, 4f);
+            using (var arrowFill = new SolidBrush(Darken(plastic, 0.12f)))
+                g.FillPath(arrowFill, arrowPath);
+            DrawRecess(g, arrowPath, arrowRect, plastic, 3.5f, paintFloor: false, escala: 0.2f);
         }
 
         return bmp;
@@ -814,11 +931,14 @@ float4 PSMain(VSOut i) : SV_TARGET
                         g.DrawImage(blurred, bgCover, 0, 0, blurred.Width, blurred.Height, GraphicsUnit.Pixel, darkAttr);
                     }
 
-                    // 2) El banner panorámico completo encajado en la mitad superior/central
+                    // 2) El banner panorámico completo encajado en la mitad superior/central.
+                    // Sus bordes se difuminan: contra el fondo borroneado el corte recto se
+                    // veía como una tira pegada ENCIMA de la etiqueta.
                     var fitZone = new Rectangle(artRect.X, artRect.Y + 18, artRect.Width, (int)(artRect.Height * 0.64f));
                     var fit = FitInside(artBmp.Size, fitZone);
 
-                    g.DrawImage(artBmp, fit);
+                    using (var banner = FeatherEdges(artBmp, (int)(artBmp.Height * 0.16f)))
+                        g.DrawImage(banner, fit);
                 }
                 else if (artBmp.Width <= 256 && artBmp.Height <= 256)
                 {
@@ -1070,6 +1190,43 @@ float4 PSMain(VSOut i) : SV_TARGET
             return new Bitmap(raw);
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Copia con los bordes superior e inferior desvanecidos en alfa, para que una imagen se
+    /// funda con lo que hay detrás en vez de terminar en un corte recto. Se hace sobre el
+    /// canal alfa real (no con un degradado encima) para no lavar el color de la imagen.
+    /// </summary>
+    private static Bitmap FeatherEdges(Bitmap src, int alto)
+    {
+        var dst = new Bitmap(src.Width, src.Height, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(dst))
+        {
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.DrawImage(src, new Rectangle(0, 0, src.Width, src.Height));
+        }
+
+        int n = Math.Max(1, Math.Min(alto, src.Height / 2));
+        var data = dst.LockBits(new Rectangle(0, 0, dst.Width, dst.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        var buffer = new byte[data.Stride * dst.Height];
+        System.Runtime.InteropServices.Marshal.Copy(data.Scan0, buffer, 0, buffer.Length);
+        for (int y = 0; y < dst.Height; y++)
+        {
+            float f = y < n ? y / (float)n
+                    : y >= dst.Height - n ? (dst.Height - 1 - y) / (float)n
+                    : 1f;
+            if (f >= 1f) continue;
+            int a = (int)(Math.Clamp(f, 0f, 1f) * 255f);
+            int fila = y * data.Stride;
+            for (int x = 0; x < dst.Width; x++)
+            {
+                int o = fila + x * 4 + 3;
+                buffer[o] = (byte)(buffer[o] * a / 255);
+            }
+        }
+        System.Runtime.InteropServices.Marshal.Copy(buffer, 0, data.Scan0, buffer.Length);
+        dst.UnlockBits(data);
+        return dst;
     }
 
     private static Rectangle Cover(Size src, Rectangle dst)

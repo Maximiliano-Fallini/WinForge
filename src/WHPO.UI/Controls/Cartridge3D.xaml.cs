@@ -821,7 +821,7 @@ public sealed partial class Cartridge3D : UserControl
     private static string DorsoCache => System.IO.Path.Combine(FaceCacheDir, "dorso");
 
     /// <summary>Versión del pintado de caras: al subirla, las caras cacheadas se repintan.</summary>
-    private const int FaceCacheVersion = 18;
+    private const int FaceCacheVersion = 20;
 
     /// <summary>Clave de caché: versión + título + código + arte (nombre, tamaño y fecha) + paleta
     /// + encabezado. La paleta y el encabezado forman parte de la clave para que cambiar de

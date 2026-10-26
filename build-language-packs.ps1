@@ -79,6 +79,7 @@ $Known = [ordered]@{
     "fr-FR" = @{ endonym = "Français";            englishName = "French";              builtin = $false }
     "zh-CN" = @{ endonym = "简体中文";           englishName = "Chinese (Simplified)"; builtin = $false }
     "ru-RU" = @{ endonym = "Русский";             englishName = "Russian";             builtin = $false }
+    "pl-PL" = @{ endonym = "Polski";              englishName = "Polish";              builtin = $false }
 }
 
 # ---------------------------------------------------------------------------
