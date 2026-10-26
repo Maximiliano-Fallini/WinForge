@@ -86,6 +86,12 @@ $Known = [ordered]@{
     "it-IT" = @{ endonym = "Italiano";            englishName = "Italian";              builtin = $false }
     "ja-JP" = @{ endonym = "日本語";               englishName = "Japanese";             builtin = $false }
     "ko-KR" = @{ endonym = "한국어";               englishName = "Korean";               builtin = $false }
+    "zh-TW" = @{ endonym = "繁體中文";             englishName = "Chinese (Traditional)"; builtin = $false }
+    "uk-UA" = @{ endonym = "Українська";           englishName = "Ukrainian";            builtin = $false }
+    "th-TH" = @{ endonym = "ไทย";                  englishName = "Thai";                 builtin = $false }
+    "cs-CZ" = @{ endonym = "Čeština";              englishName = "Czech";                builtin = $false }
+    "nl-NL" = @{ endonym = "Nederlands";           englishName = "Dutch";                builtin = $false }
+    "pt-PT" = @{ endonym = "Português (Portugal)"; englishName = "Portuguese (Portugal)"; builtin = $false }
 }
 
 # ---------------------------------------------------------------------------

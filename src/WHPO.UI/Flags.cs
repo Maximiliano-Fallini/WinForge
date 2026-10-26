@@ -186,6 +186,125 @@ public static class Flags
                     FillStar(g, yellow, 11.0f, 12.4f, 1.7f);
                     break;
                 }
+                case "zh-tw": // rojo con el cantón azul y el sol blanco
+                {
+                    g.Clear(Color.FromArgb(255, 0xFE, 0x00, 0x00));
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0x00, 0x00, 0x95)), 0, 0, W / 2f, H / 2f);
+                    float sx = W / 4f, sy = H / 4f;
+                    var sun = new SolidBrush(Color.White);
+                    // Doce rayos rectos alrededor del disco central.
+                    for (int r = 0; r < 12; r++)
+                    {
+                        double angle = r * Math.PI / 6;
+                        var p1 = new PointF(sx + (float)(Math.Cos(angle) * 2.2f), sy + (float)(Math.Sin(angle) * 2.2f));
+                        var p2 = new PointF(sx + (float)(Math.Cos(angle) * 5.2f), sy + (float)(Math.Sin(angle) * 5.2f));
+                        g.DrawLine(new Pen(sun, 1.4f), p1, p2);
+                    }
+                    g.FillEllipse(sun, sx - 2.4f, sy - 2.4f, 4.8f, 4.8f);
+                    break;
+                }
+                case "uk-ua": // azul arriba / amarillo abajo
+                {
+                    g.Clear(Color.FromArgb(255, 0x00, 0x57, 0xD7));
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0xFF, 0xD7, 0x00)), 0, H / 2f, W, H / 2f);
+                    break;
+                }
+                case "th-th": // rojo / blanco / azul (doble) / blanco / rojo
+                {
+                    g.Clear(Color.FromArgb(255, 0xA5, 0x19, 0x31));
+                    g.FillRectangle(Brushes.White, 0, H / 6f, W, H / 6f);
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0x2D, 0x2A, 0x4A)), 0, H / 3f, W, H / 3f);
+                    g.FillRectangle(Brushes.White, 0, 2 * H / 3f, W, H / 6f);
+                    break;
+                }
+                case "cs-cz": // blanco / rojo con el triángulo azul a la izquierda
+                {
+                    g.Clear(Color.White);
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0xD7, 0x14, 0x1A)), 0, H / 2f, W, H / 2f);
+                    PointF[] tri =
+                    {
+                        new(0, 0.5f), new(W * 0.55f, H / 2f), new(0, H - 0.5f)
+                    };
+                    g.FillPolygon(new SolidBrush(Color.FromArgb(255, 0x11, 0x47, 0x6C)), tri);
+                    break;
+                }
+                case "nl-nl": // rojo / blanco / azul
+                {
+                    g.Clear(Color.FromArgb(255, 0xAE, 0x1C, 0x28));
+                    g.FillRectangle(Brushes.White, 0, H / 3f, W, H / 3f);
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0x21, 0x46, 0x8B)), 0, 2 * H / 3f, W, H / 3f + 1);
+                    break;
+                }
+                case "pt-pt": // verde a la izquierda, rojo a la derecha y la esfera
+                {
+                    g.Clear(Color.FromArgb(255, 0x04, 0x63, 0x39));
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0xDA, 0x29, 0x17)), W * 2 / 5f, 0, W * 3 / 5f, H);
+                    g.FillEllipse(new SolidBrush(Color.FromArgb(255, 0xFF, 0xE9, 0x00)), W * 2 / 5f - 3.2f, H / 2f - 3.2f, 6.4f, 6.4f);
+                    g.FillEllipse(new SolidBrush(Color.FromArgb(255, 0xDA, 0x29, 0x17)), W * 2 / 5f - 1.8f, H / 2f - 1.8f, 3.6f, 3.6f);
+                    break;
+                }
+                case "pl-pl": // blanco arriba / rojo abajo
+                {
+                    g.Clear(Color.White);
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0xDC, 0x14, 0x3C)), 0, H / 2f, W, H / 2f);
+                    break;
+                }
+                case "id-id": // rojo arriba / blanco abajo
+                {
+                    g.Clear(Color.FromArgb(255, 0xCE, 0x11, 0x26));
+                    g.FillRectangle(Brushes.White, 0, H / 2f, W, H / 2f);
+                    break;
+                }
+                case "tr-tr": // rojo con la media luna y la estrella blancas
+                {
+                    var red = new SolidBrush(Color.FromArgb(255, 0xE3, 0x0A, 0x17));
+                    g.Clear(Color.FromArgb(255, 0xE3, 0x0A, 0x17));
+                    float cx = 12.0f, cy = H / 2f;
+                    g.FillEllipse(Brushes.White, cx - 5.6f, cy - 5.6f, 11.2f, 11.2f);
+                    // El círculo rojo corrido a la derecha vacía la medialuna.
+                    g.FillEllipse(red, cx - 3.6f, cy - 4.7f, 9.4f, 9.4f);
+                    FillStar(g, Brushes.White, 22.0f, cy, 3.2f);
+                    break;
+                }
+                case "vi-vn": // rojo con la estrella amarilla al centro
+                {
+                    g.Clear(Color.FromArgb(255, 0xDA, 0x25, 0x1E));
+                    FillStar(g, new SolidBrush(Color.FromArgb(255, 0xFF, 0xFF, 0x00)), W / 2f, H / 2f, 5.6f);
+                    break;
+                }
+                case "it-it": // verde / blanco / rojo verticales
+                {
+                    g.Clear(Color.FromArgb(255, 0x00, 0x92, 0x46));
+                    g.FillRectangle(Brushes.White, W / 3, 0, W / 3, H);
+                    g.FillRectangle(new SolidBrush(Color.FromArgb(255, 0xCD, 0x21, 0x2A)), 2 * W / 3, 0, W / 3 + 1, H);
+                    break;
+                }
+                case "ja-jp": // blanco con el disco solar rojo
+                {
+                    g.Clear(Color.White);
+                    g.FillEllipse(new SolidBrush(Color.FromArgb(255, 0xBC, 0x00, 0x2D)), W / 2f - 5.2f, H / 2f - 5.2f, 10.4f, 10.4f);
+                    break;
+                }
+                case "ko-kr": // blanco con el taegeuk y las barras negras de las esquinas
+                {
+                    g.Clear(Color.White);
+                    float cx = W / 2f, cy = H / 2f, r = 4.9f;
+                    var blue = new SolidBrush(Color.FromArgb(255, 0x00, 0x47, 0xA0));
+                    var koRed = new SolidBrush(Color.FromArgb(255, 0xCD, 0x2E, 0x3A));
+                    g.FillEllipse(blue, cx - r, cy - r, 2 * r, 2 * r);
+                    // 180°→360° es la mitad de arriba: el rojo va arriba y el azul abajo,
+                    // y los dos círculos chicos hacen el giro del taegeuk.
+                    g.FillPie(koRed, cx - r, cy - r, 2 * r, 2 * r, 180, 180);
+                    g.FillEllipse(koRed, cx - r, cy - r / 2f, r, r);
+                    g.FillEllipse(blue, cx, cy - r / 2f, r, r);
+                    // Cuatro barras cortas en las esquinas (los trigramas, sin detalle).
+                    var black = new SolidBrush(Color.FromArgb(255, 0x00, 0x00, 0x00));
+                    g.FillRectangle(black, 1f, 1f, 5f, 1.2f);
+                    g.FillRectangle(black, W - 6f, 1f, 5f, 1.2f);
+                    g.FillRectangle(black, 1f, H - 2.2f, 5f, 1.2f);
+                    g.FillRectangle(black, W - 6f, H - 2.2f, 5f, 1.2f);
+                    break;
+                }
                 default:
                     return null;
             }
