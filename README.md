@@ -10,12 +10,6 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/library-themes.png" width="100%" alt="WinForge game library with 3D cartridges, shown in four of the built-in themes"/>
-  <br/>
-  <sub><b>One library, any look.</b> The 3D cartridge library and console dock in four of the built-in themes.</sub>
-</p>
-
-<p align="center">
   <b>100% free</b> — every optimization feature is completely free, with no limits.
 </p>
 
@@ -38,6 +32,26 @@
   <sub>⭐ Beta — found a problem? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Open an issue</a></sub>
 </p>
 
+<p align="center">
+  <img src="assets/screenshots/library-themes.png" width="100%" alt="WinForge game library with 3D cartridges, shown in four of the built-in themes"/>
+  <br/>
+  <sub><b>One library, any look.</b> The 3D cartridge library and console dock in four of the built-in themes.</sub>
+</p>
+
+## 📸 A closer look
+
+<p align="center">
+  <img src="assets/screenshots/game-properties.png" width="100%" alt="Per-game rules panel for Counter-Strike 2 in WinForge"/>
+  <br/>
+  <sub><b>Per-game rules.</b> CPU and GPU priority, I/O priority, power plan, core affinity, Windows Defender exclusion and Control Flow Guard — set from one panel.</sub>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/sensor-monitor.gif" width="100%" alt="Animated demo of the WinForge sensor monitor expanding component groups"/>
+  <br/>
+  <sub><b>Sensor monitor.</b> Live readings for every component, grouped by device and expandable by category.</sub>
+</p>
+
 ## ✨ What it does
 
 WinForge brings together what is usually spread across half a dozen tools: live monitoring,
@@ -49,47 +63,17 @@ in-game optimization, game management and Windows tuning.
 | 🕹️ **Game library** | Detects games from Steam, Epic, GOG, Xbox and other launchers — plus emulators — with per-game rules (priority, affinity, power plan). Includes a 3D cartridge mode with a console dock and an inspection view. |
 | 📊 **Monitoring** | CPU, memory, network, temperatures and an in-game metrics overlay with keyboard shortcuts. |
 | ⚡ **Cores and power** | Power plans, turbo ceiling (boost and performance limit) with Default and Recommended profiles, affinity and per-core monitoring. |
-| 🧰 **Tools** | Macros, autoclicker, cache and registry cleanup, power plans, DNS, system repair and more. |
 | 🧠 **Optimizations** | The Windows tuning hub, Winhance-style: 418 tweaks across 10 categories (privacy, power, gaming, updates, notifications, sound, Explorer, startup, taskbar and theme), with a recommended profile and ready-made presets. The same hub hosts advanced TCP/Network, Debloat, Tools and features, Windows panel, Repair, Windows Update, Device cleanup and Startup management. |
-| 🧩 **Workshop** | The catalog of everything WinForge can do: the sections that always ship with the app plus the components you install, update or remove from there. Every one of them is explained [below](#workshop-components). |
+| 🧰 **Tools** | Macros, autoclicker, cache and registry cleanup, power plans, DNS, system repair and more. |
+| 🧩 **Workshop** | The catalog of everything WinForge can do: the core sections that ship with the app plus the components you install, update or remove from there. |
 
-## 📸 A closer look
+## 🧩 Installable components
 
-Per-game rules are set right on the cartridge: CPU and GPU priority, I/O priority, power plan,
-core affinity, Windows Defender exclusion and Control Flow Guard.
-
-<p align="center">
-  <img src="assets/screenshots/game-properties.png" width="100%" alt="Per-game rules panel for Counter-Strike 2 in WinForge"/>
-  <br/>
-  <sub><b>Per-game rules.</b> Everything that changes when that game launches, set from one panel.</sub>
-</p>
-
-The sensor monitor reads every component on the machine — motherboard, CPU, memory, GPU and
-storage — grouped and expandable, with current, minimum, maximum and average values.
-
-<p align="center">
-  <img src="assets/screenshots/sensor-monitor.gif" width="100%" alt="Animated demo of the WinForge sensor monitor expanding component groups"/>
-  <br/>
-  <sub><b>Sensor monitor.</b> Live readings for every component, grouped by device and expandable by category.</sub>
-</p>
-
-<a name="workshop-components"></a>
-## 🧩 Workshop components
-
-Every component in the Workshop, what it is for and how it gets there: **always included**
-(ships with the app), **installable** (installs, updates and uninstalls from the Workshop itself)
-and **downloadable** (arrives as a package from the component catalog).
+Beyond the core sections, these components live in the Workshop and can be installed, updated or
+removed from the app itself. They are listed with what each one does.
 
 | Component | Availability | What it does |
 |---|---|---|
-| **System** | Always included | Machine monitoring: CPU, RAM and GPU with per-device temperatures. |
-| **Network** | Always included | Network statistics, latency and connection optimizations. |
-| **Cores** | Always included | Processor management: temperature, usage, clock and affinity. |
-| **Optimizations** | Always included | Windows tweaks, recommended profiles and system tools in one place. |
-| **Game library** | Always included | Your game library with the Game Mode boost and all of its settings. |
-| **Guide** | Always included | Frequently asked questions plus a page per component explaining what it does and how to use it. |
-| **Workshop** | Always included | The component catalog itself: install, update or remove WinForge features. |
-| **Settings** | Always included | Appearance, language, updates, development tools and app behavior. |
 | **Timer resolution** | Installable | Latency tuning: enables the Windows GlobalTimerResolutionRequest rule to cut input lag. |
 | **USB overclocking** | Installable | Raises the polling rate of USB devices to cut input lag. |
 | **Key filter** | Installable | Keyboard repeat delay in milliseconds and key filtering (FilterKeys). |
