@@ -51,7 +51,7 @@ in-game optimization, game management and Windows tuning.
 | ⚡ **Cores and power** | Power plans, turbo ceiling (boost and performance limit) with Default and Recommended profiles, affinity and per-core monitoring. |
 | 🧰 **Tools** | Macros, autoclicker, cache and registry cleanup, power plans, DNS, system repair and more. |
 | 🧠 **Optimizations** | The Windows tuning hub, Winhance-style: 418 tweaks across 10 categories (privacy, power, gaming, updates, notifications, sound, Explorer, startup, taskbar and theme), with a recommended profile and ready-made presets. The same hub hosts advanced TCP/Network, Debloat, Tools and features, Windows panel, Repair, Windows Update, Device cleanup and Startup management. |
-| 🧩 **Workshop** | Every component in one place. **Fixed set**: System · Network · Cores · Optimizations · Game library · Guide · Workshop · Settings. **Installable** (install, update or remove from the app itself): Timer resolution · USB overclocking · Key filter · Memory · Sensor monitor · Fans · Process management · Stability test · Metrics overlay · Macros · Autoclicker · 3D scene benchmark. |
+| 🧩 **Workshop** | The catalog of everything WinForge can do: the sections that always ship with the app plus the components you install, update or remove from there. Every one of them is explained [below](#workshop-components). |
 
 ## 📸 A closer look
 
@@ -73,16 +73,65 @@ storage — grouped and expandable, with current, minimum, maximum and average v
   <sub><b>Sensor monitor.</b> Live readings for every component, grouped by device and expandable by category.</sub>
 </p>
 
+<a name="workshop-components"></a>
+## 🧩 Workshop components
+
+Every component in the Workshop, what it is for and how it gets there: **always included**
+(ships with the app), **installable** (installs, updates and uninstalls from the Workshop itself)
+and **downloadable** (arrives as a package from the component catalog).
+
+| Component | Availability | What it does |
+|---|---|---|
+| **System** | Always included | Machine monitoring: CPU, RAM and GPU with per-device temperatures. |
+| **Network** | Always included | Network statistics, latency and connection optimizations. |
+| **Cores** | Always included | Processor management: temperature, usage, clock and affinity. |
+| **Optimizations** | Always included | Windows tweaks, recommended profiles and system tools in one place. |
+| **Game library** | Always included | Your game library with the Game Mode boost and all of its settings. |
+| **Guide** | Always included | Frequently asked questions plus a page per component explaining what it does and how to use it. |
+| **Workshop** | Always included | The component catalog itself: install, update or remove WinForge features. |
+| **Settings** | Always included | Appearance, language, updates, development tools and app behavior. |
+| **Timer resolution** | Installable | Latency tuning: enables the Windows GlobalTimerResolutionRequest rule to cut input lag. |
+| **USB overclocking** | Installable | Raises the polling rate of USB devices to cut input lag. |
+| **Key filter** | Installable | Keyboard repeat delay in milliseconds and key filtering (FilterKeys). |
+| **Memory** | Installable | Smart automatic cleanup of the RAM cache. |
+| **Sensor monitor** | Installable | Live sensors: temperatures, voltages and clocks, grouped and expandable. |
+| **Fans** | Installable | PWM curves per sensor (CPU/GPU/board) through the PawnIO driver, with autostart on sign-in. |
+| **Process management** | Installable | System process manager, with resource usage, priorities and states. |
+| **Stability test** | Installable | Stress tests to validate that the machine holds up. |
+| **Metrics overlay** | Installable · in development | On-screen metrics: FPS, CPU, GPU, RAM, 1% low and more. |
+| **Macros** | Installable | Record key and click sequences and replay them with a global hotkey. |
+| **Autoclicker** | Installable | Configurable automatic clicks with a global hotkey. |
+| **3D scene benchmark** | Downloadable | Its own 3D scenes to measure the GPU and the whole machine, with live metrics and a comparable report (no score). |
+
 ## 🌐 Multilanguage
 
 <p align="center">
-  <img src="assets/flags/ar.png" height="26" alt="es-AR" title="Español (es-AR)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/us.png" height="26" alt="en-US" title="English (en-US)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/br.png" height="26" alt="pt-BR" title="Português (pt-BR)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/de.png" height="26" alt="de-DE" title="Deutsch (de-DE)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/fr.png" height="26" alt="fr-FR" title="Français (fr-FR)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/cn.png" height="26" alt="zh-CN" title="简体中文 (zh-CN)" hspace="8"/>&nbsp;&nbsp;
-  <img src="assets/flags/ru.png" height="26" alt="ru-RU" title="Русский (ru-RU)" hspace="8"/>
+  <b>20 languages</b>, shipped with the app or installed as language packs.
+</p>
+
+<p align="center">
+  <img src="assets/flags/ar.png" height="26" alt="es-AR" title="Español (Argentina) — es-AR" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/us.png" height="26" alt="en-US" title="English (US) — en-US" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/br.png" height="26" alt="pt-BR" title="Português (Brasil) — pt-BR" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/pt.png" height="26" alt="pt-PT" title="Português (Portugal) — pt-PT" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/de.png" height="26" alt="de-DE" title="Deutsch — de-DE" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/fr.png" height="26" alt="fr-FR" title="Français — fr-FR" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/it.png" height="26" alt="it-IT" title="Italiano — it-IT" hspace="7"/>
+  <br/>
+  <img src="assets/flags/nl.png" height="26" alt="nl-NL" title="Nederlands — nl-NL" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/pl.png" height="26" alt="pl-PL" title="Polski — pl-PL" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/cz.png" height="26" alt="cs-CZ" title="Čeština — cs-CZ" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/ru.png" height="26" alt="ru-RU" title="Русский — ru-RU" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/ua.png" height="26" alt="uk-UA" title="Українська — uk-UA" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/tr.png" height="26" alt="tr-TR" title="Türkçe — tr-TR" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/id.png" height="26" alt="id-ID" title="Bahasa Indonesia — id-ID" hspace="7"/>
+  <br/>
+  <img src="assets/flags/vi.png" height="26" alt="vi-VN" title="Tiếng Việt — vi-VN" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/th.png" height="26" alt="th-TH" title="ไทย — th-TH" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/cn.png" height="26" alt="zh-CN" title="简体中文 — zh-CN" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/tw.png" height="26" alt="zh-TW" title="繁體中文 — zh-TW" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/jp.png" height="26" alt="ja-JP" title="日本語 — ja-JP" hspace="7"/>&nbsp;&nbsp;
+  <img src="assets/flags/kr.png" height="26" alt="ko-KR" title="한국어 — ko-KR" hspace="7"/>
 </p>
 
 ## ⚙️ Requirements
