@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.6.1/WinForge-0.6.1.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Download_WinForge-v0.6.1_|_93.8_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download WinForge v0.6.1 (93.8 MB)"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.6.4/WinForge-0.6.4.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Download_WinForge-v0.6.4_|_93.8_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download WinForge v0.6.4 (93.8 MB)"/>
   </a>
   <br/>
-  <sub>26/10/2026 - UTC-3</sub>
+  <sub>27/10/2026 - UTC-3</sub>
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
