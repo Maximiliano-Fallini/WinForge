@@ -85,7 +85,7 @@ removed from the app itself. They are listed with what each one does.
 | **Metrics overlay** | Installable · in development | On-screen metrics: FPS, CPU, GPU, RAM, 1% low and more. |
 | **Macros** | Installable | Record key and click sequences and replay them with a global hotkey. |
 | **Autoclicker** | Installable | Configurable automatic clicks with a global hotkey. |
-| **3D scene benchmark** | Downloadable | Its own 3D scenes to measure the GPU and the whole machine, with live metrics and a comparable report (no score). |
+| **3D scene benchmark** | Downloadable · in development | Its own 3D scenes to measure the GPU and the whole machine, with live metrics and a comparable report (no score). |
 
 ## 🌐 Multilanguage
 
