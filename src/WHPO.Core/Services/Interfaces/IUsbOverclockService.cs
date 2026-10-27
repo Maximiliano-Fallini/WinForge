@@ -103,6 +103,14 @@ public interface IUsbOverclockService
     Task<string?> DownloadComponentAsync();
 
     /// <summary>
+    /// Motivo del último fallo de <see cref="DownloadComponentAsync"/> cuando devolvió
+    /// null (texto fuente, pasable por I18n.T). La UI lo usa para no culpar siempre a
+    /// la conexión: también puede fallar la verificación del paquete o que el zip
+    /// descargado no traiga ninguna variante válida.
+    /// </summary>
+    string? LastComponentDownloadError { get; }
+
+    /// <summary>
     /// Instala el servicio del filtro: copia el binario del filtro (desde la carpeta elegida,
     /// ej. DRIVER\AMD64_AS) a %systemroot%\system32\drivers y crea el servicio
     /// kernel a demanda.

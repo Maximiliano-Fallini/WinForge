@@ -30,6 +30,11 @@ public sealed class CatalogFetchResult
     /// <summary>Fecha de la copia local (si FromCache).</summary>
     public DateTime? CachedAt { get; init; }
     public string? Error { get; init; }
+    /// <summary>
+    /// True si el fallo fue por no poder llegar a GitHub (sin internet, DNS, timeout).
+    /// La UI usa esto para no decir «sin conexión» cuando el servidor respondió un error.
+    /// </summary>
+    public bool NoConnection { get; init; }
 }
 
 /// <summary>Resultado de una instalación.</summary>
@@ -159,12 +164,22 @@ public sealed class ComponentCatalogService
                         // La copia local también se filtra: si el usuario está offline, el
                         // componente retirado no puede reaparecer por estar en el cache.
                         DropRetiredComponents(cached);
-                        return new CatalogFetchResult { Catalog = cached, FromCache = true, CachedAt = cachedAt };
+                        return new CatalogFetchResult
+                        {
+                            Catalog = cached,
+                            FromCache = true,
+                            CachedAt = cachedAt,
+                            NoConnection = NetworkError.IsConnectionFailure(ex)
+                        };
                     }
                 }
             }
             catch (Exception ex2) { _logging.LogWarning($"Workshop: la copia cacheada tampoco se pudo leer: {ex2.Message}"); }
-            return new CatalogFetchResult { Error = ex.Message };
+            return new CatalogFetchResult
+            {
+                Error = ex.Message,
+                NoConnection = NetworkError.IsConnectionFailure(ex)
+            };
         }
     }
 
@@ -422,7 +437,15 @@ public sealed class ComponentCatalogService
         catch (Exception ex)
         {
             _logging.LogError($"Workshop: error instalando '{entry.Id}': {ex.Message}", ex);
-            return new InstallOutcome { Success = false, Error = $"No se pudo instalar el componente: {ex.Message}" };
+            // La descarga es el único paso de la instalación que sale a internet: si el
+            // fallo fue de red, se dice eso (clave traducible) en vez de la excepción.
+            return new InstallOutcome
+            {
+                Success = false,
+                Error = NetworkError.IsConnectionFailure(ex)
+                    ? "No se pudo descargar el componente. Verificá tu conexión a internet e intentá de nuevo."
+                    : $"No se pudo instalar el componente: {ex.Message}"
+            };
         }
         finally
         {

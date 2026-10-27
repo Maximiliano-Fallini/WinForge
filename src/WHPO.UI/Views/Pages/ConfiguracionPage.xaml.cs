@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using WHPO.Core;
@@ -23,12 +25,12 @@ public sealed partial class ConfiguracionPage : Page
     private readonly ILoggingService _loggingService;
     private readonly IInstalledGamesService _installedGamesService;
     private readonly IUsbOverclockService _usbOverclockService;
-    private readonly WHPO_UI.Components.ComponentRegistry _navRegistry;
+    private readonly IAppUpdateService _appUpdateService;
     private bool _isLoading;
 
-    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Caché, Navegación,
-    // Desarrollo). Solo se usa como respaldo: ApplyTabVisibility compara contra el ítem
-    // seleccionado, no contra el índice.
+    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Caché, Desarrollo).
+    // Solo se usa como respaldo: ApplyTabVisibility compara contra el ítem seleccionado,
+    // no contra el índice.
     private int _selectedTabIndex;
 
     private OnboardingSimulatorWindow? _onboardingSimulator;
@@ -39,31 +41,8 @@ public sealed partial class ConfiguracionPage : Page
     private readonly Dictionary<string, (Border Ring, FontIcon Check, FontIcon? ThemeGlyph)> _cardSkinSwatches = new();
     private bool _buildingCardSkin;
 
-    // ---- Menú de navegación: pestañas del menú lateral y su clave de configuración ----
-    // TCP, Debloat, Herramientas, Panel de Windows, Reparación, Windows Update y
-    // Limpieza ya no son pestañas: son cards DENTRO del hub de Optimizaciones, así
-    // que acá no se listan (no hay nada que ocultar en el menú).
-    private static readonly (string Tag, string Label)[] NavTabs =
-    {
-        ("sistema", "Sistema"),
-        ("red", "Red"),
-        ("memoria", "Memoria"),
-        ("temporizador", "Resolución del Temporizador"),
-        ("nucleos", "Núcleos"),
-        ("overlay", "Overlay de métricas"),
-        ("procesos", "Biblioteca de juegos"),
-        ("procesosvivos", "Gestión de procesos"),
-        ("overclockusb", "Overclock USB"),
-        ("teclado", "Teclado y Macros"),
-        ("autoclicker", "Autoclicker"),
-        ("estabilidad", "Test de estabilidad"),
-        ("sensores", "Monitor de sensores"),
-        ("optimizaciones", "Optimizaciones")
-    };
-
-    private readonly Dictionary<string, CheckBox> _navCheckBoxes = new();
-
-    // Sección de desarrollo: visible solo si la build es más nueva que la release publicada.
+    // Sección de desarrollo: visible solo en builds de desarrollo (ver
+    // UpdateDevelopmentToolsVisibility).
     public ConfiguracionPage()
     {
         InitializeComponent();
@@ -74,7 +53,7 @@ public sealed partial class ConfiguracionPage : Page
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
         _usbOverclockService = App.Services.GetRequiredService<IUsbOverclockService>();
-        _navRegistry = App.Services.GetRequiredService<WHPO_UI.Components.ComponentRegistry>();
+        _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
 
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -164,7 +143,6 @@ public sealed partial class ConfiguracionPage : Page
             Feedback.Set(StartupFeedbackText, null);
             Feedback.Set(MinimizedFeedbackText, null);
 
-            BuildNavMenu();
             ApplyConfigTabsLanguage();
             BuildThemePicker();
             UpdateDeveloperLogsSize();
@@ -1036,7 +1014,13 @@ public sealed partial class ConfiguracionPage : Page
         {
             if (DevVersionInfoText == null) return;
             var info = App.MainWindowInstance?.LatestUpdate;
-            if (info == null) return;
+            // Sin chequeo de actualizaciones todavía (build de depuración recién abierta o
+            // sin red) la card igual dice qué versión está corriendo.
+            if (info == null)
+            {
+                DevVersionInfoText.Text = I18n.T("Versión instalada: {0}", AppUpdateService.CurrentVersion());
+                return;
+            }
 
             var current = info.CurrentVersion ?? AppUpdateService.CurrentVersion();
 
@@ -1101,8 +1085,11 @@ public sealed partial class ConfiguracionPage : Page
 
     private void UpdateDevelopmentToolsVisibility()
     {
-        // La pestaña depende exclusivamente de la comparación contra la última
-        // release publicada, no del sufijo beta/alpha de la versión.
+        // La pestaña Desarrollo depende SOLO de la versión: aparece cuando esta build va
+        // ADELANTADA a la última release publicada en GitHub. No importa si es Debug o
+        // Release (antes toda Debug se consideraba de desarrollo, aunque su versión
+        // coincidiera con la publicada) ni el sufijo beta/alpha del número: manda la
+        // comparación que hace AppUpdateService contra el tag más nuevo del repositorio.
         var update = App.MainWindowInstance?.LatestUpdate;
         bool isDevelopmentBuild = update?.Status == AppUpdateStatus.DevelopmentBuild;
 
@@ -1133,145 +1120,23 @@ public sealed partial class ConfiguracionPage : Page
         UpdateDevelopmentToolsVisibility();
     }
 
-    // ===================== Menú de navegación =====================
-
-    private void BuildNavMenu()
-    {
-        _navCheckBoxes.Clear();
-        NavItemsPanel.Children.Clear();
-
-        // Agrupar por categoría lógica con subtítulos (más legible que una lista plana).
-        string? currentCat = null;
-        var installed = InstalledNavIds();
-        foreach (var (tag, label) in NavTabs)
-        {
-            bool tabInstalled = WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(tag) || installed.Contains(tag);
-            var cat = NavCategory(tag);
-            if (cat != currentCat)
-            {
-                currentCat = cat;
-                NavItemsPanel.Children.Add(new TextBlock
-                {
-                    Text = I18n.T(cat),
-                    FontSize = 12,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
-                    Margin = new Thickness(0, NavItemsPanel.Children.Count == 0 ? 0 : 6, 0, 2)
-                });
-            }
-
-            var cb = new CheckBox
-            {
-                Content = I18n.T(label),
-                Tag = tag,
-                // Integrados no core: desde la 0.3.0 nacen sin instalar (Workshop).
-                IsChecked = _settingsService.Get("nav." + tag, !_navRegistry.RequiresInstall(tag)),
-                // Sin instalar: el checkbox se deshabilita. No tiene sentido tildar
-                // una pestaña cuyo componente no está instalado (el estado de
-                // instalación manda sobre "nav.<tag>", ver ApplyNavItemVisibility).
-                IsEnabled = tabInstalled,
-                MinHeight = 34
-            };
-            if (!tabInstalled)
-                ToolTipService.SetToolTip(cb, I18n.T("Instalá el componente desde el Workshop"));
-            cb.Checked += OnNavCheckChanged;
-            cb.Unchecked += OnNavCheckChanged;
-            _navCheckBoxes[tag] = cb;
-            NavItemsPanel.Children.Add(cb);
-        }
-
-        UpdateNavMenuSummary();
-    }
-
-    /// <summary>Agrupa las pestañas del menú en categorías para la vista de configuración.</summary>
-    private static string NavCategory(string tag)
-    {
-        // Categorías para agrupar las pestañas del menú en la vista de configuración.
-        switch (tag)
-        {
-            case "sistema": case "red": case "memoria": case "temporizador":
-            case "nucleos": case "sensores": case "optimizaciones":
-                return "Sistema y rendimiento";
-            case "overlay": case "procesos": case "procesosvivos": case "overclockusb": case "teclado":
-            case "autoclicker": case "estabilidad":
-                return "Juegos y automatización";
-            default:
-                return "Otras";
-        }
-    }
-
-    /// <summary>Componentes no core del registro que están instalados (built-ins sin "builtin.removed" y descargados).</summary>
-    private HashSet<string> InstalledNavIds()
-    {
-        var installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var c in _navRegistry.NavbarComponents)
-        {
-            if (c is not WHPO_UI.Components.BuiltinComponent)
-            {
-                installed.Add(c.Id);
-                continue;
-            }
-            if (!_settingsService.Get("builtin.removed." + c.Id, _navRegistry.RequiresInstall(c.Id)))
-                installed.Add(c.Id);
-        }
-        return installed;
-    }
-
-    /// <summary>True si la pestaña corresponde a un componente instalado (el set core siempre lo está).</summary>
-    private bool IsTabInstalled(string tag)
-        => WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(tag) || InstalledNavIds().Contains(tag);
-
-    private void OnNavCheckChanged(object sender, RoutedEventArgs e)
-    {
-        if (_isLoading) return;
-        // Defensa extra: un componente sin instalar no puede mostrarse (el estado
-        // de instalación manda sobre "nav.<tag>"). Revertir el tildé y no guardar.
-        if (sender is CheckBox cb && cb.Tag is string tag && !IsTabInstalled(tag))
-        {
-            cb.IsChecked = false;
-            return;
-        }
-        SaveNavVisibility();
-    }
-
-    private void SaveNavVisibility()
-    {
-        foreach (var (tag, _) in NavTabs)
-            _settingsService.Set("nav." + tag, _navCheckBoxes.TryGetValue(tag, out var cb) && cb.IsChecked == true);
-        _settingsService.Save();
-        App.MainWindowInstance?.ApplyNavigationVisibility();
-        UpdateNavMenuSummary();
-    }
-
-    
-
-    private void UpdateNavMenuSummary()
-    {
-        // El total cuenta solo las pestañas de componentes instalados: una pestaña
-        // sin instalar no es mostrable, así que no entra en el contador.
-        var installed = InstalledNavIds();
-        int visible = NavTabs.Count(t => WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(t.Tag)
-            || (installed.Contains(t.Tag) && _navCheckBoxes.TryGetValue(t.Tag, out var cb) && cb.IsChecked == true));
-        int total = NavTabs.Count(t => WHPO_UI.Components.ComponentRegistry.CoreTags.Contains(t.Tag) || installed.Contains(t.Tag));
-
-        NavMenuSummaryText.Text = visible == total
-            ? I18n.T("Todas las pestañas son visibles")
-            : I18n.T("{0} de {1} pestañas visibles", visible, total);
-        NavMenuCountText.Text = $"{visible}/{total}";
-        NavProgressBar.Value = total == 0 ? 0 : (double)visible / total;
-        NavBadgeIcon.Foreground = visible == total ? ThemeBrushes.Get("SuccessBrush") : ThemeBrushes.Get("AccentBrush");
-    }
-
     private void OnLanguageChanged()
     {
         ApplyConfigTabsLanguage();
-        UpdateNavMenuSummary();
         // La grilla de temas se etiqueta al armarla (I18n.T en cada card): se rearma para que los
         // nombres y los encabezados de grupo queden en el idioma nuevo.
         ThemePickerUi.Relabel(_themeService.CurrentTheme);
         // Las etiquetas de las muestras de carcasa se arman en código: se rearman traducidas.
         BuildCardSkinPicker();
         UpdateDeveloperLogsSize();
+
+        // La pestaña Actualizaciones arma sus cards en código (textos y fechas): se rehace
+        // entera para que quede en el idioma nuevo sin volver a pedir nada al repositorio.
+        if (_updatesLoaded)
+        {
+            UpdateUpdatesHeader();
+            RenderReleases();
+        }
     }
 
     /// <summary>
@@ -1355,7 +1220,7 @@ public sealed partial class ConfiguracionPage : Page
     // ===================== Navbar interno (pestañas) =====================
 
     /// <summary>
-    /// Traduce las pestañas del SelectorBar interno (Inicio / Caché / Navegación / Desarrollo).
+    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Caché / Desarrollo).
     /// Los SelectorBarItem pueden no estar realizados en el árbol visual,
     /// así que se traducen por colección lógica (mismo patrón que NucleosPage).
     /// </summary>
@@ -1391,18 +1256,596 @@ public sealed partial class ConfiguracionPage : Page
 
     private void ApplyTabVisibility()
     {
-        if (HomeTab == null || AppearanceTab == null || CacheTab == null || NavTab == null || DevTab == null) return;
+        if (HomeTab == null || AppearanceTab == null || DevTab == null) return;
 
         // Cada panel se muestra según el ÍTEM seleccionado (no por índice fijo): así
         // sumar una pestaña en el medio no corre la visibilidad de las demás.
         var selected = ConfigTabs.SelectedItem;
         HomeTab.Visibility = ReferenceEquals(selected, HomeTabItem) ? Visibility.Visible : Visibility.Collapsed;
         AppearanceTab.Visibility = ReferenceEquals(selected, AppearanceTabItem) ? Visibility.Visible : Visibility.Collapsed;
-        CacheTab.Visibility = ReferenceEquals(selected, CacheTabItem) ? Visibility.Visible : Visibility.Collapsed;
-        NavTab.Visibility = ReferenceEquals(selected, NavTabItem) ? Visibility.Visible : Visibility.Collapsed;
+        bool updatesSelected = ReferenceEquals(selected, UpdatesTabItem);
+        UpdatesTab.Visibility = updatesSelected ? Visibility.Visible : Visibility.Collapsed;
         DevTab.Visibility = ReferenceEquals(selected, DevelopmentTabItem)
             && DevelopmentTabItem.Visibility == Visibility.Visible
             ? Visibility.Visible
             : Visibility.Collapsed;
+
+        // La primera vez que se abre la pestaña se consulta el repositorio. Después queda
+        // cacheado en memoria: volver a entrar no repite la descarga (ver LoadUpdatesAsync).
+        if (updatesSelected) _ = LoadUpdatesAsync(forceRefresh: false);
+    }
+
+    // ===================== Pestaña Actualizaciones =====================
+
+    private AppUpdateInfo? _updatesInfo;
+    private IReadOnlyList<AppReleaseInfo>? _releases;
+    private bool _updatesLoading;
+    private bool _updatesLoaded;
+
+    // Estado de los desplegables del historial: sobrevive a los renders (buscar
+    // actualizaciones, cambio de idioma) para respetar lo que el usuario dejó abierto.
+    private readonly HashSet<string> _expandedReleases = new(StringComparer.OrdinalIgnoreCase);
+    private bool _releasesRendered;
+
+    /// <summary>
+    /// Carga el estado del chequeo y el historial de versiones. La primera pasada sale del
+    /// repositorio; <paramref name="forceRefresh"/> (botón "Buscar actualizaciones") saltea
+    /// la caché en memoria del servicio y del propio estado de la página.
+    /// </summary>
+    private async Task LoadUpdatesAsync(bool forceRefresh)
+    {
+        if (_updatesLoading) return;
+        if (_updatesLoaded && !forceRefresh) return;
+
+        _updatesLoading = true;
+        UpdatesProgressRing.IsActive = true;
+        UpdatesProgressRing.Visibility = Visibility.Visible;
+        CheckUpdatesButton.IsEnabled = false;
+        ReleasesFeedbackText.Visibility = Visibility.Collapsed;
+
+        try
+        {
+            var info = await Task.Run(() => _appUpdateService.CheckForUpdatesAsync());
+
+            var previous = _releases;
+            IReadOnlyList<AppReleaseInfo> releases;
+            try
+            {
+                releases = await _appUpdateService.GetReleasesAsync(12, forceRefresh);
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"Configuración: historial de versiones: {ex.Message}");
+                releases = previous ?? Array.Empty<AppReleaseInfo>();
+                // Si ya había una lista en pantalla se conserva y se avisa del error; si no
+                // había, RenderReleases muestra el aviso en su lugar.
+                if (previous != null)
+                {
+                    // Sin conexión se dice derecho: el aviso genérico solo haría pensar que
+                    // el historial está roto. Un 403/500 de GitHub no es falta de internet.
+                    ReleasesFeedbackText.Text = I18n.T("No se pudieron cargar las versiones.")
+                        + (NetworkError.IsConnectionFailure(ex) ? " " + I18n.T(NetworkError.ConnectionHint) : "");
+                    ReleasesFeedbackText.Visibility = Visibility.Visible;
+                }
+            }
+
+            _updatesInfo = info;
+            _releases = releases;
+            _updatesLoaded = true;
+            UpdateUpdatesHeader();
+            RenderReleases();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Configuración: actualizaciones: {ex.Message}");
+            ReleasesFeedbackText.Text = I18n.T("No se pudo comprobar actualizaciones.")
+                + (NetworkError.IsConnectionFailure(ex) ? " " + I18n.T(NetworkError.ConnectionHint) : "");
+            ReleasesFeedbackText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            _updatesLoading = false;
+            UpdatesProgressRing.IsActive = false;
+            UpdatesProgressRing.Visibility = Visibility.Collapsed;
+            CheckUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Pinta la cabecera: versión instalada, estado del chequeo y acción principal. El botón
+    /// de instalar solo aparece cuando hay una versión más nueva publicada.
+    /// </summary>
+    private void UpdateUpdatesHeader()
+    {
+        if (UpdatesInstalledVersionText == null) return;
+
+        string current = "v" + AppUpdateService.CurrentVersion();
+        UpdatesInstalledVersionText.Text = I18n.T("Versión instalada: {0}", current);
+
+        var accent = ThemeBrushes.Get("AccentBrush");
+        var success = Feedback.SuccessBrush;
+        var warning = Feedback.WarningBrush;
+
+        InstallUpdateButton.Visibility = Visibility.Collapsed;
+
+        switch (_updatesInfo?.Status)
+        {
+            case AppUpdateStatus.UpdateAvailable:
+                UpdatesStatusText.Text = I18n.T("¡Hay una versión más nueva disponible!") + $" · v{_updatesInfo.LatestVersion}";
+                SetUpdatesBadge(I18n.T("Desactualizado"), accent);
+                InstallUpdateButton.Visibility = Visibility.Visible;
+                break;
+
+            case AppUpdateStatus.DevelopmentBuild:
+                UpdatesStatusText.Text = I18n.T(
+                    "Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio.",
+                    current);
+                SetUpdatesBadge(I18n.T("Desarrollo"), warning);
+                break;
+
+            case AppUpdateStatus.NoConnection:
+                UpdatesStatusText.Text = I18n.T("No se pudo comprobar actualizaciones.")
+                    + " " + I18n.T("Revisá tu conexión a internet y volvé a intentarlo.");
+                SetUpdatesBadge(I18n.T("Sin conexión"), warning);
+                break;
+
+            case AppUpdateStatus.Error:
+                UpdatesStatusText.Text = I18n.T("No se pudo comprobar actualizaciones.");
+                SetUpdatesBadge(I18n.T("Sin conexión"), warning);
+                break;
+
+            case AppUpdateStatus.UpToDate:
+                UpdatesStatusText.Text = I18n.T("WinForge está actualizado.");
+                SetUpdatesBadge(I18n.T("Actualizado"), success);
+                break;
+
+            default:
+                UpdatesStatusText.Text = I18n.T("Comprobando actualizaciones...");
+                UpdatesStatusBadge.Visibility = Visibility.Collapsed;
+                break;
+        }
+    }
+
+    /// <summary>Pastilla de estado del tema vigente: tinte de fondo + texto en el color recibido.</summary>
+    private void SetUpdatesBadge(string text, SolidColorBrush color)
+    {
+        UpdatesStatusBadge.Visibility = Visibility.Visible;
+        UpdatesStatusBadgeText.Text = text;
+        UpdatesStatusBadgeText.Foreground = color;
+        UpdatesStatusBadge.Background = new SolidColorBrush(color.Color) { Opacity = 0.14 };
+    }
+
+    /// <summary>
+    /// Arma las cards del historial. Se rehace entero al cambiar de idioma (los textos y las
+    /// fechas se arman acá) y al volver a entrar a la pestaña con datos nuevos.
+    /// </summary>
+    private void RenderReleases()
+    {
+        if (ReleasesHost == null) return;
+        ReleasesHost.Children.Clear();
+
+        var list = _releases;
+        if (list == null || list.Count == 0)
+        {
+            ReleasesHost.Children.Add(new TextBlock
+            {
+                Text = I18n.T("No se pudieron cargar las versiones."),
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = ThemeBrushes.Get("SecondaryTextBrush")
+            });
+            return;
+        }
+
+        string current = AppUpdateService.CurrentVersion();
+        // La primera vez se abre la versión más reciente. Después manda el estado que dejó
+        // el usuario: pulsar «Buscar actualizaciones» ya no vuelve a abrir la última.
+        bool firstRender = !_releasesRendered;
+        _releasesRendered = true;
+        for (int i = 0; i < list.Count; i++)
+        {
+            var release = list[i];
+            bool expanded = firstRender ? i == 0 : _expandedReleases.Contains(release.Version);
+            if (expanded) _expandedReleases.Add(release.Version);
+            ReleasesHost.Children.Add(BuildReleaseCard(
+                release,
+                string.Equals(release.Version, current, StringComparison.OrdinalIgnoreCase),
+                expanded,
+                isOpen =>
+                {
+                    if (isOpen) _expandedReleases.Add(release.Version);
+                    else _expandedReleases.Remove(release.Version);
+                }));
+        }
+    }
+
+    /// <summary>
+    /// Un desplegable por versión: el encabezado es SOLO el nombre de la versión (con sus
+    /// distintivos y la fecha) y los cambios quedan adentro, así la pestaña se lee como un
+    /// índice de versiones en vez de una pared de texto.
+    /// </summary>
+    private Border BuildReleaseCard(AppReleaseInfo release, bool isCurrent, bool expanded, Action<bool> onExpandedChanged)
+    {
+        var headerRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        // La versión es un enlace a su release en GitHub (subrayado apagado: se lee como título).
+        var versionText = new TextBlock
+        {
+            FontSize = 17,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var versionLink = new Hyperlink { UnderlineStyle = UnderlineStyle.None };
+        versionLink.Inlines.Add(new Run { Text = "v" + release.Version });
+        if (Uri.TryCreate(release.WebUrl, UriKind.Absolute, out var releaseUri))
+            versionLink.NavigateUri = releaseUri;
+        versionText.Inlines.Add(versionLink);
+        headerRow.Children.Add(versionText);
+
+        if (isCurrent) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Actual"), Feedback.SuccessBrush));
+        if (release.Prerelease) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Beta"), Feedback.WarningBrush));
+
+        if (release.PublishedAt is { } published)
+        {
+            headerRow.Children.Add(new TextBlock
+            {
+                Text = I18n.T("Publicado el {0}", published.ToLocalTime().ToString("d MMM yyyy")),
+                FontSize = 11.5,
+                Margin = new Thickness(4, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = ThemeBrushes.Get("SecondaryTextBrush")
+            });
+        }
+
+        // Desplegable PROPIO en vez de Expander: el control nativo dibuja su propio
+        // contorno (ControlStroke) y las cards de la app no llevan reborde. Acá el
+        // header es un botón transparente y sin borde, y el contenido se muestra u
+        // oculta según el estado.
+        var chevron = new FontIcon
+        {
+            Glyph = expanded ? "\uE70E" : "\uE70D",
+            FontSize = 11,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var headerGrid = new Grid { ColumnSpacing = 10 };
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        headerGrid.Children.Add(headerRow);
+        Grid.SetColumn(chevron, 1);
+        headerGrid.Children.Add(chevron);
+
+        var body = new StackPanel
+        {
+            Spacing = 7,
+            Margin = new Thickness(12, 0, 12, 10),
+            Visibility = expanded ? Visibility.Visible : Visibility.Collapsed
+        };
+        body.Children.Add(BuildReleaseNotes(release));
+
+        var toggle = new Button
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(12, 10, 12, 10),
+            CornerRadius = new CornerRadius(8),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = headerGrid
+        };
+        toggle.Click += (_, _) =>
+        {
+            bool open = body.Visibility == Visibility.Visible;
+            body.Visibility = open ? Visibility.Collapsed : Visibility.Visible;
+            chevron.Glyph = open ? "\uE70D" : "\uE70E";
+            onExpandedChanged(!open);
+        };
+
+        var panel = new StackPanel();
+        panel.Children.Add(toggle);
+        panel.Children.Add(body);
+
+        return new Border
+        {
+            Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(2, 2, 2, 2),
+            Child = panel
+        };
+    }
+
+    private static Border MakeReleaseBadge(string text, SolidColorBrush color) => new()
+    {
+        Background = new SolidColorBrush(color.Color) { Opacity = 0.14 },
+        CornerRadius = new CornerRadius(9),
+        Padding = new Thickness(8, 2, 8, 3),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 10.5,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = color
+        }
+    };
+
+    /// <summary>
+    /// Renderiza las notas de la release (Markdown de GitHub) sin traer un motor entero:
+    /// encabezados, viñetas, citas y texto con **negrita**, `código` y [enlaces](url).
+    /// El encabezado que repite el nombre de la versión se omite: la card ya lo muestra arriba.
+    /// </summary>
+    private UIElement BuildReleaseNotes(AppReleaseInfo release)
+    {
+        var host = new StackPanel { Spacing = 7 };
+        string notes = (release.Notes ?? string.Empty)
+            .Replace("\r\n", "\n")
+            .Replace('\r', '\n')
+            .Trim();
+
+        if (notes.Length == 0)
+        {
+            host.Children.Add(MakeNotesLine(I18n.T("Sin notas publicadas."), ThemeBrushes.Get("SecondaryTextBrush")));
+            return host;
+        }
+
+        var quoteLines = new List<string>();
+        bool firstBlock = true;
+
+        void FlushQuote()
+        {
+            if (quoteLines.Count == 0) return;
+            host.Children.Add(BuildReleaseQuote(quoteLines));
+            quoteLines.Clear();
+        }
+
+        foreach (var rawLine in notes.Split('\n'))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                FlushQuote();
+                continue;
+            }
+
+            // Cita / aviso de GitHub ("[!WARNING]"): se agrupa hasta la línea en blanco.
+            if (line.StartsWith(">", StringComparison.Ordinal))
+            {
+                quoteLines.Add(line.TrimStart('>').Trim());
+                continue;
+            }
+            FlushQuote();
+
+            if (line.StartsWith("#", StringComparison.Ordinal))
+            {
+                string heading = line.TrimStart('#').Trim();
+                // El título de la release repite versión y nombre: ya está en el encabezado.
+                if (firstBlock && (string.Equals(heading, release.Name, StringComparison.OrdinalIgnoreCase)
+                                   || heading.Contains(release.Version, StringComparison.OrdinalIgnoreCase)))
+                {
+                    firstBlock = false;
+                    continue;
+                }
+                firstBlock = false;
+                if (heading.Length == 0) continue;
+
+                // Los títulos de cada bloque de cambios tienen que leerse MÁS grandes que
+                // el texto de las viñetas: antes iban casi al mismo tamaño y se perdían.
+                var headingText = new TextBlock
+                {
+                    FontSize = 15,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 8, 0, 2)
+                };
+                headingText.Inlines.Add(new Run { Text = heading });
+                host.Children.Add(headingText);
+                continue;
+            }
+
+            firstBlock = false;
+
+            if (line.StartsWith("- ", StringComparison.Ordinal)
+                || line.StartsWith("* ", StringComparison.Ordinal)
+                || line.StartsWith("• ", StringComparison.Ordinal))
+            {
+                var bullet = new Grid { ColumnSpacing = 8 };
+                bullet.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                bullet.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                bullet.Children.Add(new TextBlock
+                {
+                    Text = "•",
+                    FontSize = 13,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Foreground = ThemeBrushes.Get("AccentBrush")
+                });
+
+                var bulletText = MakeNotesLine(string.Empty, ThemeBrushes.Get("PrimaryTextBrush"));
+                AppendInline(bulletText, line.Substring(2).Trim());
+                Grid.SetColumn(bulletText, 1);
+                bullet.Children.Add(bulletText);
+
+                host.Children.Add(bullet);
+                continue;
+            }
+
+            var paragraph = MakeNotesLine(string.Empty, ThemeBrushes.Get("PrimaryTextBrush"));
+            AppendInline(paragraph, line);
+            host.Children.Add(paragraph);
+        }
+
+        FlushQuote();
+        return host;
+    }
+
+    private static TextBlock MakeNotesLine(string text, Brush foreground) => new()
+    {
+        Text = text,
+        FontSize = 13,
+        TextWrapping = TextWrapping.Wrap,
+        Foreground = foreground
+    };
+
+    /// <summary>Cita / aviso: barra lateral (amarilla si es un "[!WARNING]" de GitHub) y fondo tenue.</summary>
+    private static Border BuildReleaseQuote(List<string> lines)
+    {
+        string text = string.Join(" ", lines);
+        bool warning = text.Contains("[!WARNING]", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("[!CAUTION]", StringComparison.OrdinalIgnoreCase);
+        foreach (var marker in new[] { "[!WARNING]", "[!NOTE]", "[!IMPORTANT]", "[!TIP]", "[!CAUTION]" })
+            text = text.Replace(marker, string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        var textBlock = MakeNotesLine(string.Empty, ThemeBrushes.Get("SecondaryTextBrush"));
+        textBlock.FontSize = 12.5;
+        AppendInline(textBlock, text.Trim());
+
+        return new Border
+        {
+            Background = ThemeBrushes.GetSurface("ChipBackgroundBrush"),
+            BorderBrush = warning ? Feedback.WarningBrush : ThemeBrushes.Get("AccentBrush"),
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(12, 8, 12, 8),
+            Child = textBlock
+        };
+    }
+
+    /// <summary>
+    /// Agrega a un TextBlock el texto con **negrita**, `código` y [enlaces](url) resueltos a
+    /// Runs/Hyperlinks. Si un marcador no cierra, se deja el texto literal (nunca se come texto).
+    /// </summary>
+    private static void AppendInline(TextBlock target, string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+
+        int index = 0;
+        while (index < text.Length)
+        {
+            int bold = text.IndexOf("**", index, StringComparison.Ordinal);
+            int code = text.IndexOf('`', index);
+            int link = text.IndexOf('[', index);
+
+            int next = int.MaxValue;
+            if (bold >= 0) next = Math.Min(next, bold);
+            if (code >= 0) next = Math.Min(next, code);
+            if (link >= 0) next = Math.Min(next, link);
+
+            if (next == int.MaxValue)
+            {
+                target.Inlines.Add(new Run { Text = text.Substring(index) });
+                return;
+            }
+
+            if (next > index)
+                target.Inlines.Add(new Run { Text = text.Substring(index, next - index) });
+
+            if (next == bold)
+            {
+                int end = text.IndexOf("**", next + 2, StringComparison.Ordinal);
+                if (end < 0)
+                {
+                    target.Inlines.Add(new Run { Text = text.Substring(next) });
+                    return;
+                }
+                target.Inlines.Add(new Run
+                {
+                    Text = text.Substring(next + 2, end - next - 2),
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                });
+                index = end + 2;
+            }
+            else if (next == code)
+            {
+                int end = text.IndexOf('`', next + 1);
+                if (end < 0)
+                {
+                    target.Inlines.Add(new Run { Text = text.Substring(next) });
+                    return;
+                }
+                target.Inlines.Add(new Run
+                {
+                    Text = text.Substring(next + 1, end - next - 1),
+                    FontFamily = new FontFamily("Consolas")
+                });
+                index = end + 1;
+            }
+            else
+            {
+                int labelEnd = text.IndexOf(']', next + 1);
+                int urlStart = labelEnd > next ? text.IndexOf('(', labelEnd + 1) : -1;
+                int urlEnd = urlStart > labelEnd ? text.IndexOf(')', urlStart + 1) : -1;
+
+                if (labelEnd > next && urlStart == labelEnd + 1 && urlEnd > urlStart
+                    && Uri.TryCreate(text.Substring(urlStart + 1, urlEnd - urlStart - 1), UriKind.Absolute, out var uri))
+                {
+                    var hyperlink = new Hyperlink { NavigateUri = uri };
+                    hyperlink.Inlines.Add(new Run { Text = text.Substring(next + 1, labelEnd - next - 1) });
+                    target.Inlines.Add(hyperlink);
+                    index = urlEnd + 1;
+                }
+                else
+                {
+                    target.Inlines.Add(new Run { Text = "[" });
+                    index = next + 1;
+                }
+            }
+        }
+    }
+
+    private void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+        => _ = LoadUpdatesAsync(forceRefresh: true);
+
+    private async void InstallUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var info = _updatesInfo;
+        if (info == null || info.Status != AppUpdateStatus.UpdateAvailable || XamlRoot == null) return;
+
+        if (string.IsNullOrWhiteSpace(info.DownloadUrl))
+        {
+            var noInstaller = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = I18n.T("Actualizar WinForge"),
+                Content = I18n.T("No se encontró el instalador en la release. Descargalo manualmente desde el repositorio."),
+                CloseButtonText = I18n.T("Cerrar"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            await noInstaller.ShowAsync();
+            return;
+        }
+
+        var confirm = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("Actualizar WinForge"),
+            Content = I18n.T("Se descargará la versión {0} y la app se cerrará para instalarla. ¿Continuar?", info.LatestVersion),
+            PrimaryButtonText = I18n.T("Actualizar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+        // Flujo compartido con el botón "Actualizar" del navbar: descarga, lanza el MSI y
+        // cierra la app (el instalador la reabre al terminar).
+        var main = App.MainWindowInstance;
+        if (main != null) await main.InstallUpdateAsync(info);
+    }
+
+    private void OpenReleasesButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(ProjectEndpoints.Releases) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Configuración: abrir releases: {ex.Message}");
+        }
     }
 }

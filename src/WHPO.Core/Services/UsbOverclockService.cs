@@ -903,10 +903,16 @@ public class UsbOverclockService : IUsbOverclockService
  /// eso lo hace InstallFilterServiceAsync; la UI muestra esto como "descargar
  /// componentes".
  /// </summary>
+    private string? _lastComponentDownloadError;
+
+    /// <inheritdoc/>
+    public string? LastComponentDownloadError => _lastComponentDownloadError;
+
     public async Task<string?> DownloadComponentAsync()
     {
         return await Task.Run(async () =>
         {
+            _lastComponentDownloadError = null;
             try
             {
                 var cacheDir = ComponentCachePath;
@@ -959,6 +965,7 @@ public class UsbOverclockService : IUsbOverclockService
                 if (harvested == 0)
                 {
                     _logging.LogWarning("OverclockUSB: el paquete descargado no contiene ninguna variante de hidusbf.sys válida.");
+                    _lastComponentDownloadError = "El paquete descargado no contiene una variante válida del componente.";
                     return null;
                 }
 
@@ -972,6 +979,11 @@ public class UsbOverclockService : IUsbOverclockService
             catch (Exception ex)
             {
                 _logging.LogError("OverclockUSB: error resolviendo el componente", ex);
+                // Se guarda el motivo para que la UI no diga siempre «revisá tu conexión»:
+                // el fallo puede ser un hash inválido o un zip sin variantes.
+                _lastComponentDownloadError = NetworkError.IsConnectionFailure(ex)
+                    ? NetworkError.ConnectionHint
+                    : "No se pudo verificar el componente descargado.";
                 return null;
             }
         });

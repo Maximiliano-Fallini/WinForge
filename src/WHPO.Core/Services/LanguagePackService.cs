@@ -356,7 +356,16 @@ public sealed class LanguagePackService
         catch (Exception ex)
         {
             _logging.LogError($"Idiomas: error instalando '{entry.Code}': {ex.Message}", ex);
-            return new LanguagePackOutcome { Success = false, Error = $"No se pudo descargar el idioma: {ex.Message}" };
+            // El prefijo «No se pudo descargar el idioma» lo pone la UI: acá va SOLO el
+            // motivo, para no mostrarlo dos veces. Sin conexión se dice con la frase
+            // traducible; cualquier otro fallo conserva su detalle técnico.
+            return new LanguagePackOutcome
+            {
+                Success = false,
+                Error = NetworkError.IsConnectionFailure(ex)
+                    ? NetworkError.ConnectionHint
+                    : ex.Message
+            };
         }
         finally
         {

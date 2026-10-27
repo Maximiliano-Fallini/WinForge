@@ -351,6 +351,21 @@ public static class CartridgeDock
             tick.Background = ThemeBrushes.Get("AccentBrush");
         if (FindPart(dial, "OffLabel") is TextBlock off) off.Foreground = TextBrush();
         if (FindPart(dial, "OnLabel") is TextBlock on) on.Foreground = TextBrush();
+        LocalizeSwitch(dial);
+    }
+
+    /// <summary>
+    /// Escribe las etiquetas Off/On del dial en el idioma activo. Son literales del
+    /// template (<c>PerformanceSwitchStyle</c>): nacen escritos en el XAML y el recorrido
+    /// de I18n no los re-traduce al cambiar de idioma, así que quedaban clavados en el
+    /// idioma con el que se armó el control. Se llaman desde los dos estilos del dial y
+    /// al cambiar de idioma (ver la página de la biblioteca).
+    /// </summary>
+    public static void LocalizeSwitch(ToggleButton dial)
+    {
+        dial.ApplyTemplate();
+        if (FindPart(dial, "OffLabel") is TextBlock off) off.Text = I18n.T("Off");
+        if (FindPart(dial, "OnLabel") is TextBlock on) on.Text = I18n.T("On");
     }
 
     /// <summary>Devuelve el dial a los colores del mock (header): mismo código que el template.</summary>
@@ -365,6 +380,7 @@ public static class CartridgeDock
             tick.Background = Brush("#FF3B7FAA");
         if (FindPart(dial, "OffLabel") is TextBlock off) off.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
         if (FindPart(dial, "OnLabel") is TextBlock on) on.Foreground = ThemeBrushes.Get("PrimaryTextBrush");
+        LocalizeSwitch(dial);
     }
 
     /// <summary>Busca una parte del template por x:Name en el árbol visual ya aplicado.</summary>

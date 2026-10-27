@@ -189,15 +189,25 @@ public sealed partial class WorkshopPage : Page
 
         if (result.Catalog == null)
         {
-            // 404 ≠ sin conexión: si el repo todavía no publica components.json, el
-            // usuario tiene internet igual y el mensaje "sin conexión" confunde.
+            // Tres motivos distintos, tres mensajes: el 404 es un catálogo que todavía
+            // no se publicó, la falta de conexión es un problema del equipo del usuario
+            // y el resto es un fallo del servidor o del archivo. Antes todo lo que no
+            // era 404 se mostraba como "sin conexión", incluso un 500 de GitHub.
             if (result.Error?.Contains("404") == true)
                 SetStatus(I18n.T("El catálogo de componentes todavía no fue publicado en el repo. Se muestran los componentes instalados."), true);
-            else
+            else if (result.NoConnection)
                 SetStatus(I18n.T("No se pudo cargar el catálogo de componentes (sin conexión). Se muestran los componentes instalados."), true);
+            else
+                SetStatus(I18n.T("No se pudo cargar el catálogo de componentes. Se muestran los componentes instalados."), true);
         }
         else if (result.FromCache)
-            SetStatus(I18n.T("Sin conexión: se muestra la copia guardada del catálogo."), true);
+        {
+            // La copia local se usa tanto sin internet como cuando el repo falla: el
+            // aviso tiene que decir cuál de las dos pasó.
+            SetStatus(result.NoConnection
+                ? I18n.T("Sin conexión: se muestra la copia guardada del catálogo.")
+                : I18n.T("No se pudo actualizar el catálogo: se muestra la copia guardada."), true);
+        }
         else
             SetStatus(null, false);
 
@@ -421,11 +431,15 @@ public sealed partial class WorkshopPage : Page
     // Componentes marcados como "En desarrollo": la card muestra un badge amarillo
     // adicional junto al de categoría hasta que el componente salga de esa etapa.
     // TCP / Red avanzado salió de desarrollo: ya es instalable por todos en build
-    // estable, así que la lista quedó vacía a propósito. Los componentes descargables
-    // no usan esta lista: se marcan con "inDevelopment": true en components.json y los
-    // detecta IsInDevelopment vía card.Entry.
+    // estable. Los componentes descargables no usan esta lista: se marcan con
+    // "inDevelopment": true en components.json y los detecta IsInDevelopment vía card.Entry.
+    //
+    // «Overlay de métricas» está de vuelta en desarrollo: es un built-in, así que la
+    // única forma de marcarlo es esta lista. Mientras esté acá, la card lleva el badge
+    // "En desarrollo" y no se puede instalar en una build estable.
     private static readonly HashSet<string> InDevelopmentIds = new(StringComparer.OrdinalIgnoreCase)
     {
+        "overlay"
     };
 
     // Fábrica de badges de la card: mismo formato para estado y categoría. El cuerpo es el chip
@@ -870,9 +884,8 @@ public sealed partial class WorkshopPage : Page
                     Foreground = Feedback.SuccessBrush, // estado OK: en verde
                     VerticalAlignment = VerticalAlignment.Center
                 };
-                // La visibilidad de la pestaña se gestiona solo desde el menú ⋮ del
-                // navbar ("Ocultar") y desde el switch general de Configuración;
-                // en la card queda únicamente el botón Desinstalar.
+                // Una pestaña instalada siempre se ve: no hay forma de ocultarla, así
+                // que en la card queda únicamente el botón Desinstalar.
                 var uninstallBtn = CreateActionButton(I18n.T("Desinstalar"));
                 uninstallBtn.Foreground = Feedback.ErrorBrush; // acción destructiva: en rojo
                 uninstallBtn.Click += async (s, e) => await UninstallBuiltinAsync(card);
@@ -1106,7 +1119,7 @@ public sealed partial class WorkshopPage : Page
 
     /// <summary>
     /// Desinstala un componente integrado de fábrica: la pestaña sale del navbar
-    /// ("builtin.removed.<id>" + "nav.<id>" = false) y la card pasa a mostrar
+    /// ("builtin.removed.<id>" = true) y la card pasa a mostrar
     /// "Desinstalado" con el botón "Instalar". No borra nada del exe (los
     /// integrados viven dentro de WinForge.exe), solo lo quita de la UI.
     /// </summary>
@@ -1153,9 +1166,8 @@ public sealed partial class WorkshopPage : Page
     private static void SetBuiltinRemoved(string id, bool removed)
     {
         var settings = App.Services.GetRequiredService<WHPO.Core.Services.Interfaces.ISettingsService>();
+        // Única fuente de verdad de la pestaña: desinstalado = sin pestaña.
         settings.Set("builtin.removed." + id, removed);
-        // "nav.<id>" siempre acompaña: oculto al desinstalar, visible al reinstalar.
-        settings.Set("nav." + id, !removed);
         settings.Save();
         App.MainWindowInstance?.ApplyNavigationVisibility();
     }

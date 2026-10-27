@@ -179,8 +179,10 @@ public interface IProcessService
     /// <summary>
     /// True si hay actividad de juego: un juego conocido en ejecución o un proceso
     /// que matchea una regla (incluida la cadena launcher→juego). Reemplaza el
-    /// chequeo por RunningGameExes.Count para que el Modo juego también arranque
-    /// cuando el juego real no se llama como el exe de la biblioteca.
+    /// chequeo por RunningGameExes.Count para reconocer la partida aunque el juego
+    /// real no se llame como el exe de la biblioteca. El Modo juego lo usa para
+    /// saber cuándo ya no queda nada corriendo y restaurar (no para activarse:
+    /// solo se activa al lanzar el juego desde WinForge).
     /// </summary>
     bool HasRunningGameActivity { get; }
 

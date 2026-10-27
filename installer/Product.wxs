@@ -5,8 +5,8 @@
        (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
   <Package Name="WinForge"
            Manufacturer="WinForge"
-           Version="0.6.1"
-           ProductCode="{C78ED3B7-91C4-439B-9B82-6DA387AE4261}"
+           Version="0.6.3"
+           ProductCode="{A7BB2246-F9CE-4E03-9934-1AE335349829}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"
@@ -33,7 +33,7 @@
     <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
     <Property Id="ARPPUBLISHER" Value="WinForge" />
     <Property Id="ARPCONTACT" Value="WinForge" />
-    <Property Id="ARPCOMMENTS" Value="WinForge 0.6.1 Beta - optimizador y monitor del sistema" />
+    <Property Id="ARPCOMMENTS" Value="WinForge 0.6.3 Beta - optimizador y monitor del sistema" />
 
     <!-- Cierra WinForge antes de tocar archivos (instala, repara, actualiza o desinstala).
          Por qué ANTES de InstallValidate y SIEMPRE: con la app abierta, el motor del MSI

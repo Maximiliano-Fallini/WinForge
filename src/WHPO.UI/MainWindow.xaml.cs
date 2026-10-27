@@ -216,12 +216,12 @@ public sealed partial class MainWindow : Window
         ApplyInstallerTabSelection();
         MarkStartup("pestañas del instalador aplicadas");
 
-        // Aplicar la visibilidad de apartados según la configuración (claves "nav.*").
+        // Aplicar la visibilidad de apartados según la instalación de cada componente.
         ApplyNavigationVisibility();
         MarkStartup("visibilidad del navbar aplicada");
 
-        // Botón "⋮" al extremo derecho de cada pestaña: menú con "Ocultar" para
-        // esconder la pestaña sin pasar por Configuración. Se agrega ANTES de
+        // Botón "⋮" al extremo derecho de cada pestaña: menú con "Desinstalar" (y
+        // "Ir al Workshop" si el componente no está instalado). Se agrega ANTES de
         // TranslateNavbar para capturar el texto fuente en español del XAML.
         AttachNavItemMenus();
         MarkStartup("menus de pestaña adjuntos");
@@ -1788,10 +1788,11 @@ public sealed partial class MainWindow : Window
     // ===== Selección de pestañas del instalador =====
 
     /// <summary>
-    /// Aplica una sola vez la selección de pestañas del instalador
-    /// (HKLM\Software\WinForge\InstallTabs\&lt;tag&gt;). Desde la 0.3.0 SOLO se
-    /// considera el set core (siempre visible): las pestañas no core no se leen del
-    /// instalador porque nacen sin instalar y se activan desde el Workshop.
+    /// Marca como aplicada (una sola vez) la selección de pestañas del instalador
+    /// (HKLM\Software\WinForge\InstallTabs\&lt;tag&gt;). Desde la 0.3.0 las pestañas no
+    /// core se instalan desde el Workshop, y desde que ninguna pestaña se puede ocultar
+    /// la selección del instalador no tiene nada que aplicar: solo queda la marca para
+    /// no volver a leerla en cada arranque.
     /// </summary>
     private void ApplyInstallerTabSelection()
     {
@@ -1800,19 +1801,6 @@ public sealed partial class MainWindow : Window
             // Solo se aplica en el primer arranque tras la instalación.
             if (_settingsService.Get("installer.tabsApplied", false)) return;
 
-            using var key = Registry.LocalMachine.OpenSubKey(@"Software\WinForge\InstallTabs");
-            if (key != null)
-            {
-                foreach (var name in key.GetValueNames())
-                {
-                    // 0.3.0 (Workshop): las pestañas no core se instalan desde el
-                    // Workshop, no desde el instalador — se ignoran acá.
-                    if (!ComponentRegistry.CoreTags.Contains(name)) continue;
-                    _settingsService.Set("nav." + name, true);
-                }
-            }
-
-            // Marcar como aplicada para no pisar cambios posteriores del usuario.
             _settingsService.Set("installer.tabsApplied", true);
             _settingsService.Save();
         }
@@ -1825,8 +1813,9 @@ public sealed partial class MainWindow : Window
     // ===== Visibilidad de apartados del menú lateral =====
 
     /// <summary>
-    /// Aplica la visibilidad de los apartados del menú según la configuración
-    /// (claves "nav.&lt;tag&gt;"; por defecto todas las pestañas son visibles).
+    /// Aplica la visibilidad de los apartados del menú: una pestaña se ve si su
+    /// componente está instalado. No hay forma de esconder una pestaña instalada:
+    /// la única baja es desinstalarla desde el Workshop.
     /// </summary>
     internal void ApplyNavigationVisibility()
     {
@@ -1853,17 +1842,9 @@ public sealed partial class MainWindow : Window
             return;
         }
         // Sin instalar (nunca instalado o desinstalado desde el Workshop) no se
-        // muestra NUNCA: el estado de instalación manda sobre "nav.<tag>". Así un
-        // valor viejo en true (o un tildado manual desde Configuración) no revive
-        // un componente que no está instalado.
+        // muestra NUNCA: el estado de instalación es la única fuente de verdad.
         bool removed = _settingsService.Get("builtin.removed." + tag, _componentRegistry.RequiresInstall(tag));
-        if (removed)
-        {
-            item.Visibility = Visibility.Collapsed;
-            return;
-        }
-        // Integrados no core ya instalados: la visibilidad la decide el usuario.
-        item.Visibility = _settingsService.Get("nav." + tag, !_componentRegistry.RequiresInstall(tag)) ? Visibility.Visible : Visibility.Collapsed;
+        item.Visibility = removed ? Visibility.Collapsed : Visibility.Visible;
     }
 
     // =====================================================================
@@ -2656,10 +2637,47 @@ public sealed partial class MainWindow : Window
         // El cursor de doble flecha lo pone el propio host (NavResizeSplitter): el
         // ProtectedCursor de UIElement es protected y solo una subclase puede pedirlo.
 
-        NavigationViewControl.PaneOpened += (_, _) => UpdateNavResizeThumb();
-        NavigationViewControl.PaneClosed += (_, _) => UpdateNavResizeThumb();
-        NavigationViewControl.DisplayModeChanged += (_, _) => UpdateNavResizeThumb();
+        NavigationViewControl.PaneOpened += (_, _) => { UpdateNavResizeThumb(); RefreshNavBlur(); };
+        NavigationViewControl.PaneClosed += (_, _) => { UpdateNavResizeThumb(); RefreshNavBlur(); };
+        NavigationViewControl.DisplayModeChanged += (_, _) => { UpdateNavResizeThumb(); RefreshNavBlur(); };
         UpdateNavResizeThumb();
+    }
+
+    /// <summary>
+    /// Reancla los parches del desenfoque cuando el menú se abre o se cierra. Al cambiar
+    /// el ancho del panel, el contenido se re-acomoda: los parches viejos quedan medidos
+    /// con la geometría anterior y su desenfoque se veía como una franja "pegada" detrás
+    /// del rail (y desaparecía al cambiar de página, que sí rearma la lista).
+    ///
+    /// Se repite una vez más al terminar la animación del panel (~250 ms): medir en el
+    /// mismo tick devuelve la anchura vieja.
+    /// </summary>
+    private void RefreshNavBlur()
+    {
+        // Con el menú cerrado el panel se sigue midiendo con el ancho abierto: se le dice a la
+        // capa hasta dónde puede dibujar el parche (el rail), para que no quede una franja
+        // desenfocada de 256 px detrás de los iconos.
+        PanelBlurLayer.SetNavPaneClip(NavigationViewControl.IsPaneOpen
+            ? 0
+            : NavigationViewControl.CompactPaneLength);
+        PanelBlurLayer.PanelsChanged();
+        try
+        {
+            var timer = DispatcherQueue.CreateTimer();
+            timer.Interval = System.TimeSpan.FromMilliseconds(260);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) =>
+            {
+                try
+                {
+                    timer.Stop();
+                    PanelBlurLayer.PanelsChanged();
+                }
+                catch { }
+            };
+            timer.Start();
+        }
+        catch { }
     }
 
     /// <summary>
@@ -2994,21 +3012,54 @@ public sealed partial class MainWindow : Window
         try
         {
             var restartArg = App.Services.GetRequiredService<IPostUpdateRestartService>().PrepareRestartArg();
-            bool launched = await Task.Run(() =>
+            var outcome = await Task.Run(() =>
                 _appUpdateService.DownloadAndLaunchInstaller(info.DownloadUrl!, AppUpdateService.MsiPath, restartArg));
 
-            if (launched)
+            if (outcome.Launched)
             {
                 // El MSI cierra WinForge con taskkill al reemplazar archivos.
                 await Task.Delay(500);
                 Close();
+                return true;
             }
-            return launched;
+
+            // Sin este aviso, pulsar «Instalar actualización» no mostraba nada cuando la
+            // descarga fallaba: el usuario creía que el botón estaba roto.
+            await ShowUpdateInstallFailureAsync(outcome.NoConnection);
+            return false;
         }
         catch (Exception ex)
         {
             _loggingService.LogWarning($"MainWindow: actualizar: {ex.Message}");
+            await ShowUpdateInstallFailureAsync(NetworkError.IsConnectionFailure(ex));
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Aviso de actualización que no se pudo lanzar. El texto distingue la falta de
+    /// conexión de un fallo local (disco, permisos, msiexec): culpar a la red siempre
+    /// mandaba al usuario a revisar el router cuando el problema era otro.
+    /// </summary>
+    private async Task ShowUpdateInstallFailureAsync(bool noConnection)
+    {
+        try
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Content.XamlRoot,
+                Title = I18n.T("Actualizar WinForge"),
+                Content = noConnection
+                    ? I18n.T("No se pudo descargar la actualización: revisá tu conexión a internet e intentá de nuevo.")
+                    : I18n.T("No se pudo iniciar la actualización. Probá de nuevo o descargá la versión a mano desde GitHub."),
+                CloseButtonText = I18n.T("Cerrar"),
+                DefaultButton = ContentDialogButton.Close
+            };
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"MainWindow: aviso de actualización fallida: {ex.Message}");
         }
     }
 
@@ -3065,10 +3116,9 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// Reemplaza el Content (texto) de cada pestaña por un Grid: nombre a la
-    /// izquierda + botón "⋮" al extremo derecho. El botón abre un menú con
-    /// "Ocultar" que esconde la pestaña (misma clave "nav.&lt;tag&gt;" que la
-    /// opción de Configuración). La pestaña Configuración no lleva botón (no se
-    /// puede ocultar).
+    /// izquierda + botón "⋮" al extremo derecho. El botón abre un menú para
+    /// desinstalar el componente. Las pestañas core no llevan botón: no se pueden
+    /// desinstalar.
     /// </summary>
     private void AttachNavItemMenus()
     {
@@ -3152,10 +3202,9 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Menú del botón ⋮ de una pestaña. Si el componente no está instalado,
-    /// solo ofrece ir al Workshop ("Ocultar" no tiene sentido: ya está oculto).
-    /// Si está instalado, "Ocultar" esconde la pestaña (misma clave "nav.&lt;tag&gt;"
-    /// que la opción de Configuración).
+    /// Menú del botón ⋮ de una pestaña. Si el componente no está instalado, solo
+    /// ofrece ir al Workshop. Si está instalado, ofrece desinstalarlo (no hay forma
+    /// de esconder una pestaña sin desinstalar el componente).
     /// </summary>
     private void NavItemMore_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
     {
@@ -3163,7 +3212,7 @@ public sealed partial class MainWindow : Window
         if (sender is not Microsoft.UI.Xaml.Controls.Button btn || btn.Tag is not string tag) return;
         var menu = new MenuFlyout();
         // No instalado (nunca instalado o desinstalado): el único sentido es
-        // mandarlo al Workshop. Ocultar/Desinstalar no aplican.
+        // mandarlo al Workshop. Desinstalar no aplica.
         bool removed = _settingsService.Get("builtin.removed." + tag, _componentRegistry.RequiresInstall(tag));
         if (removed)
         {
@@ -3173,29 +3222,6 @@ public sealed partial class MainWindow : Window
             menu.ShowAt(btn);
             return;
         }
-        var hide = new MenuFlyoutItem { Text = I18n.T("Ocultar") };
-        hide.Click += (s, e2) =>
-        {
-            try
-            {
-                _settingsService.Set("nav." + tag, false);
-                _settingsService.Save();
-                ApplyNavigationVisibility();
-                // Si se ocultó la pestaña en pantalla, la vista activa queda sin ítem
-                // en el navbar: ir al Workshop, donde la puede volver a tildar
-                // (Configuración también, pero el ⋮ vive en el navbar).
-                if (string.Equals(_navigationService.CurrentPage, tag, StringComparison.OrdinalIgnoreCase))
-                {
-                    _navigationService.NavigateTo("workshop");
-                    HighlightNavItemForPage("workshop");
-                }
-            }
-            catch (Exception ex)
-            {
-                _loggingService.LogWarning($"Error ocultando pestaña {tag}: {ex.Message}");
-            }
-        };
-        menu.Items.Add(hide);
 
         // "Desinstalar" para todo lo que no es core (los core ni siquiera tienen ⋮).
         // Integrados de fábrica: la pestaña sale del navbar hasta reinstalarla desde
@@ -3239,7 +3265,6 @@ public sealed partial class MainWindow : Window
             if (isBuiltin)
             {
                 _settingsService.Set("builtin.removed." + tag, true);
-                _settingsService.Set("nav." + tag, false);
                 _settingsService.Save();
                 // Changed + Removed: cierra la pestaña abierta (si era la de este
                 // componente) y reconcilia el navbar. Visibilidad después de la
@@ -3314,9 +3339,23 @@ public sealed partial class MainWindow : Window
         foreach (var entry in downloadable)
             rows.Children.Add(BuildLanguageRow(entry.Code, entry));
 
-        var flyout = new Flyout
+        // Tope VERTICAL: con 20 idiomas la lista mide ~800 px y el menú se comía la
+        // pantalla (y se cortaba sin poder llegar al final). La lista vive en un
+        // ScrollViewer de alto acotado: se ven diez filas y el resto se recorre con la
+        // rueda. El ancho no cambia (260).
+        var scroll = new ScrollViewer
         {
             Content = rows,
+            MaxHeight = 440,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollMode = ScrollMode.Auto,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+
+        var flyout = new Flyout
+        {
+            Content = scroll,
             FlyoutPresenterStyle = BuildLanguageFlyoutStyle()
         };
         // El menú se rearma EN CALIENTE (al elegir un idioma, al quitar un pack, al terminar
@@ -3520,12 +3559,19 @@ public sealed partial class MainWindow : Window
                 await ShowLanguageMenuAsync();
                 return;
             }
-            name.Text = outcome.Error ?? LanguagePacks.DisplayName(entry.Code);
+            // El motivo lo devuelve el servicio en español fuente: pasa por I18n.T para
+            // que «sin conexión» se lea en el idioma activo. El texto completo queda en el
+            // tooltip porque la fila es angosta y lo recorta.
+            name.Text = I18n.T(outcome.Error ?? LanguagePacks.DisplayName(entry.Code));
+            ToolTipService.SetToolTip(name, name.Text);
             _loggingService.LogWarning($"Idiomas: descarga de {entry.Code} fallida: {name.Text}");
         }
         catch (Exception ex)
         {
-            name.Text = ex.Message;
+            name.Text = NetworkError.IsConnectionFailure(ex)
+                ? I18n.T(NetworkError.ConnectionHint)
+                : ex.Message;
+            ToolTipService.SetToolTip(name, name.Text);
             _loggingService.LogWarning($"Idiomas: descarga de {entry.Code}: {ex.Message}");
         }
         finally

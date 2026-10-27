@@ -185,9 +185,10 @@
                         </VisualStateManager.VisualStateGroups>
 
                         <!-- Etiquetas de los dos estados: OFF a la izquierda, ON a la
-                             derecha. Son literales del template (el motor i18n recorre
-                             árboles visuales, no templates de ResourceDictionary: no se
-                             traducen — trade-off de este control del mock). El estado
+                             derecha. Son literales del template: el recorrido de I18n
+                             no los re-traduce al cambiar de idioma, así que
+                             CartridgeDock.LocalizeSwitch los reescribe en el idioma
+                             activo (dueño del dial: el pie de la biblioteca). El estado
                              activo va a opacidad plena y el inactivo atenuado (los
                              estados Checked/Unchecked animan la opacidad). -->
                         <!-- Tinta primaria, no secundaria: a 10 px el gris atenuado se

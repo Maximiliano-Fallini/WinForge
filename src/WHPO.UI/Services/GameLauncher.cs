@@ -71,9 +71,17 @@ public static class GameLauncher
         }
         catch { }
 
-        // Modo juego de WinForge (BETA): no hace nada si el
-        // switch está desactivado. Se ejecuta en background para no retrasar el juego.
-        if (gameBoost != null) _ = gameBoost.ApplyAsync();
+        // Modo juego de WinForge (BETA): se aplica cuando el juego ARRANCA de verdad
+        // (proceso iniciado o detectado), nunca al principio del método. Antes se
+        // aplicaba antes de validar nada: un lanzamiento cancelado —launcher cerrado,
+        // ejecutable faltante, Epic que nunca abre— dejaba servicios detenidos y el
+        // aviso «Modo juego activo» en la biblioteca sin ninguna partida.
+        // No hace nada si el switch está desactivado; corre en background para no
+        // retrasar el juego.
+        void ApplyBoost()
+        {
+            if (gameBoost != null) _ = gameBoost.ApplyAsync();
+        }
 
         // GOG Galaxy y Xbox: el launcher NO se abre solo. Si está cerrado, no se
         // lanza el juego (los de Xbox son paquetes MSIX que exigen el app activo;
@@ -93,7 +101,10 @@ public static class GameLauncher
                 return;
             }
             BeginSession();
-            StartProcess(fileName, arguments);
+            // Solo después de que el proceso/URI arrancó sin excepción: si el
+            // lanzamiento falla, no hay partida que optimizar.
+            if (StartProcess(fileName, arguments))
+                ApplyBoost();
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
             return;
@@ -119,6 +130,9 @@ public static class GameLauncher
                 SetStatus(status, I18n.T("Abriendo Blacksmith..."), LaunchStatusKind.Info);
                 StartProcess(blacksmithExe, "");
             }
+            // Sin boost: el juego lo lanza el usuario DESDE Blacksmith y desde acá no
+            // se puede confirmar que haya arrancado; aplicarlo dejaba optimizaciones
+            // activas con solo abrir el launcher.
             SetStatus(status, I18n.T("Abrí Blacksmith y apretá Play para iniciar Dark and Darker."), LaunchStatusKind.Info);
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
@@ -130,7 +144,7 @@ public static class GameLauncher
             // Log de diagnóstico: registrar qué exe se intenta abrir y cualquier
             // error (StartProcess silenciaba todo con Debug.WriteLine).
             if (!string.IsNullOrEmpty(fileName)) BeginSession();
-            StartProcessLogged(fileName, arguments, msg =>
+            bool started = StartProcessLogged(fileName, arguments, msg =>
             {
                 try { log.LogWarning(msg); } catch { }
             });
@@ -139,6 +153,7 @@ public static class GameLauncher
             // launcher sino al proceso del juego cuando aparece.
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
+            if (started) ApplyBoost();
             return;
         }
 
@@ -147,7 +162,7 @@ public static class GameLauncher
         // porque la URI tiene que procesarla el shell del usuario, no este proceso.
         if (epic)
         {
-            await LaunchEpicGameAsync(log, processes, fileName, installPath, exeFileName, status);
+            await LaunchEpicGameAsync(gameBoost, log, processes, fileName, installPath, exeFileName, status);
             return;
         }
 
@@ -185,6 +200,8 @@ public static class GameLauncher
         {
             if (IsGameProcessRunning(processes, installPath, exeFileName))
             {
+                // Recién acá hay partida: el proceso del juego existe.
+                if (gameBoost != null) _ = gameBoost.ApplyAsync();
                 SetStatus(status, "", LaunchStatusKind.Hide);
                 return;
             }
@@ -217,6 +234,7 @@ public static class GameLauncher
     /// launcher la procesa con el mismo nivel que un doble clic en el escritorio.
     /// </summary>
     private static async Task LaunchEpicGameAsync(
+        IGameBoostService? gameBoost,
         ILoggingService log,
         IProcessService processes,
         string uri,
@@ -239,7 +257,9 @@ public static class GameLauncher
         // launcher y la card manda el exe. Se abre directo como último recurso.
         if (!uri.StartsWith("com.epicgames.launcher:", StringComparison.OrdinalIgnoreCase))
         {
-            StartProcessLogged(uri, "", msg => { try { log.LogWarning(msg); } catch { } });
+            if (StartProcessLogged(uri, "", msg => { try { log.LogWarning(msg); } catch { } })
+                && gameBoost != null)
+                _ = gameBoost.ApplyAsync();
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
             return;
@@ -268,6 +288,8 @@ public static class GameLauncher
             {
                 if (!string.IsNullOrEmpty(exeFileName))
                     processes.ApplyLaunchChainRule(exeFileName);
+                // El proceso del juego existe: recién ahora hay partida que optimizar.
+                if (gameBoost != null) _ = gameBoost.ApplyAsync();
                 SetStatus(status, "", LaunchStatusKind.Hide);
                 return;
             }
@@ -323,9 +345,13 @@ public static class GameLauncher
     private static void SetStatus(Action<string, LaunchStatusKind>? status, string message, LaunchStatusKind kind)
         => status?.Invoke(message, kind);
 
-    public static void StartProcess(string fileName, string arguments)
+    /// <summary>
+    /// Inicia un exe o URI. Devuelve true solo si <see cref="Process.Start(ProcessStartInfo)"/>
+    /// no lanzó excepción: es la señal que usa el boost para saber que hay partida.
+    /// </summary>
+    public static bool StartProcess(string fileName, string arguments)
     {
-        if (string.IsNullOrEmpty(fileName)) return;
+        if (string.IsNullOrEmpty(fileName)) return false;
         try
         {
             var psi = new ProcessStartInfo(fileName)
@@ -341,12 +367,14 @@ public static class GameLauncher
                 psi.WorkingDirectory = Path.GetDirectoryName(fileName) ?? "";
             }
             Process.Start(psi);
+            return true;
         }
         catch (Exception ex)
         {
             // El llamador registra el error con su propio logger; acá se evita
             // que un fallo de lanzamiento reviente el flujo.
             System.Diagnostics.Debug.WriteLine($"GameLauncher: iniciar juego: {ex.Message}");
+            return false;
         }
     }
 
@@ -368,12 +396,12 @@ public static class GameLauncher
     /// Versión con log para diagnóstico: registra qué exe se intenta abrir y el
     /// error si falla (el logging no existe en StartProcess).
     /// </summary>
-    public static void StartProcessLogged(string fileName, string arguments, Action<string>? logWarning)
+    public static bool StartProcessLogged(string fileName, string arguments, Action<string>? logWarning)
     {
         if (string.IsNullOrEmpty(fileName))
         {
             logWarning?.Invoke("GameLauncher: StartProcess recibió fileName vacío (el exe no se resolvió).");
-            return;
+            return false;
         }
         // Las URIs de launcher (steam://, com.epicgames.launcher://, shell:) NO son
         // archivos en disco: File.Exists las rechazaría y cortaría el lanzamiento
@@ -383,7 +411,7 @@ public static class GameLauncher
         if (!IsProtocolUri(fileName) && !File.Exists(fileName))
         {
             logWarning?.Invoke($"GameLauncher: el exe no existe: {fileName}");
-            return;
+            return false;
         }
         try
         {
@@ -399,10 +427,12 @@ public static class GameLauncher
             }
             Process.Start(psi);
             logWarning?.Invoke($"GameLauncher: lanzado OK: {fileName}");
+            return true;
         }
         catch (Exception ex)
         {
             logWarning?.Invoke($"GameLauncher: ERROR al lanzar {fileName}: {ex.Message}");
+            return false;
         }
     }
 

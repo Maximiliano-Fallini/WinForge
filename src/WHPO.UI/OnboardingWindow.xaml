@@ -5,6 +5,10 @@
     Title="Bienvenido a WinForge">
 
     <Grid x:Name="RootGrid" Background="{ThemeResource OnboardingBackdropBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
         <Grid.Resources>
             <Style x:Key="OnboardingCardStyle" TargetType="Border">
                 <Setter Property="Background" Value="{ThemeResource OnboardingSurfaceBrush}"/>
@@ -22,12 +26,33 @@
             </Style>
         </Grid.Resources>
 
-        <Image Source="/logos/backgroundinstaller/banner.png"
+<!-- El banner y el velo cubren TODA la ventana, también la franja del título:
+             así la barra propia queda 100 % transparente sobre la foto y no aparece
+             la banda de color de la barra de título nativa. -->
+        <Image Grid.RowSpan="2" Source="/logos/backgroundinstaller/banner.png"
                Stretch="UniformToFill"
                IsHitTestVisible="False"/>
-        <Border Background="{ThemeResource OnboardingScrimBrush}" IsHitTestVisible="False"/>
+        <Border Grid.RowSpan="2" Background="{ThemeResource OnboardingScrimBrush}" IsHitTestVisible="False"/>
 
-        <StackPanel MaxWidth="640" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+<!-- Barra de título PROPIA: la ventana extiende el contenido hasta el canto
+             (ExtendsContentIntoTitleBar) y esta franja no pinta nada: se ve el banner.
+             El título de la ventana se dibuja acá al DOBLE del tamaño de la barra nativa.
+             El margen derecho deja libre el lugar de minimizar/cerrar/maximizar. -->
+        <Grid x:Name="TitleBarArea" Grid.Row="0" Height="46"
+              Background="Transparent" Margin="0,0,144,0">
+            <TextBlock x:Name="TitleBarText"
+                       FontSize="24" FontWeight="SemiBold"
+                       VerticalAlignment="Center" Margin="22,0,8,0"
+                       TextTrimming="CharacterEllipsis"/>
+        </Grid>
+
+<!-- Ancho FIJO (no MaxWidth): con MaxWidth la ventana se encogía en las fases de poco
+             contenido (idioma, gracias) y se estiraba en la del tema, porque el tamaño de esta
+             ventana lo termina de decidir su contenido. Con un ancho fijo el asistente mide
+             siempre lo mismo, centrado y simétrico, en las cuatro fases. 700 deja la card con
+             644 px útiles: entran la grilla de temas (476), el banner de antivirus y los textos
+             largos sin apretar. -->
+        <StackPanel Grid.Row="1" Width="700" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
 <!-- Cabecera: logo + marca SOLOS. El subtítulo va fuera de la fila porque es lo único que
              cambia con el idioma y su largo define el ancho de la fila: centrada como unidad,
              el logo y el título se corrían horizontalmente al cambiar de idioma (en alemán
@@ -38,7 +63,7 @@
                 <TextBlock Text="WinForge" FontSize="30" FontWeight="Bold" VerticalAlignment="Center"/>
             </StackPanel>
 <!-- Subtítulo: línea propia, centrada y con wrap (sin él, los idiomas largos se
-             recortaban al tope de 640 px). -->
+             recortaban al ancho fijo de 700 px). -->
             <TextBlock x:Name="SubtitleText" FontSize="14" Foreground="{ThemeResource SecondaryTextBrush}"
                        TextWrapping="Wrap" TextAlignment="Center"/>
 
@@ -59,7 +84,11 @@
                  caso —tema, o idioma con el subtítulo en 2 líneas y el estado de descarga
                  visible— con margen, y los botones no saltan entre fases porque la altura sigue
                  siendo la misma para las tres. -->
-            <Border x:Name="ContentCard" Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="360">
+<!-- HorizontalAlignment=Stretch (pisa el Center del estilo): la card ocupa SIEMPRE el
+                 ancho completo de la ventana, así su borde no baila entre fases aunque el
+                 contenido de cada una mida distinto. La altura ya era fija (360). -->
+            <Border x:Name="ContentCard" Style="{StaticResource OnboardingCardStyle}" Padding="28" Height="360"
+                    HorizontalAlignment="Stretch">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>

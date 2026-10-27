@@ -48,6 +48,13 @@ public interface IGameBoostService
     /// <summary>True si la optimización al iniciar un juego está activada.</summary>
     bool IsEnabled { get; }
 
+    /// <summary>
+    /// True si hay una partida optimizada EN CURSO (se aplicó y todavía no se restauró).
+    /// La biblioteca lo usa al entrar para no dejar en pantalla un «Modo juego activo»
+    /// viejo cuando el juego ya se cerró en otra pestaña.
+    /// </summary>
+    bool IsActive { get; }
+
     /// <summary>Activa/desactiva la optimización (persistida en settings). Al desactivar con un boost activo, restaura.</summary>
     void SetEnabled(bool enabled);
 
@@ -99,6 +106,13 @@ public interface IGameBoostService
     /// se va a completar.
     /// </summary>
     event Action? BoostCancelled;
+
+    /// <summary>
+    /// Se dispara cuando el boost vuelve al estado previo (juego cerrado, app
+    /// cerrándose o switch apagado). La biblioteca borra el resumen «Modo juego
+    /// activo»: sin esto el mensaje persistente quedaba aunque no hubiera partida.
+    /// </summary>
+    event Action? BoostRestored;
 
     /// <summary>Lista de procesos en segundo plano a los que se aplica el boost (configurable; vacía = lista por defecto).</summary>
     List<string> GetBackgroundProcesses();

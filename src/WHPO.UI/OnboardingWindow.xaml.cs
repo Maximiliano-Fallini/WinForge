@@ -144,6 +144,15 @@ public partial class OnboardingWindow : Window
         Closed += (_, _) => Activated -= Onboarding_Activated;
 
         Title = WindowTitleText;
+
+        // Barra de título PROPIA: la ventana extiende el contenido hasta el canto, así la
+        // franja del título queda 100 % transparente (se ve el banner y no la banda sólida
+        // de Windows) y el título se dibuja en la franja, al doble de tamaño que la nativa.
+        // SetTitleBar marca esa franja como zona de arrastre y deja los botones del sistema
+        // encima, a la derecha (por eso el margen derecho de 144 px en el XAML).
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(TitleBarArea);
+        TitleBarText.Text = WindowTitleText;
     }
 
     private bool _centered;
@@ -589,24 +598,27 @@ public partial class OnboardingWindow : Window
         try
         {
             bool dark = effective == ElementTheme.Dark;
-            var bg = dark
-                ? Windows.UI.Color.FromArgb(255, 32, 32, 32)   // #202020
-                : Windows.UI.Color.FromArgb(255, 255, 255, 255);
+            // Con el contenido extendido hasta el canto, la barra NO pinta fondo: la franja
+            // del título muestra el banner de la ventana (100 % transparente). Solo el
+            // botón con el mouse encima se ilumina, como en cualquier barra nativa.
+            var transparent = Windows.UI.Color.FromArgb(0, 0, 0, 0);
             var fg = dark
                 ? Microsoft.UI.Colors.White
                 : Microsoft.UI.Colors.Black;
             var hoverBg = dark
-                ? Windows.UI.Color.FromArgb(255, 58, 58, 58)
-                : Windows.UI.Color.FromArgb(255, 229, 229, 229);
+                ? Windows.UI.Color.FromArgb(56, 255, 255, 255)
+                : Windows.UI.Color.FromArgb(40, 0, 0, 0);
 
             var tb = AppWindow.TitleBar;
-            tb.BackgroundColor = bg;
+            tb.BackgroundColor = transparent;
             tb.ForegroundColor = fg;
-            tb.ButtonBackgroundColor = bg;
+            tb.ButtonBackgroundColor = transparent;
             tb.ButtonForegroundColor = fg;
             tb.ButtonHoverBackgroundColor = hoverBg;
             tb.ButtonHoverForegroundColor = fg;
-            tb.ButtonInactiveBackgroundColor = bg;
+            tb.ButtonPressedBackgroundColor = hoverBg;
+            tb.ButtonPressedForegroundColor = fg;
+            tb.ButtonInactiveBackgroundColor = transparent;
             tb.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(255, 128, 128, 128);
         }
         catch (Exception ex)
@@ -893,11 +905,16 @@ public partial class OnboardingWindow : Window
                     error: false);
                 return;
             }
-            ShowLanguageStatus(I18n.T("No se pudo descargar el idioma") + ": " + (outcome.Error ?? entry.Code), error: true);
+            // El motivo puede ser una clave traducible (falta de conexión) o el
+            // detalle técnico del fallo: I18n.T deja intacto lo que no conoce.
+            ShowLanguageStatus(I18n.T("No se pudo descargar el idioma") + ": " + I18n.T(outcome.Error ?? entry.Code), error: true);
         }
         catch (Exception ex)
         {
-            ShowLanguageStatus(I18n.T("No se pudo descargar el idioma") + ": " + ex.Message, error: true);
+            ShowLanguageStatus(
+                I18n.T("No se pudo descargar el idioma") + ": "
+                + (NetworkError.IsConnectionFailure(ex) ? I18n.T(NetworkError.ConnectionHint) : ex.Message),
+                error: true);
         }
         finally
         {
@@ -1356,6 +1373,7 @@ public partial class OnboardingWindow : Window
         I18n.ApplyToVisualTree(RootGrid);
         ApplyTexts();
         Title = WindowTitleText;
+        TitleBarText.Text = WindowTitleText;
 
         // Re-marcar las filas: la ✓ tiene que seguir al idioma activo (si la lista de idiomas
         // no cambió, esto NO toca la colección del desplegable: ver BuildLanguagePhase).

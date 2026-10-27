@@ -86,11 +86,10 @@ public sealed partial class GuiaPage : Page
             new[]
             {
                 "Abrí Workshop y buscá el nombre o la función que necesitás.",
-                "Instalá el componente desde su tarjeta. Los componentes integrados pueden requerir reiniciar WinForge para aparecer.",
-                "Si solo querés mostrar u ocultar una pestaña ya instalada, revisá Configuración → Navegación."
+                "Instalá el componente desde su tarjeta. Los componentes integrados pueden requerir reiniciar WinForge para aparecer."
             },
             new[] { new GuideLink("Abrir Workshop", "workshop"), new GuideLink("Abrir Configuración", "configuracion") },
-            "instalar activar componente pestaña mostrar ocultar workshop navegación",
+            "instalar activar componente pestaña workshop",
             HelpGlyph, null, null),
         new(
             "¿Dónde veo el uso y la temperatura del equipo?",
@@ -245,7 +244,6 @@ public sealed partial class GuiaPage : Page
             null,
             new[]
             {
-                "Confirmá que el componente esté instalado en Workshop y habilitado en Configuración → Navegación.",
                 "Si la función depende de hardware, comprobá que Windows o el fabricante expongan ese dispositivo.",
                 "Para problemas de Windows, consultá las herramientas de Reparación. Algunas operaciones requieren permisos de administrador."
             },
@@ -310,17 +308,17 @@ public sealed partial class GuiaPage : Page
                     "Iniciá el juego desde la biblioteca para que la regla se aplique."
                 }),
             ["configuracion"] = (
-                "Todo lo que se puede dejar a tu gusto: apariencia, idioma, navegación, inicio con Windows y el arranque.",
-                "Entrá en Apariencia para el tema y la transparencia, en Navegación para mostrar u ocultar pestañas, y en Idioma para cambiar el idioma de la app.",
+                "Todo lo que se puede dejar a tu gusto: apariencia, idioma, inicio con Windows y el arranque.",
+                "Entrá en Apariencia para el tema y la transparencia, y en Idioma para cambiar el idioma de la app.",
                 new[]
                 {
                     "Abrí Configuración desde el menú lateral.",
                     "En Apariencia elegí el tema y ajustá transparencia y desenfoque.",
-                    "En Navegación mostrá u ocultá pestañas, y en Idioma cambiá el idioma de la app."
+                    "En Idioma cambiá el idioma de la app."
                 }),
             ["workshop"] = (
                 "Todos los componentes de WinForge en un solo lugar: se instalan, actualizan o desinstalan desde acá.",
-                "Buscá el componente que te interesa y tocá Instalar. Los que ya tengas se pueden ocultar o quitar desde su propia tarjeta.",
+                "Buscá el componente que te interesa y tocá Instalar. Los que ya tengas se pueden quitar desde su propia tarjeta.",
                 new[]
                 {
                     "Abrí Workshop y buscá el componente por nombre o función.",
@@ -581,8 +579,8 @@ public sealed partial class GuiaPage : Page
             },
             ["configuracion"] = new[]
             {
-                new GuideQa("¿Cómo oculto una pestaña que no uso?",
-                    "En Configuración → Navegación. La pestaña deja de aparecer en el menú sin desinstalar nada."),
+                new GuideQa("¿Cómo quito una pestaña que no uso?",
+                    "Desinstalá su componente desde Workshop: la pestaña desaparece del menú y podés reinstalarlo cuando quieras. No hay forma de esconderla sin desinstalarla."),
                 new GuideQa("¿Cómo cambio el idioma?",
                     "En Configuración → Idioma. Si el pack no está descargado, la app lo baja sola."),
             },

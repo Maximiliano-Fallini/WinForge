@@ -113,7 +113,7 @@
         </Style>
     </Page.Resources>
 
-    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*"><!-- ====== NAVBAR INTERNO: Inicio / Apariencia / Caché / Navegación / Desarrollo ======
+    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*"><!-- ====== NAVBAR INTERNO: Inicio / Apariencia / Actualizaciones / Desarrollo ======
              En los temas CLÁSICOS la barra se lee como el navbar principal: trae el color
              de la clave NavigationViewDefaultPaneBackground (blanco en Rosa/Blanco, etc.).
              En Marea esa clave viene transparente a propósito: ahí el menú es el
@@ -130,8 +130,7 @@
                      una pestaña en el medio corría todas las demás. -->
                 <SelectorBarItem x:Name="HomeTabItem" Text="Inicio" IsSelected="True"/>
                 <SelectorBarItem x:Name="AppearanceTabItem" Text="Apariencia"/>
-                <SelectorBarItem x:Name="CacheTabItem" Text="Caché"/>
-                <SelectorBarItem x:Name="NavTabItem" Text="Navegación"/>
+                <SelectorBarItem x:Name="UpdatesTabItem" Text="Actualizaciones"/>
                 <SelectorBarItem x:Name="DevelopmentTabItem" Text="Desarrollo" Visibility="Collapsed"/>
             </SelectorBar>
         </Border>
@@ -324,6 +323,66 @@
                                            VerticalAlignment="Center"/>
                             </StackPanel>
                         </StackPanel>
+                    </Border>
+
+<!-- Mantenimiento: la caché y los logs cierran Inicio. Antes tenían su propia
+                         pestaña (Caché), pero son dos acciones que se buscan junto al resto
+                         de los ajustes del equipo, no un área aparte. El encabezado lleva el
+                         mismo tipo de ícono que el resto de la app (FontIcon del tema, no un
+                         emoji a color): se tiñe con el tema vigente. -->
+                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="2,14,0,0">
+                        <FontIcon Glyph="&#xE74D;" FontSize="15"
+                                  Foreground="{ThemeResource SecondaryTextBrush}"
+                                  VerticalAlignment="Center"/>
+                        <TextBlock Text="Caché" FontSize="18" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+<!-- Caché de la aplicación -->
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>
+                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                <TextBlock x:Name="CacheSizeText" Text="" FontSize="13"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           VerticalAlignment="Center"/>
+                                <Button x:Name="ClearCacheButton" Content="Limpiar caché" FontSize="12"
+                                        Padding="12,4" VerticalAlignment="Center" Click="ClearCacheButton_Click"/>
+                                <TextBlock x:Name="ClearCacheFeedbackText" Text="" FontSize="12"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+<!-- Logs de desarrollo -->
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="Logs de desarrollo" FontSize="16" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                                    <TextBlock x:Name="DeveloperLogsSizeText" Text="" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               VerticalAlignment="Center"/>
+                                    <Button x:Name="DeleteLogsButton" Content="Borrar logs" FontSize="12"
+                                            Padding="12,4" VerticalAlignment="Center" Click="DeleteLogsButton_Click"/>
+                                    <Button x:Name="OpenLogsFolderButton" Content="Abrir carpeta de logs" FontSize="12"
+                                            Padding="12,4" VerticalAlignment="Center" Click="OpenLogsFolderButton_Click"/>
+                                    <TextBlock x:Name="DeleteLogsFeedbackText" Text="" FontSize="12"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="DeveloperLogsToggle"
+                                Grid.Column="1"
+                                Style="{StaticResource CompactToggleSwitchStyle}"
+                                IsOn="False"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"/>
+                        </Grid>
                     </Border>
 
                 </StackPanel>
@@ -662,125 +721,76 @@
                 </StackPanel>
             </ScrollViewer>
 
-<!-- ============ PESTAÑA: CACHÉ (caché de la app + logs de desarrollo) ============ -->
-            <ScrollViewer x:Name="CacheTab" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+<!-- ============ PESTAÑA: ACTUALIZACIONES (versión instalada + historial de versiones) ============ -->
+            <!-- La lista de releases se arma en código (BuildReleaseCard): el cuerpo de cada
+                 versión es Markdown y se renderiza con los pinceles del tema vigente. -->
+            <ScrollViewer x:Name="UpdatesTab" Visibility="Collapsed"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
 
-<!-- Caché de la aplicación -->
+<!-- Versión instalada y estado del chequeo -->
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Caché de la aplicación" FontSize="16" FontWeight="SemiBold"/>
-                            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-                                <TextBlock x:Name="CacheSizeText" Text="" FontSize="13"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           VerticalAlignment="Center"/>
-                                <Button x:Name="ClearCacheButton" Content="Limpiar caché" FontSize="12"
-                                        Padding="12,4" VerticalAlignment="Center" Click="ClearCacheButton_Click"/>
-                                <TextBlock x:Name="ClearCacheFeedbackText" Text="" FontSize="12"
-                                           VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-<!-- Logs de desarrollo -->
-                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock Text="Logs de desarrollo" FontSize="16" FontWeight="SemiBold"/>
-                                <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-                                    <TextBlock x:Name="DeveloperLogsSizeText" Text="" FontSize="12"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                               VerticalAlignment="Center"/>
-                                    <Button x:Name="DeleteLogsButton" Content="Borrar logs" FontSize="12"
-                                            Padding="12,4" VerticalAlignment="Center" Click="DeleteLogsButton_Click"/>
-                                    <Button x:Name="OpenLogsFolderButton" Content="Abrir carpeta de logs" FontSize="12"
-                                            Padding="12,4" VerticalAlignment="Center" Click="OpenLogsFolderButton_Click"/>
-                                    <TextBlock x:Name="DeleteLogsFeedbackText" Text="" FontSize="12"
-                                               VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </StackPanel>
-                            <ToggleSwitch
-                                x:Name="DeveloperLogsToggle"
-                                Grid.Column="1"
-                                Style="{StaticResource CompactToggleSwitchStyle}"
-                                IsOn="False"
-                                HorizontalAlignment="Right"
-                                VerticalAlignment="Center"/>
-                        </Grid>
-                    </Border>
-
-                </StackPanel>
-            </ScrollViewer>
-
-<!-- ============ PESTAÑA: NAVEGACIÓN ============ -->
-            <ScrollViewer x:Name="NavTab" Visibility="Collapsed" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
-
-<!-- Card hero: estado del menú lateral -->
-                    <Border Style="{StaticResource CardStyle}" CornerRadius="20" Padding="28" Tag="reveal">
                         <StackPanel Spacing="14">
-                            <Grid ColumnSpacing="20">
+                            <Grid ColumnSpacing="16">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-<!-- Badge con ícono de menú -->
-                                <Border x:Name="NavBadge" Width="56" Height="56" CornerRadius="16"
-                                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                                        VerticalAlignment="Center" Tag="reveal">
-                                    <FontIcon x:Name="NavBadgeIcon" Glyph="&#xE73E;" FontSize="24"
-                                              Foreground="{ThemeResource AccentBrush}"/>
+                                <Border Width="52" Height="52" CornerRadius="12" Background="{ThemeResource AccentTintBrush}" VerticalAlignment="Center">
+                                    <Image Source="ms-appx:///logos/WinForge.png" Width="34" Height="34"/>
                                 </Border>
-                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                    <TextBlock Text="Personalizá tu menú lateral" FontSize="20" FontWeight="SemiBold"/>
-                                    <TextBlock Text="Mostrá u ocultá las secciones de la barra de navegación. Podés dejar solo lo que usás para tener un menú más limpio."
-                                               FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                    <TextBlock Text="WinForge" FontSize="18" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="UpdatesInstalledVersionText" FontSize="13"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 </StackPanel>
+                                <Border x:Name="UpdatesStatusBadge" Grid.Column="2" CornerRadius="12" Padding="12,5" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <TextBlock x:Name="UpdatesStatusBadgeText" FontSize="11.5" FontWeight="SemiBold"/>
+                                </Border>
                             </Grid>
 
-<!-- Progreso: cuántas pestañas están visibles -->
-                            <StackPanel Spacing="6">
-                                <Grid ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock x:Name="NavMenuSummaryText" Text="" FontSize="13"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                    <TextBlock x:Name="NavMenuCountText" Grid.Column="1" Text="" FontSize="13" FontWeight="SemiBold"/>
-                                </Grid>
-                                <ProgressBar x:Name="NavProgressBar" Maximum="1" Value="1"/>
+                            <TextBlock x:Name="UpdatesStatusText" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       Text="Comprobando actualizaciones..."/>
+
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="CheckUpdatesButton" Content="Buscar actualizaciones"
+                                        Style="{StaticResource AccentButtonStyle}" Padding="14,8"
+                                        Click="CheckUpdatesButton_Click"/>
+                                <Button x:Name="InstallUpdateButton" Content="Instalar actualización"
+                                        Padding="14,8" Visibility="Collapsed"
+                                        Click="InstallUpdateButton_Click"/>
+                                <Button x:Name="OpenReleasesButton" Content="Ver en GitHub"
+                                        Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
+                                        Click="OpenReleasesButton_Click"/>
+                                <ProgressRing x:Name="UpdatesProgressRing" Width="18" Height="18"
+                                              IsActive="False" Visibility="Collapsed" VerticalAlignment="Center"/>
                             </StackPanel>
-
-                            
                         </StackPanel>
                     </Border>
 
-<!-- Lista de secciones agrupadas por categoría -->
-                    <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="20" Tag="reveal">
-                        <StackPanel Spacing="4">
-                            <TextBlock Text="Secciones del menú" FontSize="15" FontWeight="SemiBold"/>
-                            <TextBlock Text="Desactivá las que no quieras ver en la barra lateral."
-                                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <!-- Nota: explica las dos ausencias que antes se resolvían con controles
-                                 que no hacían nada (las secciones core, que no se pueden ocultar)
-                                 o que confundían (los componentes sin instalar, sin pestaña). -->
-                            <TextBlock Text="Las secciones propias de la app (Sistema, Red, Núcleos, Procesos, Workshop y Configuración) siempre están visibles. Los componentes que no tenés instalados no aparecen acá: se suman solos cuando los instalás desde el Workshop."
-                                       FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       TextWrapping="Wrap" Margin="0,4,0,0"/>
-                            <StackPanel x:Name="NavItemsPanel" Spacing="2" Margin="0,6,0,0"/>
-                        </StackPanel>
-                    </Border>
+<!-- Historial de versiones -->
+                    <StackPanel Spacing="3" Margin="0,10,0,0">
+                        <TextBlock Text="Historial de versiones" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Text="Todo lo que cambió en cada versión publicada." FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    </StackPanel>
 
+                    <StackPanel x:Name="ReleasesHost" Spacing="10"/>
 
+                    <TextBlock x:Name="ReleasesFeedbackText" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed"/>
+
+                    <Button x:Name="AllReleasesButton" Content="Ver todas las versiones"
+                            Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
+                            BorderThickness="0"
+                            HorizontalAlignment="Left" Margin="0,2,0,0"
+                            Click="OpenReleasesButton_Click"/>
                 </StackPanel>
             </ScrollViewer>
 
-<!-- ============ PESTAÑA: DESARROLLO (solo si la build supera la release) ============ -->
+<!-- ============ PESTAÑA: DESARROLLO (solo en builds de desarrollo) ============ -->
             <ScrollViewer x:Name="DevTab" Visibility="Collapsed"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
@@ -805,7 +815,7 @@
                                 </StackPanel>
                             </Border>
 
-<!-- Logs de desarrollo: se administran desde la pestaña Caché. -->
+<!-- Logs de desarrollo: se administran desde Inicio (bloque Caché). -->
                             <Border Style="{StaticResource FilledCardStyle}" CornerRadius="10" Padding="16" Visibility="Collapsed">
                                 <StackPanel Spacing="8">
                                     <TextBlock Text="Logs de desarrollo" FontSize="14" FontWeight="SemiBold"/>

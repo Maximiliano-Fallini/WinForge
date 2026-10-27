@@ -6,7 +6,7 @@
     <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
         <StackPanel Spacing="0" Margin="24,16,24,24">
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
-                <FontIcon Glyph="&#xE9CE;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                <FontIcon Glyph="&#xE957;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
                 <TextBlock Text="Monitor de sensores" FontWeight="SemiBold" FontSize="18" VerticalAlignment="Center"/>
             </StackPanel>
             <TextBlock x:Name="SensorsStatusText" Text="" FontSize="12" Visibility="Collapsed"

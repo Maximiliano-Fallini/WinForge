@@ -44,6 +44,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private readonly ICpuPowerService _cpuPowerService;
     private readonly ILoggingService _loggingService;
     private readonly IGameBoostService _gameBoostService;
+
+    /// <summary>True si StatusText muestra el aviso del Modo juego (aplicando o activo):
+    /// permite borrarlo al volver a la página si la partida ya terminó.</summary>
+    private bool _boostFeedbackShown;
     private readonly ISettingsService _settings;
     // Evita que el Toggled se dispare al cargar el estado inicial del switch.
     private bool _boostSwitchInitialized;
@@ -288,6 +292,26 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _boostSwitchInitialized = true;
         UpdateGameBoostLabel();
 
+        // Feedback del Modo juego: se (re)suscribe en CADA visita. La página está
+        // cacheada y OnNavigatedFrom da de baja los handlers; si quedaran solo en el
+        // constructor, después de la primera salida no llegaría ningún aviso.
+        _gameBoostService.BoostApplying -= OnBoostApplying;
+        _gameBoostService.BoostApplied -= OnBoostApplied;
+        _gameBoostService.BoostCancelled -= OnBoostCancelled;
+        _gameBoostService.BoostRestored -= OnBoostRestored;
+        _gameBoostService.BoostApplying += OnBoostApplying;
+        _gameBoostService.BoostApplied += OnBoostApplied;
+        _gameBoostService.BoostCancelled += OnBoostCancelled;
+        _gameBoostService.BoostRestored += OnBoostRestored;
+
+        // Si la partida terminó mientras estábamos en otra pestaña, el evento no se
+        // recibió: el resumen quedaría en pantalla aunque el boost ya se restauró.
+        if (_boostFeedbackShown && !_gameBoostService.IsActive)
+        {
+            Feedback.Set(StatusText, null);
+            _boostFeedbackShown = false;
+        }
+
         // Estilo de las cards (2D / 3D), persistido. Se elige en Configuración →
         // Apariencia (el header de la biblioteca ya no tiene switch) y se relee acá en
         // cada visita: por defecto, cartuchos 3D.
@@ -375,6 +399,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _gameBoostService.BoostApplying -= OnBoostApplying;
         _gameBoostService.BoostApplied -= OnBoostApplied;
         _gameBoostService.BoostCancelled -= OnBoostCancelled;
+        _gameBoostService.BoostRestored -= OnBoostRestored;
         // Si se sale de la página (cacheada) estando en la vista de configuración,
         // volver al estado base para que el próximo ingreso muestre la biblioteca.
         if (BoostConfigView.Visibility == Visibility.Visible)
@@ -488,6 +513,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // El switch ya no es un ToggleSwitch con On/OffContent: nombrarlo para los
         // lectores de pantalla (el estilo del mock lleva el Off/On en el template).
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(GameBoostSwitch, I18n.T("Modo rendimiento"));
+        // Off/On son literales del template: el recorrido de I18n no los re-traduce al
+        // cambiar de idioma, así que se reescriben acá (es el punto que corre en cada
+        // cambio de idioma, ver OnLanguageChanged).
+        CartridgeDock.LocalizeSwitch(GameBoostSwitch);
         if (inDock)
         {
             GameBoostLabel.Foreground = CartridgeDock.TextBrush();
@@ -561,6 +590,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// </summary>
     private void OnBoostApplying()
     {
+        _boostFeedbackShown = true;
         DispatcherQueue.TryEnqueue(() => Feedback.Running(StatusText,
             I18n.T("Modo juego: aplicando optimización... esperando confirmación de servicios y procesos."),
             persistent: true));
@@ -572,6 +602,18 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// </summary>
     private void OnBoostCancelled()
     {
+        _boostFeedbackShown = false;
+        DispatcherQueue.TryEnqueue(() => Feedback.Set(StatusText, null));
+    }
+
+    /// <summary>
+    /// El boost volvió al estado previo (el juego se cerró): el resumen persistente
+    /// «Modo juego activo» ya no corresponde a ninguna partida y se borra. Antes
+    /// quedaba en pantalla hasta reiniciar la app.
+    /// </summary>
+    private void OnBoostRestored()
+    {
+        _boostFeedbackShown = false;
         DispatcherQueue.TryEnqueue(() => Feedback.Set(StatusText, null));
     }
 
@@ -622,6 +664,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             else
                 Feedback.Warning(StatusText, msg + " — " + string.Join(" ", caveats), persistent: true);
         });
+        _boostFeedbackShown = true;
     }
 
     // ===================== Tuerca: configuración del optimizador =====================
@@ -7364,71 +7407,91 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         // Afinidad como desplegable: con CPUs de 16, 24 o 32 núcleos la grilla de
         // checks ocupa varias filas y empujaba el pie del panel fuera de la vista
-        // (MaxHeight 380). Mismo patrón de header-botón que las secciones de la
-        // biblioteca —chevron + título, transparente en todos los estados— y a la
-        // derecha el resumen de la selección, para leerla sin desplegar.
+        // (MaxHeight 380). Va con la MISMA caja que los desplegables de al lado
+        // (Prioridad de CPU/GPU/E/S/plan): etiqueta arriba, caja con el resumen de
+        // la selección y el chevron a la derecha, y al pulsarla se abre la grilla.
         coresWrap.Visibility = Visibility.Collapsed;
-        coresWrap.Margin = new Thickness(2, 2, 0, 0);
+        coresWrap.Margin = new Thickness(1, 6, 1, 0);
 
         var affChevron = new FontIcon
         {
-            Glyph = "\uE76C", // cerrado: apunta a la derecha
-            FontSize = 11,
-            Foreground = DetailBrush("MutedBrush"),
-            VerticalAlignment = VerticalAlignment.Center
+            Glyph = "\uE70D", // cerrado: apunta abajo, como el chevron de un ComboBox
+            FontSize = 12,
+            Foreground = DetailBrush("SecondaryTextBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right
         };
         var affSummary = new TextBlock
         {
             Text = string.Empty,
-            FontSize = 11,
-            Foreground = DetailBrush("MutedBrush"),
+            FontSize = 12,
+            Foreground = DetailBrush("PrimaryTextBrush"),
             VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            HorizontalAlignment = HorizontalAlignment.Right
+            TextTrimming = TextTrimming.CharacterEllipsis
         };
 
-        var affLabelRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children =
-            {
-                affChevron,
-                new TextBlock
-                {
-                    Text = I18n.T("Afinidad de CPU"),
-                    FontSize = 12,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = DetailBrush("SecondaryTextBrush"),
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            }
-        };
-        var affHeaderGrid = new Grid { ColumnSpacing = 8 };
-        affHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        affHeaderGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetColumn(affLabelRow, 0);
-        Grid.SetColumn(affSummary, 1);
-        affHeaderGrid.Children.Add(affLabelRow);
-        affHeaderGrid.Children.Add(affSummary);
+        var affFieldGrid = new Grid { ColumnSpacing = 8 };
+        affFieldGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        affFieldGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(affSummary, 0);
+        Grid.SetColumn(affChevron, 1);
+        affFieldGrid.Children.Add(affSummary);
+        affFieldGrid.Children.Add(affChevron);
 
         var affToggle = new Button
         {
-            Content = affHeaderGrid,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(2, 4, 2, 4),
+            Content = affFieldGrid,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1F, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(11, 0, 7, 0),
+            MinHeight = 32,
             HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Center
         };
-        // El header no se pinta en ningún estado: es solo el título con chevron.
-        foreach (var stateKey in new[]
-                 {
-                     "ButtonBackground", "ButtonBackgroundPointerOver", "ButtonBackgroundPressed",
-                     "ButtonBorderBrush", "ButtonBorderBrushPointerOver", "ButtonBorderBrushPressed"
-                 })
-            affToggle.Resources[stateKey] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        // Estados hover/pressed como el desplegable: se aclara el relleno, el borde queda.
+        affToggle.Resources["ButtonBackgroundPointerOver"] = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF));
+        affToggle.Resources["ButtonBackgroundPressed"] = new SolidColorBrush(Windows.UI.Color.FromArgb(0x24, 0xFF, 0xFF, 0xFF));
+        affToggle.Resources["ButtonBorderBrushPointerOver"] = new SolidColorBrush(Windows.UI.Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+        affToggle.Resources["ButtonBorderBrushPressed"] = new SolidColorBrush(Windows.UI.Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+
+        // La caja se copia del ComboBox hermano ya cargado (relleno, borde, radio,
+        // alto y tipografía del tema vigente): así la afinidad se ve EXACTAMENTE
+        // como los demás desplegables, tanto en apariencia clara como oscura.
+        void MatchComboChrome()
+        {
+            try
+            {
+                if (cpuCombo.Background is Brush comboFill)
+                {
+                    affToggle.Background = comboFill;
+                    // También el estado de reposo del VSM: al salir del hover el
+                    // botón vuelve a esta clave, no al gris del tema.
+                    affToggle.Resources["ButtonBackground"] = comboFill;
+                }
+                if (cpuCombo.BorderBrush is Brush comboBorder)
+                {
+                    affToggle.BorderBrush = comboBorder;
+                    affToggle.Resources["ButtonBorderBrush"] = comboBorder;
+                }
+                if (cpuCombo.BorderThickness.Top > 0 || cpuCombo.BorderThickness.Bottom > 0)
+                    affToggle.BorderThickness = cpuCombo.BorderThickness;
+                affToggle.CornerRadius = cpuCombo.CornerRadius;
+                // El padding NO se copia: el del ComboBox es asimétrico y deja el
+                // chevron pegado al borde derecho (lo delata a simple vista). Acá
+                // queda aire simétrico a la derecha y el texto centrado en alto.
+                if (cpuCombo.MinHeight > 0) affToggle.MinHeight = cpuCombo.MinHeight;
+                if (cpuCombo.Foreground is Brush comboInk)
+                {
+                    affSummary.Foreground = comboInk;
+                    affChevron.Foreground = comboInk;
+                }
+            }
+            catch { }
+        }
+        cpuCombo.Loaded += (_, _) => MatchComboChrome();
 
         bool syncingUi = false;
 
@@ -7465,7 +7528,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             affOpen = open;
             coresWrap.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-            affChevron.Glyph = open ? "\uE70D" : "\uE76C";
+            // El chevron gira como el de un desplegable: abajo cerrado, arriba abierto.
+            affChevron.Glyph = open ? "\uE70E" : "\uE70D";
         }
         affToggle.Click += (s, e) => SetAffinityOpen(!affOpen);
         UpdateAffinitySummary();
@@ -7744,6 +7808,18 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         prioGrid.Children.Add(ioField);
         prioGrid.Children.Add(planField);
 
+        // Afinidad a TODO el ancho, debajo de los cuatro desplegables y con el mismo
+        // formato de campo (etiqueta arriba, caja abajo): la grilla de núcleos se
+        // despliega dentro del propio campo.
+        prioGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var affinityField = BuildLabeledField(
+            I18n.T("Afinidad de CPU"),
+            new StackPanel { Spacing = 0, Children = { affToggle, coresWrap } });
+        Grid.SetRow(affinityField, 2);
+        Grid.SetColumn(affinityField, 0);
+        Grid.SetColumnSpan(affinityField, 2);
+        prioGrid.Children.Add(affinityField);
+
         var sysGrid = new Grid { ColumnSpacing = 12 };
         sysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         sysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -7793,7 +7869,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             {
                 scopeRow,
                 prioGrid,
-                new StackPanel { Spacing = 4, Children = { affToggle, coresWrap } },
                 sysGrid,
                 bottomActionsRow,
                 detailStatus

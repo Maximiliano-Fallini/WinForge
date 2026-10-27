@@ -76,8 +76,8 @@ public sealed class ComponentRegistry
 
     /// <summary>
     /// True si el id corresponde a un integrado de fábrica no core: desde la 0.3.0
-    /// nace "no instalado" (define el default de "builtin.removed.<id>" y de
-    /// "nav.<id>"). Los core y los componentes descargados no requieren instalación.
+    /// nace "no instalado" (define el default de "builtin.removed.<id>"). Los core y
+    /// los componentes descargados no requieren instalación.
     /// </summary>
     public bool RequiresInstall(string id)
         => _nonCoreBuiltinIds.Contains(id)

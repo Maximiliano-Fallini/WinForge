@@ -1007,8 +1007,12 @@ public sealed class BenchmarkPage : Page
                     .ConfigureAwait(true);
                 if (!pack.Success)
                 {
-                    SetStatus(
-                        AppBridge.T("No se pudieron preparar los assets de la escena: {0}", pack.Detail),
+                    // Sin red no se muestra el detalle técnico de la excepción: el usuario necesita
+                    // saber qué hacer, no el nombre del socket. Cualquier otro fallo sí lo conserva
+                    // (hash que no coincide, pack no publicado, tamaño cambiado).
+                    SetStatus(pack.Offline
+                        ? AppBridge.T("No se pudieron preparar los assets de la escena: no hay conexión a internet. Revisá tu conexión e intentá de nuevo.")
+                        : AppBridge.T("No se pudieron preparar los assets de la escena: {0}", pack.Detail),
                         warning: true);
                     return;
                 }

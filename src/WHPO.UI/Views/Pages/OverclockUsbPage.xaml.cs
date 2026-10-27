@@ -2560,7 +2560,12 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             string? sys = await _usb.DownloadComponentAsync();
             if (string.IsNullOrEmpty(sys) || !File.Exists(sys))
             {
-                SetGateFailure(I18n.T("No se pudo descargar el componente. Verificá tu conexión a internet e intentá de nuevo."));
+                // El servicio devuelve el motivo real: sin conexión, verificación fallida
+                // o un paquete sin variantes. Antes esta puerta culpaba siempre a la red.
+                string? reason = _usb.LastComponentDownloadError;
+                SetGateFailure(reason == null
+                    ? I18n.T("No se pudo descargar el componente. Verificá tu conexión a internet e intentá de nuevo.")
+                    : I18n.T("No se pudo descargar el componente.") + " " + I18n.T(reason));
                 return;
             }
 

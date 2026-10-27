@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Security.Cryptography;
 using WHPO.Core;
+using WHPO.Core.Services;
 
 namespace WinForge.Component.Benchmark.Assets;
 
@@ -11,11 +12,16 @@ namespace WinForge.Component.Benchmark.Assets;
 /// fallo, en el idioma fuente (español): la página lo mete DENTRO de una frase traducida en vez de
 /// mostrar un texto suelto sin traducir.
 /// </summary>
-internal sealed record AssetPackResult(bool Success, string Root, string Detail)
+internal sealed record AssetPackResult(bool Success, string Root, string Detail, bool Offline = false)
 {
     internal static AssetPackResult Ready(string root) => new(true, root, "");
 
-    internal static AssetPackResult Failed(string detail) => new(false, "", detail);
+    /// <summary>
+    /// <paramref name="offline"/> separa «no hay conexión» de «el pack no coincide o no
+    /// existe»: la página muestra un aviso distinto para cada uno. El detalle técnico
+    /// solo se usa cuando NO es un corte de red (si lo es, el texto técnico no aporta).
+    /// </summary>
+    internal static AssetPackResult Failed(string detail, bool offline = false) => new(false, "", detail, offline);
 }
 
 /// <summary>
@@ -155,7 +161,8 @@ internal static class BenchmarkAssetPacks
         catch (Exception exception)
         {
             return AssetPackResult.Failed(
-                $"no se pudo bajar el pack '{set}': {exception.Message}." + ManualPath(set));
+                $"no se pudo bajar el pack '{set}': {exception.Message}." + ManualPath(set),
+                NetworkError.IsConnectionFailure(exception));
         }
         finally
         {

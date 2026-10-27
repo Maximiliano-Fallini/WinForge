@@ -598,6 +598,15 @@ public sealed class ProcessService : IProcessService
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
+    // Estilo extendido de la ventana en primer plano: los overlays de captura y
+    // herramientas se marcan como ventana de HERRAMIENTA (sin botón en la barra de
+    // tareas). Un juego nunca lo es, así que sirve para descartarlos.
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    private const int GwlExStyle = -20;
+    private const int WsExToolWindow = 0x00000080;
+
     // Prioridad de GPU por proceso (D3DKMT_SCHEDULINGPRIORITYCLASS).
     // Devuelven NTSTATUS: 0 = STATUS_SUCCESS.
     // IMPORTANTE: el entry point exportado es "D3DKMT...PriorityClass" (sin sufijo);
@@ -2851,7 +2860,13 @@ public sealed class ProcessService : IProcessService
         "applicationframehost", "startmenuexperiencehost", "shellexperiencehost",
         "textinputhost", "searchhost", "searchapp", "widgets", "widgetservice",
         "photosapp", "mspaint", "systemsettings", "lockapp", "logonui",
-        "conhost", "windowsterminal"
+        "conhost", "windowsterminal",
+        // Herramientas de CAPTURA de pantalla: al recortar, su overlay ocupa la
+        // pantalla completa y se tomaba como "juego" → el Modo juego se aplicaba al
+        // sacar una captura (reportado con Lightshot: "Modo juego activo" sin jugar).
+        "lightshot", "snippingtool", "screenclippinghost", "sharex", "greenshot",
+        "snipaste", "snagit32", "snagiteditor", "picpick", "gyazo", "screenpresso",
+        "flameshot", "snipdo"
     };
 
     private void FullscreenTick(object? _)
@@ -2872,6 +2887,12 @@ public sealed class ProcessService : IProcessService
             if (hwnd == IntPtr.Zero) return;
             if (GetWindowThreadProcessId(hwnd, out uint pid) == 0 || pid == 0) return;
             if (pid == Environment.ProcessId) return; // nuestra propia app
+
+            // 2b) Una ventana de HERRAMIENTA (sin botón en la barra de tareas) no es
+            // un juego: son los overlays de captura/recorte que se pintan a pantalla
+            // completa un instante. Es el filtro general para cualquier herramienta
+            // de captura que no esté en la lista de nombres.
+            if ((GetWindowLong(hwnd, GwlExStyle) & WsExToolWindow) != 0) return;
 
             using (var p = Process.GetProcessById((int)pid))
             {

@@ -86,6 +86,9 @@ public sealed class GameBoostService : IGameBoostService
     /// <summary>Se dispara si el boost se canceló a mitad de camino (ver interfaz).</summary>
     public event Action? BoostCancelled;
 
+    /// <summary>Se dispara cuando el estado previo quedó restaurado (ver interfaz).</summary>
+    public event Action? BoostRestored;
+
     // Servicios con impacto directo en la actividad del sistema mientras se juega:
     // mantenimiento/indexado + telemetría/diagnóstico + cola de impresión + tienda y
     // puente USB legado. Todos se detienen SOLO durante la partida y se restauran al
@@ -817,7 +820,8 @@ public sealed class GameBoostService : IGameBoostService
     private const int VerifyTimeoutMs = 8000; // plazo máximo para confirmar los servicios
     private const int VerifyPollMs = 400;     // intervalo entre consultas WMI
 
-    private bool IsActive
+    /// <inheritdoc/>
+    public bool IsActive
     {
         get { lock (_lock) return _active; }
     }
@@ -1494,6 +1498,10 @@ public sealed class GameBoostService : IGameBoostService
             // próximo arranque intentaría restaurar algo que ya está restaurado).
             GameBoostJournal.Delete(_logging);
             _journal = null;
+
+            // Avisar a la UI: el resumen «Modo juego activo» persistente se borra al
+            // cerrarse la partida (antes quedaba hasta reiniciar la app).
+            BoostRestored?.Invoke();
         }
         catch (Exception ex)
         {
@@ -1552,19 +1560,20 @@ public sealed class GameBoostService : IGameBoostService
 
             // HasRunningGameActivity incluye los procesos que matchean una regla,
             // aunque el juego real no se llame como el exe de la biblioteca (cadena
-            // launcher→juego). Antes, con un launcher de por medio, el boost no se
-            // activaba porque RunningGameExes quedaba vacío.
+            // launcher→juego). Se usa SOLO para saber cuándo ya no queda ninguna
+            // partida y poder restaurar.
             if (!_processService.HasRunningGameActivity)
             {
                 _logging.LogDebug("GameBoost: no quedan juegos corriendo — restaurando.");
                 _ = RestoreAsync();
             }
-            else
-            {
-                // Red de seguridad: si el juego se lanzó sin pasar por el botón
-                // "Iniciar" (p. ej. desde el launcher), aplicar igual.
-                _ = ApplyAsync();
-            }
+            // El boost NO se activa solo por detectar un juego corriendo: se aplica
+            // únicamente al iniciar el juego DESDE WinForge (GameLauncher, cuando
+            // confirma que el proceso arrancó). Antes había acá una "red de
+            // seguridad" que aplicaba el boost con cualquier juego abierto por
+            // fuera; con la detección por fullscreen eso terminaba optimizando el
+            // sistema al sacar una captura de pantalla (Lightshot) o al abrir
+            // cualquier app a pantalla completa.
         }
         catch (Exception ex)
         {

@@ -610,7 +610,12 @@ public class FanControlService : IFanControlService
         catch (Exception ex)
         {
             _loggingService.LogWarning($"{LogTag} instalación de PawnIO falló: {ex.Message}");
-            return new PawnIOInstallResult(false, $"Instalación fallida: {ex.Message}");
+            // Antes cualquier fallo decía «Instalación fallida: <mensaje técnico>» y la
+            // conexión caída no se distinguía de un hash inválido o de un fallo de
+            // elevación. El mensaje de red es una clave traducible.
+            return new PawnIOInstallResult(false, NetworkError.IsConnectionFailure(ex)
+                ? "No se pudo descargar el instalador de PawnIO: revisá tu conexión a internet e intentá de nuevo."
+                : $"Instalación fallida: {ex.Message}");
         }
     }
 

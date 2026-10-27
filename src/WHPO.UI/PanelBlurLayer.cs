@@ -246,6 +246,43 @@ internal static class PanelBlurLayer
     private static Brush? _chromeKeyBrush;
 
     /// <summary>
+    /// Ancho VISIBLE del panel del menú lateral, o 0 si el menú está abierto (sin recorte).
+    ///
+    /// POR QUÉ EXISTE: al colapsar el NavigationView, su panel se sigue midiendo con el ancho
+    /// abierto (el contenido se recorta, el elemento no). El parche del desenfoque se pintaba con
+    /// esa caja: una franja borrosa de ~256 px que quedaba "pegada" detrás del rail de iconos.
+    /// Con esto el parche se recorta al ancho real del rail (ver <see cref="ClampNavPanePatch"/>).
+    /// </summary>
+    private static double _navPaneClipWidth;
+
+    /// <summary>Fija el ancho visible del panel del menú (0 = menú abierto: no se recorta nada).</summary>
+    internal static void SetNavPaneClip(double width)
+    {
+        width = Math.Max(0, width);
+        if (Math.Abs(_navPaneClipWidth - width) < 0.5) return;
+        _navPaneClipWidth = width;
+        _forceRebuild = true;
+        Invalidate();
+    }
+
+    /// <summary>
+    /// Recorta al rail el parche del panel del MENÚ cuando está cerrado: es el único panel
+    /// anclado al borde izquierdo que ocupa casi todo el alto de la ventana. Los demás paneles
+    /// (barra de título, contenido, cards) no cumplen las tres condiciones a la vez.
+    /// </summary>
+    private static Rect ClampNavPanePatch(Rect bounds, double windowWidth, double windowHeight)
+    {
+        if (_navPaneClipWidth < 1) return bounds;
+        if (bounds.Left > 1) return bounds;
+        if (bounds.Height < windowHeight * 0.7) return bounds;
+        if (bounds.Width <= _navPaneClipWidth + 1) return bounds;
+
+        var clamped = bounds;
+        clamped.Width = _navPaneClipWidth;
+        return clamped;
+    }
+
+    /// <summary>
     /// MODO CHROME: la capa atiende SOLO las piezas del chrome —barra de título, panel del menú y
     /// barras de pestañas internas de cada página— y deja el resto de los paneles (cards, grillas,
     /// cuadros de texto) al vidrio por elemento del compositor.
@@ -1995,7 +2032,7 @@ internal static class PanelBlurLayer
                         continue;
                     }
 
-                    var bounds = Intersect(full, region);
+                    var bounds = ClampNavPanePatch(Intersect(full, region), windowWidth, windowHeight);
                     if (bounds.Width < 1 || bounds.Height < 1)
                     {
                         // Si la caja FRESCA sigue en pantalla, el que fallÃ³ es el recorte (ancestros

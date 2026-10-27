@@ -42,6 +42,34 @@ public sealed class AppUpdateInfo
 }
 
 /// <summary>
+/// Una release de VERSIÓN de la app, para el historial de Configuración → Actualizaciones:
+/// versión, fecha, notas y si el instalador se puede bajar desde la app.
+/// </summary>
+public sealed class AppReleaseInfo
+{
+    /// <summary>Versión sin la "v" del tag ("0.6.1").</summary>
+    public string Version { get; init; } = "";
+    public string Tag { get; init; } = "";
+    /// <summary>Título de la release ("WinForge 0.6.1").</summary>
+    public string Name { get; init; } = "";
+    /// <summary>Notas de la release, en Markdown (lo que GitHub muestra como body).</summary>
+    public string Notes { get; init; } = "";
+    public DateTimeOffset? PublishedAt { get; init; }
+    public bool Prerelease { get; init; }
+    public string WebUrl { get; init; } = "";
+    /// <summary>MSI instalable de esa release (null si la release no lo trae).</summary>
+    public string? DownloadUrl { get; init; }
+    public long SizeBytes { get; init; }
+}
+
+/// <summary>
+/// Resultado de lanzar una actualización: si el instalador arrancó y, cuando no,
+/// si el motivo fue no poder descargarlo. La UI usa <see cref="NoConnection"/> para
+/// no culpar a la red cuando falló el disco o msiexec.
+/// </summary>
+public sealed record UpdateInstallOutcome(bool Launched, bool NoConnection = false);
+
+/// <summary>
 /// Actualizador integrado de WinForge: consulta las releases del repositorio
 /// (GitHub API), compara la versión con la app instalada y descarga el MSI de la
 /// última release para instalarlo sobre la versión anterior (MajorUpgrade).
@@ -68,6 +96,14 @@ public sealed class AppUpdateService : IAppUpdateService
 
     private readonly ILoggingService _logging;
     private readonly HttpClient _http;
+
+    // Historial de releases cacheado en memoria: abrir y cerrar la pestaña Actualizaciones
+    // no puede gastar el límite de peticiones de la API de GitHub en cada visita (60/h
+    // sin autenticar). El botón "Buscar actualizaciones" fuerza la recarga.
+    private static readonly object ReleaseCacheLock = new();
+    private static readonly TimeSpan ReleaseCacheTtl = TimeSpan.FromMinutes(5);
+    private static IReadOnlyList<AppReleaseInfo>? _releaseCache;
+    private static DateTime _releaseCacheAt = DateTime.MinValue;
 
     /// <summary>Ruta del MSI descargado (se conserva si el usuario cancela el reinicio).</summary>
     public const string MsiPath = "%TEMP%\\WinForge-update.msi";
@@ -149,6 +185,17 @@ public sealed class AppUpdateService : IAppUpdateService
            && (tag[0] == 'v' || tag[0] == 'V')
            && char.IsDigit(tag[1]);
 
+    /// <summary>
+    /// True si el asset es un instalador que la app puede bajar: MSI de la arquitectura
+    /// de este build (se descartan arm64 y x86 suelto). La app publica el instalador x64
+    /// pero el nombre puede ser "WinForge.msi" o "WinForge-x64.msi".
+    /// </summary>
+    private static bool IsInstallableMsi(string name)
+        => name.EndsWith(".msi", StringComparison.OrdinalIgnoreCase)
+           && !name.Contains("arm64", StringComparison.OrdinalIgnoreCase)
+           && (!name.Contains("x86", StringComparison.OrdinalIgnoreCase)
+               || name.Contains("x64", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Chequea actualizaciones en el repositorio (GitHub Releases API).</summary>
     /// <remarks>
     /// Consulta la LISTA de releases (/releases) en vez de /releases/latest: ese
@@ -226,13 +273,7 @@ public sealed class AppUpdateService : IAppUpdateService
                 foreach (var asset in assets.EnumerateArray())
                 {
                     string name = asset.GetProperty("name").GetString() ?? "";
-                    // Solo MSIs instalables. La app publica el instalador x64 pero el
-                    // nombre puede ser "WinForge.msi" o "WinForge-x64.msi": se toman
-                    // ambos y se descartan explícitamente otras arquitecturas.
-                    if (!name.EndsWith(".msi", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (name.Contains("arm64", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (name.Contains("x86", StringComparison.OrdinalIgnoreCase)
-                        && !name.Contains("x64", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!IsInstallableMsi(name)) continue;
                     downloadUrl = asset.GetProperty("browser_download_url").GetString();
                     break;
                 }
@@ -271,11 +312,99 @@ public sealed class AppUpdateService : IAppUpdateService
     }
 
     /// <summary>
+    /// Historial de releases de VERSIÓN de la app (la más nueva primero), con fecha, notas
+    /// e instalador. Deja afuera los buckets de contenido ("components", "languages"), que
+    /// comparten el mismo endpoint pero no son versiones de la app.
+    ///
+    /// Lo usa la pestaña Actualizaciones de Configuración. La respuesta se cachea unos
+    /// minutos en memoria: recorrer la pestaña no gasta el límite de la API de GitHub, y
+    /// <paramref name="forceRefresh"/> lo saltea cuando el usuario pide buscar de nuevo.
+    /// </summary>
+    public async Task<IReadOnlyList<AppReleaseInfo>> GetReleasesAsync(int max = 10, bool forceRefresh = false)
+    {
+        int take = Math.Max(1, max);
+        lock (ReleaseCacheLock)
+        {
+            if (!forceRefresh && _releaseCache != null
+                && DateTime.UtcNow - _releaseCacheAt < ReleaseCacheTtl)
+                return _releaseCache.Take(take).ToList();
+        }
+
+        var json = await GetStringAsync(ProjectEndpoints.ApiReleases);
+        using var doc = JsonDocument.Parse(json);
+
+        var releases = new List<AppReleaseInfo>();
+        if (doc.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var release in doc.RootElement.EnumerateArray())
+            {
+                string tag = TagOf(release);
+                if (!IsVersionTag(tag)) continue;
+
+                bool prerelease = release.TryGetProperty("prerelease", out var pr)
+                    && pr.ValueKind == JsonValueKind.True && pr.GetBoolean();
+
+                DateTimeOffset? publishedAt = null;
+                if (release.TryGetProperty("published_at", out var pa)
+                    && pa.ValueKind == JsonValueKind.String
+                    && DateTimeOffset.TryParse(
+                        pa.GetString(),
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out var published))
+                    publishedAt = published;
+
+                string? downloadUrl = null;
+                long sizeBytes = 0;
+                if (release.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var asset in assets.EnumerateArray())
+                    {
+                        string assetName = asset.TryGetProperty("name", out var an) ? an.GetString() ?? "" : "";
+                        if (!IsInstallableMsi(assetName)) continue;
+                        downloadUrl = asset.TryGetProperty("browser_download_url", out var dl)
+                            ? dl.GetString()
+                            : null;
+                        if (asset.TryGetProperty("size", out var sz) && sz.TryGetInt64(out var bytes))
+                            sizeBytes = bytes;
+                        break;
+                    }
+                }
+
+                releases.Add(new AppReleaseInfo
+                {
+                    Version = tag.Length > 1 ? tag.Substring(1) : tag,
+                    Tag = tag,
+                    Name = release.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+                    Notes = release.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "",
+                    PublishedAt = publishedAt,
+                    Prerelease = prerelease,
+                    WebUrl = release.TryGetProperty("html_url", out var html) ? html.GetString() ?? "" : "",
+                    DownloadUrl = downloadUrl,
+                    SizeBytes = sizeBytes
+                });
+            }
+        }
+
+        releases = releases
+            .OrderByDescending(r => r.PublishedAt ?? DateTimeOffset.MinValue)
+            .ToList();
+
+        lock (ReleaseCacheLock)
+        {
+            _releaseCache = releases;
+            _releaseCacheAt = DateTime.UtcNow;
+        }
+
+        return releases.Take(take).ToList();
+    }
+
+    /// <summary>
     /// Descarga el MSI de la actualización a %TEMP% y lo lanza con msiexec en modo
     /// silencioso y "requiere reinicio" planificado (ARPNOREMOVE + el CustomAction
     /// RunWinForgeAfterUpgrade del instalador la vuelve a abrir al terminar).
     /// </summary>
-    public bool DownloadAndLaunchInstaller(string downloadUrl, string localMsiPath, string launchArgs)
+    public UpdateInstallOutcome DownloadAndLaunchInstaller(string downloadUrl, string localMsiPath, string launchArgs)
     {
         try
         {
@@ -288,7 +417,7 @@ public sealed class AppUpdateService : IAppUpdateService
             if (!File.Exists(path))
             {
                 _logging.LogError($"AppUpdateService: el MSI no quedó guardado en {path}; no se puede instalar.");
-                return false;
+                return new UpdateInstallOutcome(false);
             }
 
             var psi = new ProcessStartInfo("msiexec.exe")
@@ -305,15 +434,15 @@ public sealed class AppUpdateService : IAppUpdateService
             if (p == null)
             {
                 _logging.LogError("AppUpdateService: no se pudo lanzar msiexec.");
-                return false;
+                return new UpdateInstallOutcome(false);
             }
             _logging.LogInfo("AppUpdateService: instalador lanzado; la app se cerrará sola.");
-            return true;
+            return new UpdateInstallOutcome(true);
         }
         catch (Exception ex)
         {
             _logging.LogError("AppUpdateService: fallo al descargar/instalar la actualización.", ex);
-            return false;
+            return new UpdateInstallOutcome(false, NetworkError.IsConnectionFailure(ex));
         }
     }
 
