@@ -1312,6 +1312,8 @@ public static class Translations
         // Estado de la pastilla de Actualizaciones: describe la situación de la app, no la release.
         ["Actualizado"] = ("Up to date", "Atualizado", "Aktuell", "À jour"),
         ["Desactualizado"] = ("Out of date", "Desatualizado", "Nicht aktuell", "Obsolète"),
+        // Badge de la release más nueva del historial (no de la instalada: eso es «Actual»).
+        ["Última versión"] = ("Latest version", "Última versão", "Neueste Version", "Dernière version"),
         ["Versión instalada: {0}"] = ("Installed version: {0}", "Versão instalada: {0}", "Installierte Version: {0}", "Version installée : {0}"),
         ["Versión instalada: {0} · Versión disponible: {1}"] = ("Installed version: {0} · Available version: {1}", "Versão instalada: {0} · Versão disponível: {1}", "Installierte Version: {0} · Verfügbare Version: {1}", "Version installée : {0} · Version disponible : {1}"),
         ["Buscar actualizaciones"] = ("Check for updates", "Procurar atualizações", "Nach Updates suchen", "Rechercher des mises à jour"),

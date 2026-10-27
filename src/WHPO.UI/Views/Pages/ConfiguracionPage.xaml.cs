@@ -1450,6 +1450,10 @@ public sealed partial class ConfiguracionPage : Page
             ReleasesHost.Children.Add(BuildReleaseCard(
                 release,
                 string.Equals(release.Version, current, StringComparison.OrdinalIgnoreCase),
+                // GitHub entrega las releases de la más nueva a la más vieja: la primera es
+                // la última publicada, y lleva su badge siempre (aunque la app esté en una
+                // build de desarrollo, donde la instalada no coincide con ninguna release).
+                i == 0,
                 expanded,
                 isOpen =>
                 {
@@ -1464,7 +1468,7 @@ public sealed partial class ConfiguracionPage : Page
     /// distintivos y la fecha) y los cambios quedan adentro, así la pestaña se lee como un
     /// índice de versiones en vez de una pared de texto.
     /// </summary>
-    private Border BuildReleaseCard(AppReleaseInfo release, bool isCurrent, bool expanded, Action<bool> onExpandedChanged)
+    private Border BuildReleaseCard(AppReleaseInfo release, bool isCurrent, bool isLatest, bool expanded, Action<bool> onExpandedChanged)
     {
         var headerRow = new StackPanel
         {
@@ -1487,6 +1491,7 @@ public sealed partial class ConfiguracionPage : Page
         versionText.Inlines.Add(versionLink);
         headerRow.Children.Add(versionText);
 
+        if (isLatest) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Última versión"), ThemeBrushes.Get("AccentBrush")));
         if (isCurrent) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Actual"), Feedback.SuccessBrush));
         if (release.Prerelease) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Beta"), Feedback.WarningBrush));
 
