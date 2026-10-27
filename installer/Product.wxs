@@ -35,6 +35,14 @@
     <Property Id="ARPCONTACT" Value="WinForge" />
     <Property Id="ARPCOMMENTS" Value="WinForge 0.6.4 Beta - optimizador y monitor del sistema" />
 
+    <!-- Accesos directos opcionales: los elige el usuario en la última página del
+         asistente (WFVerifyDlg) con dos checks. Nacen en 1 para que una instalación
+         silenciosa (el auto-updater) los cree igual, y Secure="yes" los pasa a la
+         parte elevada del instalador, que es donde se evalúa la condición de cada
+         componente: sin eso, un check destildado no llegaría al tramo que copia. -->
+    <Property Id="DESKTOPSHORTCUT" Value="1" Secure="yes" />
+    <Property Id="STARTMENUSHORTCUT" Value="1" Secure="yes" />
+
     <!-- Cierra WinForge antes de tocar archivos (instala, repara, actualiza o desinstala).
          Por qué ANTES de InstallValidate y SIEMPRE: con la app abierta, el motor del MSI
          detecta los archivos en uso justo ahí y muestra el diálogo "estas aplicaciones están
@@ -180,7 +188,10 @@
 
     <!-- Acceso directo en el escritorio -->
     <StandardDirectory Id="DesktopFolder">
-      <Component Id="Cmp_DesktopShortcut" Guid="{249C137C-68B4-456B-AC14-3B87FE545357}">
+      <!-- Condition: si el usuario destildó «En el escritorio» el componente no se
+           instala (y no deja el valor de registro que lo marca). Al desinstalar se
+           quita igual si estaba instalado: las condiciones no intervienen ahí. -->
+      <Component Id="Cmp_DesktopShortcut" Guid="{249C137C-68B4-456B-AC14-3B87FE545357}" Condition="DESKTOPSHORTCUT">
         <Shortcut Id="DesktopShortcut"
                   Name="WinForge"
                   Target="[INSTALLFOLDER]WinForge.exe"
@@ -194,7 +205,7 @@
     <!-- Menú Inicio: lanzar + desinstalar -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="StartMenuWinForge" Name="WinForge">
-        <Component Id="Cmp_StartMenuShortcuts" Guid="{D603F0F3-3959-4235-8F15-9C4C5DE87874}">
+        <Component Id="Cmp_StartMenuShortcuts" Guid="{D603F0F3-3959-4235-8F15-9C4C5DE87874}" Condition="STARTMENUSHORTCUT">
           <Shortcut Id="StartMenuShortcut"
                     Name="WinForge"
                     Target="[INSTALLFOLDER]WinForge.exe"

@@ -47,15 +47,9 @@
                  Text="{\WFTitle}Bienvenido a WinForge" />
         <Control Id="Intro" Type="Text" X="18" Y="104" Width="334" Height="30" NoPrefix="yes" Transparent="yes"
                  Text="{\WFBody}Optimizador, monitor y herramientas del sistema para Windows 10 y 11." />
-        <Control Id="Bullet1" Type="Text" X="18" Y="140" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
-                 Text="{\WFBody}•  Modo juego y biblioteca con cartuchos 3D" />
-        <Control Id="Bullet2" Type="Text" X="18" Y="156" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
-                 Text="{\WFBody}•  Monitoreo en vivo y optimizaciones de Windows" />
-        <Control Id="Bullet3" Type="Text" X="18" Y="172" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
-                 Text="{\WFBody}•  Instalación para todos los usuarios (pide administrador)" />
-        <Control Id="Note" Type="Text" X="18" Y="204" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
+        <Control Id="Note" Type="Text" X="18" Y="190" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
                  Text="{\WFMuted}Se puede desinstalar desde Agregar o quitar programas." />
-        <Control Id="Version" Type="Text" X="18" Y="220" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
+        <Control Id="Version" Type="Text" X="18" Y="222" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
                  Text="{\WFMuted}Versión [ProductVersion]" />
 
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="Atrás" />
@@ -109,12 +103,18 @@
         <Control Id="FolderValue" Type="Text" X="18" Y="146" Width="334" Height="16" NoPrefix="yes" Transparent="yes"
                  Text="{\WFPath}[INSTALLFOLDER]" />
 
-        <Control Id="ShortcutCaption" Type="Text" X="18" Y="172" Width="334" Height="12" NoPrefix="yes" Transparent="yes"
-                 Text="{\WFMuted}Accesos directos" />
-        <Control Id="ShortcutValue" Type="Text" X="18" Y="186" Width="334" Height="16" NoPrefix="yes" Transparent="yes"
-                 Text="{\WFBody}Escritorio y menú Inicio" />
+        <Control Id="ShortcutCaption" Type="Text" X="18" Y="164" Width="334" Height="12" NoPrefix="yes" Transparent="yes"
+                 Text="{\WFMuted}Accesos directos (destildá lo que no quieras)" />
+        <!-- El motor pone la propiedad en 1 al marcar y la borra al destildar; las
+             condiciones de los componentes de acceso directo (Product.wxs) leen esa
+             propiedad, así destildar de verdad no crea el acceso. Por defecto vienen
+             marcados (la propiedad nace en 1 en la tabla Property). -->
+        <Control Id="ChkDesktop" Type="CheckBox" X="18" Y="180" Width="334" Height="16"
+                 Property="DESKTOPSHORTCUT" CheckBoxValue="1" Text="{\WFBody}En el escritorio" />
+        <Control Id="ChkStartMenu" Type="CheckBox" X="18" Y="198" Width="334" Height="16"
+                 Property="STARTMENUSHORTCUT" CheckBoxValue="1" Text="{\WFBody}En el menú Inicio" />
 
-        <Control Id="Note" Type="Text" X="18" Y="212" Width="334" Height="16" NoPrefix="yes" Transparent="yes"
+        <Control Id="Note" Type="Text" X="18" Y="224" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
                  Text="{\WFMuted}La copia tarda menos de un minuto." />
 
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="Atrás">
@@ -180,7 +180,14 @@
                  ShowCondition="NOT REMOVE=&quot;ALL&quot;" HideCondition="REMOVE=&quot;ALL&quot;" />
         <Control Id="HintInstall" Type="Text" X="18" Y="150" Width="334" Height="16" NoPrefix="yes" Transparent="yes"
                  Text="{\WFMuted}Abrí WinForge desde el escritorio o el menú Inicio."
-                 ShowCondition="NOT REMOVE=&quot;ALL&quot;" HideCondition="REMOVE=&quot;ALL&quot;" />
+                 ShowCondition="NOT REMOVE=&quot;ALL&quot; AND (DESKTOPSHORTCUT OR STARTMENUSHORTCUT)"
+                 HideCondition="REMOVE=&quot;ALL&quot; OR (NOT DESKTOPSHORTCUT AND NOT STARTMENUSHORTCUT)" />
+        <!-- Sin accesos directos: el único camino es la carpeta de instalación, así que
+             el texto no puede mandar al escritorio ni al menú Inicio. -->
+        <Control Id="HintInstallNoShortcuts" Type="Text" X="18" Y="150" Width="334" Height="16" NoPrefix="yes" Transparent="yes"
+                 Text="{\WFMuted}Abri WinForge desde [INSTALLFOLDER]"
+                 ShowCondition="NOT REMOVE=&quot;ALL&quot; AND NOT DESKTOPSHORTCUT AND NOT STARTMENUSHORTCUT"
+                 HideCondition="REMOVE=&quot;ALL&quot; OR DESKTOPSHORTCUT OR STARTMENUSHORTCUT" />
 
         <Control Id="IntroRemoved" Type="Text" X="18" Y="104" Width="334" Height="40" NoPrefix="yes" Transparent="yes"
                  Text="{\WFBody}Se borraron los archivos y los accesos directos."
