@@ -114,6 +114,7 @@ public sealed class BenchmarkPage : Page
     private CancellationTokenSource? _cancellation;
     private bool _running;
     private bool _startedMetrics;
+    private Action? _unsubscribeUpdateState;
 
     public BenchmarkPage()
     {
@@ -126,8 +127,13 @@ public sealed class BenchmarkPage : Page
         _sensorTimer.Interval = TimeSpan.FromSeconds(1);
         _sensorTimer.Tick += (_, _) => RefreshMachinePanel();
 
+        _sceneCombo.SelectionChanged += (_, _) => SelectScene();
+        _retranslate.Add(TranslateSceneOptions);
+
         Loaded += (_, _) =>
         {
+            _unsubscribeUpdateState ??= AppBridge.SubscribeToUpdateState(() =>
+                _dispatcher.TryEnqueue(RefreshSceneAvailability));
             LoadApiOptions();
             LoadSceneOptions();
             LoadAdapterOptions();
@@ -138,7 +144,12 @@ public sealed class BenchmarkPage : Page
             RefreshMachinePanel();
             RefreshHistory();
         };
-        Unloaded += (_, _) => _sensorTimer.Stop();
+        Unloaded += (_, _) =>
+        {
+            _sensorTimer.Stop();
+            _unsubscribeUpdateState?.Invoke();
+            _unsubscribeUpdateState = null;
+        };
 
         AppBridge.OnLanguageChanged(() => _dispatcher.TryEnqueue(() =>
         {
@@ -539,28 +550,63 @@ public sealed class BenchmarkPage : Page
         _sceneCombo.Items.Clear();
         foreach (var scene in SceneCatalog.All)
         {
-            // El nombre se guarda como texto fuente y se traduce acá: el idioma puede cambiar
-            // después de armar la lista. Las escenas EN DESARROLLO se muestran apagadas: se ven en
-            // la lista con su marca pero no se pueden elegir — el benchmark solo mide escenas
-            // terminadas, y la de siempre (Neón) sigue siendo el default.
-            _sceneCombo.Items.Add(new ComboBoxItem
+            var label = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            content.Children.Add(label);
+            if (scene.InDevelopment)
             {
-                Content = AppBridge.T(scene.Name),
-                Tag = scene.Id,
-                IsEnabled = !scene.InDevelopment
-            });
-        }
-        _sceneCombo.SelectedIndex = 0;
-        _sceneCombo.SelectionChanged += (_, _) => SelectScene();
-        _retranslate.Add(() =>
-        {
-            for (int i = 0; i < _sceneCombo.Items.Count && i < SceneCatalog.All.Count; i++)
-            {
-                if (_sceneCombo.Items[i] is ComboBoxItem item) item.Content = AppBridge.T(SceneCatalog.All[i].Name);
+                content.Children.Add(new Border
+                {
+                    Background = AppBridge.Brush("WarningTintBrush"),
+                    CornerRadius = new CornerRadius(12),
+                    Padding = new Thickness(8, 3, 8, 3),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Child = new TextBlock
+                    {
+                        Foreground = AppBridge.Brush("WarningBrush"),
+                        FontSize = 11,
+                        FontWeight = FontWeights.SemiBold
+                    }
+                });
             }
-            _sceneText.Text = AppBridge.T(_scene.Description) + " " + AppBridge.T("El viaje es función del tiempo: dos corridas de la misma duración recorren exactamente el mismo escenario y se pueden comparar.");
-        });
+            _sceneCombo.Items.Add(new ComboBoxItem { Content = content, Tag = scene.Id });
+        }
+        TranslateSceneOptions();
+        RefreshSceneAvailability();
+        SelectByTag(_sceneCombo, SceneCatalog.Default.Id);
         SelectScene();
+    }
+
+    private void TranslateSceneOptions()
+    {
+        foreach (var item in _sceneCombo.Items.OfType<ComboBoxItem>())
+        {
+            if (item.Tag is not string id || SceneCatalog.Find(id) is not { } scene ||
+                item.Content is not StackPanel content) continue;
+            if (content.Children[0] is TextBlock label) label.Text = AppBridge.T(scene.Name);
+            if (scene.InDevelopment && content.Children[1] is Border { Child: TextBlock badge })
+                badge.Text = AppBridge.T("En desarrollo");
+        }
+        _sceneText.Text = AppBridge.T(_scene.Description) + " " + AppBridge.T("El viaje es función del tiempo: dos corridas de la misma duración recorren exactamente el mismo escenario y se pueden comparar.");
+    }
+
+    private static bool CanRunScene(SceneDefinition scene) => !scene.InDevelopment || AppBridge.IsDevelopmentBuild;
+
+    private void RefreshSceneAvailability()
+    {
+        foreach (var item in _sceneCombo.Items.OfType<ComboBoxItem>())
+            if (item.Tag is string id && SceneCatalog.Find(id) is { } scene)
+                item.IsEnabled = CanRunScene(scene);
+
+        if (!CanRunScene(_scene))
+        {
+            // No cambiar la escena mientras una corrida usa sus datos. Si dejó de ser
+            // una build de desarrollo, cancelar y volver a la predeterminada al terminar.
+            if (_running)
+                _cancellation?.Cancel();
+            else
+                SelectByTag(_sceneCombo, SceneCatalog.Default.Id);
+        }
     }
 
     private void SelectScene()
@@ -568,11 +614,9 @@ public sealed class BenchmarkPage : Page
         if (_sceneCombo.SelectedItem is ComboBoxItem { Tag: string id })
         {
             var next = SceneCatalog.Find(id) ?? SceneCatalog.Default;
-            if (next.InDevelopment)
+            if (!CanRunScene(next))
             {
-                // Los ítems en desarrollo están APAGADOS, así que esto solo puede llegar por una
-                // selección programática: se vuelve a la escena de siempre con un aviso, sin tocar
-                // la configuración guardada de ninguna de las dos escenas.
+                // Una selección programática tampoco puede abrir escenas restringidas.
                 SelectByTag(_sceneCombo, SceneCatalog.Default.Id);
                 if (!_running)
                     SetStatus(AppBridge.T("Esta escena todavía está en desarrollo: por ahora solo se puede correr {0}.", AppBridge.T(SceneCatalog.Default.Name)), warning: true);
@@ -926,9 +970,8 @@ public sealed class BenchmarkPage : Page
     {
         if (_running) return;
 
-        // Cinturón y tirantes: los ítems en desarrollo no se pueden elegir en el combo, así que esto
-        // solo dispara si el estado quedó inconsistente. Una escena a medio hacer no se corre.
-        if (_scene.InDevelopment)
+        // Verificar de nuevo al iniciar: la versión de la app pudo cambiar desde la selección.
+        if (!CanRunScene(_scene))
         {
             SetStatus(AppBridge.T("Esta escena todavía está en desarrollo: por ahora solo se puede correr {0}.", AppBridge.T(SceneCatalog.Default.Name)), warning: true);
             return;
@@ -998,12 +1041,12 @@ public sealed class BenchmarkPage : Page
             // Assets de la escena (README cinematográfico §7): si el set no está en disco, se baja
             // ANTES de preparar la escena. Es lo que hace que una instalación limpia corra la escena
             // por defecto en vez de morir con "no encontré el modelo".
-            if (!string.IsNullOrEmpty(_scene.AssetSet) && !BenchmarkAssetPacks.IsReady(_scene.AssetSet))
+            if (!string.IsNullOrEmpty(request.Scene.AssetSet) && !BenchmarkAssetPacks.IsReady(request.Scene.AssetSet))
             {
                 SetStatus(AppBridge.T("Descargando los assets de la escena…"), warning: false);
                 var packProgress = new Progress<double>(value => _progress.Value = value);
                 var pack = await BenchmarkAssetPacks
-                    .EnsureAsync(_scene.AssetSet, packProgress, token)
+                    .EnsureAsync(request.Scene.AssetSet, packProgress, token)
                     .ConfigureAwait(true);
                 if (!pack.Success)
                 {
@@ -1017,6 +1060,13 @@ public sealed class BenchmarkPage : Page
                     return;
                 }
                 SetStatus(AppBridge.T("Preparando la escena…"), warning: false);
+            }
+
+            token.ThrowIfCancellationRequested();
+            if (!CanRunScene(request.Scene))
+            {
+                SetStatus(AppBridge.T("Esta escena todavía está en desarrollo: por ahora solo se puede correr {0}.", AppBridge.T(SceneCatalog.Default.Name)), warning: true);
+                return;
             }
 
             var result = await Task.Run(() => SceneHost.Run(request, progress, token), token).ConfigureAwait(true);
@@ -1043,6 +1093,7 @@ public sealed class BenchmarkPage : Page
             _cancellation?.Dispose();
             _cancellation = null;
             SetRunningUi(false);
+            RefreshSceneAvailability();
             if (_startedMetrics) AppBridge.StopMetricsIfWeStarted();
             _startedMetrics = false;
             RefreshHistory();

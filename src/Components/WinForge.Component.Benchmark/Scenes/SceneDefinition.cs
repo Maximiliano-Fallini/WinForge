@@ -198,9 +198,8 @@ public sealed class SceneDefinition
     public required string Description { get; init; }
 
     /// <summary>
-    /// La escena se puede CORRER (tiene contenido real) o está EN DESARROLLO (aparece en el selector
-    /// con el rótulo, pero no se puede correr). Las escenas viejas (corredor, Aero) quedan visibles
-    /// como "en desarrollo" hasta que se reemplacen por sus dioramas cinematográficos.
+    /// Las escenas en desarrollo aparecen marcadas y solo se pueden correr desde una build de
+    /// desarrollo de la app. Corredor y Aero siguen en esta etapa hasta que estén terminadas.
     /// </summary>
     public bool InDevelopment { get; init; }
 
@@ -1395,7 +1394,7 @@ public static class SceneCatalog
         return new SceneDefinition
         {
             Id = "aero",
-            Name = "Frutiger Aero (en desarrollo)",
+            Name = "Frutiger Aero",
             Description = "El paseo de la postal: la cámara gira por la cascada y el arroyo del desagüe, cruza el campo estilo XP con su sendero de tierra, sobrevuela el lago hondo y termina frente a la ciudad —torres de vidrio con losa, casas con balcones y locales con toldo—. El prado, la orilla y el paseo están poblados con MODELOS REALES de fotogrametría (árboles, matas, pasto, flores, rocas, bancos y faroles, cada uno con su material PBR) y el aire lleva partículas con sprite: polen fino, hojas y pétalos girando y semillas con penacho. Cielo, agua y rápidos, burbujas transparentes a la deriva y sombras de primer plano. Mide relleno por píxel, material por material y muchos objetos instanciados.",
             InDevelopment = true,
             Meshes = new[]
@@ -2027,7 +2026,7 @@ public static class SceneCatalog
         return new SceneDefinition
         {
             Id = "corredor",
-            Name = "Corredor infinito (en desarrollo)",
+            Name = "Corredor infinito",
             Description = "Vuelo hacia adelante sobre un terreno procedural con ~16.000 rocas facetadas de 1.280 caras: mide el trabajo de vértices y de relleno de la placa mientras el escenario avanza.",
             InDevelopment = true,
             Meshes = new[]

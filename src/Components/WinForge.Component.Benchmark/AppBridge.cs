@@ -89,6 +89,40 @@ internal static class AppBridge
         }
     }
 
+    /// <summary>Solo una versión adelantada a la última release se considera de desarrollo.</summary>
+    public static bool IsDevelopmentBuild
+    {
+        get
+        {
+            try
+            {
+                var window = MainWindow();
+                return window?.GetType().GetProperty("IsDevelopmentBuild")?.GetValue(window) is true;
+            }
+            catch { return false; }
+        }
+    }
+
+    private static object? MainWindow() => Application.Current?.GetType()
+        .GetProperty("MainWindowInstance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+
+    /// <summary>Escucha el resultado del chequeo de versión y devuelve cómo desuscribirse.</summary>
+    public static Action SubscribeToUpdateState(Action handler)
+    {
+        try
+        {
+            var window = MainWindow();
+            var updateEvent = window?.GetType().GetEvent("AppUpdateStateChanged");
+            if (window != null && updateEvent != null)
+            {
+                updateEvent.AddEventHandler(window, handler);
+                return () => updateEvent.RemoveEventHandler(window, handler);
+            }
+        }
+        catch { }
+        return () => { };
+    }
+
     /// <summary>Servicio de Core por contrato (null si la app no lo tiene registrado).</summary>
     public static T? GetService<T>() where T : class
     {

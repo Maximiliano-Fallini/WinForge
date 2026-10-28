@@ -22,7 +22,7 @@
          lleva SUS dependencias y el script de empaquetado las mete en el zip. -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Versión del componente: viaja al manifest (components.json) al publicar. -->
-    <Version>0.1.16</Version>
+    <Version>0.1.17</Version>
   </PropertyGroup>
 
   <ItemGroup>

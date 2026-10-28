@@ -72,6 +72,7 @@ $keepPatterns = @(
     "^WinForge\.Component\.",   # el propio componente
     "^Vortice\.",                # bindings D3D11/D3D12/DXGI/compiler/math
     "^SharpGen\.Runtime",       # base de los bindings (COM interop)
+    "^SharpGLTF\.Core\.dll$",   # modelos glTF de las escenas del benchmark
     "^Dia2Lib\.",                # interop de símbolos que usa Vortice.D3DCompiler
     "^TraceReloggerLib\."
 )
@@ -126,6 +127,10 @@ $entry = [pscustomobject]@{
 # traducciones (bloque i18n) que ya estaban publicadas.
 $previous = $catalog.components | Where-Object { $_.id -eq $Component } | Select-Object -First 1
 if ($previous) {
+    # Mantener la categoría existente salvo que se haya indicado otra explícitamente.
+    if (-not $PSBoundParameters.ContainsKey('Category') -and $previous.PSObject.Properties['category']) {
+        $entry.category = $previous.category
+    }
     foreach ($field in 'name', 'description', 'i18n', 'inDevelopment') {
         if ($previous.PSObject.Properties[$field]) {
             $entry | Add-Member -NotePropertyName $field -NotePropertyValue $previous.$field -Force
