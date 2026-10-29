@@ -6,6 +6,11 @@ This page describes which WinForge artifacts are code signed, how they are built
 is allowed to approve a signing request. It applies to every release published at
 <https://github.com/Maximiliano-Fallini/WinForge/releases>.
 
+> **Release exception — v0.6.6:** this release was published without a digital signature
+> because no SignPath connection was available for its signing request. Its GitHub release
+> notes and the README warn users that the installer is unsigned. The signing process below
+> remains the policy for subsequent releases unless another exception is explicitly recorded.
+
 ## What is signed
 
 | Artifact | Description |
