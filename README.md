@@ -22,12 +22,6 @@
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
-    <img src="https://img.shields.io/badge/%F0%9F%93%84_Releases-winforge-2ea44f?style=flat-square" alt="Releases"/>
-  </a>
-  &nbsp;
-  <img src="https://img.shields.io/badge/self_contained-no_.NET_required-5c5c5c?style=flat-square" alt="Self contained"/>
-  &nbsp;
-  <img src="https://img.shields.io/badge/run_as-administrator-e3b341?style=flat-square" alt="Runs as administrator"/>
   <br/>
   <sub>⭐ Beta — found a problem? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Open an issue</a></sub>
 </p>
