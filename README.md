@@ -14,11 +14,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.6.4/WinForge-0.6.4.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Download_WinForge-v0.6.4_|_93.8_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download WinForge v0.6.4 (93.8 MB)"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.6.6/WinForge-0.6.6.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Download_WinForge-v0.6.6_|_93.9_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download WinForge v0.6.6 (93.9 MB)"/>
   </a>
   <br/>
-  <sub>27/10/2026 - UTC-3</sub>
+  <sub>29/10/2026 - UTC-3</sub>
   <br/>
   <br/>
   <a href="https://github.com/Maximiliano-Fallini/WinForge/releases">
@@ -78,14 +78,16 @@ removed from the app itself. They are listed with what each one does.
 | **USB overclocking** | Installable | Raises the polling rate of USB devices to cut input lag. |
 | **Key filter** | Installable | Keyboard repeat delay in milliseconds and key filtering (FilterKeys). |
 | **Memory** | Installable | Smart automatic cleanup of the RAM cache. |
-| **Sensor monitor** | Installable | Live sensors: temperatures, voltages and clocks, grouped and expandable. |
-| **Fans** | Installable | PWM curves per sensor (CPU/GPU/board) through the PawnIO driver, with autostart on sign-in. |
+| **Sensor monitor** | Installable | Live sensors: temperatures, voltages and clocks, grouped and expandable. CPU temperature, clock and power need the PawnIO driver; while it is missing, the page shows a notice with a direct link to Settings → Drivers and keeps showing the readings that do not need it. |
+| **Fans** | Installable | PWM curves per channel with a selectable temperature sensor classified by role (CPU, GPU, VRM, board) and its live reading in the selector, or the hottest of CPU and GPU, through the PawnIO driver, with autostart on sign-in. |
 | **Process management** | Installable | System process manager, with resource usage, priorities and states. |
 | **Stability test** | Installable | Stress tests to validate that the machine holds up. |
 | **Metrics overlay** | Installable · in development | On-screen metrics: FPS, CPU, GPU, RAM, 1% low and more. |
 | **Macros** | Installable | Record key and click sequences and replay them with a global hotkey. |
 | **Autoclicker** | Installable | Configurable automatic clicks with a global hotkey. |
 | **3D scene benchmark** | Downloadable · in development | Its own 3D scenes to measure the GPU and the whole machine, with live metrics and a comparable report (no score). |
+
+PawnIO (sensor monitor and fans) and hidusbf (USB overclocking) are shared dependencies, so they do not belong to any component: **Settings → Drivers** is the permanent place to see, install, repair or uninstall them even if the components that use them are removed. The sensor monitor and USB overclocking link there when the driver is missing; the fans page also offers the one-click install itself.
 
 ## 🌐 Multilanguage
 

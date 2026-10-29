@@ -74,11 +74,13 @@ public partial class App : Application
         Services = services.BuildServiceProvider();
 
         // Evitar múltiples instancias de la aplicación (como herramientas similares: single-instance por sesión)
-        // Relanzamiento de tema (--theme-restart): la instancia vieja sigue viva unos
+        // Relanzamiento pedido por la propia app (--theme-restart para el tema,
+        // --restart para cargar PawnIO): la instancia vieja sigue viva unos
         // instantes mientras se cierra, así que esperamos a que libere el mutex en
         // vez de morir al instante (el reinicio "no funciona" silenciosamente).
-        bool themeRestart = Environment.GetCommandLineArgs().Contains("--theme-restart");
-        if (themeRestart)
+        bool relaunch = Environment.GetCommandLineArgs().Contains("--theme-restart")
+                     || Environment.GetCommandLineArgs().Contains("--restart");
+        if (relaunch)
         {
             try
             {
@@ -228,15 +230,20 @@ public partial class App : Application
         // Compat: instalaciones que activaron la opción antes de que existiera el flag
         // siguen minimizando en todo arranque hasta que la página de Configuración
         // normalice el valor del registro.
-        bool startMinimized = StartupMinimizedRequested();
-        if (!startMinimized
+        bool relaunch = Environment.GetCommandLineArgs().Contains("--theme-restart")
+                     || Environment.GetCommandLineArgs().Contains("--restart");
+
+        // Un relanzamiento pedido por la app (tema o PawnIO) siempre muestra la
+        // ventana: si el usuario tiene "iniciar minimizado", reiniciar no debe
+        // mandarla a la bandeja y dejar la sensación de que la app se cerró.
+        bool startMinimized = !relaunch && StartupMinimizedRequested();
+        if (!relaunch
+            && !startMinimized
             && settingsService.Get("window.startMinimized", false)
             && !startupService.HasStartMinimizedFlag())
         {
             startMinimized = startupService.IsEnabled();
         }
-
-        bool themeRestart = Environment.GetCommandLineArgs().Contains("--theme-restart");
 
         // ===== Splash de arranque =====
         // Se muestra apenas arranca la app, ANTES de cualquier trabajo pesado, para
@@ -246,7 +253,7 @@ public partial class App : Application
         // verla, no una carga) y el arranque minimizado a la bandeja (lo lanza Windows
         // al iniciar sesión, sin nadie mirando la pantalla).
         SplashWindow? splash = null;
-        if (!themeRestart && !startMinimized)
+        if (!relaunch && !startMinimized)
         {
             // El splash también pinta colores de fábrica (tarjeta, texto y fondos)
             // antes de que exista MainWindow. Capturarlos acá evita que use el
@@ -375,9 +382,9 @@ public partial class App : Application
         // se crea al cerrarlo: así el tema elegido ya está persistido cuando
         // ThemeService inicializa. Se saltea en relanzamientos de tema
         // (--theme-restart) y en arranques minimizados a la bandeja (inicio de sesión).
-        // themeRestart y startMinimized se resolvieron arriba, antes del splash.
+        // relaunch y startMinimized se resolvieron arriba, antes del splash.
         bool showOnboarding = !settingsService.Get("onboarding.complete", false)
-            && !themeRestart
+            && !relaunch
             && !startMinimized;
 
         // Crea la ventana principal y arranca lo que depende de ella. El tema se
@@ -513,7 +520,7 @@ public partial class App : Application
         {
             Services.GetRequiredService<ILoggingService>()
                 .LogInfo("Onboarding: salteado (complete=" + settingsService.Get("onboarding.complete", false)
-                    + ", themeRestart=" + themeRestart + ", startMinimized=" + startMinimized + ").");
+                    + ", relaunch=" + relaunch + ", startMinimized=" + startMinimized + ").");
             CreateMainWindow();
         }
 
@@ -635,6 +642,13 @@ public partial class App : Application
                 }
             }
         }
+        catch { }
+
+        // Ventiladores: al cerrar, cada canal vuelve al BIOS. Sin esto, el último
+        // duty escrito (slider manual o curva) quedaba fijo hasta que el BIOS
+        // reprogramara el chip. Dispose NO toca las curvas ni su autostart: se
+        // vuelven a aplicar en el próximo arranque.
+        try { Services.GetService<IFanControlService>()?.Dispose(); }
         catch { }
 
         // Liberar el driver de LibreHardwareMonitor del SensorService (instancia

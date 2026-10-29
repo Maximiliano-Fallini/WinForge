@@ -402,6 +402,25 @@ public sealed class InstalledGamesService : IInstalledGamesService
         lock (_lock) previous = _cache ?? LoadCacheFromDisk();
 
         var games = MergeStickyEmulators(ScanAll(deepEmulatorScan, progress), previous);
+
+        // Un escaneo que devuelve CERO habiendo juegos antes casi nunca significa
+        // "desinstalé todo": lo habitual es que un launcher no se haya podido leer
+        // (biblioteca en un disco desconectado, registro sin permisos, Steam a medio
+        // actualizar) y que sus juegos desaparezcan sin lanzar excepción. Si además
+        // alguna carpeta de la lista anterior sigue en disco, se conserva esa lista, no
+        // se pisa la caché y queda el aviso en el log. Un "Re-detectar" vuelve a probar.
+        // Si ninguna carpeta sobrevive, el cero es real y se acepta.
+        if (games.Count == 0 && previous is { Count: > 0 } && previous.Any(LooksStillInstalled))
+        {
+            _logging.LogWarning($"InstalledGames: el escaneo no devolvió ningún juego y {previous.Count} entrada(s) previas siguen en disco; se conserva la biblioteca anterior (la caché no se pisa).");
+            lock (_lock)
+            {
+                _cache = previous;
+                _scanTask = null;
+            }
+            return previous;
+        }
+
         lock (_lock)
         {
             _cache = games;
@@ -409,6 +428,18 @@ public sealed class InstalledGamesService : IInstalledGamesService
             SaveCacheToDisk(games);
         }
         return games;
+    }
+
+    /// <summary>
+    /// ¿La entrada apunta a una carpeta que sigue existiendo? Se usa para distinguir
+    /// un cero real (el usuario desinstaló todo) de un escaneo que no pudo leer los
+    /// launchers: una sola carpeta viva alcanza para desconfiar del cero.
+    /// </summary>
+    private static bool LooksStillInstalled(InstalledGame game)
+    {
+        if (string.IsNullOrEmpty(game.InstallPath)) return false;
+        try { return Directory.Exists(game.InstallPath); }
+        catch { return false; }
     }
 
     /// <summary>Launcher de las entradas de emulador: es lo que las distingue dentro de la
@@ -458,29 +489,54 @@ public sealed class InstalledGamesService : IInstalledGamesService
     private List<InstalledGame> ScanAll(bool deepEmulatorScan, IProgress<EmulatorScanProgress>? progress)
     {
         var games = new List<InstalledGame>();
-        try { games.AddRange(ScanSteam()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Steam: {ex.Message}"); }
-        try { games.AddRange(ScanEpic()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Epic: {ex.Message}"); }
-        try { games.AddRange(ScanUbisoft()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Ubisoft: {ex.Message}"); }
-        try { games.AddRange(ScanEaGames()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: EA: {ex.Message}"); }
-        try { games.AddRange(ScanBattleNet()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Battle.net: {ex.Message}"); }
-        try { games.AddRange(ScanGog()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: GOG: {ex.Message}"); }
-        try { games.AddRange(ScanXbox()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Xbox: {ex.Message}"); }
-        try { games.AddRange(ScanRiot()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Riot: {ex.Message}"); }
-        try { games.AddRange(ScanBlacksmith()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Blacksmith: {ex.Message}"); }
-        try { games.AddRange(ScanStandalone()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: independientes: {ex.Message}"); }
-        try { games.AddRange(ScanItch()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Itch.io: {ex.Message}"); }
-        try { games.AddRange(ScanAmazonGames()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: Amazon Games: {ex.Message}"); }
-        try { games.AddRange(ScanEmulators(deepEmulatorScan, progress)); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: emuladores: {ex.Message}"); }
-        try { games.AddRange(ScanAdditionalLauncherGames()); } catch (Exception ex) { _logging.LogWarning($"InstalledGames: otros launchers: {ex.Message}"); }
+        // Cuántos juegos aporta cada launcher. Sin esto, un launcher que deja de leer
+        // (biblioteca en otro disco, registro sin permisos) desaparece en silencio: el
+        // escaneo sigue siendo válido, sólo devuelve menos. Una línea por escaneo
+        // alcanza para ver a quién se le cayó la lista.
+        var perLauncher = new List<string>();
+        void Scan(string label, Func<List<InstalledGame>> scanner)
+        {
+            try
+            {
+                var found = scanner();
+                games.AddRange(found);
+                perLauncher.Add($"{label} {found.Count}");
+            }
+            catch (Exception ex)
+            {
+                perLauncher.Add($"{label} error");
+                _logging.LogWarning($"InstalledGames: {label}: {ex.Message}");
+            }
+        }
+
+        Scan("Steam", ScanSteam);
+        Scan("Epic", ScanEpic);
+        Scan("Ubisoft", ScanUbisoft);
+        Scan("EA", ScanEaGames);
+        Scan("Battle.net", ScanBattleNet);
+        Scan("GOG", ScanGog);
+        Scan("Xbox", ScanXbox);
+        Scan("Riot", ScanRiot);
+        Scan("Blacksmith", ScanBlacksmith);
+        Scan("independientes", ScanStandalone);
+        Scan("Itch.io", ScanItch);
+        Scan("Amazon Games", ScanAmazonGames);
+        Scan("emuladores", () => ScanEmulators(deepEmulatorScan, progress));
+        Scan("otros launchers", ScanAdditionalLauncherGames);
+
         // Llave maestra: ningún launcher/instalador/anti-cheat puede ser un juego.
         // Si cualquier scanner resolviera el cliente de un launcher o un stub como exe
         // (ej. BlacksmithBootstrap.exe del launcher de Dark and Darker), se descarta acá,
         // pase lo que pase.
-        return games
+        var result = games
             .Where(g => !IsDetectedLauncher(g))
             .GroupBy(g => g.ExeFileName, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
+
+        _logging.LogInfo($"InstalledGames: escaneo {(deepEmulatorScan ? "profundo" : "liviano")}: " +
+                         $"{string.Join(", ", perLauncher)} → {result.Count} juego(s) tras filtros.");
+        return result;
     }
 
     // ===================== Launchers adicionales =====================

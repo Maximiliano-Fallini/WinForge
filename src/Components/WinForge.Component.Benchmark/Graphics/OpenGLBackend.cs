@@ -105,6 +105,80 @@ public sealed unsafe class OpenGLBackend : IGraphicsBackend
     private uint _shadowFramebuffer;
     private uint _shadowTexture;
 
+    // ---- Antialiasing (MSAA de la escena) ----
+    // La escena se dibuja en un framebuffer MULTISAMPLE y al cerrar el frame se resuelve al
+    // framebuffer de la ventana con glBlitFramebuffer. Es el equivalente exacto del resolve de
+    // Direct3D y Vulkan: el framebuffer por defecto no es multisample.
+    private uint _msaaFramebuffer;
+    private uint _msaaColorTexture;
+    private uint _msaaDepthTexture;
+
+    /// <summary>Crea el framebuffer multisample de la escena y sus dos adjuntos.</summary>
+    private void CreateMsaaTarget()
+    {
+        if (_width < 1 || _height < 1) return;
+
+        uint framebuffer = 0;
+        GlApi.glGenFramebuffers(1, &framebuffer);
+        _msaaFramebuffer = framebuffer;
+        GlApi.glBindFramebuffer(GlApi.GL_FRAMEBUFFER, _msaaFramebuffer);
+
+        uint color = 0;
+        GlApi.glGenTextures(1, &color);
+        _msaaColorTexture = color;
+        GlApi.glBindTexture(GlApi.GL_TEXTURE_2D_MULTISAMPLE, _msaaColorTexture);
+        GlApi.glTexImage2DMultisample(GlApi.GL_TEXTURE_2D_MULTISAMPLE, SceneGraphicsOptions.MSAASamples,
+            GlApi.GL_RGBA8, _width, _height, 1);
+        GlApi.glFramebufferTexture2D(GlApi.GL_FRAMEBUFFER, GlApi.GL_COLOR_ATTACHMENT0,
+            GlApi.GL_TEXTURE_2D_MULTISAMPLE, _msaaColorTexture, 0);
+
+        uint depth = 0;
+        GlApi.glGenTextures(1, &depth);
+        _msaaDepthTexture = depth;
+        GlApi.glBindTexture(GlApi.GL_TEXTURE_2D_MULTISAMPLE, _msaaDepthTexture);
+        GlApi.glTexImage2DMultisample(GlApi.GL_TEXTURE_2D_MULTISAMPLE, SceneGraphicsOptions.MSAASamples,
+            GlApi.GL_DEPTH_COMPONENT24, _width, _height, 1);
+        GlApi.glFramebufferTexture2D(GlApi.GL_FRAMEBUFFER, GlApi.GL_DEPTH_ATTACHMENT,
+            GlApi.GL_TEXTURE_2D_MULTISAMPLE, _msaaDepthTexture, 0);
+
+        GlApi.glDrawBuffer(GlApi.GL_COLOR_ATTACHMENT0);
+        GlApi.glReadBuffer(GlApi.GL_COLOR_ATTACHMENT0);
+        uint status = GlApi.glCheckFramebufferStatus(GlApi.GL_FRAMEBUFFER);
+        GlApi.glBindFramebuffer(GlApi.GL_FRAMEBUFFER, 0);
+        GlApi.glBindTexture(GlApi.GL_TEXTURE_2D_MULTISAMPLE, 0);
+        if (status != GlApi.GL_FRAMEBUFFER_COMPLETE)
+        {
+            throw new InvalidOperationException(
+                $"El framebuffer multisample de OpenGL quedó incompleto (0x{status:X}): no se puede dibujar la escena.");
+        }
+    }
+
+    /// <summary>Libera el framebuffer multisample y sus texturas. Best-effort, como el resto del Dispose.</summary>
+    private void DestroyMsaaTarget()
+    {
+        if (_msaaFramebuffer != 0 && GlApi.glDeleteFramebuffers != null)
+        {
+            uint* pointer = stackalloc uint[1];
+            pointer[0] = _msaaFramebuffer;
+            GlApi.glDeleteFramebuffers(1, pointer);
+            _msaaFramebuffer = 0;
+        }
+        if (_msaaColorTexture != 0 && GlApi.glDeleteTextures != null)
+        {
+            uint* pointer = stackalloc uint[1];
+            pointer[0] = _msaaColorTexture;
+            GlApi.glDeleteTextures(1, pointer);
+            _msaaColorTexture = 0;
+        }
+        if (_msaaDepthTexture != 0 && GlApi.glDeleteTextures != null)
+        {
+            uint* pointer = stackalloc uint[1];
+            pointer[0] = _msaaDepthTexture;
+            GlApi.glDeleteTextures(1, pointer);
+            _msaaDepthTexture = 0;
+        }
+    }
+
     /// <summary>Mundo → espacio de luz de la pasada (ver
     /// <see cref="SceneEnvironmentConstants.LightViewProjectionFor"/>). En OpenGL va la versión
     /// CONVERTIDA a la convención de profundidad de esta API: el shader comparte la de Direct3D, pero
@@ -435,6 +509,7 @@ public sealed unsafe class OpenGLBackend : IGraphicsBackend
         // Shadow map (ver README-SOMBRAS.md): la textura de profundidad, su framebuffer y su unidad de
         // textura (la que declara el GLSL generado, ver GlShaders.ShadowTextureUnit).
         CreateShadowResources();
+        CreateMsaaTarget();
         ApplyViewport();
 
         // La escena arranca con el estado correcto y no lo cambia nunca más (no hay estados por
@@ -1060,8 +1135,8 @@ vec4  GlFdy(vec4 value)  { return -dFdy(value); }
     private void ApplyViewport() => GlApi.glViewport(0, 0, _width, _height);
 
     /// <summary>
-    /// Ventana redimensionada. En OpenGL el framebuffer por defecto sigue a la ventana, así que no
-    /// hay nada que recrear: alcanza con mover el viewport.
+    /// Ventana redimensionada. El framebuffer por defecto sigue a la ventana, pero el target
+    /// multisample tiene su propio tamaño y hay que recrearlo; el viewport, después.
     /// </summary>
     public void Resize(int width, int height)
     {
@@ -1070,6 +1145,8 @@ vec4  GlFdy(vec4 value)  { return -dFdy(value); }
         if (width == _width && height == _height) return;
         _width = width;
         _height = height;
+        DestroyMsaaTarget();
+        CreateMsaaTarget();
         ApplyViewport();
     }
 
@@ -1100,6 +1177,9 @@ vec4  GlFdy(vec4 value)  { return -dFdy(value); }
         // el resto del frame no se entera de que existió.
         if (_shadowEnabled) RenderShadowPass(timeSeconds);
 
+        // La escena se dibuja en el framebuffer multisample; el blit al framebuffer de la ventana va
+        // al final del frame, después de la franja de métricas.
+        GlApi.glBindFramebuffer(GlApi.GL_FRAMEBUFFER, _msaaFramebuffer);
         GlApi.glViewport(0, 0, _width, _height);
         GlApi.glClearColor(0.02f, 0.02f, 0.03f, 1f);
         GlApi.glClear(GlApi.GL_COLOR_BUFFER_BIT | GlApi.GL_DEPTH_BUFFER_BIT);
@@ -1146,6 +1226,14 @@ vec4  GlFdy(vec4 value)  { return -dFdy(value); }
         // que se entrega, así que su costo no puede quedar afuera de la medición.
         if (HasOverlay) DrawOverlay();
 
+        // Resolver MSAA al framebuffer de la ventana. El blit es parte del frame que se entrega, así
+        // que va DENTRO de la query de tiempo, igual que el resolve de Direct3D y Vulkan.
+        GlApi.glBindFramebuffer(GlApi.GL_READ_FRAMEBUFFER, _msaaFramebuffer);
+        GlApi.glBindFramebuffer(GlApi.GL_DRAW_FRAMEBUFFER, 0);
+        GlApi.glBlitFramebuffer(0, 0, _width, _height, 0, 0, _width, _height,
+            GlApi.GL_COLOR_BUFFER_BIT, GlApi.GL_NEAREST);
+        GlApi.glBindFramebuffer(GlApi.GL_FRAMEBUFFER, 0);
+
         if (HasGpuTiming)
         {
             GlApi.glEndQuery(GlApi.GL_TIME_ELAPSED);
@@ -1191,9 +1279,9 @@ vec4  GlFdy(vec4 value)  { return -dFdy(value); }
         }
 
         GlApi.glBindVertexArray(0);
-        // Volver al framebuffer de la ventana y a la matriz de la cámara: el resto del frame sigue igual
-        // que si esta pasada no hubiera corrido.
-        GlApi.glBindFramebuffer(GlApi.GL_FRAMEBUFFER, 0);
+        // Volver al framebuffer de la ESCENA (el multisample) y a la matriz de la cámara: el resto del
+        // frame sigue igual que si esta pasada no hubiera corrido.
+        GlApi.glBindFramebuffer(GlApi.GL_FRAMEBUFFER, _msaaFramebuffer);
         UpdateConstants(timeSeconds);
     }
 
@@ -1325,6 +1413,9 @@ vec4  GlFdy(vec4 value)  { return -dFdy(value); }
                 if (_geometryProgram != 0) GlApi.glDeleteProgram(_geometryProgram);
                 if (_shadowProgram != 0) GlApi.glDeleteProgram(_shadowProgram);
             }
+            // Framebuffer multisample de la escena (ver CreateMsaaTarget).
+            DestroyMsaaTarget();
+
             // Shadow map (ver README-SOMBRAS.md): el framebuffer del mapa y su textura de profundidad.
             if (GlApi.glDeleteFramebuffers != null)
             {

@@ -102,10 +102,16 @@ public sealed class VulkanBackend : IGraphicsBackend
     private int _swapchainFormat;
     private uint _lastImageIndex;
 
-    // ---- Profundidad ----
-    private nint _depthImage;
-    private nint _depthView;
-    private nint _depthMemory;
+    // ---- Targets por imagen del swapchain ----
+    // Profundidad y color MULTISAMPLE: uno de cada uno por buffer del swapchain. Compartir un solo
+    // target entre frames dejaría que dos frames en vuelo se pisaran (Vulkan usa dos), y el color
+    // multisample se resuelve en el render pass directamente al buffer que se presenta.
+    private nint[] _depthImages = Array.Empty<nint>();
+    private nint[] _depthViews = Array.Empty<nint>();
+    private nint[] _depthMemories = Array.Empty<nint>();
+    private nint[] _msaaImages = Array.Empty<nint>();
+    private nint[] _msaaViews = Array.Empty<nint>();
+    private nint[] _msaaMemories = Array.Empty<nint>();
 
     // ---- Pipeline ----
     private nint _renderPass;
@@ -859,7 +865,10 @@ public sealed class VulkanBackend : IGraphicsBackend
         return VulkanApi.VkPresentMode.Fifo;
     }
 
-    private nint CreateImageView(nint image, int format)
+    private nint CreateImageView(nint image, int format) =>
+        CreateImageView(image, format, VulkanApi.VkImageAspect.Color);
+
+    private nint CreateImageView(nint image, int format, int aspect)
     {
         var createInfo = new VulkanApi.VkImageViewCreateInfo
         {
@@ -869,7 +878,7 @@ public sealed class VulkanBackend : IGraphicsBackend
             format = format,
             subresourceRange = new VulkanApi.VkImageSubresourceRange
             {
-                aspectMask = VulkanApi.VkImageAspect.Color,
+                aspectMask = aspect,
                 levelCount = 1,
                 layerCount = 1
             }
@@ -887,46 +896,57 @@ public sealed class VulkanBackend : IGraphicsBackend
 
     private void CreateDepthBuffer()
     {
+        int count = _swapchainViews.Length;
+        _depthImages = new nint[count];
+        _depthViews = new nint[count];
+        _depthMemories = new nint[count];
+        _msaaImages = new nint[count];
+        _msaaViews = new nint[count];
+        _msaaMemories = new nint[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            _depthImages[i] = CreateRenderTargetImage(
+                VulkanApi.VkFormat.D32Sfloat, VulkanApi.VkSampleCount.Count4,
+                VulkanApi.VkImageUsage.DepthStencilAttachment, out _depthMemories[i], "profundidad");
+            _depthViews[i] = CreateImageView(_depthImages[i], VulkanApi.VkFormat.D32Sfloat, VulkanApi.VkImageAspect.Depth);
+
+            _msaaImages[i] = CreateRenderTargetImage(
+                _swapchainFormat, VulkanApi.VkSampleCount.Count4,
+                VulkanApi.VkImageUsage.ColorAttachment, out _msaaMemories[i], "color multisample");
+            _msaaViews[i] = CreateImageView(_msaaImages[i], _swapchainFormat, VulkanApi.VkImageAspect.Color);
+        }
+    }
+
+    /// <summary>Crea una imagen de adjunto del tamaño de la ventana y devuelve su memoria.</summary>
+    private nint CreateRenderTargetImage(int format, int samples, int usage, out nint memory, string label)
+    {
         var createInfo = new VulkanApi.VkImageCreateInfo
         {
             sType = VulkanApi.VkStructureType.ImageCreateInfo,
             imageType = VulkanApi.VkImageType.Type2D,
-            format = VulkanApi.VkFormat.D32Sfloat,
+            format = format,
             extent = new VulkanApi.VkExtent3D { width = (uint)_width, height = (uint)_height, depth = 1 },
             mipLevels = 1,
             arrayLayers = 1,
-            samples = VulkanApi.VkSampleCount.Count1,
+            samples = samples,
             tiling = VulkanApi.VkImageTiling.Optimal,
-            usage = VulkanApi.VkImageUsage.DepthStencilAttachment,
+            usage = usage,
             sharingMode = VulkanApi.VkSharingMode.Exclusive,
             initialLayout = VulkanApi.VkImageLayout.Undefined
         };
-        Check(VulkanApi.vkCreateImage(_device, ref createInfo, 0, out _depthImage), "crear la imagen de profundidad");
-        VulkanApi.vkGetImageMemoryRequirements(_device, _depthImage, out var requirements);
-        _depthMemory = AllocateMemory(requirements, VulkanApi.VkMemoryProperty.DeviceLocal, "profundidad");
-        Check(VulkanApi.vkBindImageMemory(_device, _depthImage, _depthMemory, 0), "atar la memoria de profundidad");
-
-        var viewInfo = new VulkanApi.VkImageViewCreateInfo
-        {
-            sType = VulkanApi.VkStructureType.ImageViewCreateInfo,
-            image = _depthImage,
-            viewType = VulkanApi.VkImageViewType.Type2D,
-            format = VulkanApi.VkFormat.D32Sfloat,
-            subresourceRange = new VulkanApi.VkImageSubresourceRange
-            {
-                aspectMask = VulkanApi.VkImageAspect.Depth,
-                levelCount = 1,
-                layerCount = 1
-            }
-        };
-        Check(VulkanApi.vkCreateImageView(_device, ref viewInfo, 0, out _depthView), "crear la vista de profundidad");
+        Check(VulkanApi.vkCreateImage(_device, ref createInfo, 0, out nint image), $"crear la imagen de {label}");
+        VulkanApi.vkGetImageMemoryRequirements(_device, image, out var requirements);
+        memory = AllocateMemory(requirements, VulkanApi.VkMemoryProperty.DeviceLocal, label);
+        Check(VulkanApi.vkBindImageMemory(_device, image, memory, 0), $"atar la memoria de {label}");
+        return image;
     }
 
     /// <summary>
-    /// Render pass con color y profundidad. En los dos adjuntos el layout inicial es UNDEFINED y la
-    /// carga es CLEAR: cada frame descarta lo anterior, así no hay que rastrear el layout entre las
-    /// imágenes del swapchain (fuente clásica de imagen corrupta). El color termina en
-    /// PRESENT_SRC_KHR, que es la transición que necesita el present.
+    /// Render pass con color multisample, profundidad multisample y RESOLVE al buffer del swapchain.
+    /// El color se dibuja en el adjunto 0 (4 muestras) y el render pass lo resuelve en el adjunto 2
+    /// (1 muestra, PRESENT_SRC_KHR al terminar): el swapchain no puede ser multisample, así que el
+    /// resolve es parte del mismo pase y no cuesta una pasada extra.
     /// </summary>
     private void CreateRenderPassAndFramebuffers()
     {
@@ -935,38 +955,53 @@ public sealed class VulkanBackend : IGraphicsBackend
             new VulkanApi.VkAttachmentDescription
             {
                 format = _swapchainFormat,
-                samples = VulkanApi.VkSampleCount.Count1,
+                samples = VulkanApi.VkSampleCount.Count4,
                 loadOp = VulkanApi.VkAttachmentLoadOp.Clear,
-                storeOp = VulkanApi.VkAttachmentStoreOp.Store,
+                // El contenido multisample no se guarda: lo que importa es el resolve del adjunto 2.
+                storeOp = VulkanApi.VkAttachmentStoreOp.DontCare,
                 stencilLoadOp = VulkanApi.VkAttachmentLoadOp.DontCare,
                 stencilStoreOp = VulkanApi.VkAttachmentStoreOp.DontCare,
                 initialLayout = VulkanApi.VkImageLayout.Undefined,
-                finalLayout = VulkanApi.VkImageLayout.PresentSrcKhr
+                finalLayout = VulkanApi.VkImageLayout.ColorAttachmentOptimal
             },
             new VulkanApi.VkAttachmentDescription
             {
                 format = VulkanApi.VkFormat.D32Sfloat,
-                samples = VulkanApi.VkSampleCount.Count1,
+                samples = VulkanApi.VkSampleCount.Count4,
                 loadOp = VulkanApi.VkAttachmentLoadOp.Clear,
                 storeOp = VulkanApi.VkAttachmentStoreOp.DontCare,
                 stencilLoadOp = VulkanApi.VkAttachmentLoadOp.DontCare,
                 stencilStoreOp = VulkanApi.VkAttachmentStoreOp.DontCare,
                 initialLayout = VulkanApi.VkImageLayout.Undefined,
                 finalLayout = VulkanApi.VkImageLayout.DepthStencilAttachmentOptimal
+            },
+            new VulkanApi.VkAttachmentDescription
+            {
+                format = _swapchainFormat,
+                samples = VulkanApi.VkSampleCount.Count1,
+                loadOp = VulkanApi.VkAttachmentLoadOp.DontCare,
+                storeOp = VulkanApi.VkAttachmentStoreOp.Store,
+                stencilLoadOp = VulkanApi.VkAttachmentLoadOp.DontCare,
+                stencilStoreOp = VulkanApi.VkAttachmentStoreOp.DontCare,
+                initialLayout = VulkanApi.VkImageLayout.Undefined,
+                finalLayout = VulkanApi.VkImageLayout.PresentSrcKhr
             }
         };
 
         var colorReference = new VulkanApi.VkAttachmentReference { attachment = 0, layout = VulkanApi.VkImageLayout.ColorAttachmentOptimal };
         var depthReference = new VulkanApi.VkAttachmentReference { attachment = 1, layout = VulkanApi.VkImageLayout.DepthStencilAttachmentOptimal };
+        var resolveReference = new VulkanApi.VkAttachmentReference { attachment = 2, layout = VulkanApi.VkImageLayout.ColorAttachmentOptimal };
         var subpass = new VulkanApi.VkSubpassDescription
         {
             pipelineBindPoint = VulkanApi.VkPipelineBindPoint.Graphics,
             colorAttachmentCount = 1,
             pColorAttachments = (nint)0,
+            pResolveAttachments = (nint)0,
             pDepthStencilAttachment = (nint)0
         };
         // Dependencia externa → subpaso 0: la escritura al color no puede empezar antes de que la
-        // imagen esté realmente disponible (es el "estoy a punto de escribir" del acquire).
+        // imagen esté realmente disponible (es el "estoy a punto de escribir" del acquire). El resolve
+        // LEE el adjunto multisample, así que también se declara ColorAttachmentRead.
         var dependency = new VulkanApi.VkSubpassDependency
         {
             srcSubpass = SubpassExternal,
@@ -974,7 +1009,7 @@ public sealed class VulkanBackend : IGraphicsBackend
             srcStageMask = VulkanApi.VkPipelineStage.ColorAttachmentOutput,
             dstStageMask = VulkanApi.VkPipelineStage.ColorAttachmentOutput,
             srcAccessMask = 0,
-            dstAccessMask = VulkanApi.VkAccess.ColorAttachmentWrite
+            dstAccessMask = VulkanApi.VkAccess.ColorAttachmentRead | VulkanApi.VkAccess.ColorAttachmentWrite
         };
 
         unsafe
@@ -982,6 +1017,7 @@ public sealed class VulkanBackend : IGraphicsBackend
             fixed (VulkanApi.VkAttachmentDescription* attachmentPointer = attachments)
             {
                 subpass.pColorAttachments = (nint)(&colorReference);
+                subpass.pResolveAttachments = (nint)(&resolveReference);
                 subpass.pDepthStencilAttachment = (nint)(&depthReference);
 
                 var createInfo = new VulkanApi.VkRenderPassCreateInfo
@@ -1001,7 +1037,7 @@ public sealed class VulkanBackend : IGraphicsBackend
         _framebuffers = new nint[_swapchainViews.Length];
         for (int i = 0; i < _framebuffers.Length; i++)
         {
-            var attachmentViews = new[] { _swapchainViews[i], _depthView };
+            var attachmentViews = new[] { _msaaViews[i], _depthViews[i], _swapchainViews[i] };
             unsafe
             {
                 fixed (nint* views = attachmentViews)
@@ -1010,7 +1046,7 @@ public sealed class VulkanBackend : IGraphicsBackend
                     {
                         sType = VulkanApi.VkStructureType.FramebufferCreateInfo,
                         renderPass = _renderPass,
-                        attachmentCount = 2,
+                        attachmentCount = (uint)attachmentViews.Length,
                         pAttachments = (nint)views,
                         width = (uint)_width,
                         height = (uint)_height,
@@ -1300,7 +1336,9 @@ public sealed class VulkanBackend : IGraphicsBackend
             var multisample = new VulkanApi.VkPipelineMultisampleStateCreateInfo
             {
                 sType = VulkanApi.VkStructureType.PipelineMultisampleStateCreateInfo,
-                rasterizationSamples = VulkanApi.VkSampleCount.Count1
+                // La pasada de sombras tiene su propio render pass de UNA muestra; la principal dibuja
+                // en el target multisample y su pipeline TIENE que declarar el mismo conteo.
+                rasterizationSamples = depthOnly ? VulkanApi.VkSampleCount.Count1 : VulkanApi.VkSampleCount.Count4
             };
             var keepStencil = new VulkanApi.VkStencilOpState
             {
@@ -3049,21 +3087,37 @@ public sealed class VulkanBackend : IGraphicsBackend
         }
         _presentSemaphores = Array.Empty<nint>();
 
-        if (_depthView != 0)
+        foreach (var view in _depthViews)
         {
-            VulkanApi.vkDestroyImageView(_device, _depthView, 0);
-            _depthView = 0;
+            if (view != 0) VulkanApi.vkDestroyImageView(_device, view, 0);
         }
-        if (_depthImage != 0)
+        _depthViews = Array.Empty<nint>();
+        foreach (var image in _depthImages)
         {
-            VulkanApi.vkDestroyImage(_device, _depthImage, 0);
-            _depthImage = 0;
+            if (image != 0) VulkanApi.vkDestroyImage(_device, image, 0);
         }
-        if (_depthMemory != 0)
+        _depthImages = Array.Empty<nint>();
+        foreach (var memory in _depthMemories)
         {
-            VulkanApi.vkFreeMemory(_device, _depthMemory, 0);
-            _depthMemory = 0;
+            if (memory != 0) VulkanApi.vkFreeMemory(_device, memory, 0);
         }
+        _depthMemories = Array.Empty<nint>();
+
+        foreach (var view in _msaaViews)
+        {
+            if (view != 0) VulkanApi.vkDestroyImageView(_device, view, 0);
+        }
+        _msaaViews = Array.Empty<nint>();
+        foreach (var image in _msaaImages)
+        {
+            if (image != 0) VulkanApi.vkDestroyImage(_device, image, 0);
+        }
+        _msaaImages = Array.Empty<nint>();
+        foreach (var memory in _msaaMemories)
+        {
+            if (memory != 0) VulkanApi.vkFreeMemory(_device, memory, 0);
+        }
+        _msaaMemories = Array.Empty<nint>();
         if (_swapchain != 0)
         {
             VulkanApi.vkDestroySwapchainKHR(_device, _swapchain, 0);

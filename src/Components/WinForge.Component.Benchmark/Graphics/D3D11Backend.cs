@@ -42,6 +42,15 @@ public sealed class D3D11Backend : IGraphicsBackend
 
     private ID3D11RenderTargetView _renderTarget = null!;
 
+    /// <summary>
+    /// Target MULTISAMPLE de la escena (ver <see cref="SceneGraphicsOptions.MSAASamples"/>): la escena
+    /// se dibuja acá y al final del frame se resuelve al back buffer. El swapchain con flip model no
+    /// admite multisampling, así que el resolve es obligatorio; el costo es de rasterización real, no
+    /// un filtro de post que emborrone la imagen.
+    /// </summary>
+    private ID3D11Texture2D _msaaColor = null!;
+    private ID3D11RenderTargetView _msaaView = null!;
+
     /// <summary>Backbuffer para herramientas de verificación (el probador saca capturas). No tocar en el bucle.</summary>
     internal ID3D11Texture2D BackBufferForDiagnostics { get; private set; } = null!;
     private ID3D11DepthStencilView _depthView = null!;
@@ -292,6 +301,7 @@ public sealed class D3D11Backend : IGraphicsBackend
         _factory = DXGI.CreateDXGIFactory2<IDXGIFactory2>(false);
         CreateSwapChain(options.WindowHandle);
         CreateDepthBuffer();
+        CreateMsaaColorTarget();
         CreatePipeline();
         CreateGeometryBuffers();
         CreateDetailTexture();
@@ -501,15 +511,41 @@ public sealed class D3D11Backend : IGraphicsBackend
 
     private void CreateDepthBuffer()
     {
-        _depthTexture = _device.CreateTexture2D(
-            DxgiFormat.D24_UNorm_S8_UInt,
-            (uint)_width,
-            (uint)_height,
-            1,
-            1,
-            null,
-            BindFlags.DepthStencil);
+        // La profundidad tiene que tener el MISMO conteo de muestras que el color; si no, el
+        // render target multisample no se puede atar y D3D11 falla al armar el frame.
+        _depthTexture = _device.CreateTexture2D(new Texture2DDescription
+        {
+            Width = (uint)_width,
+            Height = (uint)_height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = DxgiFormat.D24_UNorm_S8_UInt,
+            SampleDescription = new SampleDescription(SceneGraphicsOptions.MSAASamples, 0),
+            Usage = ResourceUsage.Default,
+            BindFlags = BindFlags.DepthStencil,
+            CPUAccessFlags = CpuAccessFlags.None,
+            MiscFlags = ResourceOptionFlags.None
+        });
         _depthView = _device.CreateDepthStencilView(_depthTexture);
+    }
+
+    /// <summary>Color multisample de la escena. Se resuelve al back buffer al cerrar el frame.</summary>
+    private void CreateMsaaColorTarget()
+    {
+        _msaaColor = _device.CreateTexture2D(new Texture2DDescription
+        {
+            Width = (uint)_width,
+            Height = (uint)_height,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = DxgiFormat.B8G8R8A8_UNorm,
+            SampleDescription = new SampleDescription(SceneGraphicsOptions.MSAASamples, 0),
+            Usage = ResourceUsage.Default,
+            BindFlags = BindFlags.RenderTarget,
+            CPUAccessFlags = CpuAccessFlags.None,
+            MiscFlags = ResourceOptionFlags.None
+        });
+        _msaaView = _device.CreateRenderTargetView(_msaaColor);
     }
 
     private void CreatePipeline()
@@ -663,6 +699,8 @@ public sealed class D3D11Backend : IGraphicsBackend
         _context.OMSetRenderTargets(0, Array.Empty<ID3D11RenderTargetView>(), null!);
         SafeDispose(_renderTarget);
         SafeDispose(BackBufferForDiagnostics);
+        SafeDispose(_msaaView);
+        SafeDispose(_msaaColor);
         SafeDispose(_depthView);
         SafeDispose(_depthTexture);
 
@@ -671,6 +709,7 @@ public sealed class D3D11Backend : IGraphicsBackend
             SwapChainFlags.AllowModeSwitch | SwapChainFlags.AllowTearing);
         CreateRenderTarget();
         CreateDepthBuffer();
+        CreateMsaaColorTarget();
         ApplyViewport();
     }
 
@@ -720,7 +759,7 @@ public sealed class D3D11Backend : IGraphicsBackend
         _context.PSSetShaderResource(4, _materialView!);
         _context.PSSetSampler(1, _materialSampler!);
 
-        _context.ClearRenderTargetView(_renderTarget, new Color4(0.02f, 0.02f, 0.03f, 1f));
+        _context.ClearRenderTargetView(_msaaView, new Color4(0.02f, 0.02f, 0.03f, 1f));
         _context.ClearDepthStencilView(_depthView, DepthStencilClearFlags.Depth, 1f, 0);
         BindRenderTarget();
 
@@ -802,6 +841,12 @@ public sealed class D3D11Backend : IGraphicsBackend
             _context.PSSetShaderResource(1, null!);
             unsafe { _context.OMSetBlendState(null, null, uint.MaxValue); }
         }
+
+        // Resolver el target multisample al back buffer ANTES de cerrar los timestamps: el resolve es
+        // trabajo de GPU del frame y tiene que entrar en la medición. El back buffer no está atado en
+        // este momento, que es la condición para que ResolveSubresource sea válido.
+        _context.ResolveSubresource(
+            BackBufferForDiagnostics, 0, _msaaColor, 0, DxgiFormat.B8G8R8A8_UNorm);
 
         _context.End(_timestampEnds[timingSlot]);
         _context.End(_disjointTimers[timingSlot]);
@@ -887,7 +932,7 @@ public sealed class D3D11Backend : IGraphicsBackend
 
     private void BindRenderTarget()
     {
-        _context.OMSetRenderTargets(1, new[] { _renderTarget }, _depthView);
+        _context.OMSetRenderTargets(1, new[] { _msaaView }, _depthView);
     }
 
     /// <summary>
@@ -1118,7 +1163,8 @@ public sealed class D3D11Backend : IGraphicsBackend
         foreach (var query in _disjointTimers) SafeDispose(query);
         foreach (var query in _timestampStarts) SafeDispose(query);
         foreach (var query in _timestampEnds) SafeDispose(query);
-        SafeDispose(_depthView); SafeDispose(_depthTexture); SafeDispose(_renderTarget); SafeDispose(BackBufferForDiagnostics);
+        SafeDispose(_depthView); SafeDispose(_depthTexture); SafeDispose(_msaaView); SafeDispose(_msaaColor);
+        SafeDispose(_renderTarget); SafeDispose(BackBufferForDiagnostics);
         SafeDispose(_swapChain); SafeDispose(_context); SafeDispose(_device); SafeDispose(_factory);
     }
 

@@ -45,6 +45,8 @@ public sealed partial class LimpiezaPage : Page
         public required TextBlock Size { get; set; }
         public string? BrowserId { get; init; }
         public BrowserSubItem? SubItem { get; init; }
+        /// <summary>Tamaño escaneado del ítem: con esto se calcula el total tildado.</summary>
+        public long Bytes { get; set; }
     }
 
     private sealed class CustomUi
@@ -52,12 +54,16 @@ public sealed partial class LimpiezaPage : Page
         public required CleanupTargetInfo Target { get; init; }
         public required CheckBox Check { get; init; }
         public required TextBlock Size { get; init; }
+        /// <summary>Tamaño escaneado del ítem: con esto se calcula el total tildado.</summary>
+        public long Bytes { get; set; }
     }
 
     private readonly List<ChequeoUi> _chequeoItems = new();
     private readonly List<ChequeoUi> _chequeoApps = new();  // fase 2: procesos con ventana
     private readonly List<ChequeoUi> _chequeoStartup = new(); // fase 3: apps de inicio
     private int _chequeoPhase;         // 0=limpieza, 1=apps, 2=inicio
+    /// <summary>Bytes encontrados por el último análisis (lo que se puede limpiar como máximo).</summary>
+    private long _chequeoFoundBytes;
     /// <summary>Timer que refresca en vivo la RAM de las apps en segundo plano (fase 2).</summary>
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _chequeoAppsTimer;
     /// <summary>Nombres de cada fase del Chequeo (claves de traducción).</summary>
@@ -486,6 +492,7 @@ public sealed partial class LimpiezaPage : Page
 
                         var ci = _custom.FirstOrDefault(s => s.Target.Id == item.Id);
                         if (ci == null) continue;
+                        ci.Bytes = item.Bytes;
                         ci.Size.Text = item.FileCount > 0 && item.Bytes == 0
                             ? I18n.T("{0} entradas", item.FileCount)
                             : FormatBytes(item.Bytes);
@@ -650,11 +657,10 @@ public sealed partial class LimpiezaPage : Page
             _chequeoPhase = 0;
             ChequeoProgressPanel.Visibility = Visibility.Collapsed;
             ChequeoResultsPanel.Visibility = Visibility.Visible;
-            if (ChequeoTotalsText != null)
-            {
-                ChequeoTotalsText.Text = I18n.T("Total: {0}", FormatBytes(totalBytes));
-                ChequeoTotalsText.Visibility = Visibility.Visible;
-            }
+            // Dos cifras: todo lo encontrado y lo que realmente se va a limpiar con los
+            // checks actuales. Destildar una carpeta grande tiene que notarse en la segunda.
+            _chequeoFoundBytes = totalBytes;
+            UpdateChequeoTotalFromChecks();
             if (ChequeoHeroCard != null) ChequeoHeroCard.Visibility = Visibility.Visible;
             if (ChequeoHeroDetails != null) ChequeoHeroDetails.Visibility = Visibility.Visible;
             UpdateChequeoPhaseView();
@@ -1156,11 +1162,11 @@ public sealed partial class LimpiezaPage : Page
         ChequeoAppsHost?.Children.Clear();
         CategoriesHost?.Children.Clear();
         ChequeoStartupHost?.Children.Clear();
+        _chequeoFoundBytes = 0;
         if (ChequeoTotalsText != null)
-        {
             ChequeoTotalsText.Text = "—";
-            ChequeoTotalsText.Visibility = Visibility.Visible;
-        }
+        if (ChequeoToCleanText != null)
+            ChequeoToCleanText.Text = "—";
         if (ChequeoFeedbackText != null) ChequeoFeedbackText.Visibility = Visibility.Collapsed;
         if (ChequeoBrowserTotal != null) ChequeoBrowserTotal.Visibility = Visibility.Collapsed;
         if (ChequeoAppsTotal != null) ChequeoAppsTotal.Visibility = Visibility.Collapsed;
@@ -1263,12 +1269,16 @@ public sealed partial class LimpiezaPage : Page
     /// </summary>
     private async void ChequeoCleanButton_Click(object sender, RoutedEventArgs e)
     {
-        var checkedItems = _chequeoItems.Where(c => c.Check.IsChecked == true).ToList();
-        if (checkedItems.Count == 0) return;
+        var checkedBrowsers = _chequeoItems.Where(c => c.Check.IsChecked == true).ToList();
+        // Las categorías personalizadas también forman parte del chequeo: antes el total
+        // las contaba pero la limpieza solo recorría los navegadores.
+        var checkedCustom = _custom.Where(c => c.Check.IsChecked == true).ToList();
+        int checkedCount = checkedBrowsers.Count + checkedCustom.Count;
+        if (checkedCount == 0) return;
 
         if (XamlRoot == null) return;
-        var dialogContent = I18n.T("Se limpiarán {0} elementos seleccionados. Esta acción no se puede deshacer.", checkedItems.Count);
-        if (checkedItems.Any(c => c.SubItem == BrowserSubItem.Cookies))
+        var dialogContent = I18n.T("Se limpiarán {0} elementos seleccionados. Esta acción no se puede deshacer.", checkedCount);
+        if (checkedBrowsers.Any(c => c.SubItem == BrowserSubItem.Cookies))
             dialogContent += "\n" + I18n.T("Incluiste Cookies: se cerrarán las sesiones iniciadas en los sitios web.");
         var dialog = new ContentDialog
         {
@@ -1282,13 +1292,13 @@ public sealed partial class LimpiezaPage : Page
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
 
         SetBusy(false);
-        _logging.LogInfo($"[Chequeo] Limpieza iniciada: {checkedItems.Count} elemento(s) seleccionado(s).");
+        _logging.LogInfo($"[Chequeo] Limpieza iniciada: {checkedCount} elemento(s) seleccionado(s).");
         Feedback.Running(ChequeoFeedbackText, "Limpiando...", persistent: true);
         var dq = DispatcherQueue;
 
         // Mientras se borra, el velocímetro ocupa el lugar de los resultados y
         // avanza con los elementos ya limpiados (mismo dial del arranque).
-        int cleanTotal = checkedItems.Count;
+        int cleanTotal = checkedCount;
         int cleanDone = 0;
         SetChequeoCleaning(0, cleanTotal);
         long totalFreed = 0;
@@ -1296,8 +1306,8 @@ public sealed partial class LimpiezaPage : Page
         try
         {
             // Agrupar: browsers por browserId, custom targets juntos.
-            var browserItems = checkedItems.Where(c => c.BrowserId != null).GroupBy(c => c.BrowserId!).ToList();
-            var customIds = checkedItems.Where(c => c.BrowserId == null).Select(c => c.Id).Distinct().ToList();
+            var browserItems = checkedBrowsers.GroupBy(c => c.BrowserId!).ToList();
+            var customIds = checkedCustom.Select(c => c.Target.Id).Distinct().ToList();
 
             // Limpiar navegadores (uno por uno).
             foreach (var group in browserItems)
@@ -1323,14 +1333,19 @@ public sealed partial class LimpiezaPage : Page
 
             dq.TryEnqueue(() =>
             {
-                foreach (var c in checkedItems)
+                foreach (var c in checkedBrowsers)
+                {
+                    c.Size.Text = "—";
+                    c.Check.IsChecked = false;
+                }
+                foreach (var c in checkedCustom)
                 {
                     c.Size.Text = "—";
                     c.Check.IsChecked = false;
                 }
                 ChequeoBrowserTotal.Visibility = Visibility.Collapsed;
-                ChequeoTotalsText.Text = I18n.T("Limpieza completada: {0} liberados.", FormatBytes(totalFreed));
-                ChequeoTotalsText.Visibility = Visibility.Visible;
+                // "Total a limpiar" queda en 0 B solo (los checks se desmarcan arriba);
+                // el resultado de la limpieza se anuncia en el texto de feedback.
                 UpdateChequeoPhaseView();
                 Feedback.Success(ChequeoFeedbackText, I18n.T("Limpieza completada: {0} liberados.", FormatBytes(totalFreed)));
                 _logging.LogInfo($"[Chequeo] Limpieza completada: {FormatBytes(totalFreed)} liberados.");
@@ -1771,10 +1786,31 @@ public sealed partial class LimpiezaPage : Page
         {
             if (c.BrowserId == browserId && c.SubItem == subItem)
             {
+                c.Bytes = bytes;
                 c.Size.Text = FormatBytes(bytes);
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Refresca las dos cifras del encabezado: lo encontrado por el análisis y lo
+    /// tildado (lo que realmente se liberaría al limpiar). La segunda se recalcula al
+    /// terminar el análisis y cada vez que se marca o desmarca un ítem (navegadores y
+    /// categorías personalizadas).
+    /// </summary>
+    private void UpdateChequeoTotalFromChecks()
+    {
+        long selected = 0;
+        foreach (var c in _chequeoItems)
+            if (c.Check.IsChecked == true) selected += c.Bytes;
+        foreach (var c in _custom)
+            if (c.Check.IsChecked == true) selected += c.Bytes;
+
+        if (ChequeoTotalsText != null)
+            ChequeoTotalsText.Text = FormatBytes(_chequeoFoundBytes);
+        if (ChequeoToCleanText != null)
+            ChequeoToCleanText.Text = FormatBytes(selected);
     }
 
     // =====================================================================
@@ -1998,6 +2034,7 @@ public sealed partial class LimpiezaPage : Page
     private void OnChequeoItemCheckChanged(object sender, RoutedEventArgs e)
     {
         if (_chequeoPhase == 0) UpdateChequeoCleanButton();
+        UpdateChequeoTotalFromChecks();
     }
 
     // =====================================================================

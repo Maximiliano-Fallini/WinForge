@@ -8,7 +8,6 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using LibreHardwareMonitor.Hardware;
-using LibreHardwareMonitor.PawnIo;
 using WHPO.Core.Services.Fan;
 using WHPO.Core.Services.Interfaces;
 
@@ -39,12 +38,6 @@ namespace WHPO.Core.Services;
 /// </summary>
 public class FanControlService : IFanControlService
 {
-    // Instalador oficial de PawnIO: versión pinneada (NO el permalink "latest",
-    // que cambiaría de hash al salir una versión nueva) + SHA-256 verificado
-    // contra el artefacto descargado de github.com/namazso/PawnIO.Setup.
-    private const string PawnIOSetupUrl = "https://github.com/namazso/PawnIO.Setup/releases/download/2.2.0/PawnIO_setup.exe";
-    private const string PawnIOSetupSha256 = "1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032";
-
     /// <summary>Reintentos de detección del SuperIO cuando Open() vino vacío.</summary>
     private const int MaxRedetectAttempts = 3;
     private const int RedetectDelayMs = 1500;
@@ -53,6 +46,7 @@ public class FanControlService : IFanControlService
 
     private readonly ILoggingService _loggingService;
     private readonly ISettingsService _settingsService;
+    private readonly IPawnIoService _pawnIoService;
     private readonly object _lock = new();
     private Computer? _computer;
     private bool _initFailed;
@@ -69,6 +63,20 @@ public class FanControlService : IFanControlService
     private readonly Dictionary<string, (IHardware Hardware, IFanWriteHandle Control, ISensor Sensor)> _controlsById = new();
     private readonly Dictionary<string, (IHardware Hardware, ISensor Sensor)> _fansById = new();
 
+    // Sensores de temperatura que pueden alimentar una curva, por id estable de LHM.
+    // Se refresca con el hardware ya actualizado (ver RefreshTemperatureSourcesLocked);
+    // es lo que resuelve el sensor elegido por el usuario en cada tick.
+    private sealed record TemperatureSourceEntry(string Name, IHardware Hardware, ISensor Sensor);
+    private readonly Dictionary<string, TemperatureSourceEntry> _temperatureSourcesById = new(StringComparer.Ordinal);
+
+    // Aviso de sensor elegido que ya no existe: una vez por canal, no por tick.
+    private readonly HashSet<string> _missingSourceWarned = new(StringComparer.Ordinal);
+
+    // True si en esta sesión se puso algún canal en modo software (manual, curva
+    // o calibración). El cierre solo abre el hardware para restaurar si hace falta:
+    // un usuario que nunca tocó un ventilador no paga el escaneo del bus al salir.
+    private bool _touchedChannels;
+
     // Curvas por canal: puntos ordenados por temperatura + flag activo.
     // internal (no private) para que el harness de verificación del motor de curvas
     // (tools/CurveEngineProbe) pueda ejercer la planificación real, sin duplicarla.
@@ -76,6 +84,12 @@ public class FanControlService : IFanControlService
     {
         public List<FanCurvePoint> Points = new();
         public bool Enabled;
+
+        // Sensor que alimenta esta curva (vacío = automático: CPU en la placa, GPU
+        // en la video). Se copia de settings al crear el estado para que el tick no
+        // dependa de una lectura de settings por canal y para poder cambiarlo en
+        // caliente desde SetTemperatureSource.
+        public string TemperatureSourceId = "";
 
         // Dinámica de aplicación (persistida por canal): los filtros entre la
         // temperatura medida y el duty escrito. Todo en 0 = sin filtros.
@@ -121,27 +135,26 @@ public class FanControlService : IFanControlService
     // El diagnóstico de GPU se deja una sola vez por sesión (ver LogGpuDiagnostics).
     private bool _gpuDiagnosticsLogged;
 
-    public FanControlService(ILoggingService loggingService, ISettingsService settingsService)
+    public FanControlService(
+        ILoggingService loggingService,
+        ISettingsService settingsService,
+        IPawnIoService pawnIoService)
     {
         _loggingService = loggingService;
         _settingsService = settingsService;
+        _pawnIoService = pawnIoService;
     }
 
     public FanControlStatus GetStatus()
     {
         EnsureInitialized();
 
-        bool installed;
-        string? version = null;
-        try
-        {
-            installed = PawnIo.IsInstalled;
-            if (installed) version = PawnIo.Version.ToString();
-        }
-        catch
-        {
-            installed = false;
-        }
+        // El estado del driver vive en el servicio compartido: Sensores y
+        // Ventiladores ven exactamente lo mismo, y la instalación no depende de
+        // ninguno de los dos componentes.
+        var pawnIo = _pawnIoService.GetStatus();
+        bool installed = pawnIo.Installed;
+        string? version = pawnIo.Version;
 
         string? chipName = null;
         int fanCount = 0;
@@ -175,6 +188,7 @@ public class FanControlService : IFanControlService
                 _fansById.Clear();
 
                 var channels = CollectChannels(update: true);
+                RefreshTemperatureSourcesLocked();
                 LogGpuDiagnostics();
 
                 foreach (var channel in channels)
@@ -182,7 +196,6 @@ public class FanControlService : IFanControlService
                     var owner = channel.Owner;
                     var chipName = channel.ChipName;
                     var isGpu = IsGpu(owner);
-                    var refTemp = ReferenceTemperatureC(owner);
 
                     // 1) Canales con control PWM: el sensor de control lleva el
                     //    nombre del fan y su IControl escribe el duty. Igual en el
@@ -195,6 +208,8 @@ public class FanControlService : IFanControlService
                     {
                         var id = c.Identifier?.ToString() ?? $"{chipName}/control/{c.Index}";
                         var rpm = channel.Fans.FirstOrDefault(f => f.Index == c.Index)?.Value;
+                        var channelTemp = ReferenceTemperatureC(owner, id, out var channelSource, out var channelSynthetic);
+                        var selectedSource = GetTemperatureSource(id);
                         var control = c.Control;
                         IFanWriteHandle? write = control != null ? new LhmFanWriteHandle(control) : null;
 
@@ -217,10 +232,13 @@ public class FanControlService : IFanControlService
                             // ventilador, igual que muestra FanControl.
                             DutyPercent: c.Value,
                             IsGpu: isGpu,
-                            Temperature: refTemp,
+                            Temperature: channelTemp,
                             IsCurveActive: _curves.TryGetValue(id, out var cs) && cs.Enabled,
                             RawName: c.Name,
-                            HasCustomName: HasCustomName(id)));
+                            HasCustomName: HasCustomName(id),
+                            TemperatureSourceId: selectedSource,
+                            TemperatureSourceName: channelSource,
+                            TemperatureSourceSynthetic: channelSynthetic));
                     }
 
                     // 2) Canales SIN control en LHM: GPUs Intel (IGCL solo publica
@@ -233,6 +251,8 @@ public class FanControlService : IFanControlService
                     foreach (var f in channel.Fans.Where(f => channel.Controls.All(c => c.Index != f.Index)))
                     {
                         var id = f.Identifier?.ToString() ?? $"{chipName}/fan/{f.Index}";
+                        var channelTemp = ReferenceTemperatureC(owner, id, out var channelSource, out var channelSynthetic);
+                        var selectedSource = GetTemperatureSource(id);
                         IFanWriteHandle? vendorWrite = isGpu
                             ? GpuFanVendor.TryGetWriteHandle(owner, f.Index, _loggingService)
                             : null;
@@ -249,10 +269,13 @@ public class FanControlService : IFanControlService
                             IsManual: vendorWrite?.Mode == FanWriteMode.Software,
                             DutyPercent: vendorWrite?.ReadPercent(),
                             IsGpu: isGpu,
-                            Temperature: refTemp,
+                            Temperature: channelTemp,
                             IsCurveActive: _curves.TryGetValue(id, out var cs2) && cs2.Enabled,
                             RawName: f.Name,
-                            HasCustomName: HasCustomName(id)));
+                            HasCustomName: HasCustomName(id),
+                            TemperatureSourceId: selectedSource,
+                            TemperatureSourceName: channelSource,
+                            TemperatureSourceSynthetic: channelSynthetic));
                     }
                 }
             }
@@ -297,6 +320,7 @@ public class FanControlService : IFanControlService
                     _loggingService.LogWarning($"{LogTag} {fanId}: el backend rechazó el duty {percent:0}%");
                     return false;
                 }
+                _touchedChannels = true;
                 _loggingService.LogInfo($"{LogTag} {fanId} duty manual {percent:0}%");
                 return true;
             }
@@ -466,6 +490,7 @@ public class FanControlService : IFanControlService
                     disabledCurves.Add(id);
                 }
             }
+            _touchedChannels = false;
             _loggingService.LogInfo($"{LogTag} todos los canales devueltos al BIOS");
         }
 
@@ -546,86 +571,31 @@ public class FanControlService : IFanControlService
         _loggingService.LogInfo($"{LogTag} hardware reinicializado");
     }
 
-    public async Task<PawnIOInstallResult> InstallPawnIOSilentAsync()
-    {
-        try
-        {
-            // Si ya está, nada que hacer.
-            if (IsPawnIOInstalled())
-                return new PawnIOInstallResult(true, "PawnIO ya está instalado.");
-
-            Directory.CreateDirectory(CacheDir);
-            var cached = Path.Combine(CacheDir, "PawnIO_setup.exe");
-
-            // 1) Copia de una instalación/verificación anterior.
-            if (!HasValidHash(cached))
-            {
-                // 2) Copia opcional junto al exe (instalación sin red), solo si
-                //    el hash coincide — igual que el driver de Overclock USB.
-                if (HasValidHash(BundledSetupPath))
-                {
-                    File.Copy(BundledSetupPath, cached, overwrite: true);
-                    _loggingService.LogInfo($"{LogTag} instalador resuelto desde {BundledSetupPath}");
-                }
-                else
-                {
-                    // 3) Descarga de la release oficial pinneada.
-                    await DownloadInstallerAsync(cached);
-                }
-            }
-
-            // Verificación SIEMPRE, también sobre lo recién descargado.
-            if (!HasValidHash(cached))
-            {
-                try { File.Delete(cached); } catch { }
-                _loggingService.LogWarning($"{LogTag} el instalador de PawnIO no coincide con el hash oficial; no se ejecuta");
-                return new PawnIOInstallResult(false, "El instalador descargado no coincide con el hash oficial de PawnIO (SHA-256). No se ejecutó: probá de nuevo más tarde.");
-            }
-
-            _loggingService.LogInfo($"{LogTag} instalador verificado ({new FileInfo(cached).Length / 1024} KB), ejecutando silencioso");
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = cached,
-                Arguments = "/S",
-                UseShellExecute = true,
-                Verb = "runas" // fuerza elevación si la app no corre como admin
-            };
-
-            using var process = Process.Start(psi);
-            if (process == null)
-                return new PawnIOInstallResult(false, "No se pudo iniciar el instalador de PawnIO.");
-
-            await process.WaitForExitAsync();
-            _loggingService.LogInfo($"{LogTag} instalador terminó con código {process.ExitCode}");
-
-            // Darle un momento al driver para que quede operativo.
-            await Task.Delay(500);
-
-            bool ok = IsPawnIOInstalled();
-            return ok
-                ? new PawnIOInstallResult(true, "PawnIO instalado correctamente.")
-                : new PawnIOInstallResult(false, $"El instalador terminó (código {process.ExitCode}) pero PawnIO no quedó registrado.");
-        }
-        catch (Exception ex)
-        {
-            _loggingService.LogWarning($"{LogTag} instalación de PawnIO falló: {ex.Message}");
-            // Antes cualquier fallo decía «Instalación fallida: <mensaje técnico>» y la
-            // conexión caída no se distinguía de un hash inválido o de un fallo de
-            // elevación. El mensaje de red es una clave traducible.
-            return new PawnIOInstallResult(false, NetworkError.IsConnectionFailure(ex)
-                ? "No se pudo descargar el instalador de PawnIO: revisá tu conexión a internet e intentá de nuevo."
-                : $"Instalación fallida: {ex.Message}");
-        }
-    }
+    /// <summary>
+    /// Compatibilidad: la instalación real vive en <see cref="IPawnIoService"/>.
+    /// Se conserva porque la página de Ventiladores y los componentes externos
+    /// pueden llamar a este método; así el driver sigue siendo uno solo.
+    /// </summary>
+    public Task<PawnIOInstallResult> InstallPawnIOSilentAsync()
+        => _pawnIoService.InstallAsync();
 
     public void Dispose()
     {
-        // Antes de soltar el hardware, devolver todos los canales al BIOS para
-        // no dejar la máquina en PWM fijo al cerrar WinForge (y cortar cualquier
-        // calibración en curso, que volvería a escribir duty).
         _disposed = true;
-        try { RestoreAll(); } catch { }
+
+        // El motor se detiene ANTES de restaurar: si siguiera vivo, el próximo tick
+        // volvería a escribir el duty que estamos soltando.
+        lock (_lock)
+        {
+            try { _curveTimer?.Dispose(); } catch { }
+            _curveTimer = null;
+        }
+
+        // Al cerrar, los canales vuelven al BIOS pero las curvas y su autostart se
+        // CONSERVAN: cerrar la app no es "soltar las curvas". El botón "Todos al
+        // automático" usa RestoreAll, que sí las apaga (decisión explícita).
+        try { RestoreChannelsToBios(); } catch { }
+
         lock (_lock)
         {
             try { _computer?.Close(); } catch { }
@@ -635,6 +605,36 @@ public class FanControlService : IFanControlService
         // se cierran recién acá, después de devolver los canales a automático.
         GpuFanVendor.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Devuelve TODOS los canales al BIOS sin tocar las curvas ni el autostart.
+    /// Es el camino del apagado: la máquina no puede quedar con un duty fijo, pero
+    /// las curvas tienen que volver a aplicarse en el próximo arranque.
+    /// Para la acción explícita del usuario está <see cref="RestoreAll"/>, que además
+    /// apaga las curvas.
+    /// </summary>
+    private void RestoreChannelsToBios()
+    {
+        lock (_lock)
+        {
+            // Sin ningún duty nuestro escrito, no hay nada que soltar y no vale
+            // la pena abrir el hardware (bus ISA lento) durante el apagado.
+            if (!_touchedChannels) return;
+
+            if (_controlsById.Count == 0)
+            {
+                try { GetFans(); } catch { }
+            }
+
+            foreach (var id in _controlsById.Keys.ToList())
+            {
+                try { _controlsById[id].Control.SetDefault(); } catch { }
+            }
+
+            _touchedChannels = false;
+            _loggingService.LogInfo($"{LogTag} canales devueltos al BIOS al cerrar (curvas conservadas)");
+        }
     }
 
     // =====================================================================
@@ -899,44 +899,245 @@ public class FanControlService : IFanControlService
     // =====================================================================
 
     /// <summary>
-    /// Temperatura de referencia del canal (°C), para las curvas: la del paquete
-    /// de CPU para headers de la placa (el cooler de CPU cuelga de ahí), y la
-    /// del núcleo de la GPU para los canales de video. Null si no hay lectura.
-    /// Requiere _lock tomado (usa _computer para llegar al CPU).
+    /// Temperatura de referencia del canal (°C) para las curvas: el sensor elegido
+    /// por el usuario o, si no hay ninguno, el automático (paquete del CPU para los
+    /// headers de la placa, núcleo de la GPU para los canales de video). Devuelve
+    /// también el nombre del sensor usado y si es virtual, para que la card muestre
+    /// contra qué está reaccionando.
+    /// Requiere _lock tomado (usa _computer y el índice de sensores).
     /// </summary>
-    private double? ReferenceTemperatureC(IHardware owner)
+    private double? ReferenceTemperatureC(IHardware owner, string fanId, out string? sourceName, out bool synthetic)
     {
+        sourceName = null;
+        synthetic = false;
         try
         {
-            if (IsGpu(owner))
+            // El estado en memoria manda: es el que SetTemperatureSource actualiza
+            // en caliente. Para un canal sin curva todavía se lee de settings.
+            string selected;
+            lock (_lock)
             {
-                return owner.Sensors
-                    .Where(s => s.SensorType == SensorType.Temperature)
-                    .OrderBy(s => s.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-                    .FirstOrDefault()?.Value;
+                selected = _curves.TryGetValue(fanId, out var state)
+                    ? state.TemperatureSourceId
+                    : GetTemperatureSource(fanId);
             }
 
-            // Headers de placa: la temperatura del paquete del CPU.
-            if (_computer == null) return null;
-            foreach (var hw in _computer.Hardware)
+            if (!string.IsNullOrEmpty(selected))
             {
-                if (hw.HardwareType != HardwareType.Cpu) continue;
-                var t = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature &&
-                    (s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase) ||
-                     s.Name.Contains("CCD", StringComparison.OrdinalIgnoreCase) ||
-                     s.Name.Contains("Tctl", StringComparison.OrdinalIgnoreCase)))?.Value;
-                if (t.HasValue) return t;
-                // Fallback: la más alta de las temperaturas del CPU (más
-                // representativa que el promedio para gobernar un cooler).
-                return hw.Sensors.Where(s => s.SensorType == SensorType.Temperature)
-                    .Max(s => s.Value);
+                if (selected == MixMaxCpuGpuId)
+                {
+                    sourceName = MixMaxCpuGpuName;
+                    synthetic = true;
+                    return MaxCpuGpuTemperatureC();
+                }
+
+                if (_temperatureSourcesById.TryGetValue(selected, out var entry))
+                {
+                    sourceName = entry.Name;
+                    return entry.Sensor.Value;
+                }
+
+                // El sensor guardado ya no está (GPU apagada, hardware cambiado):
+                // se cae al automático en vez de soltar el canal. Se avisa una vez
+                // por canal para no llenar el log en cada tick.
+                if (_missingSourceWarned.Add(fanId))
+                    _loggingService.LogWarning($"{LogTag} {fanId}: el sensor guardado '{selected}' no está disponible; se usa el automático");
             }
+
+            if (IsGpu(owner))
+            {
+                var sensor = GpuTemperatureSensor(owner);
+                sourceName = sensor?.Name;
+                return sensor?.Value;
+            }
+
+            var cpuSensor = CpuTemperatureSensor();
+            sourceName = cpuSensor?.Name;
+            return cpuSensor?.Value;
         }
         catch
         {
             // Sin lectura de temperatura: la curva no aplica duty extra.
+            return null;
+        }
+    }
+
+    // Sensor de temperatura de la GPU: el mismo que usa la app como referencia
+    // automática (prefiere "GPU Core").
+    private static ISensor? GpuTemperatureSensor(IHardware gpu)
+        => gpu.Sensors
+            .Where(s => s.SensorType == SensorType.Temperature)
+            .OrderBy(s => s.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .FirstOrDefault();
+
+    // Sensor de temperatura del CPU: paquete/CCD/Tctl y, si no hay, la lectura más
+    // alta (más representativa que el promedio para gobernar un cooler).
+    private ISensor? CpuTemperatureSensor()
+    {
+        if (_computer == null) return null;
+        foreach (var hw in _computer.Hardware)
+        {
+            if (hw.HardwareType != HardwareType.Cpu) continue;
+            var sensor = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Temperature &&
+                (s.Name.Contains("Package", StringComparison.OrdinalIgnoreCase) ||
+                 s.Name.Contains("CCD", StringComparison.OrdinalIgnoreCase) ||
+                 s.Name.Contains("Tctl", StringComparison.OrdinalIgnoreCase)));
+            if (sensor != null) return sensor;
+            return hw.Sensors
+                .Where(s => s.SensorType == SensorType.Temperature)
+                .OrderByDescending(s => s.Value ?? double.MinValue)
+                .FirstOrDefault();
         }
         return null;
+    }
+
+    // El virtual de los fans de caja: el componente más caliente de CPU y GPU.
+    private double? MaxCpuGpuTemperatureC()
+    {
+        double? max = null;
+        foreach (var entry in _temperatureSourcesById.Values)
+        {
+            if (entry.Hardware.HardwareType != HardwareType.Cpu && !IsGpu(entry.Hardware)) continue;
+            if (entry.Sensor.Value is not float value) continue;
+            max = max.HasValue ? Math.Max(max.Value, value) : value;
+        }
+
+        if (max.HasValue) return max;
+
+        // Índice vacío (arranque muy temprano): se resuelve contra el hardware.
+        var cpu = CpuTemperatureSensor()?.Value;
+        if (cpu.HasValue) max = cpu;
+        if (_computer != null)
+        {
+            foreach (var hw in _computer.Hardware.Where(IsGpu))
+            {
+                foreach (var s in hw.Sensors.Where(s => s.SensorType == SensorType.Temperature))
+                {
+                    if (s.Value is not float value) continue;
+                    max = max.HasValue ? Math.Max(max.Value, value) : value;
+                }
+            }
+        }
+        return max;
+    }
+
+    /// <summary>
+    /// Reconstruye el índice de sensores con el hardware YA actualizado (no hace
+    /// Update propio: el llamador lo hizo). Requiere _lock tomado.
+    /// </summary>
+    private void RefreshTemperatureSourcesLocked()
+    {
+        _temperatureSourcesById.Clear();
+        if (_computer == null) return;
+
+        foreach (var hw in AllHardware())
+        {
+            foreach (var sensor in hw.Sensors)
+            {
+                if (sensor.SensorType != SensorType.Temperature) continue;
+                // "Distance to Tjmax" es un margen hasta el límite, no una temperatura
+                // absoluta: usarlo en una curva la haría reaccionar al revés.
+                if (IsThermalMargin(sensor)) continue;
+                var id = sensor.Identifier?.ToString();
+                if (string.IsNullOrWhiteSpace(id)) continue;
+                _temperatureSourcesById[id] = new TemperatureSourceEntry(FriendlySensorName(hw, sensor), hw, sensor);
+            }
+        }
+    }
+
+    private static bool IsThermalMargin(ISensor sensor) =>
+        sensor.Name.Contains("Distance to Tjmax", StringComparison.OrdinalIgnoreCase) ||
+        sensor.Name.Contains("Thermal Margin", StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<IHardware> AllHardware()
+    {
+        if (_computer == null) yield break;
+        foreach (var hw in _computer.Hardware)
+        {
+            yield return hw;
+            foreach (var sub in hw.SubHardware) yield return sub;
+        }
+    }
+
+    private static string FriendlySensorName(IHardware hw, ISensor sensor)
+        => hw.HardwareType switch
+        {
+            // CPU y GPU ya traen nombres claros ("CPU Package", "GPU Core").
+            HardwareType.Cpu or HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel => sensor.Name,
+            // En la placa el sensor suele ser genérico ("Temperature #3"): se
+            // antepone el chip para poder distinguirlo.
+            _ => $"{hw.Name} · {sensor.Name}"
+        };
+
+    // Clasificación del sensor por rol, para ordenar el desplegable y mostrar el
+    // grupo delante del nombre cuando el nombre no lo dice por sí solo.
+    private static FanTemperatureGroup ClassifyTemperatureSource(IHardware hw, ISensor sensor)
+    {
+        if (hw.HardwareType == HardwareType.Cpu) return FanTemperatureGroup.Cpu;
+        if (IsGpu(hw)) return FanTemperatureGroup.Gpu;
+        if (sensor.Name.Contains("VRM", StringComparison.OrdinalIgnoreCase)) return FanTemperatureGroup.Vrm;
+        if (hw.HardwareType == HardwareType.Motherboard) return FanTemperatureGroup.Motherboard;
+        return FanTemperatureGroup.Other;
+    }
+
+    private static int GroupOrder(FanTemperatureGroup group) => group switch
+    {
+        FanTemperatureGroup.Cpu => 0,
+        FanTemperatureGroup.Gpu => 1,
+        FanTemperatureGroup.Vrm => 2,
+        FanTemperatureGroup.Motherboard => 3,
+        _ => 4
+    };
+
+    // Dentro de cada grupo, primero el sensor que mejor representa al componente:
+    // paquete del CPU, núcleo de la GPU, VRM y sensor T antes que los genéricos.
+    private int SourceRoleOrder(string sourceId)
+    {
+        if (!_temperatureSourcesById.TryGetValue(sourceId, out var entry)) return 99;
+        var name = entry.Sensor.Name;
+
+        if (entry.Hardware.HardwareType == HardwareType.Cpu)
+        {
+            if (name.Contains("Package", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Tctl", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("CCD", StringComparison.OrdinalIgnoreCase)) return 0;
+            if (name.Contains("Core", StringComparison.OrdinalIgnoreCase)) return 1;
+            return 2;
+        }
+
+        if (IsGpu(entry.Hardware))
+        {
+            if (name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase)) return 0;
+            if (name.Contains("Hot Spot", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Hotspot", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (name.Contains("Memory", StringComparison.OrdinalIgnoreCase)) return 2;
+            return 3;
+        }
+
+        if (name.Contains("VRM", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (name.Contains("T_Sensor", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("T Sensor", StringComparison.OrdinalIgnoreCase)) return 1;
+        if (name.Contains("System", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Chipset", StringComparison.OrdinalIgnoreCase)) return 2;
+        return 3;
+    }
+
+    /// <summary>
+    /// Piso de duty de una curva. El rango entre 1% y el piso de arranque del
+    /// ventilador es el peor de los dos mundos: el canal queda energizado, la app
+    /// cree que está enfriando y el ventilador no gira. Se saltea entero: cualquier
+    /// pedido mayor que cero sube al piso, y 0 sigue siendo apagar.
+    ///
+    /// Static e internal para poder ejercitarlo sin hardware, igual que
+    /// <see cref="PlanCurveDuty"/> y <see cref="CurveMissingTemp"/>.
+    /// </summary>
+    internal static float ApplyDutyFloor(float duty, double floorPercent)
+    {
+        if (duty <= 0) return 0;
+        if (floorPercent <= 0) return duty;
+
+        var floor = (float)Math.Clamp(floorPercent, 0, 100);
+        return duty >= floor ? duty : floor;
     }
 
     /// <summary>Duty interpolado linealmente en la curva del canal (null si la curva no aplica).</summary>
@@ -996,6 +1197,10 @@ public class FanControlService : IFanControlService
 
     private const string CurveProfilePrefix = "fan.curve.profile.";
 
+    // Piso de duty por canal (el "Start %" de FanControl). Fuera de las claves de
+    // dinámica porque no es un filtro de la curva: es un límite del ventilador.
+    private const string MinDutyPrefix = "fan.minduty.";
+
     public string GetCurveProfile(string fanId)
     {
         try { return _settingsService.Get(CurveProfilePrefix + fanId, string.Empty); }
@@ -1048,6 +1253,47 @@ public class FanControlService : IFanControlService
             $"{LogTag} dinámica de {fanId}: histéresis {clean.HysteresisC:0.#} °C, respuesta {clean.ResponseSeconds:0.#} s, subida {clean.StepUpPercent:0.#} %/tick, bajada {clean.StepDownPercent:0.#} %/tick");
     }
 
+    public double GetMinDuty(string fanId) => MinDutyFor(fanId);
+
+    /// <summary>
+    /// Piso de duty del canal. Se lee en cada tick del motor, igual que el sensor de
+    /// temperatura del canal: es una preferencia que puede cambiar en caliente y no
+    /// justifica un caché propio.
+    /// </summary>
+    private float MinDutyFor(string fanId)
+    {
+        try
+        {
+            var value = _settingsService.Get(MinDutyPrefix + fanId, 0.0);
+            return (float)Math.Clamp(double.IsFinite(value) ? value : 0, 0, 100);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public void SetMinDuty(string fanId, double percent)
+    {
+        var clean = Math.Clamp(double.IsFinite(percent) ? percent : 0, 0, 100);
+
+        try
+        {
+            _settingsService.Set(MinDutyPrefix + fanId, clean);
+            _settingsService.Save();
+
+            // El piso nuevo rige en el próximo tick. Si la curva ya está aplicada y el
+            // duty escrito cae dentro del rango nuevo, el motor lo corrige solo (el
+            // duty pedido cambia y deja de coincidir con el aplicado).
+            _loggingService.LogInfo($"{LogTag} {fanId}: piso de duty {clean:0}%" +
+                (clean > 0 ? string.Empty : " (sin piso)"));
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"{LogTag} guardar piso de {fanId} falló: {ex.Message}");
+        }
+    }
+
     public void SetFanCurve(string fanId, List<FanCurvePoint> points, bool enabled)
     {
         EnsureInitialized();
@@ -1086,6 +1332,7 @@ public class FanControlService : IFanControlService
 
             state.Points = clean;
             state.Enabled = effectiveEnabled;
+            if (effectiveEnabled) _touchedChannels = true;
             // Reescribir la curva olvida el seguimiento: la edición se aplica en el
             // próximo tick, sin esperar histéresis ni tiempo de respuesta.
             ResetCurveTracking(state);
@@ -1166,6 +1413,10 @@ public class FanControlService : IFanControlService
                     { try { sub.Update(); } catch { } }
                 }
 
+                // Un sensor nuevo (otra GPU, un cabezal que apareció) entra al
+                // índice sin esperar a que la página vuelva a listar los fans.
+                RefreshTemperatureSourcesLocked();
+
                 var now = DateTime.UtcNow;
 
                 foreach (var (id, state) in _curves)
@@ -1177,7 +1428,7 @@ public class FanControlService : IFanControlService
                     // desapareció (re-detección), se omite este tick.
                     if (!_controlsById.TryGetValue(id, out var entry)) continue;
 
-                    var temp = ReferenceTemperatureC(entry.Hardware);
+                    var temp = ReferenceTemperatureC(entry.Hardware, id, out _, out _);
                     if (!temp.HasValue)
                     {
                         // Fail-safe: la decisión (contar ticks, soltar al BIOS al
@@ -1197,7 +1448,11 @@ public class FanControlService : IFanControlService
                     // del canal (histéresis, respuesta, rampa).
                     var asked = Interpolate(state.Points, temp.Value);
                     if (!asked.HasValue) continue;
-                    var raw = (float)Math.Round(asked.Value);
+
+                    // El piso se aplica ANTES de la dinámica: así histéresis, tiempo de
+                    // respuesta y rampas comparan contra el duty que realmente se
+                    // escribe, y no contra uno que el ventilador no puede cumplir.
+                    var raw = ApplyDutyFloor((float)Math.Round(asked.Value), MinDutyFor(id));
 
                     // PlanCurveDuty decide el duty de ESTE tick, o null si todavía no
                     // corresponde escribir (y de paso actualiza el seguimiento).
@@ -1447,6 +1702,88 @@ public class FanControlService : IFanControlService
 
     private bool HasCustomName(string fanId) => GetCustomName(fanId).Length > 0;
 
+    private const string TemperatureSourcePrefix = "fan.sensor.";
+
+    // Sensor virtual para los ventiladores de caja: el máximo de CPU y GPU.
+    private const string MixMaxCpuGpuId = "mix:cpu-gpu:max";
+    private const string MixMaxCpuGpuName = "Máximo de CPU y GPU";
+
+    public List<FanTemperatureSource> GetTemperatureSources()
+    {
+        EnsureInitialized();
+        lock (_lock)
+        {
+            if (_computer == null) return new List<FanTemperatureSource>();
+
+            // Si nadie llamó a GetFans todavía, el índice está vacío: se actualiza
+            // una vez para tener nombres y valores. En el camino normal GetFans ya
+            // dejó el índice al día y esto no vuelve a tocar el bus ISA.
+            if (_temperatureSourcesById.Count == 0)
+            {
+                foreach (var hw in AllHardware())
+                {
+                    try { hw.Update(); } catch { }
+                }
+                RefreshTemperatureSourcesLocked();
+            }
+
+            // Se devuelven todos los sensores, también los que no reportan en este
+            // instante: la UI filtra los que no tienen lectura, pero el índice del
+            // motor los conserva para que un sensor elegido pueda volver sin perder
+            // la configuración del canal.
+            var list = _temperatureSourcesById
+                .Select(kv => new FanTemperatureSource(
+                    kv.Key,
+                    kv.Value.Name,
+                    kv.Value.Sensor.Value,
+                    Group: ClassifyTemperatureSource(kv.Value.Hardware, kv.Value.Sensor)))
+                // Clasificados por rol: CPU, GPU, VRM, placa y el resto. Dentro de
+                // cada grupo, primero la lectura que gobierna (paquete/núcleo).
+                .OrderBy(s => GroupOrder(s.Group))
+                .ThenBy(s => SourceRoleOrder(s.Id), Comparer<int>.Default)
+                .ThenBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+
+            // Va primera para que sea fácil de encontrar entre los sensores reales.
+            list.Insert(0, new FanTemperatureSource(
+                MixMaxCpuGpuId, MixMaxCpuGpuName, MaxCpuGpuTemperatureC(), Synthetic: true));
+            return list;
+        }
+    }
+
+    public string GetTemperatureSource(string fanId)
+    {
+        try { return _settingsService.Get(TemperatureSourcePrefix + fanId, string.Empty) ?? string.Empty; }
+        catch { return string.Empty; }
+    }
+
+    public void SetTemperatureSource(string fanId, string? sourceId)
+    {
+        var value = sourceId ?? string.Empty;
+        try
+        {
+            _settingsService.Set(TemperatureSourcePrefix + fanId, value);
+            _settingsService.Save();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"{LogTag} guardar sensor de {fanId} falló: {ex.Message}");
+        }
+
+        lock (_lock)
+        {
+            if (_curves.TryGetValue(fanId, out var state))
+            {
+                state.TemperatureSourceId = value;
+                // La elección nueva se aplica ya, sin arrastrar histéresis ni
+                // respuesta decididas con el sensor anterior.
+                ResetCurveTracking(state);
+            }
+        }
+
+        _loggingService.LogInfo($"{LogTag} {fanId}: sensor de temperatura = {(value.Length == 0 ? "automático" : value)}");
+    }
+
     // =====================================================================
     // Persistencia de curvas en settings.json ("temp:duty;temp:duty…")
     // =====================================================================
@@ -1493,7 +1830,8 @@ public class FanControlService : IFanControlService
             HysteresisC = dynamics.HysteresisC,
             ResponseSeconds = dynamics.ResponseSeconds,
             StepUpPercent = dynamics.StepUpPercent,
-            StepDownPercent = dynamics.StepDownPercent
+            StepDownPercent = dynamics.StepDownPercent,
+            TemperatureSourceId = GetTemperatureSource(fanId)
         };
     }
 
@@ -1633,6 +1971,8 @@ public class FanControlService : IFanControlService
             entry.Hardware.Update();
             if (!entry.Control.SetSoftware(percent))
                 _loggingService.LogWarning($"{LogTag} calibración: el backend rechazó {percent}% en {fanId}");
+            else
+                _touchedChannels = true;
         }
         catch (Exception ex)
         {
@@ -1741,46 +2081,4 @@ public class FanControlService : IFanControlService
         };
     }
 
-    // =====================================================================
-    // Instalador de PawnIO (patrón Overclock USB: hash pinneado)
-    // =====================================================================
-
-    /// <summary>Carpeta de caché del instalador verificado (datos de la app).</summary>
-    private static string CacheDir => Path.Combine(AppPaths.RootDir, "pawnio");
-
-    /// <summary>Copia opcional junto al exe (solo se acepta si el hash coincide).</summary>
-    private static string BundledSetupPath
-        => Path.Combine(AppContext.BaseDirectory, "Assets", "Drivers", "PawnIO_setup.exe");
-
-    private static bool IsPawnIOInstalled()
-    {
-        try { return PawnIo.IsInstalled; }
-        catch { return false; }
-    }
-
-    private static bool HasValidHash(string path)
-    {
-        try
-        {
-            if (!File.Exists(path)) return false;
-            using var sha = SHA256.Create();
-            using var fs = File.OpenRead(path);
-            var hash = Convert.ToHexString(sha.ComputeHash(fs));
-            return hash.Equals(PawnIOSetupSha256, StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task DownloadInstallerAsync(string destPath)
-    {
-        using var http = new HttpClient();
-        http.Timeout = TimeSpan.FromMinutes(5);
-        using var response = await http.GetAsync(PawnIOSetupUrl, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-        await using var fs = File.Create(destPath);
-        await response.Content.CopyToAsync(fs);
-    }
 }

@@ -93,7 +93,16 @@ internal static unsafe class GlApi
     // que el shader la declara sampler2DShadow y el muestreo devuelve 0/1.
     internal const uint GL_FRAMEBUFFER = 0x8D40;
     internal const uint GL_DEPTH_ATTACHMENT = 0x8D00;
+    internal const uint GL_COLOR_ATTACHMENT0 = 0x8CE0;
     internal const uint GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
+
+    // ---- Antialiasing (MSAA de la escena) ----
+    // Textura multisample + blit de resolución al framebuffer de la ventana. Núcleo desde 3.2/3.0;
+    // el contexto del backend es 4.3, así que no hace falta extensión.
+    internal const uint GL_TEXTURE_2D_MULTISAMPLE = 0x9100;
+    internal const uint GL_READ_FRAMEBUFFER = 0x8CA8;
+    internal const uint GL_DRAW_FRAMEBUFFER = 0x8CA9;
+    internal const uint GL_NEAREST = 0x2600;
     internal const uint GL_DEPTH_COMPONENT = 0x1902;
     internal const uint GL_DEPTH_COMPONENT24 = 0x81A6;
     internal const uint GL_TEXTURE_COMPARE_MODE = 0x884C;
@@ -244,6 +253,8 @@ internal static unsafe class GlApi
     /// <summary>glTexImage2D y glTexParameteri son de OpenGL 1.1: las exporta el propio opengl32.dll.</summary>
     internal static delegate* unmanaged[Cdecl]<uint, int, int, int, int, int, uint, uint, void*, void> glTexImage2D;
     internal static delegate* unmanaged[Cdecl]<uint, uint, int, void> glTexParameteri;
+    internal static delegate* unmanaged[Cdecl]<uint, int, uint, int, int, int, void> glTexImage2DMultisample;
+    internal static delegate* unmanaged[Cdecl]<int, int, int, int, int, int, int, int, uint, uint, void> glBlitFramebuffer;
 
     /// <summary>glTexImage3D (una rebanada del arreglo de materiales por llamada, con su nivel de mip).</summary>
     internal static delegate* unmanaged[Cdecl]<uint, int, int, int, int, int, int, uint, uint, void*, void> glTexImage3D;
@@ -355,6 +366,8 @@ internal static unsafe class GlApi
         glActiveTexture = (delegate* unmanaged[Cdecl]<uint, void>)Resolve("glActiveTexture");
         glTexImage2D = (delegate* unmanaged[Cdecl]<uint, int, int, int, int, int, uint, uint, void*, void>)Resolve("glTexImage2D");
         glTexParameteri = (delegate* unmanaged[Cdecl]<uint, uint, int, void>)Resolve("glTexParameteri");
+        glTexImage2DMultisample = (delegate* unmanaged[Cdecl]<uint, int, uint, int, int, int, void>)Resolve("glTexImage2DMultisample");
+        glBlitFramebuffer = (delegate* unmanaged[Cdecl]<int, int, int, int, int, int, int, int, uint, uint, void>)Resolve("glBlitFramebuffer");
         glTexImage3D = (delegate* unmanaged[Cdecl]<uint, int, int, int, int, int, int, uint, uint, void*, void>)Resolve("glTexImage3D");
         glBlendFunc = (delegate* unmanaged[Cdecl]<uint, uint, void>)Resolve("glBlendFunc");
         glDrawArrays = (delegate* unmanaged[Cdecl]<uint, int, int, void>)Resolve("glDrawArrays");

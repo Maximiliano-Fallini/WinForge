@@ -26,10 +26,6 @@
             <Setter Property="Foreground" Value="{ThemeResource ErrorBrush}"/>
             <Setter Property="BorderBrush" Value="{ThemeResource ErrorBrush}"/>
         </Style>
-        <Style x:Key="OverclockUsbFeatureRowStyle" TargetType="StackPanel">
-            <Setter Property="Orientation" Value="Horizontal"/>
-            <Setter Property="Spacing" Value="10"/>
-        </Style>
     </Page.Resources>
 
     <Grid Background="{ThemeResource AppBackgroundBrush}">
@@ -466,190 +462,118 @@
         </Grid>
 
  <!-- ================================================================
-             PUERTA DE ENTRADA: descargar e instalar los componentes del
-             sistema para desbloquear esta sección (texto 100% genérico,
-             sin nombres internos de componentes)
+             PUERTA DE ENTRADA: falta el driver hidusbf. No se descarga ni
+             instala desde acá: se explica la dependencia y se lleva a
+             Configuración → Drivers, el único lugar donde se administra.
              ================================================================ -->
         <Grid x:Name="GatePanel">
-            <ScrollViewer VerticalScrollBarVisibility="Auto"
+            <ScrollViewer x:Name="GateScroll"
+                          VerticalContentAlignment="Center"
+                          VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
-                <StackPanel MaxWidth="620"
-                            HorizontalAlignment="Center"
-                            Padding="32,28,32,36"
-                            Spacing="0">
+                <!-- MinHeight = alto del viewport: la tarjeta queda centrada cuando
+                     entra, y el ScrollViewer aparece cuando no. -->
+                <Grid MinHeight="{Binding ViewportHeight, ElementName=GateScroll}">
+                    <StackPanel Style="{StaticResource DriverGateHostStyle}">
 
  <!-- Tarjeta principal -->
-                    <Border Background="{ThemeResource CardBackgroundBrush}"
-                            BorderBrush="{ThemeResource SensorGridLineBrush}"
-                            BorderThickness="1"
-                            CornerRadius="12"
-                            Padding="30">
-                        <StackPanel Spacing="0">
+                        <Border Style="{StaticResource DriverGateCardStyle}">
+                            <StackPanel Spacing="0">
 
  <!-- Encabezado con insignia -->
-                            <StackPanel Orientation="Horizontal" Spacing="12">
-                                <Border Width="46"
-                                        Height="46"
-                                        CornerRadius="10"
-                                        Background="{ThemeResource AppBackgroundBrush}"
-                                        BorderBrush="{ThemeResource AccentBrush}"
-                                        BorderThickness="1.5">
-                                    <FontIcon Glyph="&#xE88E;"
-                                              FontSize="20"
-                                              Foreground="{ThemeResource AccentBrush}"
-                                              HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Border Style="{StaticResource DriverGateIconBadgeStyle}">
+                                        <FontIcon Glyph="&#xE88E;"
+                                                  FontSize="20"
+                                                  Foreground="{ThemeResource AccentBrush}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="Overclock USB"
+                                                   FontSize="20"
+                                                   FontWeight="SemiBold"/>
+                                        <TextBlock Text="Tasa de sondeo de tus periféricos"
+                                                   Style="{StaticResource DriverGateSubtitleStyle}"/>
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <TextBlock x:Name="GateTitleText"
+                                           Text="Falta el driver hidusbf"
+                                           Style="{StaticResource DriverGateTitleStyle}"
+                                           Margin="0,22,0,0"/>
+
+                                <TextBlock x:Name="GateDescriptionText"
+                                           Text="Overclock USB necesita el driver hidusbf para cambiar la tasa de sondeo de tus periféricos. Se administra desde Configuración → Drivers."
+                                           Style="{StaticResource DriverGateBodyStyle}"
+                                           Margin="0,10,0,0"/>
+
+ <!-- Consecuencia: la misma caja ámbar que Monitor de sensores -->
+                                <Border Style="{StaticResource DriverGateWarningStyle}"
+                                        Margin="0,16,0,0">
+                                    <Grid ColumnSpacing="9">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE7BA;"
+                                                  FontSize="14"
+                                                  Foreground="{StaticResource WarningBrush}"
+                                                  VerticalAlignment="Top"
+                                                  Margin="0,2,0,0"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="Sin este driver, no se puede leer ni cambiar la tasa de sondeo de tus dispositivos."
+                                                   Style="{StaticResource DriverGateWarningTextStyle}"/>
+                                    </Grid>
                                 </Border>
-                                <StackPanel VerticalAlignment="Center" Spacing="2">
-                                    <TextBlock Text="Overclock USB"
-                                               FontSize="20"
-                                               FontWeight="SemiBold"/>
-                                    <TextBlock Text="Tasa de sondeo de tus periféricos"
-                                               FontSize="12"
-                                               Foreground="{ThemeResource SecondaryTextBrush}"/>
+
+ <!-- Acciones centradas: el driver se instala desde Configuración → Drivers -->
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="10"
+                                            Margin="0,22,0,0"
+                                            HorizontalAlignment="Center">
+                                    <Button x:Name="OpenDriversButton"
+                                            Content="Abrir Configuración → Drivers"
+                                            Click="OpenDriversButton_Click"
+                                            Style="{StaticResource DriverGatePrimaryButtonStyle}"/>
+                                    <Button x:Name="RetryDriverButton"
+                                            Content="Reintentar"
+                                            Click="RetryDriverButton_Click"
+                                            Style="{StaticResource DriverGateSecondaryButtonStyle}"/>
                                 </StackPanel>
-                            </StackPanel>
-
-                            <TextBlock Text="Descargá los componentes para desbloquear este apartado"
-                                       FontSize="18"
-                                       FontWeight="SemiBold"
-                                       Margin="0,22,0,0"
-                                       TextWrapping="Wrap"/>
-
-                            <TextBlock Text="Overclock USB ajusta la tasa de sondeo (polling rate) de tus periféricos USB — mouses, teclados y mandos — para reducir la latencia de respuesta. Antes de usarlo, WinForge necesita instalar un pequeño componente del sistema en tu PC."
-                                       FontSize="13"
-                                       Foreground="{ThemeResource SecondaryTextBrush}"
-                                       Margin="0,10,0,0"
-                                       LineHeight="20"
-                                       TextWrapping="Wrap"/>
-
- <!-- Qué incluye -->
-                            <StackPanel Margin="0,18,0,0" Spacing="8">
-                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
-                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
-                                              Foreground="{ThemeResource AccentBrush}"
-                                              VerticalAlignment="Center"/>
-                                    <TextBlock Text="Reducí la latencia de respuesta de tus periféricos"
-                                               FontSize="13" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
-                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
-                                              Foreground="{ThemeResource AccentBrush}"
-                                              VerticalAlignment="Center"/>
-                                    <TextBlock Text="Consultá la tasa de sondeo real (Hz) de cada dispositivo"
-                                               FontSize="13" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <Grid ColumnSpacing="10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
-                                              Foreground="{ThemeResource AccentBrush}"
-                                              VerticalAlignment="Top"/>
-                                    <TextBlock Grid.Column="1"
-                                               Text="Hacé overclock de la tasa de sondeo para reducir la latencia (hasta 8K en dispositivos compatibles)"
-                                               FontSize="13"
-                                               TextWrapping="Wrap"
-                                               LineHeight="18"
-                                               VerticalAlignment="Center"/>
-                                </Grid>
-                                <StackPanel Style="{StaticResource OverclockUsbFeatureRowStyle}">
-                                    <FontIcon Glyph="&#xE73E;" FontSize="14"
-                                              Foreground="{ThemeResource AccentBrush}"
-                                              VerticalAlignment="Center"/>
-                                    <TextBlock Text="Restaurá los valores de fábrica con un clic"
-                                               FontSize="13" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <Rectangle Height="1"
-                                       Fill="{ThemeResource SensorGridLineBrush}"
-                                       Margin="0,18,0,0"
-                                       IsHitTestVisible="False"/>
-
- <!-- Nota de transparencia -->
-                            <Grid Margin="0,16,0,0" ColumnSpacing="8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <FontIcon Glyph="&#xE946;"
-                                          FontSize="13"
-                                          Foreground="{ThemeResource AccentBrush}"
-                                          VerticalAlignment="Top"
-                                          Margin="1,1,0,0"/>
-                                <TextBlock Grid.Column="1"
-                                           Text="Es un motor de polling del sistema (software libre y de código abierto). Se descarga solo desde su repositorio oficial por HTTPS, se instala una única vez y no se envía ningún dato."
-                                           FontSize="11"
-                                           Foreground="{ThemeResource MutedBrush}"
-                                           LineHeight="16"
-                                           TextWrapping="Wrap"/>
-                            </Grid>
-
- <!-- Acción principal -->
-                            <StackPanel Margin="0,20,0,0">
-                                <Button x:Name="DownloadComponentsButton"
-                                        Content="Descargar e instalar componentes"
-                                        Click="DownloadComponentsButton_Click"
-                                        Style="{StaticResource AccentButtonStyle}"
-                                        FontWeight="SemiBold"
-                                        CornerRadius="8"
-                                        Padding="26,12"
-                                        MinWidth="340"
-                                        HorizontalAlignment="Center"/>
-                            </StackPanel>
-
- <!-- Progreso de la instalación -->
-                            <StackPanel x:Name="GateProgressArea"
-                                        Orientation="Horizontal"
-                                        Spacing="10"
-                                        Visibility="Collapsed"
-                                        Margin="0,18,0,0">
-                                <ProgressRing x:Name="GateProgressRing"
-                                              IsActive="False"
-                                              IsIndeterminate="True"
-                                              Width="18"
-                                              Height="18"
-                                              VerticalAlignment="Center"/>
-                                <TextBlock x:Name="GateStatusText"
+                                <TextBlock x:Name="GateRetryStatusText"
                                            Text=""
-                                           FontSize="13"
-                                           Foreground="{ThemeResource SecondaryTextBrush}"
-                                           VerticalAlignment="Center"
-                                           TextWrapping="Wrap"/>
+                                           FontSize="12"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap"
+                                           Margin="0,10,0,0"
+                                           Visibility="Collapsed"/>
                             </StackPanel>
+                        </Border>
 
- <!-- Error de la descarga -->
-                            <TextBlock x:Name="GateErrorText"
-                                       Text=""
-                                       FontSize="13"
-                                       Foreground="{ThemeResource ErrorBrush}"
-                                       Visibility="Collapsed"
-                                       Margin="0,16,0,0"
-                                       TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
-
-                    <TextBlock Text="Overclock USB ya está incluido en la app: al instalar los componentes se activa la lista de dispositivos, el ajuste por popup y la restauración de fábrica."
-                               FontSize="11"
-                               Foreground="{ThemeResource MutedBrush}"
-                               Margin="6,14,6,0"
-                               TextWrapping="Wrap"/>
-                    <HyperlinkButton x:Name="HidusbfAdvancedLink"
-                                     Content="¿Cómo funciona esta sección?"
-                                     Click="HowItWorksLink_Click"
-                                     FontSize="11"
-                                     Margin="6,6,6,0"
-                                     HorizontalAlignment="Left"/>
-                    <TextBlock x:Name="HowItWorksDetail"
-                               Text=""
-                               FontSize="11"
-                               Foreground="{ThemeResource MutedBrush}"
-                               Visibility="Collapsed"
-                               Margin="6,4,6,0"
-                               TextWrapping="Wrap"/>
-                </StackPanel>
+ <!-- Pie: procedencia del driver y nota compartida, centrados -->
+                        <TextBlock Style="{StaticResource DriverGateFooterStyle}"
+                                   Margin="6,14,6,0"
+                                   Text="Es un motor de polling del sistema (software libre y de código abierto). Se descarga solo desde su repositorio oficial por HTTPS, se instala una única vez y no se envía ningún dato."/>
+                        <TextBlock Style="{StaticResource DriverGateFooterStyle}"
+                                   Margin="6,6,6,0"
+                                   Text="El driver hidusbf es compartido: sigue disponible aunque desinstales Overclock USB."/>
+                        <HyperlinkButton x:Name="HidusbfAdvancedLink"
+                                         Content="¿Cómo funciona esta sección?"
+                                         Click="HowItWorksLink_Click"
+                                         FontSize="11"
+                                         Margin="0,2,0,0"
+                                         HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="HowItWorksDetail"
+                                   Text=""
+                                   FontSize="11"
+                                   Foreground="{ThemeResource MutedBrush}"
+                                   Visibility="Collapsed"
+                                   Margin="6,4,6,0"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Grid>
             </ScrollViewer>
         </Grid>
     </Grid>

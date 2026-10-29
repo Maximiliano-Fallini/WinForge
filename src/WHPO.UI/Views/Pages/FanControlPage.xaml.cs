@@ -115,6 +115,10 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     // placa le manda al ventilador): la lectura confiable de su estado.
     private const string UsageTooltipKey =
         "Uso: señal PWM que la placa le manda al ventilador (0-100%) — la lectura más confiable de su estado.";
+    // Sensor = termómetro que alimenta la curva, no el ventilador. El texto lo
+    // comparten la etiqueta, el desplegable y la lectura para que no haya dudas.
+    private const string SensorTooltipKey =
+        "Sensor de temperatura que alimenta la curva: Automático usa el CPU en los headers de la placa y la GPU en los ventiladores de la video. «Máximo de CPU y GPU» sigue al componente más caliente.";
     // En canales de solo lectura la única lectura posible es el RPM del sensor,
     // que es best-effort (header sin tacómetro, cable de señal no conectado, fan
     // alimentado desde la fuente) y puede faltar aunque el ventilador gire.
@@ -149,6 +153,16 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         public required TextBlock CurveStateText;
         public required Button ApplyCurveButton;
         public required ComboBox ProfileBox;
+        // Fila del sensor que alimenta la curva (solo canales controlables): el
+        // desplegable elige entre automático, el máximo CPU+GPU y cada sensor real.
+        public required Grid SensorRow;
+        public required ComboBox SensorBox;
+        public required TextBlock SensorValueText;
+        // Nombre visible de cada opción (sin la temperatura): se usa para refrescar
+        // el texto del desplegable en cada sondeo sin rearmarlo.
+        public Dictionary<string, string> SensorBaseNames = new(StringComparer.Ordinal);
+        // Evita que rellenar el desplegable dispare SelectionChanged.
+        public bool SuppressSensorEvents;
         // Dinámica de la curva: contenedor de la fila y un cuadro por parámetro
         // (°C, s, %/tick, %/tick). Los cuadros se arman al abrir el editor (igual
         // que las filas de puntos), así que existen recién ahí.
@@ -157,10 +171,14 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         public NumberBox? ResponseBox;
         public NumberBox? StepUpBox;
         public NumberBox? StepDownBox;
+        // Piso de duty: no es un filtro de la curva, es el mínimo que el ventilador
+        // necesita para girar. Se guarda aparte de la dinámica por eso.
+        public NumberBox? MinDutyBox;
         public double HysteresisC;
         public double ResponseSeconds;
         public double StepUpPercent;
         public double StepDownPercent;
+        public double MinDutyPercent;
         // Evita que sincronizar el desplegable dispare su SelectionChanged.
         public bool SuppressProfileEvents;
         // Espejo de IsCurveActive (lo refresca el sondeo): la curva está activa en
@@ -214,6 +232,12 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     }
 
     private readonly List<FanCard> _cards = new();
+    // Sensores que expone el hardware, cacheados para armar los desplegables de
+    // cada card. La firma detecta altas/bajas (una GPU que aparece) sin rearmar
+    // los combos en cada refresco.
+    private List<FanTemperatureSource> _temperatureSources = new();
+    private string _sensorSignature = string.Empty;
+    private string _lastSensorSignature = string.Empty;
     // Layout de cards: 3 o 4 columnas como máximo (persistido en settings).
     private const string ColumnsSettingsKey = "fancontrol.columns";
     private const double CardSpacing = 18;
@@ -368,8 +392,20 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             var fans = await Task.Run(() => _fanService.GetFans());
             _loggingService.LogDebug($"FanControlPage: fans leídos ({fans.Count})");
 
+            // GetFans ya actualizó el hardware, así que esto solo enumera los
+            // sensores: no vuelve a tocar el bus ISA. Si falla, se conserva la
+            // lista anterior y las cards siguen funcionando.
+            List<FanTemperatureSource>? sources = null;
+            try { sources = await Task.Run(() => _fanService.GetTemperatureSources()); }
+            catch (Exception ex) { _loggingService.LogWarning($"FanControlPage: no se pudieron leer los sensores: {ex.Message}"); }
+
             _dispatcherQueue.TryEnqueue(() =>
             {
+                if (sources != null)
+                {
+                    _temperatureSources = sources;
+                    _sensorSignature = string.Join("|", sources.Select(s => s.Id));
+                }
                 _loggingService.LogDebug($"FanControlPage: rebuild de cards ({fans.Count} ventiladores)");
                 RebuildFanCards(fans);
                 _loggingService.LogDebug("FanControlPage: rebuild listo");
@@ -445,11 +481,17 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         var existing = _cards.ToDictionary(c => c.Id, c => c);
         var seen = new HashSet<string>();
 
+        // Solo rearmamos los combos cuando cambió la lista de sensores: hacerlo en
+        // cada refresco cerraría el desplegable mientras el usuario elige.
+        bool sourcesChanged = !string.Equals(_sensorSignature, _lastSensorSignature, StringComparison.Ordinal);
+        _lastSensorSignature = _sensorSignature;
+
         foreach (var fan in byId)
         {
             seen.Add(fan.Id);
             if (existing.TryGetValue(fan.Id, out var card))
             {
+                if (sourcesChanged) PopulateSensorBox(card, fan);
                 UpdateCard(card, fan);
             }
             else
@@ -735,6 +777,48 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         ToolTipService.SetToolTip(dutyValueText, I18n.T(UsageTooltipKey));
 
         // ---------------------------------------------------------------
+        // 3b) Sensor de temperatura que alimenta la curva: es el termómetro, no
+        //     el ventilador. El canal de solo lectura no tiene curva, así que la
+        //     fila se oculta en UpdateCard.
+        // ---------------------------------------------------------------
+        var sensorLabel = new TextBlock
+        {
+            Text = I18n.T("Sensor"),
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = MutedBrush
+        };
+        var sensorBox = new ComboBox
+        {
+            MinWidth = 0,
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = HoverBrush,
+            BorderThickness = new Thickness(0)
+        };
+        var sensorValueText = new TextBlock
+        {
+            FontSize = 12,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Width = 52,
+            TextAlignment = TextAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var sensorRow = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 2, 0, 0) };
+        sensorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        sensorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        sensorRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(sensorLabel, 0);
+        Grid.SetColumn(sensorBox, 1);
+        Grid.SetColumn(sensorValueText, 2);
+        sensorRow.Children.Add(sensorLabel);
+        sensorRow.Children.Add(sensorBox);
+        sensorRow.Children.Add(sensorValueText);
+        ToolTipService.SetToolTip(sensorLabel, I18n.T(SensorTooltipKey));
+        ToolTipService.SetToolTip(sensorBox, I18n.T(SensorTooltipKey));
+        ToolTipService.SetToolTip(sensorValueText, I18n.T(SensorTooltipKey));
+
+        // ---------------------------------------------------------------
         // 4) Separador + switch de curva + editor (colapsado por defecto).
         // ---------------------------------------------------------------
         var divider = new Border
@@ -942,6 +1026,7 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         stack.Children.Add(header);
         stack.Children.Add(statsRow);
         stack.Children.Add(dutyRow);
+        stack.Children.Add(sensorRow);
         stack.Children.Add(divider);
         stack.Children.Add(curveHeaderRow);
         stack.Children.Add(curvePanel);
@@ -985,6 +1070,9 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             CurveStateText = curveStateText,
             ApplyCurveButton = applyCurveButton,
             ProfileBox = profileBox,
+            SensorRow = sensorRow,
+            SensorBox = sensorBox,
+            SensorValueText = sensorValueText,
             DynamicsHost = dynamicsPanel,
             CurvePanel = curvePanel,
             CurveBodyPanel = curveBodyPanel,
@@ -1013,6 +1101,17 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
                 _ = ApplyDutyAsync(card, (float)slider.Value);
         };
         autoButton.Click += (s, e) => _ = SetAutoAsync(card);
+
+        // Cambiar el termómetro que alimenta la curva se guarda por canal y se
+        // aplica en el próximo tick del motor. El combo ya está lleno (abajo).
+        sensorBox.SelectionChanged += (s, e) =>
+        {
+            if (card.SuppressSensorEvents) return;
+            var sourceId = (sensorBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+            try { _fanService.SetTemperatureSource(card.Id, sourceId); }
+            catch (Exception ex) { _loggingService.LogWarning($"FanControlPage: guardar sensor de {card.Id} falló: {ex.Message}"); }
+            _ = RefreshAsync();
+        };
 
         // Renombrado en línea.
         renameButton.Click += (s, e) => StartInlineRename(card);
@@ -1137,6 +1236,8 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             SaveCurve(card, card.CurveApplied);
         };
 
+        PopulateSensorBox(card, fan);
+
         return card;
     }
 
@@ -1169,6 +1270,28 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     private void UpdateCard(FanCard card, FanControlInfo fan)
     {
         card.CurrentTempC = fan.Temperature;
+
+        // La fila del sensor solo existe donde hay curva; en un canal de solo
+        // lectura no hay nada que alimentar. El combo se llena al construir la
+        // card (o cuando cambia la lista de sensores); acá solo se refresca la
+        // lectura, sin tocar la selección.
+        card.SensorRow.Visibility = fan.HasControl ? Visibility.Visible : Visibility.Collapsed;
+        if (fan.HasControl)
+        {
+            // Cada opción del desplegable muestra su propia lectura en vivo; se
+            // actualiza el texto sin tocar la selección ni cerrar el combo.
+            UpdateSensorBoxValues(card);
+
+            card.SensorValueText.Text = fan.Temperature is double t ? $"{t:0.#} °C" : "—";
+            card.SensorValueText.Foreground = fan.Temperature.HasValue ? null : MutedBrush;
+
+            var resolved = fan.TemperatureSourceName;
+            if (fan.TemperatureSourceSynthetic && !string.IsNullOrEmpty(resolved))
+                resolved = I18n.T(resolved);
+            ToolTipService.SetToolTip(card.SensorValueText,
+                string.IsNullOrEmpty(resolved) ? I18n.T(SensorTooltipKey) : I18n.T("Sensor: {0}", resolved));
+        }
+
         card.LastManual = fan.IsManual;
         card.LastCurveActive = fan.IsCurveActive;
         card.LastDutyPercent = fan.DutyPercent;
@@ -1308,6 +1431,164 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         // El marcador de temperatura actual en el gráfico.
         if (fan.IsCurveActive || card.CurvePanel.Visibility == Visibility.Visible)
             RedrawCurve(card);
+    }
+
+    /// <summary>
+    /// Llena el desplegable de sensores de una card: primero el automático del
+    /// canal (CPU para la placa, GPU para la video), después el virtual de CPU+GPU
+    /// y por último cada sensor real, clasificado por rol y con su lectura al lado.
+    /// Los sensores que no reportan no se listan, salvo el que ya está elegido por
+    /// el canal (para no mostrar "Automático" y ocultar la configuración real).
+    /// La selección se lee de settings y se aplica con los eventos suprimidos, para
+    /// que armar el combo no dispare un guardado.
+    /// </summary>
+    private void PopulateSensorBox(FanCard card, FanControlInfo fan)
+    {
+        var selected = _fanService.GetTemperatureSource(card.Id);
+
+        card.SuppressSensorEvents = true;
+        try
+        {
+            card.SensorBox.Items.Clear();
+            card.SensorBaseNames.Clear();
+            card.SensorBox.Items.Add(new ComboBoxItem
+            {
+                Content = I18n.T(fan.IsGpu ? "Automático (GPU)" : "Automático (CPU)"),
+                Tag = string.Empty
+            });
+
+            // Si en este sondeo no reporta ninguno (arranque frío, GPU dormida), se
+            // listan todos con "—" en vez de dejar el desplegable vacío: el usuario
+            // tiene que poder ver qué sensores existen.
+            bool anyReporting = _temperatureSources.Any(IsReporting);
+
+            bool selectedFound = false;
+            foreach (var source in _temperatureSources)
+            {
+                bool isSelected = string.Equals(source.Id, selected, StringComparison.Ordinal);
+                if (anyReporting && !IsReporting(source) && !isSelected) continue;
+                if (isSelected) selectedFound = true;
+
+                var baseName = ClassifiedSensorName(source);
+                card.SensorBaseNames[source.Id] = baseName;
+
+                var item = new ComboBoxItem
+                {
+                    Content = FormatSensorItem(baseName, source.Celsius),
+                    Tag = source.Id
+                };
+                ToolTipService.SetToolTip(item, item.Content as string);
+                card.SensorBox.Items.Add(item);
+            }
+
+            // Sensor guardado que ya no existe en el hardware: se conserva como
+            // opción para que el desplegable no muestre "Automático" por error.
+            if (!string.IsNullOrEmpty(selected) && !selectedFound)
+            {
+                var baseName = I18n.T("Sensor guardado");
+                card.SensorBaseNames[selected] = baseName;
+                var item = new ComboBoxItem
+                {
+                    Content = FormatSensorItem(baseName, null),
+                    Tag = selected
+                };
+                ToolTipService.SetToolTip(item, item.Content as string);
+                card.SensorBox.Items.Add(item);
+            }
+
+            int index = 0;
+            for (int i = 0; i < card.SensorBox.Items.Count; i++)
+            {
+                if (card.SensorBox.Items[i] is ComboBoxItem item &&
+                    string.Equals(item.Tag as string, selected, StringComparison.Ordinal))
+                {
+                    index = i;
+                    break;
+                }
+            }
+            card.SensorBox.SelectedIndex = index;
+        }
+        finally
+        {
+            card.SuppressSensorEvents = false;
+        }
+    }
+
+    // True si el sensor está entregando una lectura utilizable. Los que devuelven
+    // null (o 0) no se ofrecen en el desplegable: no sirven para gobernar una curva.
+    private static bool IsReporting(FanTemperatureSource source) =>
+        source.Celsius is double c && double.IsFinite(c) && c > 0;
+
+    // Nombre visible de la opción: antepone el grupo (CPU, GPU, placa, VRM, otros)
+    // solo cuando el nombre del sensor no lo dice por sí mismo. Los nombres reales
+    // son datos del fabricante y NO se traducen; el virtual sí.
+    private static string ClassifiedSensorName(FanTemperatureSource source)
+    {
+        if (source.Synthetic) return I18n.T(source.Name);
+
+        var name = source.Name;
+        var group = source.Group switch
+        {
+            FanTemperatureGroup.Cpu => I18n.T("CPU"),
+            FanTemperatureGroup.Gpu => I18n.T("GPU"),
+            FanTemperatureGroup.Vrm => I18n.T("VRM"),
+            FanTemperatureGroup.Motherboard => I18n.T("Placa Base"),
+            _ => I18n.T("Otros")
+        };
+
+        bool alreadyNamed = source.Group switch
+        {
+            FanTemperatureGroup.Cpu => name.Contains("CPU", StringComparison.OrdinalIgnoreCase),
+            FanTemperatureGroup.Gpu => name.Contains("GPU", StringComparison.OrdinalIgnoreCase),
+            FanTemperatureGroup.Vrm => name.Contains("VRM", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
+
+        return alreadyNamed || group.Length == 0 ? name : $"{group} · {name}";
+    }
+
+    // Texto de la opción: nombre + lectura actual. La temperatura se refresca en
+    // cada sondeo sin rearmar el combo, así el desplegable puede quedar abierto.
+    private static string FormatSensorItem(string name, double? celsius) =>
+        celsius is double c && double.IsFinite(c) && c > 0
+            ? $"{name}  ·  {c:0.#} °C"
+            : $"{name}  ·  —";
+
+    private void UpdateSensorBoxValues(FanCard card)
+    {
+        foreach (var entry in card.SensorBox.Items)
+        {
+            if (entry is not ComboBoxItem item) continue;
+            var id = item.Tag as string ?? string.Empty;
+            if (id.Length == 0) continue; // Automático: no representa un sensor puntual
+
+            var source = _temperatureSources.FirstOrDefault(
+                s => string.Equals(s.Id, id, StringComparison.Ordinal));
+            if (source != null)
+            {
+                var baseName = ClassifiedSensorName(source);
+                card.SensorBaseNames[id] = baseName;
+                SetSensorItemText(item, FormatSensorItem(baseName, source.Celsius));
+            }
+            else if (card.SensorBaseNames.TryGetValue(id, out var baseName))
+            {
+                SetSensorItemText(item, FormatSensorItem(baseName, null));
+            }
+            else
+            {
+                SetSensorItemText(item, FormatSensorItem(I18n.T("Sensor guardado"), null));
+            }
+        }
+    }
+
+    // Solo toca el ComboBox si el texto cambió: la lectura suele repetirse entre
+    // sondeos y reescribir el contenido de todas las opciones cada 2 s hace parpadear
+    // el desplegable sin necesidad.
+    private static void SetSensorItemText(ComboBoxItem item, string text)
+    {
+        if (string.Equals(item.Content as string, text, StringComparison.Ordinal)) return;
+        item.Content = text;
+        ToolTipService.SetToolTip(item, text);
     }
 
     /// <summary>
@@ -1615,10 +1896,21 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         card.StepUpPercent = dynamics.StepUpPercent;
         card.StepDownPercent = dynamics.StepDownPercent;
 
+        try
+        {
+            card.MinDutyPercent = _fanService.GetMinDuty(card.Id);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"FanControlPage: no se pudo leer el piso de {card.Id}: {ex.Message}");
+            card.MinDutyPercent = 0;
+        }
+
         var hysteresisBox = DynamicsBox(card.HysteresisC, 20);
         var responseBox = DynamicsBox(card.ResponseSeconds, 60);
         var stepUpBox = DynamicsBox(card.StepUpPercent, 100);
         var stepDownBox = DynamicsBox(card.StepDownPercent, 100);
+        var minDutyBox = DynamicsBox(card.MinDutyPercent, 100);
 
         // Los cuadros se guardan con cada cambio (también sin la curva aplicada:
         // queda como borrador, igual que los puntos).
@@ -1626,11 +1918,13 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         responseBox.ValueChanged += (s, e) => SaveDynamics(card);
         stepUpBox.ValueChanged += (s, e) => SaveDynamics(card);
         stepDownBox.ValueChanged += (s, e) => SaveDynamics(card);
+        minDutyBox.ValueChanged += (s, e) => SaveDynamics(card);
 
         card.HysteresisBox = hysteresisBox;
         card.ResponseBox = responseBox;
         card.StepUpBox = stepUpBox;
         card.StepDownBox = stepDownBox;
+        card.MinDutyBox = minDutyBox;
 
         card.DynamicsHost.Children.Clear();
         card.DynamicsHost.Children.Add(DynamicsField(I18n.T("Histéresis °C"), hysteresisBox,
@@ -1641,6 +1935,8 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             I18n.T("Subida máxima de uso por actualización (cada 2 s): suaviza los cambios bruscos. 0 = sin límite.")));
         card.DynamicsHost.Children.Add(DynamicsField(I18n.T("Bajada %"), stepDownBox,
             I18n.T("Bajada máxima de uso por actualización (cada 2 s): suaviza los cambios bruscos. 0 = sin límite.")));
+        card.DynamicsHost.Children.Add(DynamicsField(I18n.T("Piso %"), minDutyBox,
+            I18n.T("Piso de duty (%): el uso mínimo que aplica la curva. Por debajo de cierto valor muchos ventiladores no arrancan: consumen y se calientan sin girar. La curva nunca pide menos que esto, salvo 0 %, que sigue apagando el ventilador. 0 = sin piso.")));
 
         _loggingService.LogDebug($"FanControlPage: fila de dinámica de {card.Id} armada");
     }
@@ -1649,26 +1945,34 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     private void SaveDynamics(FanCard card)
     {
         if (card.HysteresisBox is not { } hysteresisBox || card.ResponseBox is not { } responseBox ||
-            card.StepUpBox is not { } stepUpBox || card.StepDownBox is not { } stepDownBox)
+            card.StepUpBox is not { } stepUpBox || card.StepDownBox is not { } stepDownBox ||
+            card.MinDutyBox is not { } minDutyBox)
             return;
 
         double hysteresis = BoxValue(hysteresisBox, card.HysteresisC);
         double response = BoxValue(responseBox, card.ResponseSeconds);
         double stepUp = BoxValue(stepUpBox, card.StepUpPercent);
         double stepDown = BoxValue(stepDownBox, card.StepDownPercent);
+        double minDuty = BoxValue(minDutyBox, card.MinDutyPercent);
 
-        if (hysteresis == card.HysteresisC && response == card.ResponseSeconds &&
-            stepUp == card.StepUpPercent && stepDown == card.StepDownPercent)
-            return;
+        bool dynamicsChanged = hysteresis != card.HysteresisC || response != card.ResponseSeconds ||
+            stepUp != card.StepUpPercent || stepDown != card.StepDownPercent;
+        bool minDutyChanged = minDuty != card.MinDutyPercent;
+        if (!dynamicsChanged && !minDutyChanged) return;
 
         card.HysteresisC = hysteresis;
         card.ResponseSeconds = response;
         card.StepUpPercent = stepUp;
         card.StepDownPercent = stepDown;
+        card.MinDutyPercent = minDuty;
 
         try
         {
-            _fanService.SetCurveDynamics(card.Id, new FanCurveDynamics(hysteresis, response, stepUp, stepDown));
+            // El piso se guarda aunque la curva no esté aplicada: queda como
+            // borrador, igual que los puntos y la dinámica.
+            if (minDutyChanged) _fanService.SetMinDuty(card.Id, minDuty);
+            if (dynamicsChanged)
+                _fanService.SetCurveDynamics(card.Id, new FanCurveDynamics(hysteresis, response, stepUp, stepDown));
         }
         catch (Exception ex)
         {
@@ -2540,12 +2844,16 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
 
             if (result.Success)
             {
-                StatusText.Text = "✓ " + result.Message;
+                StatusText.Text = I18n.T("PawnIO instalado. Reiniciando WinForge…");
                 StatusText.Foreground = Feedback.SuccessBrush;
                 // Re-escanear hardware con el driver ya presente.
                 _fanService.Reinitialize();
                 await RefreshAsync();
                 StartPolling();
+
+                // LHM cachea la versión del driver al arrancar: el proceso nuevo es
+                // lo que termina de habilitar los canales de la placa.
+                await RestartAfterPawnIoAsync();
             }
             else
             {
@@ -2559,6 +2867,19 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             PawnInstallRing.Visibility = Visibility.Collapsed;
             InstallPawnButton.IsEnabled = true;
         }
+    }
+
+    /// <summary>
+    /// Después de instalar PawnIO se reinicia la app sin preguntar.
+    /// LibreHardwareMonitor resuelve la versión del driver al arrancar, así que el
+    /// proceso nuevo es lo único que habilita las lecturas de la placa. Las curvas se
+    /// reaplican solas al iniciar (FanControlService.ReapplyCurvesOnStartup).
+    /// </summary>
+    private async Task RestartAfterPawnIoAsync()
+    {
+        var main = App.MainWindowInstance;
+        if (main == null || !await main.RestartAppAsync())
+            Feedback.Error(StatusText, I18n.T("No se pudo reiniciar WinForge. Cerralo y abrilo a mano."));
     }
 
     // =====================================================================

@@ -68,8 +68,24 @@ public record SensorGroupInfo(string Name, List<SensorCategoryInfo> Categories, 
 /// </summary>
 public interface ISensorService : IDisposable
 {
-    /// <summary>Indica si LibreHardwareMonitor pudo inicializarse (driver cargado).</summary>
+    /// <summary>
+    /// Indica si LibreHardwareMonitor pudo abrirse. No implica que PawnIO esté
+    /// instalado: LHM abre igual y deja los sensores del CPU sin lectura.
+    /// </summary>
     bool IsAvailable { get; }
+
+    /// <summary>
+    /// True si PawnIO está instalado en este momento (se consulta el registro, no
+    /// la caché estática de LHM). Sin PawnIO, LHM enumera los sensores del CPU
+    /// pero no puede leer temperatura, reloj ni potencia.
+    /// </summary>
+    bool PawnIOInstalled { get; }
+
+    /// <summary>
+    /// Cierra y vuelve a abrir LibreHardwareMonitor. Se usa al reintentar después
+    /// de instalar el driver o de cerrar otro monitor de hardware.
+    /// </summary>
+    void Reinitialize();
 
     /// <summary>
     /// Devuelve los grupos de sensores (por hardware) con sus categorías y lecturas

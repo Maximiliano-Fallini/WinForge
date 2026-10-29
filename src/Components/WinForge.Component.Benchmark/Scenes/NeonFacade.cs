@@ -43,6 +43,27 @@ internal static class NeonFacade
         internal float Height => Floors * Cell;
     }
 
+    /// <summary>Qué ocupa una celda de planta baja (ver <see cref="Shop"/>).</summary>
+    internal enum GroundKind
+    {
+        /// <summary>Local con vidriera y puerta propia (ver <c>NeonScene.BuildShopfronts</c>).</summary>
+        Shop,
+        /// <summary>Portal de viviendas: puerta de edificio, escalón y farol (ver <c>BuildPortal</c>).</summary>
+        Portal,
+        /// <summary>Garaje con persiana metálica (ver <c>BuildGarage</c>).</summary>
+        Garage
+    }
+
+    /// <summary>
+    /// Una pieza de planta baja, en coordenadas de la fila de fachada: qué celdas ocupa, cuál es la de
+    /// la puerta y qué estilo tiene. El GENERADOR de fachadas lo necesita para no poner muros del kit
+    /// en esas celdas —ahí va la geometría armada a mano (local, portal o garaje)—; el mismo dato lo
+    /// usa el armado para saber dónde cae cada celda.
+    /// </summary>
+    internal readonly record struct Shop(
+        int Row, int FirstColumn, int Columns, int DoorColumn, int Style,
+        GroundKind Kind = GroundKind.Shop);
+
     /// <summary>Una pieza del kit: la pared (y su relleno, si lo tiene) con su pivote y su medida.</summary>
     private sealed class Module
     {
@@ -50,6 +71,10 @@ internal static class NeonFacade
         public required Vector3 Pivot { get; init; }
         public required List<GltfPart> Parts { get; init; }
         public required bool IsDoor { get; init; }
+        /// <summary>False solo para los muros CIEGOS del kit: en una calle de noche se leen como un
+        /// hueco sin terminar, así que no entran al pool de ventanas (ver <see cref="Build"/>).</summary>
+        public bool HasOpening { get; init; }
+        public float DoorBottom { get; init; }
     }
 
     /// <summary>
@@ -57,7 +82,8 @@ internal static class NeonFacade
     /// escena sigue dibujando el resto en vez de tumbar la corrida por un asset.
     /// </summary>
     internal static IReadOnlyList<SceneMesh> Build(
-        string root, IReadOnlyList<FacadeRow> rows, float facadeOffset, Random rng, Action<string> note)
+        string root, IReadOnlyList<FacadeRow> rows, float facadeOffset,
+        IReadOnlyList<Shop> shops, Random rng, Action<string> note)
     {
         var meshes = new List<SceneMesh>();
         if (rows.Count == 0) return meshes;
@@ -93,20 +119,68 @@ internal static class NeonFacade
                  $"no entran en la fachada, porque dejarían el interior del edificio a la vista.");
         }
 
-        var doors = modules.Where(m => m.IsDoor).ToList();
-        var windows = modules.Where(m => !m.IsDoor).ToList();
+        // Las entradas que trae el kit deben terminar cerca del piso de la celda;
+        // algunos módulos llamados door son balcones o tienen el umbral elevado.
+        var doors = modules.Where(m => m.IsDoor && MathF.Abs(m.DoorBottom) < 0.20f).ToList();
+        // Solo muros CON hueco: el muro ciego (wall_standard_standard_01) deja una pared lisa de 3 × 3
+        // en medio de una fachada de ventanas, y a la luz de la calle eso no se lee como un muro a
+        // propósito sino como un edificio sin terminar. Si el kit no trajera ninguno con hueco, se
+        // cae al pool completo para no quedarse sin fachada.
+        var windows = modules.Where(m => !m.IsDoor && m.HasOpening).ToList();
+        if (windows.Count == 0) windows = modules.Where(m => m.HasOpening).ToList();
         if (windows.Count == 0) windows = modules;
+
+        // Celdas de planta baja que ocupa un local: no llevan módulo del kit (la vidriera y la puerta
+        // las arma NeonScene.BuildShopfronts, en el mismo plano y con el mismo alto de celda).
+        var reserved = new HashSet<(int Row, int Column)>();
+        var withBays = new bool[rows.Count];
+        foreach (var shop in shops)
+        {
+            if (shop.Row < 0 || shop.Row >= rows.Count) continue;
+            withBays[shop.Row] = true;
+            for (int column = 0; column < shop.Columns; column++)
+                reserved.Add((shop.Row, shop.FirstColumn + column));
+        }
 
         // Una lista de colocaciones por PIEZA: cada primitiva es una malla del motor (dibuja sin índice
         // y con un material por malla) y todas sus celdas viajan como instancias suyas.
         var placements = new Dictionary<GltfPart, List<SceneInstance>>();
 
-        foreach (var row in rows)
+        // El kit trae el vidrio con alphaMode BLEND y una textura oscura. Este motor dibuja los
+        // materiales opacos (no hay pase de transparencias), así que ese vidrio salía NEGRO y las
+        // ventanas se leían como agujeros vacíos. Acá se reemplaza solo para las piezas de vidrio
+        // por un material nocturno: refleja el entorno y, en las ventanas encendidas, emite la
+        // tinta cálida o fría que le toca a cada celda. Los marcos y las paredes no se tocan.
+        var windowGlass = new SceneMaterial
         {
+            Name = "vidrio de fachada",
+            Tint = Vector3.One,
+            RoughnessScale = 0.10f,
+            MetallicScale = 0.50f,
+            NormalStrength = 0f,
+            Emissive = Vector3.One,
+            EmissiveStrength = 0f
+        };
+
+        for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            var row = rows[rowIndex];
             // El giro deja el +Z local (el frente de la pieza) mirando al centro de la calle.
             float yaw = row.Side > 0f ? -MathF.PI * 0.5f : MathF.PI * 0.5f;
             float x = row.Side * facadeOffset;
             int columns = Math.Max(1, (int)MathF.Round((row.Z1 - row.Z0) / Cell));
+            // Cada edificio conserva un lenguaje de ventanas: variación entre edificios,
+            // no una pieza distinta al azar en cada piso y columna.
+            var upperModules = new Module[columns];
+            for (int column = 0; column < columns; column++)
+                upperModules[column] = windows[rng.Next(windows.Count)];
+            Vector3[] palette =
+            {
+                new(1.10f, 0.91f, 0.80f), new(0.78f, 0.88f, 0.94f),
+                new(0.83f, 0.75f, 0.71f), new(1.05f, 1.01f, 0.91f),
+                new(0.78f, 0.83f, 0.76f)
+            };
+            var facadeTint = palette[rng.Next(palette.Length)];
 
             for (int floor = 0; floor < row.Floors; floor++)
             {
@@ -114,15 +188,21 @@ internal static class NeonFacade
 
                 for (int column = 0; column < columns; column++)
                 {
-                    // La planta baja mezcla entradas con ventanas; los pisos altos son todas ventanas.
-                    bool ground = floor == 0 && doors.Count > 0;
-                    var pool = ground && rng.NextDouble() < 0.45 ? doors : windows;
-                    var module = pool[rng.Next(pool.Count)];
+                    // La celda de un local no lleva módulo: la ocupa la vidriera.
+                    if (floor == 0 && reserved.Contains((rowIndex, column))) continue;
+
+                    // La planta baja la arma NeonScene (local, portal o garaje) en las celdas
+                    // reservadas; las que quedan libres son ventanas, nunca un muro ciego. Solo una
+                    // fila sin NINGUNA pieza cae a la puerta del kit como entrada de emergencia.
+                    bool ground = floor == 0;
+                    var module = ground && !withBays[rowIndex] && doors.Count > 0 && column == columns / 2
+                        ? doors[rng.Next(doors.Count)]
+                        : upperModules[column];
 
                     // Ancla de la celda. La vereda de la IZQUIERDA crece hacia −Z (con ese giro su +X
                     // local apunta ahí), así que su celda se ancla desde Z1.
                     float z = row.Side > 0f ? row.Z0 + column * Cell : row.Z1 - column * Cell;
-                    var target = new Vector3(x, baseY, z);
+                    var target = new Vector3(x, baseY + 0.16f, z);
 
                     // Pivote: la pieza se corre por su esquina mínima para que su celda arranque en el
                     // ancla (mismo criterio para la pared y para su relleno, que vive en la misma celda).
@@ -131,6 +211,24 @@ internal static class NeonFacade
                         new Vector4(origin, 1f),
                         new Vector4(yaw, 0f, SceneDefinition.KindTextured, 0f));
 
+                    // La luz de cada ventana se decide con un hash de la celda, no con el RNG del
+                    // armado: agregar una tirada acá cambiaría la elección de módulos y todo el
+                    // frente. Un tercio de las ventanas queda encendido, con mayoría cálida.
+                    uint windowHash = (uint)(rowIndex * 73856093) ^ (uint)(floor * 19349663) ^
+                                      (uint)(column * 83492791) ^ (row.Side > 0f ? 0x9E3779B9u : 0u);
+                    // Las puertas del kit son entradas de vivienda: el vidrio de la hoja va SIEMPRE
+                    // encendido, aunque la ventana de al lado esté apagada. Si no, la puerta queda
+                    // como un rectángulo negro en la planta baja y se lee como un hueco.
+                    bool entrance = module.IsDoor;
+                    bool litWindow = entrance || windowHash % 100u < 34u;
+                    bool coolWindow = !entrance && (windowHash / 100u) % 100u < 30u;
+                    var glassTint = litWindow
+                        ? (coolWindow ? new Vector3(0.55f, 0.72f, 1.00f) : new Vector3(1.00f, 0.66f, 0.36f))
+                        : new Vector3(0.10f, 0.14f, 0.22f);
+                    var glassParams = litWindow
+                        ? new Vector4(0f, 0.55f, 0f, coolWindow ? 0.18f : 0.24f)
+                        : new Vector4(0f, 0.08f, 0.55f, 0f);
+
                     foreach (var part in module.Parts)
                     {
                         if (!placements.TryGetValue(part, out var list))
@@ -138,7 +236,27 @@ internal static class NeonFacade
                             list = new List<SceneInstance>();
                             placements[part] = list;
                         }
-                        list.Add(instance);
+
+                        if (part.Name.StartsWith("wall_", StringComparison.Ordinal))
+                        {
+                            list.Add(instance with
+                            {
+                                MaterialTint = new Vector4(part.Material.Tint * facadeTint, part.Material.UvScale)
+                            });
+                        }
+                        else if (IsGlass(part))
+                        {
+                            list.Add(instance with
+                            {
+                                MaterialTint = new Vector4(glassTint, 1f),
+                                MaterialParams = glassParams
+                            });
+                        }
+                        else
+                        {
+                            // Puertas y marcos conservan su material y su textura.
+                            list.Add(instance);
+                        }
                     }
                 }
             }
@@ -151,12 +269,16 @@ internal static class NeonFacade
                 Name = $"fachada · {pair.Key.Name}",
                 Vertices = pair.Key.Vertices,
                 Instances = pair.Value.ToArray(),
-                Material = pair.Key.Material
+                Material = IsGlass(pair.Key) ? windowGlass : pair.Key.Material
             });
         }
 
         return meshes;
     }
+
+    /// <summary>Si la primitiva es el VIDRIO del kit (paños de ventana o de puerta).</summary>
+    private static bool IsGlass(GltfPart part) =>
+        part.Material.Name.Contains("glass", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Agrupa las primitivas del modelo por NODO. <see cref="GltfModel.Load"/> nombra cada primitiva
@@ -243,7 +365,13 @@ internal static class NeonFacade
                 Name = piece.Name,
                 Pivot = piece.Min,
                 Parts = parts,
-                IsDoor = piece.Name.Contains("door", StringComparison.Ordinal)
+                IsDoor = piece.Name.Contains("door", StringComparison.Ordinal),
+                // Con relleno emparejado el hueco existe seguro; sin relleno, la geometría lo confirma
+                // (los muros ciegos son los únicos que llegan acá sin hueco).
+                HasOpening = index.TryGetValue(insertName, out _) || HasOpening(piece.Parts, size),
+                DoorBottom = index.TryGetValue(insertName, out int doorInsert)
+                    ? pieces[doorInsert].Min.Y - piece.Min.Y
+                    : float.PositiveInfinity
             });
         }
         return modules;

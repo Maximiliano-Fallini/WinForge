@@ -83,6 +83,9 @@ public sealed class D3D12Backend : IGraphicsBackend
 
     private ID3D12DescriptorHeap _rtvHeap = null!;
     private ID3D12Resource[] _renderTargets = null!;
+
+    /// <summary>Color multisample de la escena: se resuelve al back buffer antes de presentar.</summary>
+    private ID3D12Resource _msaaTarget = null!;
     private uint _rtvDescriptorSize;
     private ID3D12Resource _depthTexture = null!;
     private ID3D12DescriptorHeap _dsvHeap = null!;
@@ -365,7 +368,8 @@ public sealed class D3D12Backend : IGraphicsBackend
         _rtvHeap = _device.CreateDescriptorHeap(new DescriptorHeapDescription
         {
             Type = DescriptorHeapType.RenderTargetView,
-            DescriptorCount = FramesInFlight
+            // Una vista por buffer del swapchain y UNA más para el target multisample.
+            DescriptorCount = FramesInFlight + 1
         });
 
         _renderTargets = new ID3D12Resource[FramesInFlight];
@@ -402,6 +406,51 @@ public sealed class D3D12Backend : IGraphicsBackend
                 ViewDimension = RenderTargetViewDimension.Texture2D
             }, handle);
         }
+
+        CreateMsaaTarget();
+    }
+
+    /// <summary>
+    /// Color multisample de la escena (ver <see cref="SceneGraphicsOptions.MSAASamples"/>). El swapchain
+    /// con flip model no admite multisampling: se dibuja acá y se resuelve al back buffer del frame.
+    /// La vista vive en la última ranura del heap de RTV, después de las de los buffers.
+    /// </summary>
+    private void CreateMsaaTarget()
+    {
+        DxgiShared.SafeDispose(_msaaTarget);
+
+        var description = new ResourceDescription(
+            ResourceDimension.Texture2D,
+            0,
+            (ulong)_width,
+            (uint)_height,
+            1,
+            1,
+            DxgiFormat.B8G8R8A8_UNorm,
+            SceneGraphicsOptions.MSAASamples,
+            0,
+            TextureLayout.Unknown,
+            // Sin ALLOW_RENDER_TARGET el recurso se crea pero no se le puede hacer una RTV; el flag
+            // es obligatorio para un color que la placa va a escribir.
+            ResourceFlags.AllowRenderTarget);
+        _msaaTarget = _device.CreateCommittedResource(
+            HeapType.Default,
+            HeapFlags.None,
+            description,
+            ResourceStates.RenderTarget,
+            null);
+
+        // El handle se calcula en una COPIA local por el mismo motivo que en CreateRenderTargets:
+        // pasar la referencia que devuelve Offset() directo a la llamada nativa es un puntero a una
+        // pila que ya no existe (medido: la placa se cayó al crear la vista).
+        //
+        // La descripción va en null a propósito: con una descripción EXPLÍCITA sobre un recurso
+        // multisample el driver descarta el dispositivo con DXGI_ERROR_INVALID_CALL (medido en la
+        // RTX 4060 Ti, 4x y 8x, BGRA8 y RGBA8; con 1x la misma llamada funciona). En null la vista
+        // hereda formato y dimensión del recurso, que es exactamente lo que se quiere.
+        var handle = _rtvHeap.GetCPUDescriptorHandleForHeapStart();
+        handle = handle.Offset(FramesInFlight, _rtvDescriptorSize);
+        _device.CreateRenderTargetView(_msaaTarget, null, handle);
     }
 
     private void CreateDepthBuffer()
@@ -416,7 +465,7 @@ public sealed class D3D12Backend : IGraphicsBackend
             1,
             1,
             DxgiFormat.D24_UNorm_S8_UInt,
-            1,
+            SceneGraphicsOptions.MSAASamples,
             0,
             TextureLayout.Unknown,
             ResourceFlags.AllowDepthStencil);
@@ -432,11 +481,10 @@ public sealed class D3D12Backend : IGraphicsBackend
             Type = DescriptorHeapType.DepthStencilView,
             DescriptorCount = 1
         });
-        _device.CreateDepthStencilView(_depthTexture, new DepthStencilViewDescription
-        {
-            Format = DxgiFormat.D24_UNorm_S8_UInt,
-            ViewDimension = DepthStencilViewDimension.Texture2D
-        }, _dsvHeap.GetCPUDescriptorHandleForHeapStart());
+        // En null por el mismo motivo que la vista de color: una descripción explícita sobre un
+        // recurso multisample es una llamada inválida para el driver. La vista hereda D24S8 y la
+        // dimensión del recurso.
+        _device.CreateDepthStencilView(_depthTexture, null, _dsvHeap.GetCPUDescriptorHandleForHeapStart());
     }
 
     private void CreatePipelines()
@@ -538,7 +586,7 @@ public sealed class D3D12Backend : IGraphicsBackend
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RenderTargetFormats = new[] { DxgiFormat.B8G8R8A8_UNorm },
             DepthStencilFormat = DxgiFormat.D24_UNorm_S8_UInt,
-            SampleDescription = new SampleDescription(1, 0)
+            SampleDescription = new SampleDescription(SceneGraphicsOptions.MSAASamples, 0)
         });
 
         // PASADA DE SOMBRAS (ver README-SOMBRAS.md): los MISMOS shaders de la geometría, con CERO
@@ -579,7 +627,7 @@ public sealed class D3D12Backend : IGraphicsBackend
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RenderTargetFormats = new[] { DxgiFormat.B8G8R8A8_UNorm },
             DepthStencilFormat = DxgiFormat.D24_UNorm_S8_UInt,
-            SampleDescription = new SampleDescription(1, 0)
+            SampleDescription = new SampleDescription(SceneGraphicsOptions.MSAASamples, 0)
         });
 
         // Franja de métricas: mismo pixel shader que el fondo pero con su propio vertex shader —el
@@ -598,7 +646,7 @@ public sealed class D3D12Backend : IGraphicsBackend
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RenderTargetFormats = new[] { DxgiFormat.B8G8R8A8_UNorm },
             DepthStencilFormat = DxgiFormat.D24_UNorm_S8_UInt,
-            SampleDescription = new SampleDescription(1, 0)
+            SampleDescription = new SampleDescription(SceneGraphicsOptions.MSAASamples, 0)
         });
 
         // Partículas (el polen): los MISMOS shaders que la geometría pero con blend premultiplicado
@@ -621,7 +669,7 @@ public sealed class D3D12Backend : IGraphicsBackend
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RenderTargetFormats = new[] { DxgiFormat.B8G8R8A8_UNorm },
             DepthStencilFormat = DxgiFormat.D24_UNorm_S8_UInt,
-            SampleDescription = new SampleDescription(1, 0)
+            SampleDescription = new SampleDescription(SceneGraphicsOptions.MSAASamples, 0)
         });
     }
 
@@ -1120,6 +1168,7 @@ public sealed class D3D12Backend : IGraphicsBackend
             _renderTargets[i] = null!;
         }
         DxgiShared.SafeDispose(_depthTexture);
+        DxgiShared.SafeDispose(_msaaTarget);
 
         // Mismos flags que la creación (AllowTearing incluido): con flags distintos ResizeBuffers
         // falla con DXGI_ERROR_INVALID_CALL.
@@ -1174,12 +1223,14 @@ public sealed class D3D12Backend : IGraphicsBackend
         _commandList.SetGraphicsRootSignature(_rootSignature);
 
         var renderTarget = _renderTargets[_backBufferIndex];
-        var rtvHandle = _rtvHeap.GetCPUDescriptorHandleForHeapStart().Offset((int)_backBufferIndex, _rtvDescriptorSize);
+        // La escena se dibuja en el target multisample; al final del frame se resuelve al back buffer.
+        var rtvHandle = _rtvHeap.GetCPUDescriptorHandleForHeapStart().Offset(FramesInFlight, _rtvDescriptorSize);
         var dsvHandle = _dsvHeap.GetCPUDescriptorHandleForHeapStart();
 
-        // El buffer del swapchain está en Present entre frames: hay que devolverlo a render target.
-        _commandList.ResourceBarrier(ResourceBarrier.BarrierTransition(
-            renderTarget, ResourceStates.Present, ResourceStates.RenderTarget, 0, ResourceBarrierFlags.None));
+        // El back buffer NO se toca acá: la escena se dibuja en el target multisample (que queda en
+        // RenderTarget entre frames, ver el resolve del cierre) y el buffer del swapchain sigue en
+        // Present hasta que se resuelve sobre él. Pasarlo a RenderTarget para después resolverlo es
+        // una transición inválida: el driver descarta el dispositivo.
         _commandList.OMSetRenderTargets(rtvHandle, dsvHandle);
 
         // Los timestamps de D3D12 se cierran con EndQuery (no hay versión "disjoint": D3D12 no
@@ -1291,8 +1342,18 @@ public sealed class D3D12Backend : IGraphicsBackend
             _timingPending[slot] = true;
         }
 
+        // Resolver el MISMO frame que se acaba de dibujar. Las dos transiciones son obligatorias:
+        // el color multisample no puede ser origen de resolve mientras está atado como render target,
+        // y el back buffer no puede ser destino mientras está en Present.
         _commandList.ResourceBarrier(ResourceBarrier.BarrierTransition(
-            renderTarget, ResourceStates.RenderTarget, ResourceStates.Present, 0, ResourceBarrierFlags.None));
+            _msaaTarget, ResourceStates.RenderTarget, ResourceStates.ResolveSource, 0, ResourceBarrierFlags.None));
+        _commandList.ResourceBarrier(ResourceBarrier.BarrierTransition(
+            renderTarget, ResourceStates.Present, ResourceStates.ResolveDest, 0, ResourceBarrierFlags.None));
+        _commandList.ResolveSubresource(renderTarget, 0, _msaaTarget, 0, DxgiFormat.B8G8R8A8_UNorm);
+        _commandList.ResourceBarrier(ResourceBarrier.BarrierTransition(
+            _msaaTarget, ResourceStates.ResolveSource, ResourceStates.RenderTarget, 0, ResourceBarrierFlags.None));
+        _commandList.ResourceBarrier(ResourceBarrier.BarrierTransition(
+            renderTarget, ResourceStates.ResolveDest, ResourceStates.Present, 0, ResourceBarrierFlags.None));
 
         _commandList.Close();
         _queue.ExecuteCommandLists(new ID3D12CommandList[] { _commandList });
@@ -1555,6 +1616,7 @@ public sealed class D3D12Backend : IGraphicsBackend
         DxgiShared.SafeDispose(_commandList);
         if (_allocators != null) foreach (var allocator in _allocators) DxgiShared.SafeDispose(allocator);
         if (_renderTargets != null) foreach (var target in _renderTargets) DxgiShared.SafeDispose(target);
+        DxgiShared.SafeDispose(_msaaTarget);
         DxgiShared.SafeDispose(_depthTexture);
         DxgiShared.SafeDispose(_rtvHeap);
         DxgiShared.SafeDispose(_dsvHeap);

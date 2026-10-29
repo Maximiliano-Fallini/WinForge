@@ -9,6 +9,24 @@
              defecto (120/32) se pisan para que no deforme la card. Con acento propio
              (fondo tenue + texto/borde de acento) para que no se confunda con el
              fondo de la card, que es del mismo color. -->
+        <!-- Badge de la card del CPU cuando falta PawnIO: parece una pastilla de aviso,
+             pero es un botón entero (con la flecha) para que se entienda que lleva a
+             Configuración → Drivers. Sin MinWidth/MinHeight del estilo por defecto
+             para que no deforme la fila de uso/temperatura. -->
+        <Style x:Key="DriverMissingBadgeButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource WarningTintBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource WarningBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Padding" Value="8,3"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="MinHeight" Value="0"/>
+            <Setter Property="VerticalAlignment" Value="Bottom"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="UseSystemFocusVisuals" Value="True"/>
+        </Style>
+
         <Style x:Key="SecurityCardActionButtonStyle" TargetType="Button">
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="Padding" Value="10,5"/>
@@ -45,6 +63,31 @@
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock x:Name="CpuUsageText" Text="0%" FontWeight="Bold" FontSize="24"/>
                                     <TextBlock x:Name="CpuTempText" Text="" FontSize="14" Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Bottom" Margin="0,0,0,3"/>
+                                    <!-- Sin PawnIO no hay temperatura del CPU: la badge ocupa ese
+                                         lugar y lleva directo a la pestaña Drivers. -->
+                                    <Button x:Name="CpuPawnIoMissingBadge"
+                                            Style="{StaticResource DriverMissingBadgeButtonStyle}"
+                                            Visibility="Collapsed"
+                                            Margin="0,0,0,2"
+                                            Click="CpuPawnIoMissingBadge_Click">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <FontIcon Glyph="&#xE7BA;" FontSize="11"
+                                                      Foreground="{StaticResource WarningBrush}"
+                                                      VerticalAlignment="Center"/>
+                                            <TextBlock Text="Falta driver para leer temperatura"
+                                                       FontSize="11" FontWeight="SemiBold"
+                                                       Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                       TextWrapping="Wrap" MaxWidth="210"
+                                                       VerticalAlignment="Center"/>
+                                            <!-- Flecha de avance (no chevron) y en color
+                                                 secundario: el ámbar ya lo lleva el aviso;
+                                                 el azul de acento acá competía con el texto. -->
+                                            <FontIcon Glyph="&#xE72A;" FontSize="11"
+                                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,0,-1,0"/>
+                                        </StackPanel>
+                                    </Button>
                                 </StackPanel>
                                 <TextBlock x:Name="CpuDetailsText" Text="--" FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>

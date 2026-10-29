@@ -829,7 +829,7 @@ internal static class SceneShaders
                 // corridas de la misma duración ven exactamente la misma lluvia.
                 float phase = instance.Orientation.y;
                 float fallSpeed = 0.55 + instance.Orientation.w * 0.55;   // vueltas por segundo
-                float cycle = frac(phase + TimeAndParams.x * fallSpeed);
+                float cycle = 1.0 - frac(phase + TimeAndParams.x * fallSpeed);
                 const float rainHeight = 26.0;
 
                 // Ancla: el desplazamiento horizontal de la gota (fijo, relativo al ojo) y su altura,
@@ -841,13 +841,17 @@ internal static class SceneShaders
                 // DEL MUNDO (la lluvia cae vertical) y la derecha de la vista, así que la estela
                 // siempre se ve de canto y nunca de perfil. El viento la inclina apenas.
                 float3 toCamera = CameraPositionWS.xyz - anchor;
-                float3 right = normalize(cross(float3(0.0, 1.0, 0.0), toCamera));
-                float wind = input.Position.y * 0.16 * sin(phase * 6.2831 + TimeAndParams.x * 0.4);
+                float horizontalDistance = max(length(toCamera.xz), 0.0001);
+                float3 right = float3(toCamera.z / horizontalDistance, 0.0, -toCamera.x / horizontalDistance);
+                // El viento sigue la misma dirección en el mundo: el extremo superior de la
+                // estela queda contra el viento, detrás de la gota que cae.
+                float3 windDirection = float3(0.08, 0.0, 0.05);
                 world = anchor
-                      + right * (input.Position.x * 0.032 + wind)
+                      + right * (input.Position.x * 0.022)
+                      - windDirection * input.Position.y
                       + float3(0.0, 1.0, 0.0) * (input.Position.y * instance.PositionScale.w);
 
-                normal = -normalize(toCamera);
+                normal = -toCamera / max(length(toCamera), 0.0001);
                 height = 0.0;
             }
             else if (kind > 16.5)
@@ -1982,15 +1986,16 @@ internal static class SceneShaders
                 // falta un sprite: el alfa baja hacia las puntas y hacia los bordes, y el color es el
                 // del agua que ILUMINAN las fuentes de la escena (los faroles y los carteles). Sin esa
                 // luz la lluvia sería una rejilla gris: es la luz la que la hace visible de noche.
-                float across = saturate(abs(input.Local.x) * 0.5);
+                float across = saturate(abs(input.Local.x));
                 float along = saturate(input.Local.y);
                 float edge = 1.0 - across;
-                float ends = smoothstep(0.0, 0.22, along) * (1.0 - smoothstep(0.70, 1.0, along));
-                alpha = saturate(edge * edge * ends) * 0.46;
+                float ends = smoothstep(0.0, 0.15, along) * (1.0 - smoothstep(0.45, 1.0, along));
+                float heightFade = smoothstep(0.0, 0.55, input.WorldPosition.y);
+                alpha = saturate(edge * edge * ends) * 0.32 * heightFade;
 
                 float3 rainAlbedo = float3(0.62, 0.72, 0.86);
-                float3 rainLight = SkyAmbient() * 0.9
-                                 + PointLightSum(rainAlbedo, 0.0, 0.16, n, view, input.WorldPosition) * 2.4;
+                float3 rainLight = SkyAmbient() * 0.65
+                                 + PointLightSum(rainAlbedo, 0.0, 0.24, n, view, input.WorldPosition) * 1.6;
                 color = rainLight * rainAlbedo;
             }
             else

@@ -92,6 +92,21 @@
         <Setter Property="MinHeight" Value="36"/>
     </Style>
 
+<!-- Botones de la puerta de entrada por driver faltante (Monitor de sensores /
+         Overclock USB): mismo alto y radio en las dos pantallas. Viven acá, junto a los
+         estilos base, para que la cadena BasedOn se resuelva en el mismo diccionario. -->
+    <Style x:Key="DriverGatePrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="22,10"/>
+        <Setter Property="MinWidth" Value="0"/>
+    </Style>
+
+    <Style x:Key="DriverGateSecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="16,10"/>
+        <Setter Property="MinWidth" Value="0"/>
+    </Style>
+
 <!-- Button with Icon Template -->
     <Style x:Key="ButtonWithIconStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
         <Setter Property="ContentTemplate">

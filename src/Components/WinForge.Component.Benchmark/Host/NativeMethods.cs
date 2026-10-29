@@ -48,6 +48,8 @@ internal static class NativeMethods
 
     internal const uint MONITOR_DEFAULTTONEAREST = 0x00000002;
 
+    internal delegate bool MonitorEnumProc(nint monitor, nint deviceContext, nint rect, nint data);
+
     [DllImport("user32.dll")]
     internal static extern bool SetLayeredWindowAttributes(nint hWnd, uint colorKey, byte alpha, uint flags);
 
@@ -66,6 +68,11 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     internal static extern nint MonitorFromPoint(POINT point, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool EnumDisplayMonitors(
+        nint deviceContext, nint clipRect, MonitorEnumProc callback, nint data);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]

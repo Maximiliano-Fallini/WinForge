@@ -22,8 +22,17 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
 {
     private readonly ISensorService _sensorService;
     private readonly ILoggingService _loggingService;
+    private readonly INavigationService _navigationService;
     private DispatcherQueueTimer? _pollTimer;
     private bool _polling;
+
+    // Aviso de lecturas del CPU faltantes: se confirma con dos sondeos seguidos
+    // para no mostrar el banner en el primer Update de LHM, que puede llegar vacío.
+    private int _cpuMissingStreak;
+
+    // La puerta se puede saltear para ver GPU, memoria y discos sin PawnIO: esas
+    // lecturas no necesitan driver. El banner de la grilla ofrece volver a Drivers.
+    private bool _driverGateBypassed;
 
     // Se marca cuando se creó un header de grupo/subgrupo nuevo (texto español en
     // código): al final de la actualización se recorre el árbol para traducirlo.
@@ -125,6 +134,7 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
             button.Background = ThemeBrushes.GetSurface("ButtonBackground");
         _sensorService = App.Services.GetRequiredService<ISensorService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
+        _navigationService = App.Services.GetRequiredService<INavigationService>();
         Unloaded += (s, e) => StopPolling();
 
         // Al cambiar el tema, reconstruir la grilla (grupos, categorías y filas)
@@ -143,15 +153,96 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
         SensorsGrid.RowDefinitions.Clear();
         _groups.Clear();
         _nextRow = 0;
-        _ = PollOnceAsync();
+        // Con la puerta de PawnIO visible no hay grilla que refrescar: no se
+        // gastan lecturas de LHM hasta que el driver esté instalado.
+        if (DriverGatePanel.Visibility != Visibility.Visible)
+            _ = PollOnceAsync();
     }
 
     protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        RefreshDriverGate();
+    }
+
+    /// <summary>
+    /// Primer estado de la página: sin PawnIO se muestra la puerta que lleva a
+    /// Configuración → Drivers. El driver no se instala desde los componentes:
+    /// esa pestaña es su único hogar y el estado se relee al volver.
+    /// </summary>
+    private void RefreshDriverGate()
+    {
+        DriverGateStatusText.Visibility = Visibility.Collapsed;
+        bool installed = _sensorService.PawnIOInstalled;
+        DriverGatePanel.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+        SensorsContent.Visibility = installed ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!installed)
+        {
+            StopPolling();
+            return;
+        }
+
+        _driverGateBypassed = false;
         SetStatusOnce(I18n.T("▶ Leyendo sensores..."), Feedback.AccentBrush);
         StartPolling();
         _ = PollOnceAsync();
+    }
+
+    private void OpenDriversButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _navigationService.NavigateTo("configuracion", ConfiguracionPage.DriversTabParameter);
+            // NavigateTo del servicio no mueve la selección del navbar principal.
+            App.MainWindowInstance?.HighlightNavigationPage("configuracion");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Monitor de sensores: no se pudo abrir Configuración → Drivers: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Sale de la puerta para ver lo que sí funciona sin PawnIO (GPU, memoria y
+    /// discos). El banner de la grilla mantiene el acceso a Configuración → Drivers.
+    /// </summary>
+    private void ContinueWithoutDriverButton_Click(object sender, RoutedEventArgs e)
+    {
+        _driverGateBypassed = true;
+        DriverGatePanel.Visibility = Visibility.Collapsed;
+        SensorsContent.Visibility = Visibility.Visible;
+        StartPolling();
+        _ = PollOnceAsync();
+    }
+
+    private async void RetrySensorsDriverButton_Click(object sender, RoutedEventArgs e)
+    {
+        RetrySensorsDriverButton.IsEnabled = false;
+        DriverGateStatusText.Visibility = Visibility.Collapsed;
+        try
+        {
+            if (!_sensorService.PawnIOInstalled)
+            {
+                DriverGateStatusText.Text = I18n.T("Todavía no se detecta PawnIO. Instalalo desde Configuración → Drivers.");
+                DriverGateStatusText.Foreground = Feedback.WarningBrush;
+                DriverGateStatusText.Visibility = Visibility.Visible;
+                return;
+            }
+
+            // LHM pudo haber abierto el hardware antes de que PawnIO existiera:
+            // se reabre para que la próxima lectura ya use el driver.
+            await Task.Run(() => _sensorService.Reinitialize());
+            RefreshDriverGate();
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Monitor de sensores: reintento tras instalar PawnIO falló: {ex.Message}");
+        }
+        finally
+        {
+            RetrySensorsDriverButton.IsEnabled = true;
+        }
     }
 
     protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
@@ -231,6 +322,7 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
 
         // Sin mensaje permanente: con datos cargados el estado se oculta.
         SensorsStatusText.Visibility = Visibility.Collapsed;
+        UpdateDriverBanner(groups);
 
         foreach (var group in groups)
         {
@@ -588,6 +680,96 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
                 return Feedback.AccentBrush;
             default:
                 return Feedback.MutedBrush;
+        }
+    }
+
+    // ---- Aviso e instalación de PawnIO ----
+
+    /// <summary>
+    /// Con PawnIO ausente, LHM crea los sensores del CPU pero todos devuelven
+    /// null: temperatura, reloj y potencia quedan en "—". La GPU, la RAM y los
+    /// discos se leen por APIs de usuario y no lo necesitan, así que el resto de
+    /// la grilla se ve bien y el problema pasa desapercibido.
+    /// </summary>
+    private void UpdateDriverBanner(List<SensorGroupInfo> groups)
+    {
+        // Si PawnIO falta, la puerta de entrada ya explica el problema. Si el usuario
+        // la salteó para ver GPU/memoria/discos, el banner mantiene el acceso a Drivers.
+        bool installed = _sensorService.PawnIOInstalled;
+        if (!installed && !_driverGateBypassed)
+        {
+            DriverBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var cpu = groups.FirstOrDefault(g => g.Kind == SensorGroupKind.Cpu);
+        var temperatures = cpu?.Categories
+            .FirstOrDefault(c => c.Name == "Temperatura")?.Sensors;
+        bool missing = temperatures is { Count: > 0 } && temperatures.All(s => !s.Current.HasValue);
+
+        _cpuMissingStreak = missing ? _cpuMissingStreak + 1 : 0;
+        if (!missing)
+        {
+            DriverBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // Con PawnIO instalado, el primer sondeo de LHM puede llegar vacío: el aviso
+        // espera dos lecturas seguidas para no parpadear. Sin driver no hay duda,
+        // así que el banner del modo "sin PawnIO" aparece desde la primera lectura.
+        if (installed && _cpuMissingStreak < 2)
+        {
+            DriverBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        DriverBanner.Visibility = Visibility.Visible;
+        if (!installed)
+        {
+            OpenDriversBannerButton.Visibility = Visibility.Visible;
+            RestartAppButton.Visibility = Visibility.Collapsed;
+            RetrySensorsButton.Visibility = Visibility.Collapsed;
+            DriverBannerTitle.Text = I18n.T("Faltan lecturas del CPU");
+            DriverBannerDesc.Text = I18n.T("La GPU, la memoria y los discos se leen sin driver; la temperatura, el reloj y la potencia del CPU necesitan PawnIO. Se instala desde Configuración → Drivers.");
+            return;
+        }
+
+        OpenDriversBannerButton.Visibility = Visibility.Collapsed;
+        RestartAppButton.Visibility = Visibility.Visible;
+        RetrySensorsButton.Visibility = Visibility.Visible;
+        DriverBannerTitle.Text = I18n.T("El CPU no entrega lecturas");
+        DriverBannerDesc.Text = I18n.T("PawnIO está instalado, pero el CPU todavía no entrega lecturas. Cerrá y volvé a abrir WinForge; si sigue, cerrá otros monitores de hardware y revisá la Integridad de memoria en Seguridad de Windows.");
+    }
+
+    private void RestartAppButton_Click(object sender, RoutedEventArgs e)
+    {
+        var main = App.MainWindowInstance;
+        if (main == null)
+        {
+            DriverBannerStatusText.Text = I18n.T("No se pudo reiniciar WinForge. Cerralo y abrilo a mano.");
+            DriverBannerStatusText.Foreground = Feedback.ErrorBrush;
+            return;
+        }
+
+        if (!main.RestartApp())
+        {
+            DriverBannerStatusText.Text = I18n.T("No se pudo reiniciar WinForge. Cerralo y abrilo a mano.");
+            DriverBannerStatusText.Foreground = Feedback.ErrorBrush;
+        }
+    }
+
+    private async void RetrySensorsButton_Click(object sender, RoutedEventArgs e)
+    {
+        RetrySensorsButton.IsEnabled = false;
+        try
+        {
+            await Task.Run(() => _sensorService.Reinitialize());
+            _cpuMissingStreak = 0;
+            RebuildGrid();
+        }
+        finally
+        {
+            RetrySensorsButton.IsEnabled = true;
         }
     }
 

@@ -3,7 +3,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <ScrollViewer Background="{ThemeResource AppBackgroundBrush}">
+    <Grid Background="{ThemeResource AppBackgroundBrush}">
+    <ScrollViewer x:Name="SensorsContent">
         <StackPanel Spacing="0" Margin="24,16,24,24">
             <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,6">
                 <FontIcon Glyph="&#xE957;" FontSize="18" Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
@@ -11,6 +12,37 @@
             </StackPanel>
             <TextBlock x:Name="SensorsStatusText" Text="" FontSize="12" Visibility="Collapsed"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+<!-- Aviso de lecturas del CPU faltantes cuando PawnIO SÍ está instalado: LHM
+                 todavía no lo cargó. El caso de driver ausente lo cubre la puerta de
+                 entrada de arriba, que lleva a Configuración → Drivers. -->
+            <Border x:Name="DriverBanner" Visibility="Collapsed"
+                    Background="{ThemeResource CardBackgroundBrush}"
+                    BorderBrush="{ThemeResource SensorGridLineBrush}"
+                    BorderThickness="1" CornerRadius="6" Padding="14,12" Margin="0,0,0,10">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE7BA;" FontSize="16"
+                                  Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="DriverBannerTitle" FontSize="14" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <TextBlock x:Name="DriverBannerDesc" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Button x:Name="OpenDriversBannerButton" Content="Abrir Configuración → Drivers"
+                                Visibility="Collapsed" Click="OpenDriversButton_Click"
+                                CornerRadius="6" Padding="14,7" FontWeight="SemiBold"/>
+                        <Button x:Name="RestartAppButton" Content="Reiniciar WinForge" Visibility="Collapsed"
+                                Click="RestartAppButton_Click" CornerRadius="6" Padding="14,7"
+                                FontWeight="SemiBold"/>
+                        <Button x:Name="RetrySensorsButton" Content="Reintentar" Visibility="Collapsed"
+                                Click="RetrySensorsButton_Click" CornerRadius="6" Padding="14,7"/>
+                    </StackPanel>
+                    <TextBlock x:Name="DriverBannerStatusText" FontSize="12" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
 
 <!-- Acciones de la grilla: dos columnas; abrir/cerrar subgrupos debajo de abrir/cerrar grupos -->
             <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="8" Margin="0,0,0,8">
@@ -70,4 +102,101 @@
             </Border>
         </StackPanel>
     </ScrollViewer>
+
+<!-- ================================================================
+         PUERTA DE ENTRADA: sin PawnIO no hay temperatura, reloj ni potencia
+         del CPU. La instalación del driver vive en Configuración → Drivers:
+         acá solo se explica la dependencia y se lleva a ese lugar único.
+         La tarjeta se centra en la página y comparte estilo con Overclock USB
+         (ver DriverGate* en Controls/Cards.xaml).
+         ================================================================ -->
+        <Grid x:Name="DriverGatePanel" Visibility="Collapsed">
+            <ScrollViewer x:Name="DriverGateScroll"
+                          VerticalContentAlignment="Center"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <!-- MinHeight = alto del viewport: la tarjeta queda centrada cuando
+                     entra, y el ScrollViewer aparece cuando no. -->
+                <Grid MinHeight="{Binding ViewportHeight, ElementName=DriverGateScroll}">
+                    <StackPanel Style="{StaticResource DriverGateHostStyle}">
+                        <Border Style="{StaticResource DriverGateCardStyle}">
+                            <StackPanel Spacing="0">
+                                <StackPanel Orientation="Horizontal" Spacing="12">
+                                    <Border Style="{StaticResource DriverGateIconBadgeStyle}">
+                                        <FontIcon Glyph="&#xE950;"
+                                                  FontSize="20"
+                                                  Foreground="{ThemeResource AccentBrush}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="Monitor de sensores"
+                                                   FontSize="20"
+                                                   FontWeight="SemiBold"/>
+                                        <TextBlock Text="Temperatura, reloj y potencia del CPU"
+                                                   Style="{StaticResource DriverGateSubtitleStyle}"/>
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <TextBlock Text="Falta el driver PawnIO"
+                                           Style="{StaticResource DriverGateTitleStyle}"
+                                           Margin="0,22,0,0"/>
+                                <TextBlock Text="El monitor necesita PawnIO para leer la temperatura, el reloj y la potencia del CPU. Es el mismo driver que usa LibreHardwareMonitor y se administra desde Configuración → Drivers."
+                                           Style="{StaticResource DriverGateBodyStyle}"
+                                           Margin="0,10,0,0"/>
+
+                                <Border Style="{StaticResource DriverGateWarningStyle}"
+                                        Margin="0,16,0,0">
+                                    <Grid ColumnSpacing="9">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE7BA;"
+                                                  FontSize="14"
+                                                  Foreground="{StaticResource WarningBrush}"
+                                                  VerticalAlignment="Top"
+                                                  Margin="0,2,0,0"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Style="{StaticResource DriverGateWarningTextStyle}"
+                                                   Text="Sin este driver, la temperatura, el reloj y la potencia del CPU aparecen vacíos."/>
+                                    </Grid>
+                                </Border>
+
+                                <StackPanel Orientation="Horizontal"
+                                            Spacing="10"
+                                            Margin="0,22,0,0"
+                                            HorizontalAlignment="Center">
+                                    <Button x:Name="OpenDriversButton"
+                                            Content="Abrir Configuración → Drivers"
+                                            Click="OpenDriversButton_Click"
+                                            Style="{StaticResource DriverGatePrimaryButtonStyle}"/>
+                                    <Button x:Name="RetrySensorsDriverButton"
+                                            Content="Reintentar"
+                                            Click="RetrySensorsDriverButton_Click"
+                                            Style="{StaticResource DriverGateSecondaryButtonStyle}"/>
+                                </StackPanel>
+                                <HyperlinkButton x:Name="ContinueWithoutDriverButton"
+                                                 Content="Ver sensores disponibles sin PawnIO"
+                                                 Click="ContinueWithoutDriverButton_Click"
+                                                 FontSize="12"
+                                                 Margin="0,10,0,0"
+                                                 HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="DriverGateStatusText"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           TextAlignment="Center"
+                                           Margin="0,10,0,0"
+                                           Visibility="Collapsed"/>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Style="{StaticResource DriverGateFooterStyle}"
+                                   Margin="6,14,6,0"
+                                   Text="El driver PawnIO es compartido: sigue disponible aunque desinstales el monitor de sensores."/>
+                    </StackPanel>
+                </Grid>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
 </Page>

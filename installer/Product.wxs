@@ -5,8 +5,8 @@
        (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
   <Package Name="WinForge"
            Manufacturer="WinForge"
-           Version="0.6.4"
-           ProductCode="{82BAAFA9-3724-43E6-B3C8-336E80A7AACF}"
+           Version="0.6.6"
+           ProductCode="{FCFB6A44-C51F-46BB-ACC5-D19CA1669906}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"
@@ -33,7 +33,7 @@
     <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
     <Property Id="ARPPUBLISHER" Value="WinForge" />
     <Property Id="ARPCONTACT" Value="WinForge" />
-    <Property Id="ARPCOMMENTS" Value="WinForge 0.6.4 Beta - optimizador y monitor del sistema" />
+    <Property Id="ARPCOMMENTS" Value="WinForge 0.6.6 Beta - optimizador y monitor del sistema" />
 
     <!-- Accesos directos opcionales: los elige el usuario en la última página del
          asistente (WFVerifyDlg) con dos checks. Nacen en 1 para que una instalación

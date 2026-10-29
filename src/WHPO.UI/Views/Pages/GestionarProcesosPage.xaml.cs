@@ -348,6 +348,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _ = RefreshAsync(
             showSkeleton: cacheCleared || !_installedGamesService.HasCachedResult,
             refreshCache: cacheCleared);
+        // Además de pintar la caché, cada visita comprueba en segundo plano si la
+        // realidad cambió (juego instalado o desinstalado desde la última vez) y
+        // actualiza sola la lista. Re-detectar queda exactamente igual.
+        _ = RefreshLibraryInBackgroundAsync();
         I18n.LanguageChanged += OnLanguageChanged;
         // Estado en vivo de los juegos (badge "En ejecución"): los eventos WMI
         // publican un snapshot sin polling; acá solo se refleja en las cards.
@@ -957,6 +961,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // persisten en el servicio al presionar "Guardar" (volver descarta los cambios).
     private List<string>? _boostEfficiencyCustom;
     private List<string>? _boostKillCustom;
+    // Copias de esas dos listas al abrir la vista, para saber si hay cambios sin
+    // guardar (ver UpdateBoostSaveState).
+    private List<string>? _boostEfficiencyAtOpen;
+    private List<string>? _boostKillAtOpen;
 
  // Auto-actualización de la lista "Procesos en ejecución" de la vista de
  // configuración: un timer refresca el snapshot mientras la vista está abierta.
@@ -978,7 +986,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _boostEfficiencyCustom = _gameBoostService.GetBackgroundProcesses()
             .Where(n => !defaults.Contains(n, StringComparer.OrdinalIgnoreCase))
             .ToList();
-        _boostKillCustom = _gameBoostService.GetKillProcesses();
+ // WinForge fuera de las dos listas: si quedó guardado de una versión anterior,
+ // aparecía en «Eficiencia» o en «Cerrar» como una fila más (y en «Cerrar» la app
+ // se cerraría a sí misma). El servicio ya lo protege al aplicar, pero no tiene
+ // por qué figurar como si fuera configurable.
+        _boostEfficiencyCustom = _boostEfficiencyCustom
+            .Where(n => !string.Equals(n, "WinForge", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        _boostKillCustom = _gameBoostService.GetKillProcesses()
+            .Where(n => !string.Equals(n, "WinForge", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // Copia de lo que había al abrir: es la referencia para saber si hay algo
+        // que guardar. Sin esto el botón quedaba con el acento del tema desde el
+        // primer segundo, aunque no hubiera un solo cambio.
+        _boostEfficiencyAtOpen = new List<string>(_boostEfficiencyCustom);
+        _boostKillAtOpen = new List<string>(_boostKillCustom);
 
         try
         {
@@ -999,6 +1022,42 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         MainView.Visibility = Visibility.Collapsed;
         BoostConfigView.Visibility = Visibility.Visible;
+        UpdateBoostSaveState();
+    }
+
+    /// <summary>
+    /// Estado del botón «Guardar» de la configuración del Modo juego: solo se
+    /// ilumina (acento del tema) cuando hay algo distinto de lo que estaba al
+    /// abrir la vista. Recién abierta, sin cambios, queda neutro y deshabilitado:
+    /// no hay nada que persistir.
+    /// </summary>
+    private void UpdateBoostSaveState()
+    {
+        bool dirty = BoostHasUnsavedChanges();
+        BoostSaveButton.IsEnabled = dirty;
+        BoostSaveButton.Background = ThemeBrushes.Get(dirty ? "AccentBrush" : "ControlFillColorSecondaryBrush");
+        BoostSaveButton.Foreground = ThemeBrushes.Get(dirty ? "AccentForegroundBrush" : "SecondaryTextBrush");
+        BoostSaveButton.BorderThickness = new Thickness(dirty ? 0 : 1);
+        BoostSaveButton.BorderBrush = ThemeBrushes.Get("CardBorderBrush");
+    }
+
+    /// <summary>
+    /// True si las listas en edición difieren de las que se cargaron al abrir.
+    /// Se comparan como conjuntos ordenados: el orden en que se agregaron los
+    /// procesos no es un cambio que valga la pena guardar.
+    /// </summary>
+    private bool BoostHasUnsavedChanges()
+    {
+        if (_boostEfficiencyCustom == null || _boostKillCustom == null) return false;
+        return !SameProcesses(_boostEfficiencyCustom, _boostEfficiencyAtOpen)
+            || !SameProcesses(_boostKillCustom, _boostKillAtOpen);
+
+        static bool SameProcesses(List<string> current, List<string>? atOpen)
+            => (atOpen ?? new List<string>())
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .SequenceEqual(
+                    current.OrderBy(n => n, StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1051,6 +1110,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         BoostConfigHost.Content = null;
         _boostEfficiencyCustom = null;
         _boostKillCustom = null;
+        _boostEfficiencyAtOpen = null;
+        _boostKillAtOpen = null;
         BoostConfigView.Visibility = Visibility.Collapsed;
         MainView.Visibility = Visibility.Visible;
         if (saveChanges)
@@ -1621,7 +1682,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             return panel;
         }
 
-        UIElement MakeProcessRow(string name, bool removable, Action? remove, string? stateBadge = null)
+ // locked: el candado es SOLO para las filas que no se pueden tocar (los defaults
+ // del modo eficiencia y los procesos protegidos del listado). Antes se dibujaba
+ // con remove == null, y como toda fila del listado de procesos en ejecución no es
+ // removible, todas terminaban con candado.
+        UIElement MakeProcessRow(string name, bool removable, Action? remove, string? stateBadge = null, bool locked = false)
         {
             var row = new Grid { Height = 30, ColumnSpacing = 8, Padding = new Thickness(5, 0, 3, 0), Tag = name };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1648,7 +1713,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 Grid.SetColumn(delete, 3);
                 row.Children.Add(delete);
             }
-            else if (remove == null)
+            else if (locked)
             {
                 var lockIcon = new FontIcon { Glyph = "\uE72E", FontSize = 10, Foreground = muted, VerticalAlignment = VerticalAlignment.Center };
                 Grid.SetColumn(lockIcon, 3);
@@ -1671,6 +1736,17 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 Child = new TextBlock { Text = text, FontSize = 11, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = ThemeBrushes.Get("AccentBrush") }
             };
         }
+
+ // Fila bloqueada = no se puede agregar: los protegidos (sistema y WinForge) y los
+ // que YA están configurados en eficiencia, en cerrar o en los defaults del boost.
+ // Agregar dos veces no significa nada, así que se marcan con candado y tampoco se
+ // dejan seleccionar. Vive acá (y no dentro de RefreshPicker) porque la usan también
+ // los handlers de selección y de alta.
+        bool IsLockedRow(string processName)
+            => blocked.Contains(processName)
+               || defaults.Contains(processName, StringComparer.OrdinalIgnoreCase)
+               || efficiencyCustom.Contains(processName, StringComparer.OrdinalIgnoreCase)
+               || killCustom.Contains(processName, StringComparer.OrdinalIgnoreCase);
 
         void RefreshPicker()
         {
@@ -1730,7 +1806,56 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             var offset = scroll?.VerticalOffset ?? 0;
             pickerList.Items.Clear();
             foreach (var (name, badge) in desired)
-                pickerList.Items.Add(MakeProcessRow(name, removable: false, remove: null, stateBadge: badge));
+            {
+                var row = MakeProcessRow(name, removable: false, remove: null, stateBadge: badge, locked: IsLockedRow(name));
+                // Protegidos (el sistema y la propia app): además del candado se
+                // atenúan y llevan su propio tooltip. WinForge se cerraría a sí mismo
+                // si se agrega a «Cerrar», así que ni siquiera debe verse elegible.
+                if (blocked.Contains(name))
+                {
+                    // Se atenúan solo el ícono y el nombre: el candado y la pastilla
+                    // «Sistema» quedan a plena vista, que es la señal de que no se puede
+                    // tocar. Atenuar la fila entera dejaba el candado casi invisible.
+                    if (row is Grid lockedRow)
+                        foreach (var child in lockedRow.Children)
+                            if (child is Microsoft.UI.Xaml.Controls.Image || child is TextBlock)
+                                child.Opacity = 0.55;
+                    ToolTipService.SetToolTip(row, new ToolTip
+                    {
+                        Content = new TextBlock
+                        {
+                            Text = I18n.T("WinForge y los procesos del sistema no se pueden agregar a ninguna lista."),
+                            FontSize = 11,
+                            TextWrapping = TextWrapping.Wrap,
+                            MaxWidth = 240
+                        },
+                        Placement = PlacementMode.Right
+                    });
+                }
+                else if (IsLockedRow(name))
+                {
+                    // Ya configurado en alguna de las dos listas: el candado alcanza,
+                    // sin atenuar (son procesos perfectamente normales), y el tooltip
+                    // explica por qué no se puede volver a agregar. Los del perfil
+                    // predeterminado no se pueden quitar, así que no se les dice que
+                    // los saquen de la lista.
+                    var whyLocked = defaults.Contains(name, StringComparer.OrdinalIgnoreCase)
+                        ? I18n.T("Ya forma parte del perfil de eficiencia del boost.")
+                        : I18n.T("Ya está en una de las listas. Quitalo desde la lista de la derecha para volver a agregarlo.");
+                    ToolTipService.SetToolTip(row, new ToolTip
+                    {
+                        Content = new TextBlock
+                        {
+                            Text = whyLocked,
+                            FontSize = 11,
+                            TextWrapping = TextWrapping.Wrap,
+                            MaxWidth = 240
+                        },
+                        Placement = PlacementMode.Right
+                    });
+                }
+                pickerList.Items.Add(row);
+            }
             if (scroll is not null)
                 pickerList.DispatcherQueue.TryEnqueue(() =>
                 {
@@ -1762,7 +1887,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (selectedTarget == "efficiency")
             {
                 foreach (var name in defaults)
-                    efficiencyLockedRows.Children.Add(MakeProcessRow(name, removable: false, remove: null, stateBadge: I18n.T("En eficiencia")));
+                    efficiencyLockedRows.Children.Add(MakeProcessRow(name, removable: false, remove: null, stateBadge: I18n.T("En eficiencia"), locked: true));
             }
 
             if (list.Count == 0 && selectedTarget == "efficiency" && defaults.Count > 0)
@@ -1772,7 +1897,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             foreach (var name in list.ToList())
             {
                 var copy = name;
-                rows.Children.Add(MakeProcessRow(copy, removable: true, remove: () => { list.Remove(copy); RefreshTargetRows(); RefreshPicker(); }, stateBadge: null));
+                rows.Children.Add(MakeProcessRow(copy, removable: true, remove: () => { list.Remove(copy); RefreshTargetRows(); RefreshPicker(); UpdateBoostSaveState(); }, stateBadge: null));
             }
         }
 
@@ -1787,7 +1912,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (selectedTarget == "efficiency") efficiencyCustom.Add(name); else killCustom.Add(name);
             RefreshTargetRows();
             RefreshPicker();
+            UpdateBoostSaveState();
         }
+
+ // Fila protegida = no seleccionable: el ListView selecciona con un clic, así que
+ // la selección se descarta en el acto (AddProcess ya la ignoraba, pero el
+ // resaltado azul hacía creer que se podía agregar).
+        pickerList.SelectionChanged += (_, _) =>
+        {
+            // IsLockedRow cubre protegidos y ya configurados: ninguno se puede
+            // seleccionar (mantener seleccionada una fila que no se puede agregar era
+            // lo que hacía creer que sí se podía).
+            if (pickerList.SelectedItem is FrameworkElement selected
+                && selected.Tag is string selectedName
+                && IsLockedRow(selectedName))
+                pickerList.SelectedItem = null;
+        };
 
         pickerList.DoubleTapped += (_, _) => { if (pickerList.SelectedItem is FrameworkElement row && row.Tag is string name) AddProcess(name); };
  // Enter también agrega: la fila queda seleccionada con un clic y Enter confirma
@@ -1931,15 +2071,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // Cada switch en su propia píldora con fondo y borde: son dos ajustes del
  // boost que viven en la cabecera del selector y, sueltos sobre el fondo de la
  // página, se perdían. La píldora los separa del selector y entre sí.
-        Border MakeSwitchCard(UIElement row) => new()
+        // Las dos píldoras comparten el ancho de la más larga (van apiladas en un
+        // StackPanel): el contenido las estira, la etiqueta se queda a la izquierda
+        // y el switch, que va en la última columna de la grilla, cae en el extremo
+        // derecho de SU card en las dos.
+        Border MakeSwitchCard(UIElement row)
         {
-            Background = secondaryFill,
-            BorderBrush = borderBrush,
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 4, 10, 4),
-            Child = row
-        };
+            return new Border
+            {
+                Background = secondaryFill,
+                BorderBrush = borderBrush,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 4, 10, 4),
+                Child = row
+            };
+        }
         var headerSwitches = new StackPanel
         {
             Orientation = Orientation.Vertical,
@@ -2130,9 +2277,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var autoOptSwitch = new ToggleSwitch
         {
             IsOn = _gameBoostService.IsAutomaticServiceOptimizationEnabled,
-            OnContent = I18n.T("Optimización automática activa"),
-            OffContent = I18n.T("Sin optimización automática"),
-            Margin = new Thickness(0, 2, 0, 0)
+            Margin = new Thickness(0, 2, 0, 0),
+ // Vacío y no null: sin OnContent/OffContent el control muestra sus textos
+ // por defecto («Activado»/«Desactivado»), que quedaban colgando a la derecha.
+            OnContent = string.Empty,
+            OffContent = string.Empty
+        };
+ // La etiqueta va APARTE del control: el ToggleSwitch dibuja el switch a la
+ // izquierda de su OnContent/OffContent, así que con el texto adentro es
+ // imposible dejar el switch pegado al borde derecho de la píldora.
+        var autoOptLabel = new TextBlock
+        {
+            Text = I18n.T(autoOptSwitch.IsOn ? "Optimización automática activa" : "Sin optimización automática"),
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center
         };
         var autoOptInfoButton = new Button
         {
@@ -2145,13 +2303,19 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Foreground = muted,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var autoOptRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children = { autoOptSwitch, autoOptInfoButton }
-        };
+ // Grilla, no StackPanel: la etiqueta ocupa el sobrante y queda alineada a la
+ // izquierda en las DOS píldoras (que comparten ancho), y el switch cierra el
+ // extremo derecho. Con una pila horizontal cada etiqueta arrancaba donde
+ // terminaba su propio texto y las dos cards se veían desalineadas.
+        var autoOptRow = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        autoOptRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        autoOptRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        autoOptRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        autoOptRow.Children.Add(autoOptLabel);
+        autoOptRow.Children.Add(autoOptInfoButton);
+        Grid.SetColumn(autoOptInfoButton, 1);
+        autoOptRow.Children.Add(autoOptSwitch);
+        Grid.SetColumn(autoOptSwitch, 2);
  // El contenido se arma al ABRIR el tooltip y sale de la lista real que detiene el boost
  // (GameBoostService.BoostStopServices), con el nombre para mostrar que informa Windows
  // (que ya viene localizado): así el tooltip no queda desactualizado cuando se agrega o se
@@ -2164,6 +2328,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         ToolTipService.SetToolTip(autoOptInfoButton, autoOptTip);
         autoOptSwitch.Toggled += (_, _) =>
         {
+            autoOptLabel.Text = I18n.T(autoOptSwitch.IsOn ? "Optimización automática activa" : "Sin optimización automática");
             _gameBoostService.IsAutomaticServiceOptimizationEnabled = autoOptSwitch.IsOn;
             RefillServicesList(servicesList);
         };
@@ -2513,9 +2678,17 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var taskPauseSwitch = new ToggleSwitch
         {
             IsOn = _gameBoostService.IsAutomaticTaskPauseEnabled,
-            OnContent = I18n.T("Pausa de tareas activa"),
-            OffContent = I18n.T("Sin pausa de tareas"),
-            Margin = new Thickness(0, 2, 0, 0)
+            Margin = new Thickness(0, 2, 0, 0),
+            OnContent = string.Empty,
+            OffContent = string.Empty
+        };
+ // Mismo criterio que el switch de servicios: etiqueta aparte para que el switch
+ // sea el último elemento y quede en el borde derecho.
+        var taskPauseLabel = new TextBlock
+        {
+            Text = I18n.T(taskPauseSwitch.IsOn ? "Pausa de tareas activa" : "Sin pausa de tareas"),
+            FontSize = 14,
+            VerticalAlignment = VerticalAlignment.Center
         };
         var taskPauseInfoButton = new Button
         {
@@ -2528,13 +2701,17 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Foreground = muted,
             VerticalAlignment = VerticalAlignment.Center
         };
-        var taskPauseRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children = { taskPauseSwitch, taskPauseInfoButton }
-        };
+ // Mismo armado que el switch de servicios: etiqueta en el sobrante, ⓘ y switch
+ // al borde derecho.
+        var taskPauseRow = new Grid { ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        taskPauseRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        taskPauseRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        taskPauseRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        taskPauseRow.Children.Add(taskPauseLabel);
+        taskPauseRow.Children.Add(taskPauseInfoButton);
+        Grid.SetColumn(taskPauseInfoButton, 1);
+        taskPauseRow.Children.Add(taskPauseSwitch);
+        Grid.SetColumn(taskPauseSwitch, 2);
         ToolTipService.SetToolTip(taskPauseInfoButton, new ToolTip
         {
             Content = new TextBlock
@@ -2548,6 +2725,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         });
         taskPauseSwitch.Toggled += (_, _) =>
         {
+            taskPauseLabel.Text = I18n.T(taskPauseSwitch.IsOn ? "Pausa de tareas activa" : "Sin pausa de tareas");
             _gameBoostService.IsAutomaticTaskPauseEnabled = taskPauseSwitch.IsOn;
         };
 
@@ -3479,6 +3657,90 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 knownPaths[exe] = path;
         _processService.SetKnownInstallPaths(knownPaths);
     }
+
+    // ===== Escaneo al entrar a la biblioteca =====
+
+    private int _backgroundScanRunning; // 0/1: una sola comprobación de fondo a la vez
+
+    /// <summary>
+    /// Comprueba en segundo plano, en cada visita, si la biblioteca cambió desde la
+    /// última vez. La página ya se pintó con la caché (sin skeleton ni esperas), así
+    /// que esto solo la corrige si el escaneo encontró algo distinto. No muestra
+    /// errores ni bloquea: si falla, la lista que se ve sigue siendo válida, y la
+    /// próxima visita lo vuelve a intentar. No toca la lógica de Re-detectar.
+    /// </summary>
+    private async Task RefreshLibraryInBackgroundAsync()
+    {
+        // Sin caché, la carga normal ya está escaneando: no duplicar el trabajo.
+        if (!_installedGamesService.HasCachedResult) return;
+        if (Interlocked.Exchange(ref _backgroundScanRunning, 1) == 1) return;
+        try
+        {
+            int gen = _navGeneration;
+            // Referencia de comparación: lo que la página está mostrando ahora.
+            var before = await _installedGamesService.GetInstalledGamesAsync();
+            string beforeSig = LibrarySignature(before);
+
+            List<InstalledGame> fresh;
+            try
+            {
+                fresh = await _installedGamesService.GetInstalledGamesAsync(refresh: true);
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogDebug($"GestionarProcesosPage: escaneo de entrada: {ex.Message}");
+                return;
+            }
+
+            // Se salió de la página mientras escaneaba: la caché ya quedó al día y la
+            // próxima visita la lee. No se toca la UI de una página que no se ve.
+            if (gen != _navGeneration) return;
+            if (LibrarySignature(fresh) == beforeSig) return;
+
+            // Si algún juego dejó de existir y su carpeta ya no está, se retira lo que la
+            // app había escrito para él en Windows. La regla se conserva.
+            CleanupMissingGames(before, fresh);
+
+            _loggingService.LogDebug("GestionarProcesosPage: escaneo de entrada detectó cambios; se repinta la biblioteca");
+            await RefreshAsync(showSkeleton: false, refreshCache: false);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _backgroundScanRunning, 0);
+        }
+    }
+
+    /// <summary>Juegos que estaban en la lista y ya no están: si además su carpeta
+    /// desapareció, el juego se desinstaló y se retira la prioridad de nacimiento que la
+    /// app le había escrito en Windows. Si la carpeta sigue (disco desconectado, el
+    /// launcher no lo reportó), no se toca nada. La regla del usuario se conserva.</summary>
+    private void CleanupMissingGames(IReadOnlyList<InstalledGame> before, IReadOnlyList<InstalledGame> after)
+    {
+        var alive = new HashSet<string>(after.Select(GameIdentity), StringComparer.OrdinalIgnoreCase);
+        foreach (var game in before)
+        {
+            if (game == null || string.IsNullOrEmpty(game.ExeFileName)) continue;
+            if (alive.Contains(GameIdentity(game))) continue;
+            // Sin carpeta anotada no se puede confirmar que el juego se fue: no se toca.
+            if (string.IsNullOrEmpty(game.InstallPath)) continue;
+            bool exists;
+            try { exists = Directory.Exists(game.InstallPath); } catch { exists = true; }
+            if (exists) continue;
+            _processService.CleanupBirthPriorityForMissingGame(game.ExeFileName);
+        }
+    }
+
+    /// <summary>Identidad de una entrada para comparar dos escaneos (no usa la ruta: una
+    /// reparación de carpeta no convierte al juego en otro).</summary>
+    private static string GameIdentity(InstalledGame g) => $"{g.Launcher}|{g.ExeFileName}";
+
+    /// <summary>Firma estable de la lista (origen + exe + carpeta + nombre) para saber
+    /// si un escaneo cambió algo sin repintar por cambios cosméticos.</summary>
+    private static string LibrarySignature(IReadOnlyList<InstalledGame> games)
+        => string.Join("\n", games
+            .OrderBy(g => g.ExeFileName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(g => g.Launcher, StringComparer.OrdinalIgnoreCase)
+            .Select(g => $"{g.Launcher}|{g.ExeFileName}|{g.InstallPath}|{g.Name}"));
 
     private bool _repairRunning;
 

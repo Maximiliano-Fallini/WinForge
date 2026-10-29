@@ -58,6 +58,13 @@ internal static class SceneHost
         public int WindowWidth { get; init; }
         public int WindowHeight { get; init; }
 
+        /// <summary>
+        /// Monitor donde sale la ventana (0 = el primero, -1 = el del cursor). Sirve para correr una
+        /// verificación en otra pantalla sin mover el cursor; con -1 se conserva el comportamiento de
+        /// la app (el monitor que el usuario está mirando).
+        /// </summary>
+        public int MonitorIndex { get; init; } = -1;
+
         /// <summary>False para el harness sin ventana visible (verificación headless).</summary>
         public bool ShowWindow { get; init; } = true;
 
@@ -254,13 +261,28 @@ internal static class SceneHost
 
             // La escena sale en el monitor donde está el cursor, no siempre en el primario: si el
             // usuario trabaja en otro monitor, la ventana sin bordes aparecía en la pantalla
-            // principal y la corrida se veía como "no pasa nada".
-            var monitor = Win32Window.MonitorUnderCursor();
+            // principal y la corrida se veía como "no pasa nada". El probador puede pedir un
+            // monitor concreto para dejar libre la pantalla donde el usuario está trabajando.
+            var requestedMonitor = request.MonitorIndex >= 0
+                ? Win32Window.MonitorAt(request.MonitorIndex)
+                : null;
+            if (request.MonitorIndex >= 0 && requestedMonitor == null)
+            {
+                report.Warnings.Add(BenchmarkNote.Of(
+                    "El monitor {0} no existe: la corrida salió en el monitor del cursor.",
+                    (request.MonitorIndex + 1).ToString()));
+            }
+            var cursorMonitor = Win32Window.MonitorUnderCursor();
+            var monitor = requestedMonitor is { } chosen
+                ? (X: chosen.X, Y: chosen.Y, Width: chosen.Width, Height: chosen.Height)
+                : cursorMonitor;
             bool fullscreenStyle = request.Presentation != PresentationMode.Windowed;
             // Tamaño de la ventana: lo pedido en la configuración gráfica o el automático de siempre.
             // Se encaja en el ÁREA ÚTIL (sin la barra de tareas) porque una ventana con bordes del
             // tamaño del monitor entero deja el título y el borde de abajo fuera de la pantalla.
-            var (workWidth, workHeight) = Win32Window.WorkAreaUnderCursor();
+            var (workWidth, workHeight) = requestedMonitor is { } chosenWork
+                ? (chosenWork.WorkWidth, chosenWork.WorkHeight)
+                : Win32Window.WorkAreaUnderCursor();
             bool askedResolution = request.WindowWidth > 0 && request.WindowHeight > 0;
             int windowWidth = fullscreenStyle ? monitor.Width
                 : askedResolution ? Math.Min(request.WindowWidth, workWidth)
@@ -284,8 +306,10 @@ internal static class SceneHost
             int windowX = fullscreenStyle ? monitor.X : monitor.X + Math.Max(0, (monitor.Width - windowWidth) / 2);
             int windowY = fullscreenStyle ? monitor.Y : monitor.Y + Math.Max(0, (monitor.Height - windowHeight) / 2);
 
+            // Compilar shaders y preparar recursos puede tardar: no tapar la app con una
+            // pantalla negra mientras la inicialización bloquea el hilo de render.
             sceneWindow = new Win32Window("", windowWidth, windowHeight,
-                borderless: fullscreenStyle, topMost: fullscreenStyle, visible: request.ShowWindow, clickThrough: false,
+                borderless: fullscreenStyle, topMost: fullscreenStyle, visible: false, clickThrough: false,
                 x: windowX, y: windowY);
             sceneHandle = sceneWindow.Handle;
             WindowHandleForDiagnostics = sceneHandle;
@@ -325,6 +349,15 @@ internal static class SceneHost
             report.Width = sceneWindow.ClientWidth;
             report.Height = sceneWindow.ClientHeight;
 
+            // Durante la preparación la ventana sigue oculta y la app permite cancelar.
+            token.ThrowIfCancellationRequested();
+            if (request.ShowWindow)
+            {
+                sceneWindow.SetTitle($"{request.Scene.Name} · {backend.ApiName}");
+                sceneWindow.Show();
+                Win32Window.PumpMessages();
+            }
+
             if (request.Presentation == PresentationMode.ExclusiveFullscreen)
             {
                 // Hay dos motivos distintos para no tener exclusivo y el informe tiene que decir
@@ -361,13 +394,6 @@ internal static class SceneHost
             {
                 hud = new MetricsHud(sceneWindow.Handle, BuildHudData, withWindow: !hudInFrame);
                 liveHudWindow = hud.Handle;
-            }
-
-            // El título arranca con el nombre de la escena y la API (la ventanita sin bordes no
-            // tiene barra, así que esto solo se ve en modo ventana, y con métricas en vivo).
-            if (request.ShowWindow)
-            {
-                sceneWindow.SetTitle($"{request.Scene.Name} · {backend.ApiName}");
             }
 
             // ---- Bucle de frames ----

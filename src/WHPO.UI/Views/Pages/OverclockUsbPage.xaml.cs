@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -15,7 +14,6 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
-using Path = System.IO.Path;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
 
@@ -28,17 +26,18 @@ namespace WHPO_UI.Views.Pages;
 /// deja cambiar la tasa de sondeo por dispositivo — subiendo (overclock) o
 /// bajando (downclock, que siempre funciona) — con un popup al hacer doble clic.
 ///
-/// Primera vista (gate): si el componente del sistema (el motor kernel que fuerza
-/// el bInterval) no está instalado, se muestra una pantalla profesional para
-/// descargarlo e instalarlo automáticamente con un clic — la UI usa siempre
-/// lenguaje genérico ("componentes del sistema") y nunca expone el nombre interno
-/// del componente. Recién cuando está listo aparece la grilla de dispositivos.
-/// El botón "Restaurar de fábrica" saca el filtro y el override y re-arranca.
+/// Primera vista (gate): si falta el driver hidusbf (el filtro kernel que fuerza
+/// el bInterval), se muestra una pantalla que explica la dependencia y lleva a
+/// Configuración → Drivers, el único lugar donde se instala y se repara. La página
+/// no descarga ni instala drivers por su cuenta. Recién cuando el driver está
+/// listo aparece la grilla de dispositivos. El botón "Restaurar de fábrica" saca
+/// el filtro y el override y re-arranca.
 /// </summary>
 public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 {
     private readonly IUsbOverclockService _usb;
     private readonly ILoggingService _logging;
+    private readonly INavigationService _navigationService;
 
     private List<UsbPollingDevice> _devices = new();
     private bool _busy;
@@ -489,6 +488,7 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _usb = App.Services.GetRequiredService<IUsbOverclockService>();
         _logging = App.Services.GetRequiredService<ILoggingService>();
+        _navigationService = App.Services.GetRequiredService<INavigationService>();
         _latencyMonitor = App.Services.GetRequiredService<InputLatencyMonitorService>();
         _latencyTest = App.Services.GetRequiredService<InputLatencyTestService>();
         _audioLatency = App.Services.GetRequiredService<AudioLatencyService>();
@@ -2463,9 +2463,9 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         }
         else
         {
-    // Gate: limpiar los textos dinámicos (los estáticos los re-traduce el walker).
-            SetGateIdle();
-            GateErrorText.Visibility = Visibility.Collapsed;
+            // Gate: los textos dinámicos se rearman con el idioma nuevo (los
+            // estáticos los re-traduce el walker).
+            UpdateDriverGate();
             if (HowItWorksDetail.Visibility == Visibility.Visible)
                 HowItWorksDetail.Text = I18n.T(HowItWorksKey);
         }
@@ -2474,11 +2474,14 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     // ===================== Componente: gate vs grilla =====================
 
     /// <summary>
-    /// Decide qué se muestra: la puerta de entrada (descargar componentes) si el
-    /// motor aún no está listo, o la grilla de dispositivos si ya lo está.
+    /// Decide qué se muestra: la puerta de entrada (falta el driver) si el motor
+    /// aún no está listo, o la grilla de dispositivos si ya lo está.
     /// </summary>
     private void RefreshComponentUi(bool refreshDevices)
     {
+        // El driver se administra en Configuración → Drivers: al volver hay que
+        // releer el SCM, porque la página queda cacheada y el estado anterior no vale.
+        _usb.InvalidateFilterServiceCache();
         _componentReady = _usb.IsComponentReady();
 
         MainPanel.Visibility = _componentReady ? Visibility.Visible : Visibility.Collapsed;
@@ -2486,8 +2489,64 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
         if (_componentReady)
         {
+            GateRetryStatusText.Visibility = Visibility.Collapsed;
             if (refreshDevices && !_busy)
                 _ = RefreshDevicesAsync(initial: true);
+        }
+        else
+        {
+            UpdateDriverGate();
+        }
+    }
+
+    /// <summary>
+    /// La puerta de entrada ya no descarga nada: muestra QUÉ driver falta y lleva a
+    /// Configuración → Drivers, el único lugar donde se instala y se repara.
+    /// </summary>
+    private void UpdateDriverGate()
+    {
+        var guard = _usb.GetGuardStatus();
+        bool incomplete = guard.ServiceInstalled;
+
+        // Mismo patrón que la puerta de Monitor de sensores: "Falta el driver <X>".
+        // "Instalación incompleta" queda para el único caso que no es "falta": el
+        // driver está, pero el filtro no está operativo.
+        GateTitleText.Text = I18n.T(incomplete ? "Instalación incompleta" : "Falta el driver hidusbf");
+        GateDescriptionText.Text = incomplete
+            ? I18n.T("El driver está instalado, pero el filtro no está operativo. Reparalo desde Configuración → Drivers.")
+            : I18n.T("Overclock USB necesita el driver hidusbf para cambiar la tasa de sondeo de tus periféricos. Se administra desde Configuración → Drivers.");
+        GateRetryStatusText.Visibility = Visibility.Collapsed;
+    }
+
+    private void OpenDriversButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _navigationService.NavigateTo("configuracion", ConfiguracionPage.DriversTabParameter);
+            // NavigateTo del servicio no mueve la selección del navbar principal.
+            App.MainWindowInstance?.HighlightNavigationPage("configuracion");
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"OverclockUSB: no se pudo abrir Configuración → Drivers: {ex.Message}");
+        }
+    }
+
+    private void RetryDriverButton_Click(object sender, RoutedEventArgs e)
+    {
+        RetryDriverButton.IsEnabled = false;
+        try
+        {
+            RefreshComponentUi(refreshDevices: true);
+            if (_componentReady) return;
+
+            GateRetryStatusText.Text = I18n.T("Todavía no se detecta hidusbf. Instalalo desde Configuración → Drivers.");
+            GateRetryStatusText.Foreground = Feedback.WarningBrush;
+            GateRetryStatusText.Visibility = Visibility.Visible;
+        }
+        finally
+        {
+            RetryDriverButton.IsEnabled = true;
         }
     }
 
@@ -2496,30 +2555,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     {
         RefreshButton.IsEnabled = !busy;
         RowsScroll.IsEnabled = !busy;
-        DownloadComponentsButton.IsEnabled = !busy;
-    }
-
-    // ===================== Gate: estado del progreso =====================
-
-    private void SetGateBusy(string message)
-    {
-        GateErrorText.Visibility = Visibility.Collapsed;
-        GateStatusText.Text = message;
-        GateProgressArea.Visibility = Visibility.Visible;
-        GateProgressRing.IsActive = true;
-    }
-
-    private void SetGateIdle()
-    {
-        GateProgressRing.IsActive = false;
-        GateProgressArea.Visibility = Visibility.Collapsed;
-    }
-
-    private void SetGateFailure(string message)
-    {
-        SetGateIdle();
-        GateErrorText.Text = message;
-        GateErrorText.Visibility = Visibility.Visible;
     }
 
     /// <summary>Despliega/contrae la explicación de cómo funciona la sección (transparencia, sin jerga interna).</summary>
@@ -2535,65 +2570,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         {
             HowItWorksDetail.Visibility = Visibility.Collapsed;
         }
-    }
-
-    // ===================== Descarga / instalación automática =====================
-
-    private async void DownloadComponentsButton_Click(object sender, RoutedEventArgs e)
-        => await RunAutoInstallAsync();
-
-    /// <summary>
-    /// Flujo de un clic (solo desde la puerta de entrada): descarga el paquete
-    /// oficial del componente desde su repositorio (HTTPS), extrae el driver,
-    /// instala el servicio del sistema y recién entonces muestra la grilla. Si la
-    /// descarga falla, ofrece la opción de elegir el archivo manualmente.
-    /// </summary>
-    private async Task RunAutoInstallAsync()
-    {
-        if (_busy) return;
-        _busy = true;
-        try
-        {
-            SetBusy(true);
-            SetGateBusy(I18n.T("Descargando el componente del sistema..."));
-
-            string? sys = await _usb.DownloadComponentAsync();
-            if (string.IsNullOrEmpty(sys) || !File.Exists(sys))
-            {
-                // El servicio devuelve el motivo real: sin conexión, verificación fallida
-                // o un paquete sin variantes. Antes esta puerta culpaba siempre a la red.
-                string? reason = _usb.LastComponentDownloadError;
-                SetGateFailure(reason == null
-                    ? I18n.T("No se pudo descargar el componente. Verificá tu conexión a internet e intentá de nuevo.")
-                    : I18n.T("No se pudo descargar el componente.") + " " + I18n.T(reason));
-                return;
-            }
-
-            SetGateBusy(I18n.T("Instalando el componente del sistema..."));
-            bool ok = await _usb.InstallFilterServiceAsync(sys);
-            if (!ok)
-            {
-                SetGateFailure(I18n.T("No se pudo instalar el componente. Ejecutá WinForge como administrador e intentá de nuevo."));
-                return;
-            }
-
-            SetGateBusy(I18n.T("Componente instalado. Abriendo la sección..."));
-            await Task.Delay(300);
-        }
-        catch (Exception ex)
-        {
-            _logging.LogError("OverclockUSB: error preparando los componentes", ex);
-            SetGateFailure(I18n.T("Ocurrió un error al preparar los componentes. Intentalo de nuevo."));
-        }
-        finally
-        {
-            _busy = false;
-            SetBusy(false);
-        }
-
-        if (_componentReady) return;
-        RefreshComponentUi(refreshDevices: true);
-        if (!_componentReady) SetGateIdle();
     }
 
     // ===================== Listado =====================

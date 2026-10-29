@@ -25,6 +25,19 @@ public sealed record SceneGraphicsOptions
     public static SceneGraphicsOptions Default { get; } = new();
 
     /// <summary>
+    /// Muestras por píxel del render target de la escena. Es un valor FIJO y compartido por las cuatro
+    /// APIs (no una perilla): un benchmark no puede comparar una corrida con MSAA y otra sin él, y
+    /// dejar que cada backend elija su conteo rompería la paridad visual. Cuatro muestras es el clásico
+    /// de la era Fire Strike/Time Spy, el que menos memoria cuesta y el que todo adaptador de escritorio
+    /// soporta para los formatos que usa la escena (RGBA8 y D24S8).
+    ///
+    /// La escena se dibuja en un target multisample y se RESUELVE al back buffer antes de presentar:
+    /// el costo es de rasterización y ancho de banda —trabajo real de la placa—, no un filtro de post
+    /// que emborrone la imagen.
+    /// </summary>
+    public const int MSAASamples = 4;
+
+    /// <summary>
     /// Sombras proyectadas. Apagadas, los backends no corren la PASADA de profundidad (no hay nada que
     /// escribir en el mapa) y el bloque de constantes deja la fuerza en cero, así que el shader sale
     /// del sombreado en su primera línea: no es "una sombra más suave", es el costo de la pasada y del

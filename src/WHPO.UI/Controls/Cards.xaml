@@ -126,4 +126,81 @@
         <Setter Property="Padding" Value="12"/>
     </Style>
 
+<!-- =====================================================================
+         PUERTA DE ENTRADA POR DRIVER FALTANTE
+         La usan Monitor de sensores (PawnIO) y Overclock USB (hidusbf): las dos
+         pantallas muestran el mismo estado —falta un driver compartido que se
+         administra en Configuración → Drivers— y tienen que verse igual. Los
+         estilos viven acá para que no se separen con el tiempo; el contenido
+         propio de cada página (lista de features, enlaces) queda en su XAML.
+         ===================================================================== -->
+    <Style x:Key="DriverGateHostStyle" TargetType="StackPanel">
+        <Setter Property="MaxWidth" Value="580"/>
+        <Setter Property="Margin" Value="24,28"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <Style x:Key="DriverGateCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource SensorGridLineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="12"/>
+        <Setter Property="Padding" Value="28"/>
+    </Style>
+
+    <!-- Insignia del encabezado: mismo tamaño y trazo en las dos puertas. -->
+    <Style x:Key="DriverGateIconBadgeStyle" TargetType="Border">
+        <Setter Property="Width" Value="46"/>
+        <Setter Property="Height" Value="46"/>
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="Background" Value="{ThemeResource AppBackgroundBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource AccentBrush}"/>
+        <Setter Property="BorderThickness" Value="1.5"/>
+    </Style>
+
+    <Style x:Key="DriverGateSubtitleStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <Style x:Key="DriverGateTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="18"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <Style x:Key="DriverGateBodyStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Foreground" Value="{ThemeResource SecondaryTextBrush}"/>
+        <Setter Property="LineHeight" Value="20"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- La caja ámbar de consecuencia: el mismo bloque en Sensores y Overclock. -->
+    <Style x:Key="DriverGateWarningStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource WarningTintBrush}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource WarningBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="12,10"/>
+    </Style>
+
+    <Style x:Key="DriverGateWarningTextStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}"/>
+        <Setter Property="LineHeight" Value="17"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+
+    <!-- Pie de la puerta: nota compartida, centrada y en gris. -->
+    <Style x:Key="DriverGateFooterStyle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="{ThemeResource MutedBrush}"/>
+        <Setter Property="LineHeight" Value="16"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="TextAlignment" Value="Center"/>
+    </Style>
+
 </ResourceDictionary>

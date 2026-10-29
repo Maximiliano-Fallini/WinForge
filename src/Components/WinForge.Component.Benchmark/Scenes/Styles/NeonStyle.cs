@@ -20,9 +20,9 @@ internal static class NeonStyle
     {
         // El resplandor de la ciudad vive en el horizonte (naranja sucio, no amarillo puro: el sodio
         // tira a ámbar) y a los pocos grados se va a un azul nocturno saturado.
-        SkyHorizon = new Vector3(0.165f, 0.115f, 0.090f),
-        SkyMid = new Vector3(0.038f, 0.052f, 0.098f),
-        SkyZenith = new Vector3(0.012f, 0.018f, 0.040f),
+        SkyHorizon = new Vector3(0.135f, 0.110f, 0.100f),
+        SkyMid = new Vector3(0.045f, 0.052f, 0.074f),
+        SkyZenith = new Vector3(0.014f, 0.019f, 0.032f),
         SkyMidExponent = 0.34f,
         SkyZenithStart = 0.16f,
         SkyZenithEnd = 0.62f,
@@ -57,15 +57,15 @@ internal static class NeonStyle
         // El número tiene que ser DENSO de verdad, que es lo que dice la línea de arriba: con 0,00042
         // —que era el valor que tenía, cien veces menos que esto— la bruma no llegaba a 20 m y la
         // punta de la calle se veía como un corte seco contra el cielo (las fachadas terminan de golpe
-        // y no hay nada detrás). Con 0,0095 el fondo se disuelve en el resplandor de sodio del
-        // horizonte a partir de los 60 m, que es como se ve una calle de noche con lluvia.
-        AerialDensity = 0.0095f,
+        // y no hay nada detrás). Una densidad moderada conserva la profundidad de la calle sin
+        // borrar las fachadas lejanas ni dejar un corte seco en el horizonte.
+        AerialDensity = 0.0075f,
         AerialHeightBase = 18f,
         AerialHeightScale = 420f,
 
         // Noche: hace falta exposición para que la escena no quede en un plano oscuro, pero no tanta
         // como para que el cielo deje de ser noche.
-        Exposure = 1.30f,
+        Exposure = 1.18f,
 
         // Sin resplandor de lente de sol: el de esta escena son los halos de los carteles, que los
         // hace el material emisivo y la bruma, no el destello de cámara.

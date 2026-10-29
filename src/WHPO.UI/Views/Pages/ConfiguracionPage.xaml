@@ -130,6 +130,7 @@
                      una pestaña en el medio corría todas las demás. -->
                 <SelectorBarItem x:Name="HomeTabItem" Text="Inicio" IsSelected="True"/>
                 <SelectorBarItem x:Name="AppearanceTabItem" Text="Apariencia"/>
+                <SelectorBarItem x:Name="DriversTabItem" Text="Drivers"/>
                 <SelectorBarItem x:Name="UpdatesTabItem" Text="Actualizaciones"/>
                 <SelectorBarItem x:Name="DevelopmentTabItem" Text="Desarrollo" Visibility="Collapsed"/>
             </SelectorBar>
@@ -250,10 +251,13 @@
                                 <StackPanel Orientation="Horizontal" Spacing="8">
                                     <TextBlock x:Name="TrayEcoModeTitle" Text="Modo eficiencia en bandeja"
                                                FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                    <Border Background="{ThemeResource AccentTintBrush}"
+                                    <!-- Verde fijo, no del acento: «Recomendado» es una recomendación de
+                                         la app y tiene que leerse igual en los nueve temas (SuccessBrush
+                                         y su tinte viven fuera del tema, ver App.xaml). -->
+                                    <Border Background="{StaticResource SuccessTintBrush}"
                                             CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
                                         <TextBlock Text="Recomendado" FontSize="10" FontWeight="SemiBold"
-                                                   Foreground="{ThemeResource AccentBrush}"/>
+                                                   Foreground="{StaticResource SuccessBrush}"/>
                                     </Border>
                                 </StackPanel>
                                 <TextBlock
@@ -331,8 +335,10 @@
                          mismo tipo de ícono que el resto de la app (FontIcon del tema, no un
                          emoji a color): se tiñe con el tema vigente. -->
                     <StackPanel Orientation="Horizontal" Spacing="8" Margin="2,14,0,0">
+                        <!-- Acento del tema vigente, como el resto de los íconos de sección: en gris
+                             secundario no se leía como encabezado. -->
                         <FontIcon Glyph="&#xE74D;" FontSize="15"
-                                  Foreground="{ThemeResource SecondaryTextBrush}"
+                                  Foreground="{ThemeResource AccentBrush}"
                                   VerticalAlignment="Center"/>
                         <TextBlock Text="Caché" FontSize="18" FontWeight="SemiBold"
                                    VerticalAlignment="Center"/>
@@ -718,6 +724,190 @@
                         </StackPanel>
                     </Border>
 
+                </StackPanel>
+            </ScrollViewer>
+
+<!-- ============ PESTAÑA: DRIVERS (PawnIO + hidusbf) ============ -->
+            <!-- Los drivers son dependencias COMPARTIDAS, no accesorios de un componente.
+                 Viven en Core y esta pestaña es su hogar permanente: aunque el usuario
+                 desinstale Sensores, Ventiladores u Overclock USB, acá puede ver el estado,
+                 instalar, reparar o quitar cada driver. -->
+            <ScrollViewer x:Name="DriversTab" Visibility="Collapsed"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
+
+                    <!-- ===== PawnIO ===== -->
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12"
+                            HorizontalAlignment="Stretch" Tag="reveal">
+                        <StackPanel Spacing="0">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Width="42" Height="42" CornerRadius="10"
+                                        Background="{ThemeResource AccentTintBrush}"
+                                        VerticalAlignment="Top">
+                                    <FontIcon Glyph="&#xE950;" FontSize="18"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="PawnIO" FontSize="16" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Requerido por Monitor de sensores y Ventiladores"
+                                               FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Top"
+                                            HorizontalAlignment="Right">
+                                    <Border x:Name="PawnIoStatusPill" CornerRadius="8"
+                                            Padding="9,4" HorizontalAlignment="Right">
+                                        <TextBlock x:Name="PawnIoStatusText" FontSize="11" FontWeight="SemiBold"/>
+                                    </Border>
+                                    <!-- Estado persistente del cambio: instalar o desinstalar PawnIO
+                                         recién se aplica al reiniciar WinForge. El aviso vive acá
+                                         (no en el feedback transitorio) para no repetirlo con el
+                                         botón de al lado. -->
+                                    <Border x:Name="PawnIoRestartBadge" CornerRadius="8"
+                                            Padding="9,4" HorizontalAlignment="Right"
+                                            Visibility="Collapsed">
+                                        <StackPanel Orientation="Horizontal" Spacing="5">
+                                            <FontIcon Glyph="&#xE72C;" FontSize="12"
+                                                      Foreground="{StaticResource WarningBrush}"
+                                                      VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="PawnIoRestartBadgeText"
+                                                       Text="Requiere reinicio"
+                                                       FontSize="11" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock
+                                Text="Driver de kernel para la temperatura y la potencia del CPU y los ventiladores de la placa. Es el mismo que usa LibreHardwareMonitor: código abierto (GPL-2.0) y firmado digitalmente."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"
+                                Margin="0,12,0,0"/>
+
+                            <Grid ColumnSpacing="12" Margin="0,16,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="PawnIoVersionText" FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center">
+                                    <ProgressRing x:Name="PawnIoProgressRing" Width="18" Height="18"
+                                                  IsActive="False" Visibility="Collapsed"/>
+                                    <Button x:Name="PawnIoRestartButton" Content="Reiniciar WinForge"
+                                            FontSize="12" Padding="12,5" VerticalAlignment="Center"
+                                            Visibility="Collapsed"
+                                            Click="PawnIoRestartButton_Click"/>
+                                    <Button x:Name="PawnIoUninstallButton" Content="Desinstalar PawnIO"
+                                            FontSize="12" Padding="12,5" VerticalAlignment="Center"
+                                            Visibility="Collapsed"
+                                            Click="PawnIoUninstallButton_Click"/>
+                                    <Button x:Name="PawnIoInstallButton" Content="Instalar PawnIO"
+                                            FontSize="12" Padding="12,5" VerticalAlignment="Center"
+                                            Style="{StaticResource AccentButtonStyle}"
+                                            Click="PawnIoInstallButton_Click"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock x:Name="PawnIoFeedbackText" FontSize="12" TextWrapping="Wrap"
+                                       Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===== hidusbf ===== -->
+                    <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12"
+                            HorizontalAlignment="Stretch" Tag="reveal">
+                        <StackPanel Spacing="0">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Width="42" Height="42" CornerRadius="10"
+                                        Background="{ThemeResource AccentTintBrush}"
+                                        VerticalAlignment="Top">
+                                    <FontIcon Glyph="&#xE88E;" FontSize="18"
+                                              Foreground="{ThemeResource AccentBrush}"
+                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="hidusbf" FontSize="16" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Requerido por Overclock USB"
+                                               FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Border x:Name="HidUsbfStatusPill" Grid.Column="2" CornerRadius="8"
+                                        Padding="9,4" VerticalAlignment="Top">
+                                    <TextBlock x:Name="HidUsbfStatusText" FontSize="11" FontWeight="SemiBold"/>
+                                </Border>
+                            </Grid>
+
+                            <TextBlock
+                                Text="Filtro de kernel que ajusta la tasa de sondeo (polling rate) de mouses, teclados y mandos USB. Es el driver de código abierto de hidusbf; WinForge descarga el paquete oficial y verifica el SHA-256 de cada variante antes de instalar."
+                                FontSize="13"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                TextWrapping="Wrap"
+                                Margin="0,12,0,0"/>
+
+                            <Grid ColumnSpacing="12" Margin="0,16,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="HidUsbfDetailText" FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                                            VerticalAlignment="Center">
+                                    <ProgressRing x:Name="HidUsbfProgressRing" Width="18" Height="18"
+                                                  IsActive="False" Visibility="Collapsed"/>
+                                    <Button x:Name="HidUsbfUninstallButton" Content="Desinstalar hidusbf"
+                                            FontSize="12" Padding="12,5" VerticalAlignment="Center"
+                                            Visibility="Collapsed"
+                                            Click="HidUsbfUninstallButton_Click"/>
+                                    <Button x:Name="HidUsbfInstallButton" Content="Descargar e instalar"
+                                            FontSize="12" Padding="12,5" VerticalAlignment="Center"
+                                            Style="{StaticResource AccentButtonStyle}"
+                                            Click="HidUsbfInstallButton_Click"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock x:Name="HidUsbfFeedbackText" FontSize="12" TextWrapping="Wrap"
+                                       Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Nota de transparencia común a los dos drivers. -->
+                    <Border Style="{StaticResource FilledCardStyle}" CornerRadius="12" Padding="16">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE946;" FontSize="14"
+                                      Foreground="{ThemeResource AccentBrush}"
+                                      VerticalAlignment="Top" Margin="1,1,0,0"/>
+                            <TextBlock Grid.Column="1"
+                                       Text="Los drivers se descargan solo desde sus repositorios oficiales por HTTPS y su hash SHA-256 se verifica antes de instalar. Desinstalar un componente de WinForge no desinstala sus drivers: esta pestaña es el lugar para hacerlo."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"
+                                       LineHeight="18"/>
+                        </Grid>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
 

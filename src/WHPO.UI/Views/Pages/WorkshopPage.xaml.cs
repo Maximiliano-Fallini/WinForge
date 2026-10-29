@@ -1059,6 +1059,9 @@ public sealed partial class WorkshopPage : Page
             return;
         }
 
+        // El Workshop NO instala drivers: cada componente explica su dependencia en su
+        // propia puerta y el driver se administra (e instala) desde Configuración →
+        // Drivers, que es el único lugar que puede reiniciar la app sin cortar nada.
         var owner = button.Parent as Panel;
         button.IsEnabled = false;
 
@@ -1148,7 +1151,10 @@ public sealed partial class WorkshopPage : Page
         FlashUninstalled(card.Id);
     }
 
-    /// <summary>Vuelve a instalar un integrado: la pestaña reaparece en el navbar.</summary>
+    /// <summary>
+    /// Vuelve a instalar un integrado: la pestaña reaparece en el navbar. No toca
+    /// drivers: si el componente los necesita, su propia puerta lo explica al abrirlo.
+    /// </summary>
     private void ReinstallBuiltin(CardModel card)
     {
         try

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using LibreHardwareMonitor.Hardware;
+using WHPO.Core.Services.Fan;
 using WHPO.Core.Services.Interfaces;
 
 namespace WHPO.Core.Services;
@@ -27,6 +28,7 @@ public class SensorService : ISensorService
     private bool _initFailed;
     private DateTime _lastAttempt = DateTime.MinValue;
     private bool _readErrorLogged;
+    private bool _missingCpuReadingsLogged;
 
     // Promedios de sesión por sensor (clave = Identifier del sensor).
     private readonly Dictionary<string, (double Sum, long Count)> _averages = new();
@@ -43,6 +45,24 @@ public class SensorService : ISensorService
             EnsureInitialized();
             return _computer != null;
         }
+    }
+
+    public bool PawnIOInstalled => PawnIoStatus.IsInstalled;
+
+    public void Reinitialize()
+    {
+        lock (_lock)
+        {
+            try { _computer?.Close(); } catch { }
+            _computer = null;
+            _initFailed = false;
+            _lastAttempt = DateTime.MinValue;
+            _readErrorLogged = false;
+            _missingCpuReadingsLogged = false;
+            _averages.Clear();
+        }
+
+        _loggingService.LogInfo("SensorService: hardware reinicializado");
     }
 
     public List<SensorGroupInfo> GetSensorGroups()
@@ -103,7 +123,34 @@ public class SensorService : ISensorService
             }
         }
 
+        LogMissingCpuReadings(groups);
         return groups;
+    }
+
+    /// <summary>
+    /// Deja en el log, una sola vez por racha, por qué el CPU aparece sin
+    /// temperatura. Es el caso típico de PawnIO ausente: LHM enumera los sensores
+    /// pero todos devuelven null. Sin este aviso, el usuario solo ve "—" en la grilla.
+    /// </summary>
+    private void LogMissingCpuReadings(List<SensorGroupInfo> groups)
+    {
+        var cpu = groups.FirstOrDefault(g => g.Kind == SensorGroupKind.Cpu);
+        var temperatures = cpu?.Categories
+            .FirstOrDefault(c => c.Name == "Temperatura")?.Sensors;
+
+        bool missing = temperatures is { Count: > 0 } && temperatures.All(s => !s.Current.HasValue);
+        if (!missing)
+        {
+            _missingCpuReadingsLogged = false;
+            return;
+        }
+
+        if (_missingCpuReadingsLogged) return;
+        _missingCpuReadingsLogged = true;
+
+        _loggingService.LogWarning(PawnIoStatus.IsInstalled
+            ? "SensorService: el CPU no entrega temperaturas aunque PawnIO está instalado; revisá HVCI u otro monitor de hardware."
+            : "SensorService: el CPU no entrega temperaturas porque PawnIO no está instalado; el monitor de sensores puede instalarlo.");
     }
 
     private List<SensorCategoryInfo> ReadCategories(IHardware hardware)

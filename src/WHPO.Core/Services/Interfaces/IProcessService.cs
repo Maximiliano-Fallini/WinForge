@@ -153,6 +153,12 @@ public interface IProcessService
     void SaveRule(string exe, ProcessRule rule);
     void RemoveRule(string exe);
 
+    /// <summary>Retira la prioridad de nacimiento que la app escribió para un juego que ya
+    /// no existe (su carpeta anotada desapareció). La regla guardada se conserva: si el
+    /// juego vuelve, la prioridad se reescribe sola. No hace nada si el juego sigue en
+    /// disco o si nunca se le escribió nada.</summary>
+    void CleanupBirthPriorityForMissingGame(string exe);
+
     // ===== Reglas de sesión (solo la apertura actual del juego) =====
     /// <summary>Regla de sesión: se aplica solo mientras el juego esté abierto y NO se persiste (ni escribe en el registro). Una regla toda null la elimina.</summary>
     void SetSessionRule(string exe, ProcessRule rule);

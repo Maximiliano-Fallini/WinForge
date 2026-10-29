@@ -89,8 +89,6 @@ public static class NeonScene
 
     // ---- Proporciones de las fachadas ----
     private const float BuildingDepth = 14f;        // fondo de la manzana (hacia adentro de la cuadra)
-    private const float PlinthHeight = 0.55f;       // zócalo de piedra
-    private const float PlinthProud = 0.11f;
     private const float CorniceHeight = 0.40f;      // cornisa
     private const float CorniceProud = 0.24f;
     private const float ParapetHeight = 0.75f;      // antepecho de azotea
@@ -128,9 +126,9 @@ public static class NeonScene
             Id = "neon",
             Name = "Calle nocturna con lluvia",
             Description =
-                "Diorama de calle a nivel de cine: autos estacionados, faroles y carteles de neón sobre " +
-                "asfalto mojado. Usa modelos y texturas reales (CC0) y mide el trabajo por píxel: " +
-                "materiales con relieve, varias luces puntuales y lluvia.",
+                "Diorama de calle a nivel de cine: autos estacionados, escaleras de incendio, azoteas " +
+                "con tanques de agua y guirnaldas sobre asfalto mojado. Usa modelos y texturas reales " +
+                "(CC0) y mide el trabajo por píxel: materiales con relieve, varias luces puntuales y lluvia.",
             Meshes = meshes,
             // El set que la escena necesita (README §7): el arranque de la corrida lo asegura en disco
             // antes de preparar la escena, así una instalación limpia no falla por assets.
@@ -181,7 +179,13 @@ public static class NeonScene
         BuildRoadSurface(street);
         BuildGroundDetail(street, rng);
         var rows = LayoutBuildings(rng);
+        // La planta baja comercial se decide ANTES de las fachadas: el generador de fachadas tiene que
+        // saber qué celdas no lleva el kit porque las ocupa un local.
+        var bays = LayoutGround(rows);
         foreach (var row in rows) AddMassing(street, row);
+        BuildUrbanDetails(street, rows);
+        BuildRooftops(street, rows);
+        BuildOverheadWires(street);
         BuildSigns(street);
         BuildBackdrop(street);
 
@@ -197,19 +201,33 @@ public static class NeonScene
         // Si el kit NO está (una instalación que todavía no bajó el pack de assets), el frente quedaría
         // ABIERTO —la masa no lleva esa cara, la pone el kit— y cada manzana se vería hueca por dentro:
         // por eso el camino de emergencia cierra el frente con un plano de ladrillo.
-        var facades = NeonFacade.Build(root, rows, FacadeOffset, rng, Note);
+        var facades = NeonFacade.Build(root, rows, FacadeOffset, bays, rng, Note);
         if (facades.Count == 0)
         {
             AddFlatFronts(street, rows);
             Add(meshes, "frentes de emergencia", street.FlatFronts, materials.Brick1);
         }
+        else
+        {
+            // Los locales son geometría propia: van solo si el kit está, porque el frente de
+            // emergencia es un plano ciego en el mismo plano y taparía la vidriera.
+            BuildShopfronts(street, rows, bays);
+        }
         foreach (var mesh in facades) meshes.Add(mesh);
 
         // ---- Superficie ----
         Add(meshes, "veredas", street.Walk, materials.Cement);
-        Add(meshes, "charcos", street.Puddles, materials.Wet);
-        Add(meshes, "pintura de calle", street.Paint, materials.Paint);
         Add(meshes, "herrajes", street.Metal, materials.Metal);
+        Add(meshes, "juntas de vereda", street.SidewalkSeams, materials.Recess);
+        Add(meshes, "mobiliario urbano", street.Furniture, materials.Metal);
+        Add(meshes, "toldos de comercios", street.ShopAwnings, materials.Fabric);
+        Add(meshes, "hidrantes", street.Hydrants, materials.Hydrant);
+        Add(meshes, "zócalo de fachada", street.FacadeBase, materials.Brick2);
+        Add(meshes, "ladrillo de locales", street.ShopBrick, materials.Brick1);
+        Add(meshes, "marcos de local", street.ShopFrame, materials.ShopFrame);
+        Add(meshes, "vidrieras cálidas", street.ShopGlassWarm, materials.ShopWarm);
+        Add(meshes, "vidrieras frías", street.ShopGlassCool, materials.ShopCool);
+        Add(meshes, "maderas de local y azotea", street.ShopWood, materials.Wood);
 
         // Los MUROS DE MANZANA (medianiles, fondo y azotea) van en UNA malla oscura: son la masa que
         // sostiene la fachada, no la superficie que se mira —el frente lo ponen los módulos glTF de
@@ -224,10 +242,19 @@ public static class NeonScene
         Add(meshes, "cuerpos de cartel", SignBodyVertices(horizontal: true), street.SignBodies, materials.Metal);
         Add(meshes, "cuerpos de cartel verticales", SignBodyVertices(horizontal: false), street.SignBodiesVertical, materials.Metal);
 
-        AddModel(meshes, root, "covered_car", "auto", CarPlacements());
+        // Guirnaldas: las bombillas son la única parte emisiva de los cables, así que van en su
+        // propia malla instanciada (una por todas) con el material de neón.
+        Add(meshes, "luces colgantes", BulbVertices(), street.Bulbs, materials.Sign);
+
+        AddModel(meshes, root, "covered_car", "auto", CarPlacements(), groundOnRoad: true);
         AddModel(meshes, root, "street_lamp_01", "farol", PostLampPlacements());
         AddModel(meshes, root, "street_lamp_02", "farol de pared", WallLampPlacements());
-        AddModel(meshes, root, "cardboard_box_01", "cajas", BoxPlacements());
+        // La escalera de incendio es del kit y estaba sin usar: es la pieza que le faltaba a la
+        // fachada para leerse como una cuadra de departamentos y no como una pared con ventanas.
+        AddModel(meshes, root, "modular_fire_escape", "escalera de incendio", FireEscapePlacements(rows), groundOnRoad: true);
+        AddModel(meshes, root, "cardboard_box_01", "cajas", CardboardPlacements(), groundOnRoad: true);
+        AddModel(meshes, root, "old_tyre", "neumáticos", TyrePlacements(), groundOnRoad: true);
+        // No dejar cajas o neumáticos delante de entradas elegidas por el generador de fachadas.
 
         // ---- LLUVIA: la ÚLTIMA y con MEZCLA, después de todo lo opaco ----
         meshes.Add(new SceneMesh
@@ -277,7 +304,7 @@ public static class NeonScene
             float dz = (float)(rng.NextDouble() * 2.0 - 1.0) * RainBoxRadius;
             float phase = (float)rng.NextDouble();
             float speed = (float)rng.NextDouble();
-            float length = 0.55f + (float)rng.NextDouble() * 0.80f;
+            float length = 0.28f + (float)rng.NextDouble() * 0.55f;
 
             drops.Add(new SceneInstance(
                 new Vector4(dx, 0f, dz, length),
@@ -327,7 +354,6 @@ public static class NeonScene
     /// </summary>
     private sealed record MaterialSet(
         SceneMaterial Asphalt,
-        SceneMaterial Wet,
         SceneMaterial Cement,
         SceneMaterial Metal,
         SceneMaterial Brick1,
@@ -338,8 +364,11 @@ public static class NeonScene
         SceneMaterial Glass,
         SceneMaterial Wood,
         SceneMaterial Fabric,
-        SceneMaterial Paint,
-        SceneMaterial Sign);
+        SceneMaterial Sign,
+        SceneMaterial Hydrant,
+        SceneMaterial ShopWarm,
+        SceneMaterial ShopCool,
+        SceneMaterial ShopFrame);
 
     private static MaterialSet BuildMaterials(string root)
     {
@@ -368,21 +397,9 @@ public static class NeonScene
             Tint = new Vector3(0.30f, 0.305f, 0.33f),
             // Húmedo pero no un espejo: la rugosidad del mapa se baja para que el asfalto devuelva el
             // brillo de los carteles sin convertirse en una pileta de mercurio.
-            RoughnessScale = 0.40f,
-            MetallicScale = 1.0f,
+            RoughnessScale = 0.58f,
+            MetallicScale = 0.0f,
             NormalStrength = 0.8f
-        };
-
-        // Charcos: la misma textura de asfalto, casi negra y pulida. Comparte ranura con la calzada.
-        var wet = new SceneMaterial
-        {
-            Name = "charco",
-            Albedo = asphaltAlbedo,
-            Normal = asphaltNormal,
-            Arm = asphaltArm,
-            Tint = new Vector3(0.045f, 0.05f, 0.065f),
-            RoughnessScale = 0.04f,
-            NormalStrength = 0.25f
         };
 
         var cement = new SceneMaterial
@@ -451,13 +468,6 @@ public static class NeonScene
             RoughnessScale = 0.85f
         };
 
-        var paint = new SceneMaterial
-        {
-            Name = "pintura de calle",
-            Tint = new Vector3(0.72f, 0.71f, 0.66f),
-            RoughnessScale = 0.55f
-        };
-
         var sign = new SceneMaterial
         {
             Name = "neón",
@@ -467,10 +477,53 @@ public static class NeonScene
             EmissiveStrength = SignGlow
         };
 
+        var hydrant = new SceneMaterial
+        {
+            Name = "hidrante pintado",
+            Tint = new Vector3(0.58f, 0.13f, 0.075f),
+            RoughnessScale = 0.58f
+        };
+
+        // Vidrieras de local: vidrio con luz adentro. El vidrio de la escena es OPACO (no hay pase de
+        // transparencias), así que una vidriera "vacía" sería un espejo negro; lo que la hace leer como
+        // un negocio abierto a la noche es la emisión cálida detrás del marco. Dos temperaturas —cálida
+        // para la mayoría, fría para los locales de electrónica/bar— evitan que la vereda parezca una
+        // hilera de luces clonadas.
+        SceneMaterial Shopwindow(string name, Vector3 tint, float glow) => new()
+        {
+            Name = name,
+            Tint = tint,
+            // Rugoso y dieléctrico: un vidrio pulido devuelve el cielo nocturno y la vidriera se lee
+            // AZUL, no como un local encendido (fue el primer intento). Con la rugosidad alta manda
+            // el color propio y la emisión hace el resto. La emisión la toma el shader de la tinta
+            // por instancia (`MaterialTint * glow`), no del material.
+            RoughnessScale = 0.78f,
+            MetallicScale = 0f,
+            Emissive = Vector3.One,
+            EmissiveStrength = glow
+        };
+        var shopWarm = Shopwindow("vidriera cálida", new Vector3(1.00f, 0.50f, 0.15f), 0.44f);
+        var shopCool = Shopwindow("vidriera fría", new Vector3(0.32f, 0.55f, 0.88f), 0.30f);
+
+        // Marco de local: acero pintado casi negro. El herraje de la calle es gris claro y con la luz
+        // cálida se leía del mismo color que el ladrillo, así que las vidrieras no tenían marco.
+        var shopFrame = new SceneMaterial
+        {
+            Name = "marco de local",
+            Albedo = concreteAlbedo,
+            Normal = concreteNormal,
+            Arm = concreteArm,
+            Tint = new Vector3(0.045f, 0.048f, 0.056f),
+            // Sin metalicidad: con 0,35 el marco devolvía el HDRI cálido y se veía tan claro como el
+            // ladrillo, así que las vidrieras parecían no tener marco.
+            RoughnessScale = 0.52f,
+            MetallicScale = 0f
+        };
+
         return new MaterialSet(
-            asphalt, wet, cement, metal,
+            asphalt, cement, metal,
             brick1, brick2, brick3, new[] { brick1, brick2, brick3 },
-            recess, glass, wood, fabric, paint, sign);
+            recess, glass, wood, fabric, sign, hydrant, shopWarm, shopCool, shopFrame);
     }
 
     // =========================================================================================
@@ -487,14 +540,26 @@ public static class NeonScene
         internal readonly List<SceneVertex> Road = new();
         internal readonly List<SceneVertex> Walk = new();
         internal readonly List<SceneVertex> Metal = new();
-        internal readonly List<SceneVertex> Paint = new();
-        internal readonly List<SceneVertex> Puddles = new();
+        internal readonly List<SceneVertex> SidewalkSeams = new();
+        internal readonly List<SceneVertex> Furniture = new();
+        internal readonly List<SceneVertex> ShopAwnings = new();
+        internal readonly List<SceneVertex> Hydrants = new();
+
+        // ---- Locales ----
+        internal readonly List<SceneVertex> ShopBrick = new();      // pilastras y dinteles de ladrillo
+        internal readonly List<SceneVertex> ShopFrame = new();      // marcos de acero de las vidrieras
+        internal readonly List<SceneVertex> ShopWood = new();       // zócalos y hojas de puerta
+        internal readonly List<SceneVertex> ShopGlassWarm = new();  // vidrieras encendidas
+        internal readonly List<SceneVertex> ShopGlassCool = new();
+        internal readonly List<SceneVertex> FacadeBase = new();     // zócalo que cierra el pie de fachada
 
         /// <summary>Tres tintas de ladrillo (0-2) y los cantos de los vanos (3).</summary>
         internal readonly List<SceneVertex>[] Walls = { new(), new(), new(), new() };
 
         internal readonly List<SceneInstance> Signs = new();
         internal readonly List<SceneInstance> SignsVertical = new();
+        /// <summary>Bombillas de las guirnaldas: instancias de una malla chica, material emisivo.</summary>
+        internal readonly List<SceneInstance> Bulbs = new();
         // El CUERPO del cartel (el marco oscuro que lo sostiene): el panel de neón va montado adentro.
         internal readonly List<SceneInstance> SignBodies = new();
         internal readonly List<SceneInstance> SignBodiesVertical = new();
@@ -521,47 +586,40 @@ public static class NeonScene
             float inner = side * RoadHalfWidth;
             float outer = side * (RoadHalfWidth + SidewalkWidth);
 
-            // Vereda.
-            AddQuad(street.Walk, new Vector3(inner, KerbHeight, StreetStart), new Vector3(outer, KerbHeight, StreetStart),
-                new Vector3(outer, KerbHeight, StreetStart + StreetLength), new Vector3(inner, KerbHeight, StreetStart + StreetLength),
-                Vector3.UnitY, ConcreteRepeat);
+            // Vereda CONTINUA: sin sendas peatonales no hay aberturas de cordón ni rampas. Las
+            // rampas eran dos losas inclinadas que, vistas desde la cámara, devolvían otra luz que
+            // el hormigón de al lado y se leían como un polígono gris pegado sobre la vereda.
+            AddSidewalkSection(street, side, StreetStart, StreetStart + StreetLength);
 
-            // Frente del cordón (la cara vertical que se ve desde la calle) y su remate superior.
-            AddQuad(street.Walk, new Vector3(inner, 0f, StreetStart), new Vector3(inner, 0f, StreetStart + StreetLength),
-                new Vector3(inner, KerbHeight, StreetStart + StreetLength), new Vector3(inner, KerbHeight, StreetStart),
-                new Vector3(-side, 0f, 0f), ConcreteRepeat);
-
-            // Línea de borde pintada sobre el asfalto: sin ella la calzada no tiene ancho, se lee como
-            // una explanada.
-            AddQuad(street.Paint,
-                new Vector3(inner + side * 0.18f, 0.010f, StreetStart + 1f), new Vector3(inner + side * 0.30f, 0.010f, StreetStart + 1f),
-                new Vector3(inner + side * 0.30f, 0.010f, StreetStart + StreetLength - 1f), new Vector3(inner + side * 0.18f, 0.010f, StreetStart + StreetLength - 1f),
-                Vector3.UnitY);
-        }
-
-        // Eje central: línea discontinua de verdad (los tramos pintados y los huecos de la calle).
-        for (float z = StreetStart + 6f; z < StreetStart + StreetLength - 6f; z += 9f)
-        {
-            AddQuad(street.Paint, new Vector3(-0.07f, 0.010f, z), new Vector3(0.07f, 0.010f, z),
-                new Vector3(0.07f, 0.010f, z + 3.4f), new Vector3(-0.07f, 0.010f, z + 3.4f), Vector3.UnitY);
-        }
-
-        // Dos sendas peatonales (franjas anchas): dan escala humana a la calzada.
-        foreach (float center in new[] { HeroCarZ + 18f, HeroCarZ + 52f })
-        {
-            for (int stripe = 0; stripe < 7; stripe++)
+            // Juntas finas entre paños de hormigón: a ras de vereda y regulares en metros.
+            for (float z = StreetStart + 3f; z < StreetStart + StreetLength - 2f; z += 3f)
             {
-                float x = -3.6f + stripe * 1.2f;
-                AddQuad(street.Paint, new Vector3(x, 0.012f, center - 1.9f), new Vector3(x + 0.62f, 0.012f, center - 1.9f),
-                    new Vector3(x + 0.62f, 0.012f, center + 1.9f), new Vector3(x, 0.012f, center + 1.9f), Vector3.UnitY);
+                AddQuad(street.SidewalkSeams,
+                    new Vector3(inner, KerbHeight + 0.002f, z), new Vector3(outer, KerbHeight + 0.002f, z),
+                    new Vector3(outer, KerbHeight + 0.002f, z + 0.018f), new Vector3(inner, KerbHeight + 0.002f, z + 0.018f),
+                    Vector3.UnitY, ConcreteRepeat);
             }
         }
+
+        // Sin pintura de calle: las franjas del paso peatonal y la línea de eje eran quads planos
+        // que, sin desgaste ni relieve, se leían como cinta blanca pegada sobre el asfalto. La
+        // calzada queda desnuda y la escala la dan el cordón, las bocas de tormenta y los autos.
+    }
+
+    private static void AddSidewalkSection(StreetBuilder street, float side, float start, float end)
+    {
+        float inner = side * RoadHalfWidth;
+        float outer = side * (RoadHalfWidth + SidewalkWidth);
+        AddQuad(street.Walk, new Vector3(inner, KerbHeight, start), new Vector3(outer, KerbHeight, start),
+            new Vector3(outer, KerbHeight, end), new Vector3(inner, KerbHeight, end), Vector3.UnitY, ConcreteRepeat);
+        AddQuad(street.Walk, new Vector3(inner, 0f, start), new Vector3(inner, 0f, end),
+            new Vector3(inner, KerbHeight, end), new Vector3(inner, KerbHeight, start),
+            new Vector3(-side, 0f, 0f), ConcreteRepeat);
     }
 
     /// <summary>
     /// El detalle que hace que la calle sea una calle: bocas de tormenta contra el cordón, tapas de
-    /// inspección, bolardos, y los charcos que devuelven los carteles. Todo geometría propia (una
-    /// malla por material) y ningún asset nuevo.
+    /// inspección y bolardos. Todo geometría propia (una malla por material) y ningún asset nuevo.
     /// </summary>
     private static void BuildGroundDetail(StreetBuilder street, Random rng)
     {
@@ -571,13 +629,14 @@ public static class NeonScene
             {
                 // Boca de tormenta: una reja hundida contra el cordón (y el hueco que se ve debajo).
                 float x = side * (RoadHalfWidth - 0.42f);
-                AddSlab(street.Metal,
-                    new Vector3(x - 0.34f, 0.005f, z - 0.60f), new Vector3(x + 0.34f, 0.030f, z + 0.60f), FittingRepeat);
+                AddQuad(street.SidewalkSeams,
+                    new Vector3(x - 0.34f, 0.002f, z - 0.60f), new Vector3(x + 0.34f, 0.002f, z - 0.60f),
+                    new Vector3(x + 0.34f, 0.002f, z + 0.60f), new Vector3(x - 0.34f, 0.002f, z + 0.60f), Vector3.UnitY);
                 for (int bar = 0; bar < 5; bar++)
                 {
                     float bz = z - 0.44f + bar * 0.22f;
                     AddSlab(street.Metal,
-                        new Vector3(x - 0.30f, 0.030f, bz - 0.05f), new Vector3(x + 0.30f, 0.055f, bz + 0.05f), FittingRepeat);
+                        new Vector3(x - 0.30f, 0.002f, bz - 0.035f), new Vector3(x + 0.30f, 0.008f, bz + 0.035f), FittingRepeat);
                 }
             }
         }
@@ -594,6 +653,7 @@ public static class NeonScene
         // tramo que recorre la cámara, que es donde se ven.
         for (float z = HeroCarZ - 16f; z < HeroCarZ + 52f; z += 4.4f)
         {
+            if (MathF.Abs(z - (HeroCarZ + 18f)) < 1.8f || MathF.Abs(z - (HeroCarZ + 52f)) < 1.8f) continue;
             foreach (float side in new[] { -1f, 1f })
             {
                 float x = side * (RoadHalfWidth + 0.55f);
@@ -602,29 +662,275 @@ public static class NeonScene
             }
         }
 
-        // Charcos: polígonos irregulares apenas levantados de la calzada. Es lo que convierte el
-        // "asfalto brillante" en una calle que acaba de llover.
-        for (int i = 0; i < 26; i++)
+    }
+
+    /// <summary>Elementos urbanos deterministas para vestir las fachadas y las veredas del recorrido.</summary>
+    private static void BuildUrbanDetails(StreetBuilder street, IReadOnlyList<NeonFacade.FacadeRow> rows)
+    {
+        var rng = new Random(20261028);
+        foreach (var row in rows)
         {
-            float cx = (float)(rng.NextDouble() * 8.4 - 4.2);
-            float cz = StreetStart + 4f + (float)rng.NextDouble() * (StreetLength - 10f);
-            float radius = 0.5f + (float)rng.NextDouble() * 1.7f;
-            float squash = 0.35f + (float)rng.NextDouble() * 0.4f;
-            int corners = 6 + rng.Next(4);
-            var ring = new Vector3[corners];
-            for (int c = 0; c < corners; c++)
+            if (row.Z1 < HeroCarZ - 12f || row.Z0 > HeroCarZ + 70f) continue;
+            float width = row.Z1 - row.Z0;
+            float x = row.Side * (FacadeOffset - 0.18f);
+
+            // Los gabinetes van junto al medianil, fuera del paso del local.
+            float serviceZ = row.Z0 + 0.62f;
+            float serviceX = row.Side * (FacadeOffset - 0.30f);
+            // Contra el medianil y chico: pegado a la vidriera y en tamaño grande tapaba el local
+            // entero y se leía como un pilar sin terminar.
+            AddBox(street.Furniture, new Vector3(serviceX, KerbHeight + 0.46f, serviceZ),
+                new Vector3(0.14f, 0.46f, 0.22f), FittingRepeat);
+            AddTube(street.Furniture, new Vector3(serviceX, KerbHeight + 0.92f, serviceZ),
+                new Vector3(serviceX, KerbHeight + 2.4f, serviceZ), 0.032f);
+
+            // Los toldos NO se cuelgan por edificio: van por local y los arma BuildShopfronts. Un toldo
+            // sobre una ventana de departamento era justamente el negocio sin puerta que se veía.
+
+            // Equipos de aire sobre soportes; su distribución es fija para que dos corridas coincidan.
+            for (int floor = 1; floor < row.Floors; floor++)
             {
-                float angle = MathF.Tau * c / corners;
-                float wobble = 0.72f + (float)rng.NextDouble() * 0.5f;
-                ring[c] = new Vector3(
-                    cx + MathF.Cos(angle) * radius * wobble,
-                    0.016f,
-                    cz + MathF.Sin(angle) * radius * squash * wobble);
+                if (rng.NextDouble() >= 0.42) continue;
+                float z = row.Z0 + 1.5f + (float)rng.NextDouble() * Math.Max(0f, width - 3f);
+                float y = floor * NeonFacade.Cell + 0.65f;
+                AddBox(street.Furniture, new Vector3(x, y, z), new Vector3(0.18f, 0.24f, 0.42f), FittingRepeat);
+                for (int slat = 0; slat < 4; slat++)
+                {
+                    float sy = y - 0.15f + slat * 0.10f;
+                    AddTube(street.Metal, new Vector3(x - row.Side * 0.19f, sy, z - 0.32f),
+                        new Vector3(x - row.Side * 0.19f, sy, z + 0.32f), 0.012f);
+                }
+                AddTube(street.Furniture, new Vector3(x, y - 0.24f, z - 0.3f),
+                    new Vector3(row.Side * FacadeOffset, y - 0.42f, z - 0.3f), 0.025f);
             }
-            for (int c = 1; c < corners - 1; c++)
+        }
+
+        // Hidrantes de varias secciones y bocas laterales, junto al cordón.
+        foreach (var point in new[] { (Side: -1f, Z: HeroCarZ + 2f), (Side: 1f, Z: HeroCarZ + 39f) })
+        {
+            var basePoint = new Vector3(point.Side * (RoadHalfWidth + 0.42f), KerbHeight, point.Z);
+            AddRoundTube(street.Hydrants, basePoint, basePoint + Vector3.UnitY * 0.78f, 0.12f, 12);
+            AddRoundTube(street.Hydrants, basePoint + Vector3.UnitY * 0.72f, basePoint + Vector3.UnitY * 0.86f, 0.16f, 12);
+            AddRoundTube(street.Hydrants, basePoint + Vector3.UnitY * 0.50f - Vector3.UnitZ * 0.22f,
+                basePoint + Vector3.UnitY * 0.50f + Vector3.UnitZ * 0.22f, 0.075f, 10);
+        }
+
+    }
+
+    // =========================================================================================
+    // Azoteas y aire: lo que se lee en los planos altos y en la silueta contra el cielo
+    // =========================================================================================
+
+    /// <summary>
+    /// Viste las azoteas del tramo que recorre la cámara: caseta de escalera, tanque de agua sobre
+    /// patas, antenas, respiraderos y equipos de aire. No es decorado suelto: son las formas que
+    /// hacen que la línea del techo deje de ser un antepecho repetido y pase a leerse como una
+    /// cuadra habitada. Todo va a las mallas que ya existen (masa oscura y herrajes), así que no
+    /// agrega ni un draw call.
+    /// </summary>
+    private static void BuildRooftops(StreetBuilder street, IReadOnlyList<NeonFacade.FacadeRow> rows)
+    {
+        var rng = new Random(20261103);
+
+        foreach (var row in rows)
+        {
+            if (row.Z1 < HeroCarZ - 16f || row.Z0 > HeroCarZ + 86f) continue;
+
+            float face = row.Side * FacadeOffset;
+            float roof = row.Height + 0.06f;           // sobre la losa de alquitrán, no dentro
+            float zMin = row.Z0 + 1.3f;
+            float zMax = row.Z1 - 1.3f;
+            if (zMax - zMin < 2f) continue;
+
+            // Caseta de escalera: una masa al fondo que corta la línea del techo.
+            if (rng.NextDouble() < 0.52)
             {
-                AddQuad(street.Puddles, ring[0], ring[c], ring[c + 1], ring[c + 1], Vector3.UnitY);
+                float cz = zMin + 1.2f + (float)rng.NextDouble() * MathF.Max(0.4f, zMax - zMin - 2.4f);
+                float cx = face + row.Side * (row.Depth - 3.1f);
+                AddBox(street.Walls[3], new Vector3(cx, roof + 1.05f, cz),
+                    new Vector3(1.25f, 1.05f, 1.45f), BrickRepeat);
             }
+
+            // Tanque de agua: el remate más neoyorquino de la silueta. Solo en edificios altos.
+            if (row.Floors >= 4 && rng.NextDouble() < 0.5)
+            {
+                float radius = 0.85f + (float)rng.NextDouble() * 0.30f;
+                float tx = face + row.Side * (2.2f + radius + (float)rng.NextDouble() * 1.2f);
+                float tz = zMin + 1.2f + (float)rng.NextDouble() * MathF.Max(0.4f, zMax - zMin - 2.4f);
+                AddWaterTank(street, new Vector3(tx, roof, tz), radius, 2.4f + (float)rng.NextDouble() * 0.5f);
+            }
+
+            // Antenas: tres travesaños y un mástil, apenas más finos que un poste.
+            int antennas = rng.Next(0, 3);
+            for (int i = 0; i < antennas; i++)
+            {
+                float ax = face + row.Side * (1.8f + (float)rng.NextDouble() * MathF.Max(0.5f, row.Depth - 3.6f));
+                float az = zMin + (float)rng.NextDouble() * (zMax - zMin);
+                float height = 1.4f + (float)rng.NextDouble() * 2.6f;
+                var foot = new Vector3(ax, roof, az);
+                AddTube(street.Metal, foot, foot + Vector3.UnitY * height, 0.024f);
+                for (int bar = 0; bar < 3; bar++)
+                {
+                    float y = roof + height * (0.62f + bar * 0.12f);
+                    AddTube(street.Metal, new Vector3(ax - 0.30f, y, az), new Vector3(ax + 0.30f, y, az), 0.012f);
+                }
+            }
+
+            // Respiraderos: caño con sombrerete, el detalle que se ve desde el plano alto.
+            if (rng.NextDouble() < 0.55)
+            {
+                float vx = face + row.Side * (2f + (float)rng.NextDouble() * MathF.Max(0.5f, row.Depth - 4f));
+                float vz = zMin + (float)rng.NextDouble() * (zMax - zMin);
+                var foot = new Vector3(vx, roof, vz);
+                AddRoundTube(street.Metal, foot, foot + Vector3.UnitY * 0.70f, 0.14f, 8);
+                AddRoundTube(street.Metal, foot + Vector3.UnitY * 0.70f, foot + Vector3.UnitY * 0.80f, 0.19f, 8);
+            }
+
+            // Equipo de aire acondicionado de azotea.
+            if (rng.NextDouble() < 0.42)
+            {
+                float ux = face + row.Side * (2.4f + (float)rng.NextDouble() * MathF.Max(0.5f, row.Depth - 4.8f));
+                float uz = zMin + (float)rng.NextDouble() * (zMax - zMin);
+                AddBox(street.Metal, new Vector3(ux, roof + 0.30f, uz),
+                    new Vector3(0.50f, 0.30f, 0.68f), FittingRepeat);
+            }
+        }
+    }
+
+    /// <summary>Tanque de madera sobre cuatro patas, con zunchos y tapa cónica.</summary>
+    private static void AddWaterTank(StreetBuilder street, Vector3 anchor, float radius, float height)
+    {
+        float legHeight = height * 0.34f;
+        float bodyHeight = height * 0.55f;
+        float inset = radius * 0.62f;
+        var feet = new[]
+        {
+            new Vector3(-inset, 0f, -inset), new Vector3(inset, 0f, -inset),
+            new Vector3(-inset, 0f, inset), new Vector3(inset, 0f, inset)
+        };
+
+        foreach (var foot in feet)
+        {
+            AddTube(street.Metal, anchor + foot, anchor + foot + Vector3.UnitY * legHeight, 0.055f);
+        }
+        // Arriostramiento en las dos caras que dan a la calle.
+        AddTube(street.Metal, anchor + feet[0] + Vector3.UnitY * 0.10f,
+            anchor + feet[1] + Vector3.UnitY * (legHeight * 0.78f), 0.024f);
+        AddTube(street.Metal, anchor + feet[2] + Vector3.UnitY * (legHeight * 0.78f),
+            anchor + feet[3] + Vector3.UnitY * 0.10f, 0.024f);
+
+        var bodyBase = anchor + Vector3.UnitY * legHeight;
+        AddRoundTube(street.ShopWood, bodyBase, bodyBase + Vector3.UnitY * bodyHeight, radius, 14);
+        for (int band = 0; band < 2; band++)
+        {
+            float y = bodyHeight * (0.28f + band * 0.44f);
+            AddRoundTube(street.Metal, bodyBase + Vector3.UnitY * y,
+                bodyBase + Vector3.UnitY * (y + 0.06f), radius + 0.022f, 14);
+        }
+        AddCone(street.Metal, bodyBase + Vector3.UnitY * bodyHeight, radius + 0.045f, 0.30f, 14);
+
+        // Caño de venteo pegado al tanque, para que la silueta no sea un cilindro solo.
+        var vent = anchor + new Vector3(radius * 0.55f, 0f, -radius * 0.55f);
+        AddTube(street.Metal, vent, vent + Vector3.UnitY * (legHeight + bodyHeight + 0.55f), 0.034f);
+    }
+
+    /// <summary>Cono de caras triangulares (tapa del tanque): no hay primitiva de cono en el set.</summary>
+    private static void AddCone(List<SceneVertex> vertices, Vector3 baseCenter, float radius, float height, int segments)
+    {
+        var apex = baseCenter + Vector3.UnitY * height;
+        for (int i = 0; i < segments; i++)
+        {
+            float a = MathF.Tau * i / segments;
+            float b = MathF.Tau * (i + 1) / segments;
+            var p0 = baseCenter + new Vector3(MathF.Cos(a) * radius, 0f, MathF.Sin(a) * radius);
+            var p1 = baseCenter + new Vector3(MathF.Cos(b) * radius, 0f, MathF.Sin(b) * radius);
+            var normal = Vector3.Normalize(Vector3.Cross(apex - p0, p1 - p0));
+            vertices.Add(new SceneVertex(p0, normal));
+            vertices.Add(new SceneVertex(p1, normal));
+            vertices.Add(new SceneVertex(apex, normal));
+        }
+    }
+
+    /// <summary>
+    /// Cables cruzando la calle con guirnaldas de bombillas cálidas. Son el gesto más barato de
+    /// inmersión que le faltaba al diorama: una calle nocturna no es solo fachadas iluminadas, es
+    /// también el cableado aéreo y la luz que cuelga por encima de la cabeza. La catenaria es una
+    /// parábola (no una recta) y las bombillas van instanciadas en una sola malla.
+    /// </summary>
+    private static void BuildOverheadWires(StreetBuilder street)
+    {
+        var spans = new (float Z, float LeftY, float RightY, bool Lights)[]
+        {
+            (10f, 7.10f, 6.85f, true),
+            (16f, 6.90f, 7.20f, false),
+            (27f, 7.25f, 6.95f, true),
+            (44f, 6.85f, 7.15f, true),
+            (57f, 7.15f, 6.80f, false),
+            (70f, 6.95f, 7.20f, true)
+        };
+
+        const int segments = 12;
+        const float sag = 0.50f;
+
+        foreach (var span in spans)
+        {
+            var left = new Vector3(-(FacadeOffset - 0.10f), span.LeftY, span.Z);
+            var right = new Vector3(FacadeOffset - 0.10f, span.RightY, span.Z);
+
+            var previous = left;
+            for (int i = 1; i <= segments; i++)
+            {
+                float t = i / (float)segments;
+                var point = Vector3.Lerp(left, right, t);
+                point.Y -= sag * 4f * t * (1f - t);
+                AddTube(street.Metal, previous, point, 0.017f);
+                previous = point;
+            }
+
+            // Placas de anclaje contra las dos fachadas. El centro va MEDIO ESPESOR hacia la pared
+            // respecto del extremo del cable, así la placa apoya en el ladrillo y no queda flotando.
+            AddBox(street.Metal, left - new Vector3(0.05f, 0f, 0f), new Vector3(0.05f, 0.15f, 0.09f), FittingRepeat);
+            AddBox(street.Metal, right + new Vector3(0.05f, 0f, 0f), new Vector3(0.05f, 0.15f, 0.09f), FittingRepeat);
+
+            if (!span.Lights) continue;
+
+            float length = Vector3.Distance(left, right);
+            int bulbs = Math.Max(3, (int)(length * 0.82f / 0.62f));
+            for (int i = 0; i <= bulbs; i++)
+            {
+                float t = 0.09f + 0.82f * i / bulbs;
+                var point = Vector3.Lerp(left, right, t);
+                point.Y -= sag * 4f * t * (1f - t) + 0.085f;
+                street.Bulbs.Add(Tinted(
+                    Placed(point, 0f, 1f),
+                    new Vector3(1.00f, 0.66f, 0.34f), roughness: 0.35f, glow: 1.35f));
+            }
+        }
+    }
+
+    /// <summary>Bombilla: un cilindro corto de seis caras; a la distancia de la calle se lee redonda.</summary>
+    private static SceneVertex[] BulbVertices()
+    {
+        var vertices = new List<SceneVertex>(36);
+        AddRoundTube(vertices, new Vector3(0f, -0.045f, 0f), new Vector3(0f, 0.045f, 0f), 0.038f, 6);
+        return vertices.ToArray();
+    }
+
+    private static void AddRoundTube(List<SceneVertex> vertices, Vector3 from, Vector3 to, float radius, int segments)
+    {
+        Vector3 axis = to - from;
+        if (axis.LengthSquared() < 1e-9f) return;
+        axis = Vector3.Normalize(axis);
+        Vector3 helper = MathF.Abs(axis.Y) > 0.9f ? Vector3.UnitX : Vector3.UnitY;
+        Vector3 u = Vector3.Normalize(Vector3.Cross(axis, helper));
+        Vector3 v = Vector3.Normalize(Vector3.Cross(axis, u));
+        for (int i = 0; i < segments; i++)
+        {
+            float a = MathF.Tau * i / segments, b = MathF.Tau * (i + 1) / segments;
+            Vector3 na = u * MathF.Cos(a) + v * MathF.Sin(a);
+            Vector3 nb = u * MathF.Cos(b) + v * MathF.Sin(b);
+            AddQuad(vertices, from + na * radius, to + na * radius, to + nb * radius, from + nb * radius,
+                Vector3.Normalize(na + nb), FittingRepeat);
         }
     }
 
@@ -668,6 +974,398 @@ public static class NeonScene
     }
 
     /// <summary>
+    /// Reparte la PLANTA BAJA de cada edificio. Todo edificio tiene un PORTAL de viviendas; según el
+    /// edificio se suman un garaje y/o locales. Antes cada fila con locales se llenaba entera de
+    /// vidrieras, así que la calle quedaba sin una sola entrada normal ni un garaje: una calle de
+    /// centros comerciales, no una calle. Ahora la mezcla es explícita y la semilla es fija.
+    /// </summary>
+    private static List<NeonFacade.Shop> LayoutGround(IReadOnlyList<NeonFacade.FacadeRow> rows)
+    {
+        var rng = new Random(20261029);
+        var bays = new List<NeonFacade.Shop>(96);
+
+        for (int rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            var row = rows[rowIndex];
+            int columns = Math.Max(1, (int)MathF.Round((row.Z1 - row.Z0) / NeonFacade.Cell));
+            if (columns < 2) continue;
+
+            var taken = new bool[columns];
+
+            // Portal: SIEMPRE hay uno. Es la entrada de viviendas del edificio y lo que hace que la
+            // planta baja no sea una hilera de vidrieras.
+            int portal = rng.Next(columns);
+            taken[portal] = true;
+            bays.Add(new NeonFacade.Shop(rowIndex, portal, 1, 0, 0, NeonFacade.GroundKind.Portal));
+
+            // Garaje: en frentes anchos y cada tanto. La persiana metálica es una lectura distinta de
+            // la vidriera aun de lejos, que es justo lo que faltaba.
+            if (columns >= 4 && rng.NextDouble() < 0.30)
+            {
+                int garage;
+                do { garage = rng.Next(columns); } while (taken[garage]);
+                taken[garage] = true;
+                bays.Add(new NeonFacade.Shop(rowIndex, garage, 1, 0, 0, NeonFacade.GroundKind.Garage));
+            }
+
+            // Una de cada cuatro plantas bajas es solo viviendas (portal + ventanas).
+            if (rng.NextDouble() < 0.26) continue;
+
+            // Locales en los tramos LIBRES de al menos dos celdas. Los tramos de una sola celda se
+            // quedan como ventana del kit: un local de 3 m con puerta no entra.
+            int column = 0;
+            while (column < columns)
+            {
+                if (taken[column]) { column++; continue; }
+                int run = 0;
+                while (column + run < columns && !taken[column + run]) run++;
+                if (run < 2) { column++; continue; }
+
+                int width = Math.Min(run, rng.NextDouble() < 0.52 ? 2 : 3);
+                int door = rng.Next(width);
+                // Dos tercios de los locales con luz cálida: la calle tiene que verse de sodio, con
+                // algún local frío suelto (electrónica, farmacia) que rompa la hilera.
+                bays.Add(new NeonFacade.Shop(rowIndex, column, width, door, rng.Next(3) == 0 ? 1 : 0));
+                column += width;
+            }
+        }
+        return bays;
+    }
+
+    // ---- Medidas del local (metros desde el plano del frente del kit) ----
+    private const float ShopProud = 0.05f;        // lo que el marco sobresale hacia la vereda
+    private const float ShopDepth = 0.30f;         // fondo del marco: cierra el canto del hueco
+    private const float ShopRecess = 0.16f;        // dónde queda la vidriera respecto del frente
+    private const float ShopBulkhead = 0.66f;      // remate del zócalo bajo la vidriera
+    private const float ShopGlassTop = 2.52f;      // dintel: de acá al techo de la celda
+    private const float ShopCellTop = NeonFacade.Cell + KerbHeight;
+
+    /// <summary>
+    /// Los locales de planta baja: puerta propia, vidriera encendida, marco de metal, pilastras de
+    /// ladrillo y cartel. Sin esto la planta baja era una fila de ventanas de departamento con un
+    /// toldo colgado encima: el "negocio" no tenía puerta ni vidriera.
+    ///
+    /// Todo se arma con la MISMA convención de la fachada (celda de 3 m, +Z local hacia la calle),
+    /// así el local encaja en las celdas que <see cref="NeonFacade.Build"/> dejó libres. El vidrio es
+    /// opaco en este motor (no hay pase de transparencias): la vidriera se lee por su EMISIÓN cálida
+    /// y por las siluetas de mercadería delante, no por lo que se ve detrás.
+    /// </summary>
+    private static void BuildShopfronts(
+        StreetBuilder street, IReadOnlyList<NeonFacade.FacadeRow> rows, IReadOnlyList<NeonFacade.Shop> bays)
+    {
+        var rng = new Random(20261031);
+
+        // Zócalo continuo al pie de TODAS las fachadas: la celda del kit arranca a 0,16 m (la vereda) y
+        // el frente de la manzana no tiene cara a esa altura, así que sin este listón se veía una
+        // ranura oscura al pie de cada edificio —el hueco por el que se miraba el interior vacío—.
+        foreach (var row in rows)
+        {
+            float face = row.Side * FacadeOffset;
+            AddSpan(street.FacadeBase, face - row.Side * 0.05f, face + row.Side * 0.30f,
+                0f, KerbHeight, row.Z0, row.Z1, BrickRepeat);
+        }
+
+        foreach (var shop in bays)
+        {
+            var row = rows[shop.Row];
+            float side = row.Side;
+            float zA = side > 0f
+                ? row.Z0 + shop.FirstColumn * NeonFacade.Cell
+                : row.Z1 - shop.FirstColumn * NeonFacade.Cell;
+            float zB = side > 0f ? zA + shop.Columns * NeonFacade.Cell : zA - shop.Columns * NeonFacade.Cell;
+            float zMin = MathF.Min(zA, zB), zMax = MathF.Max(zA, zB);
+
+            float face = side * FacadeOffset;
+            float xOut = face - side * ShopProud;               // cara del local
+            float xBack = face + side * ShopDepth;              // fondo del marco
+            float xGlass = face + side * ShopRecess;            // vidriera
+            float zLeft = zMin + 0.14f, zRight = zMax - 0.14f;
+
+            // Pilastras: el medianil del local, de ladrillo, del frente al fondo del marco.
+            AddSpan(street.ShopBrick, xOut, xBack, KerbHeight, ShopCellTop, zMin, zLeft, BrickRepeat);
+            AddSpan(street.ShopBrick, xOut, xBack, KerbHeight, ShopCellTop, zRight, zMax, BrickRepeat);
+
+            // Portal y garaje tienen su propia puerta, su propio dintel y no llevan cartel de local.
+            if (shop.Kind == NeonFacade.GroundKind.Portal)
+            {
+                BuildPortal(street, side, xOut, xGlass, xBack, zMin, zMax);
+                continue;
+            }
+            if (shop.Kind == NeonFacade.GroundKind.Garage)
+            {
+                BuildGarage(street, side, xOut, xBack, zMin, zMax);
+                continue;
+            }
+
+            // Dintel de pared a pared: cierra el frente por encima de la vidriera y es el fondo del
+            // cartel. Va en el MISMO ladrillo de la fachada: el marco oscuro de la vidriera termina
+            // en el vidrio, y el cartel se monta sobre la franja de ladrillo, como en un local real.
+            AddSpan(street.ShopBrick, xOut, xBack, ShopGlassTop, ShopCellTop, zLeft, zRight, BrickRepeat);
+
+            // Divisiones entre celdas del mismo local: tapan el canto de la celda y dan el ritmo de
+            // montantes de una vidriera de verdad.
+            for (int cell = 1; cell < shop.Columns; cell++)
+            {
+                float z = zMin + cell * NeonFacade.Cell;
+                AddSpan(street.ShopFrame, xOut, xBack, KerbHeight, ShopCellTop, z - 0.07f, z + 0.07f, FittingRepeat);
+            }
+
+            for (int cell = 0; cell < shop.Columns; cell++)
+            {
+                float czA = side > 0f
+                    ? row.Z0 + (shop.FirstColumn + cell) * NeonFacade.Cell
+                    : row.Z1 - (shop.FirstColumn + cell) * NeonFacade.Cell;
+                float czB = side > 0f ? czA + NeonFacade.Cell : czA - NeonFacade.Cell;
+                float czMin = MathF.Min(czA, czB), czMax = MathF.Max(czA, czB);
+
+                if (cell == shop.DoorColumn)
+                    BuildShopDoor(street, shop.Style, side, xOut, xGlass, xBack, czMin, czMax, rng);
+                else
+                    BuildShopWindow(street, shop.Style, side, xOut, xGlass, czMin, czMax, rng);
+            }
+
+            // Cartel del local: paneles de neón sobre el dintel, uno por cada 2,4 m de frente. Reusan
+            // el mismo panel de 1,20 × 0,38 m de los carteles grandes, así el local pertenece a la
+            // misma calle y no a un kit distinto.
+            int color = rng.Next(SignColors.Length);
+            var colorVector = SignColors[color];
+            float yaw = side > 0f ? -MathF.PI * 0.5f : MathF.PI * 0.5f;
+            int panels = Math.Max(1, (int)MathF.Round((zMax - zMin - 0.7f) / 2.4f));
+            float span = zMax - zMin - 0.7f;
+            float signX = side * (FacadeOffset - 0.10f);
+            for (int panel = 0; panel < panels; panel++)
+            {
+                float z = zMin + 0.35f + span * (panel + 0.5f) / panels;
+                var position = new Vector3(signX, 2.86f, z);
+                var bodyTint = new Vector3(0.050f, 0.053f, 0.062f) + colorVector * 0.14f;
+                street.SignBodies.Add(Tinted(Placed(position, yaw, 1f), bodyTint, roughness: 0.55f, metallic: 0.35f));
+                street.Signs.Add(Tinted(Placed(position, yaw, 1f), colorVector, roughness: 0.35f, glow: SignGlow));
+            }
+        }
+    }
+
+    /// <summary>Una celda de VIDRIERA: zócalo, vidrio encendido, marco y mercadería en silueta.</summary>
+    private static void BuildShopWindow(
+        StreetBuilder street, int style, float side, float xOut, float xGlass,
+        float zMin, float zMax, Random rng)
+    {
+        float z0 = zMin + 0.09f, z1 = zMax - 0.09f;
+
+        // Zócalo: del frente a la vidriera, cierra el hueco por abajo y es donde se apoya la mercadería.
+        AddSpan(street.ShopWood, xOut, xGlass, KerbHeight, ShopBulkhead, z0, z1, FittingRepeat);
+
+        // Vidrio encendido. Dos temperaturas por estilo: la mayoría cálida, los locales pares fríos.
+        var glass = (style & 1) == 0 ? street.ShopGlassWarm : street.ShopGlassCool;
+        AddSpan(glass, xGlass, xGlass + side * 0.02f, ShopBulkhead, ShopGlassTop, z0, z1);
+
+        // Marco: travesaño inferior y superior, jambas y dos montantes.
+        AddSpan(street.ShopFrame, xGlass - side * 0.04f, xGlass + side * 0.04f,
+            ShopBulkhead, ShopBulkhead + 0.07f, z0, z1, FittingRepeat);
+        AddSpan(street.ShopFrame, xGlass - side * 0.04f, xGlass + side * 0.04f,
+            ShopGlassTop - 0.07f, ShopGlassTop, z0, z1, FittingRepeat);
+        foreach (float z in new[] { z0, z1 - 0.07f })
+        {
+            AddSpan(street.ShopFrame, xGlass - side * 0.04f, xGlass + side * 0.04f,
+                ShopBulkhead, ShopGlassTop, z, z + 0.07f, FittingRepeat);
+        }
+        for (int mullion = 1; mullion <= 2; mullion++)
+        {
+            float z = z0 + (z1 - z0) * mullion / 3f;
+            AddSpan(street.ShopFrame, xGlass - side * 0.05f, xGlass + side * 0.02f,
+                ShopBulkhead + 0.07f, ShopGlassTop - 0.07f, z - 0.025f, z + 0.025f, FittingRepeat);
+        }
+
+        // Estantes: dos líneas horizontales oscuras por delante del vidrio. Sin ellas la vidriera es
+        // un rectángulo de color plano; con ellas se lee como un local con mercadería adentro.
+        foreach (float shelf in new[] { 1.38f, 1.96f })
+        {
+            AddSpan(street.ShopFrame, xGlass - side * 0.03f, xGlass + side * 0.02f,
+                shelf, shelf + 0.035f, z0, z1, FittingRepeat);
+        }
+
+        // Bultos en silueta sobre el zócalo, DELANTE del vidrio. Van en el marco casi negro (no en el
+        // metal claro del mobiliario) y bajos: contra la vidriera encendida se leen como mercadería,
+        // no como cajas claras tapando el local.
+        int items = 1 + rng.Next(2);
+        float usable = z1 - z0 - 0.30f;
+        for (int item = 0; item < items; item++)
+        {
+            float width = 0.14f + (float)rng.NextDouble() * 0.16f;
+            float height = 0.12f + (float)rng.NextDouble() * 0.22f;
+            float z = z0 + 0.15f + usable * (item + 0.5f) / items;
+            float depth = 0.08f + (float)rng.NextDouble() * 0.08f;
+            AddSpan(street.ShopFrame, xGlass - side * depth, xGlass - side * 0.03f,
+                ShopBulkhead, ShopBulkhead + height, z - width * 0.5f, z + width * 0.5f, FittingRepeat);
+        }
+    }
+
+    /// <summary>La celda de la PUERTA: hoja de madera con vidrio, marco, umbral y picaporte.</summary>
+    private static void BuildShopDoor(
+        StreetBuilder street, int style, float side, float xOut, float xGlass, float xBack,
+        float zMin, float zMax, Random rng)
+    {
+        float zCenter = (zMin + zMax) * 0.5f;
+        float zDoorA = zCenter - 0.55f, zDoorB = zCenter + 0.55f;
+        float z0 = zMin + 0.09f, z1 = zMax - 0.09f;
+
+        // Zócalos a los lados de la puerta, y vidrieras angostas arriba de cada uno.
+        foreach (var (a, b) in new[] { (z0, zDoorA - 0.07f), (zDoorB + 0.07f, z1) })
+        {
+            if (b - a < 0.10f) continue;
+            AddSpan(street.ShopWood, xOut, xGlass, KerbHeight, ShopBulkhead, a, b, FittingRepeat);
+            var glass = (style & 1) == 0 ? street.ShopGlassWarm : street.ShopGlassCool;
+            AddSpan(glass, xGlass, xGlass + side * 0.02f, ShopBulkhead, ShopGlassTop, a, b);
+            AddSpan(street.ShopFrame, xGlass - side * 0.04f, xGlass + side * 0.04f,
+                ShopBulkhead, ShopBulkhead + 0.07f, a, b, FittingRepeat);
+            AddSpan(street.ShopFrame, xGlass - side * 0.04f, xGlass + side * 0.04f,
+                ShopGlassTop - 0.07f, ShopGlassTop, a, b, FittingRepeat);
+        }
+
+        // Marco de la puerta: dos jambas y el dintel, del piso al dintel del local.
+        AddSpan(street.ShopFrame, xOut, xBack, KerbHeight, ShopGlassTop, zDoorA - 0.09f, zDoorA, FittingRepeat);
+        AddSpan(street.ShopFrame, xOut, xBack, KerbHeight, ShopGlassTop, zDoorB, zDoorB + 0.09f, FittingRepeat);
+        AddSpan(street.ShopFrame, xOut, xBack, ShopGlassTop - 0.07f, ShopGlassTop,
+            zDoorA - 0.09f, zDoorB + 0.09f, FittingRepeat);
+
+        // Hoja: madera oscura con un paño de vidrio en la mitad de arriba. El vidrio de la puerta va
+        // del mismo lado que el de la vidriera para que la fachada se lea de una sola pieza.
+        AddSpan(street.ShopWood, xGlass - side * 0.03f, xGlass + side * 0.05f,
+            KerbHeight, ShopGlassTop - 0.10f, zDoorA + 0.04f, zDoorB - 0.04f, FittingRepeat);
+        var doorGlass = (style & 1) == 0 ? street.ShopGlassWarm : street.ShopGlassCool;
+        AddSpan(doorGlass, xGlass - side * 0.06f, xGlass - side * 0.02f,
+            1.18f, 2.32f, zDoorA + 0.14f, zDoorB - 0.14f);
+
+        // Patada de la puerta y picaporte.
+        AddSpan(street.ShopFrame, xGlass - side * 0.065f, xGlass + side * 0.02f,
+            KerbHeight, KerbHeight + 0.34f, zDoorA + 0.08f, zDoorB - 0.08f, FittingRepeat);
+        AddSpan(street.ShopFrame, xGlass - side * 0.13f, xGlass - side * 0.03f,
+            1.04f, 1.12f, zDoorB - 0.20f, zDoorB - 0.12f, FittingRepeat);
+
+        // Umbral de piedra, un escalón por encima de la vereda.
+        AddSpan(street.Walk, xOut - side * 0.14f, xGlass, KerbHeight, KerbHeight + 0.05f,
+            zDoorA - 0.10f, zDoorB + 0.10f, ConcreteRepeat);
+    }
+
+    /// <summary>
+    /// PORTAL de viviendas: la entrada normal de un edificio, entre los locales. Una puerta de madera
+    /// con paño de vidrio, jambas y dintel de ladrillo, dos escalones, un pequeño refugio con luz y
+    /// buzón. Es deliberadamente MÁS BAJO y MÁS ANGOSTO que una vidriera —y de una sola hoja, no de
+    /// dos—: se lee como acceso desde lejos, no como otro negocio.
+    /// </summary>
+    private static void BuildPortal(
+        StreetBuilder street, float side, float xOut, float xGlass, float xBack, float zMin, float zMax)
+    {
+        float zCenter = (zMin + zMax) * 0.5f;
+        float zDoorA = zCenter - 0.58f, zDoorB = zCenter + 0.58f;
+        float z0 = zMin + 0.14f, z1 = zMax - 0.14f;
+        float xDoor = xGlass + side * 0.10f;
+
+        // Dintel de ladrillo sobre el portal (lo común con el local son las pilastras laterales).
+        AddSpan(street.ShopBrick, xOut, xBack, 2.80f, ShopCellTop, z0, z1, BrickRepeat);
+
+        // Jambas y dintel de ladrillo alrededor del hueco: el mismo ladrillo del edificio le da el
+        // marco de obra al portal y evita que un material claro devuelva el cielo y se vea verde.
+        AddSpan(street.ShopBrick, xOut, xDoor + side * 0.02f, KerbHeight, 2.62f, zDoorA - 0.17f, zDoorA, BrickRepeat);
+        AddSpan(street.ShopBrick, xOut, xDoor + side * 0.02f, KerbHeight, 2.62f, zDoorB, zDoorB + 0.17f, BrickRepeat);
+        AddSpan(street.ShopBrick, xOut, xDoor + side * 0.02f, 2.62f, 2.80f, zDoorA - 0.17f, zDoorB + 0.17f, BrickRepeat);
+
+        // La puerta va 0.26 m adentro: el escalón y la profundidad son lo que la distinguen de una
+        // vidriera pegada al plano de la calle.
+        AddSpan(street.ShopFrame, xDoor - side * 0.02f, xDoor + side * 0.06f, KerbHeight, 2.40f,
+            zDoorA - 0.05f, zDoorA, FittingRepeat);
+        AddSpan(street.ShopFrame, xDoor - side * 0.02f, xDoor + side * 0.06f, KerbHeight, 2.40f,
+            zDoorB, zDoorB + 0.05f, FittingRepeat);
+        AddSpan(street.ShopFrame, xDoor - side * 0.02f, xDoor + side * 0.06f, 2.34f, 2.40f,
+            zDoorA, zDoorB, FittingRepeat);
+
+        // Una sola hoja de madera con paño de vidrio arriba y picaporte: es la lectura de "entrada
+        // de edificio" que la doble puerta ancha no daba (parecía otro local).
+        float leafA = zDoorA + 0.04f, leafB = zDoorB - 0.04f;
+        AddSpan(street.ShopWood, xDoor, xDoor + side * 0.05f, KerbHeight, 2.34f, leafA, leafB, FittingRepeat);
+        AddSpan(street.ShopGlassWarm, xDoor - side * 0.02f, xDoor, 1.16f, 2.16f, leafA + 0.12f, leafB - 0.12f);
+        AddSpan(street.ShopFrame, xDoor - side * 0.05f, xDoor - side * 0.01f, 1.02f, 1.10f,
+            leafB - 0.22f, leafB - 0.12f, FittingRepeat);
+        // Travesaño bajo el vidrio, para que la hoja no sea un panel liso.
+        AddSpan(street.ShopFrame, xDoor - side * 0.03f, xDoor + side * 0.05f, 1.10f, 1.16f,
+            leafA, leafB, FittingRepeat);
+
+        // Vidrio de abanico sobre la puerta, debajo del dintel de ladrillo.
+        AddSpan(street.ShopGlassWarm, xDoor, xDoor + side * 0.02f, 2.42f, 2.62f, zDoorA + 0.08f, zDoorB - 0.08f);
+
+        // Escalones: dos, anchos, con el umbral por encima de la vereda.
+        AddSpan(street.Walk, xOut - side * 0.55f, xDoor, KerbHeight, 0.19f, zDoorA - 0.22f, zDoorB + 0.22f, ConcreteRepeat);
+        AddSpan(street.Walk, xOut - side * 0.30f, xDoor, 0.19f, 0.23f, zDoorA - 0.14f, zDoorB + 0.14f, ConcreteRepeat);
+
+        // Refugio: losa sobre la puerta, dos tirantes y una luz cálida abajo. Es lo que hace que el
+        // portal se lea desde el otro lado de la calle.
+        AddSpan(street.ShopFrame, xOut - side * 0.62f, xOut, 2.80f, 2.86f, zDoorA - 0.28f, zDoorB + 0.28f, FittingRepeat);
+        foreach (float z in new[] { zDoorA - 0.24f, zDoorB + 0.24f })
+        {
+            AddTube(street.Furniture, new Vector3(xOut - side * 0.58f, 2.86f, z),
+                new Vector3(xOut, 3.14f, z), 0.022f);
+        }
+        AddSpan(street.ShopFrame, xOut - side * 0.36f, xOut - side * 0.12f, 2.76f, 2.80f,
+            zCenter - 0.22f, zCenter + 0.22f, FittingRepeat);
+        AddSpan(street.ShopGlassWarm, xOut - side * 0.36f, xOut - side * 0.12f, 2.73f, 2.76f,
+            zCenter - 0.22f, zCenter + 0.22f);
+
+        // Buzón y placa junto a la jamba.
+        AddSpan(street.ShopFrame, xOut - side * 0.06f, xOut + side * 0.02f, 1.30f, 1.62f,
+            zDoorB + 0.20f, zDoorB + 0.52f, FittingRepeat);
+        AddSpan(street.ShopFrame, xOut - side * 0.05f, xOut + side * 0.01f, 1.38f, 1.46f,
+            zDoorB + 0.26f, zDoorB + 0.46f, FittingRepeat);
+    }
+
+    /// <summary>
+    /// GARAJE: persiana metálica de duelas, guías, dintel de ladrillo y un cartel sobre la boca. La
+    /// persiana cerrada es la lectura más distinta de una vidriera, que es lo que la calle necesitaba
+    /// además del portal: no todo local está abierto a la noche.
+    /// </summary>
+    private static void BuildGarage(
+        StreetBuilder street, float side, float xOut, float xBack, float zMin, float zMax)
+    {
+        float z0 = zMin + 0.14f, z1 = zMax - 0.14f;
+        float zCenter = (zMin + zMax) * 0.5f;
+
+        // Dintel de ladrillo sobre la boca de 2,50 m.
+        AddSpan(street.ShopBrick, xOut, xBack, 2.50f, ShopCellTop, z0, z1, BrickRepeat);
+
+        // Guías laterales.
+        AddSpan(street.ShopFrame, xOut, xBack, KerbHeight, 2.50f, z0, z0 + 0.08f, FittingRepeat);
+        AddSpan(street.ShopFrame, xOut, xBack, KerbHeight, 2.50f, z1 - 0.08f, z1, FittingRepeat);
+
+        // Duelas de la persiana: doce fajas horizontales con una junta oscura entre ellas.
+        const int slats = 12;
+        const float bottom = 0.22f, top = 2.42f;
+        float pitch = (top - bottom) / slats;
+        for (int slat = 0; slat < slats; slat++)
+        {
+            float y = bottom + slat * pitch;
+            AddSpan(street.ShopFrame, xOut - side * 0.02f, xOut + side * 0.02f,
+                y, y + pitch - 0.025f, z0 + 0.10f, z1 - 0.10f, FittingRepeat);
+        }
+        // Remate superior: cierra la luz entre la última duela y el dintel de ladrillo.
+        AddSpan(street.ShopFrame, xOut - side * 0.02f, xOut + side * 0.03f, top, 2.50f,
+            z0 + 0.08f, z1 - 0.08f, FittingRepeat);
+
+        // Remate inferior, umbral y una franja de hormigón que hace de rampa sobre la vereda.
+        AddSpan(street.ShopFrame, xOut - side * 0.04f, xOut + side * 0.02f, bottom - 0.06f, bottom,
+            z0 + 0.09f, z1 - 0.09f, FittingRepeat);
+        AddSpan(street.Walk, xOut - side * 0.55f, xOut, KerbHeight, KerbHeight + 0.02f,
+            z0 + 0.08f, z1 - 0.08f, ConcreteRepeat);
+
+        // Cartel de garaje, un solo panel ámbar sobre la boca, y una luz de aviso junto a la guía.
+        var amber = SignColors[2];
+        float yaw = side > 0f ? -MathF.PI * 0.5f : MathF.PI * 0.5f;
+        var position = new Vector3(side * (FacadeOffset - 0.10f), 2.78f, zCenter);
+        street.SignBodies.Add(Tinted(Placed(position, yaw, 1f), new Vector3(0.05f, 0.053f, 0.062f) + amber * 0.14f,
+            roughness: 0.55f, metallic: 0.35f));
+        street.Signs.Add(Tinted(Placed(position, yaw, 1f), amber, roughness: 0.35f, glow: SignGlow));
+        AddSpan(street.ShopGlassWarm, xOut - side * 0.06f, xOut + side * 0.01f, 2.56f, 2.66f,
+            z0 + 0.12f, z0 + 0.24f, FittingRepeat);
+    }
+
+    /// <summary>
     /// La MASA del edificio: fondo, medianiles, azotea, zócalo y cornisa. Es lo que hay DETRÁS de la
     /// fachada —la que arma <see cref="NeonFacade"/> con los módulos glTF reales—, así que va en tinta
     /// oscura y sin detalle: se ve como silueta contra el cielo en el plano alto y como sombra en el
@@ -695,12 +1393,6 @@ public static class NeonScene
 
         // Azotea: una losa oscura (alquitrán), que es lo que se ve desde el plano alto del tramo 3.
         AddSlab(street.Metal, new Vector3(xa, row.Height, row.Z0), new Vector3(xb, row.Height + 0.06f, row.Z1), FittingRepeat);
-
-        // ---- Zócalo: un listón de piedra que separa la planta baja de la vereda ----
-        float plinthFace = face - side * PlinthProud;
-        AddSlab(street.Walk,
-            new Vector3(MathF.Min(plinthFace, back), 0f, row.Z0 - 0.02f),
-            new Vector3(MathF.Max(plinthFace, back), PlinthHeight, row.Z1 + 0.02f), ConcreteRepeat);
 
         // ---- Cornisa y antepecho de azotea: el remate de la línea del techo ----
         float corniceFace = face - side * CorniceProud;
@@ -807,7 +1499,8 @@ public static class NeonScene
     /// colocación. Un modelo que no está se saltea con una nota en vez de tumbar la escena.
     /// </summary>
     private static void AddModel(
-        List<SceneMesh> meshes, string root, string slug, string label, IReadOnlyList<SceneInstance> instances)
+        List<SceneMesh> meshes, string root, string slug, string label, IReadOnlyList<SceneInstance> instances,
+        bool groundOnRoad = false)
     {
         if (instances.Count == 0) return;
 
@@ -821,13 +1514,24 @@ public static class NeonScene
         try
         {
             var model = GltfModel.Load(path);
+            // El glTF ya tiene horneadas las transformaciones de sus nodos. Ajustar cada
+            // instancia por su mínimo real y su escala, no por una altura supuesta del eje.
+            var placements = groundOnRoad
+                ? instances.Select(instance => instance with
+                {
+                    PositionScale = instance.PositionScale with
+                    {
+                        Y = instance.PositionScale.Y - model.Min.Y * instance.PositionScale.W
+                    }
+                }).ToArray()
+                : instances.ToArray();
             foreach (var part in model.Parts)
             {
                 meshes.Add(new SceneMesh
                 {
                     Name = $"{label} · {part.Name}",
                     Vertices = part.Vertices,
-                    Instances = instances.ToArray(),
+                    Instances = placements,
                     Material = part.Material
                 });
             }
@@ -842,23 +1546,65 @@ public static class NeonScene
     // Colocación de los objetos de la calle
     // =========================================================================================
 
-    /// <summary>
-    /// Altura a la que se APOYA el auto: el origen del modelo <c>covered_car</c> está a la altura del
-    /// EJE —sus cuatro ruedas cuelgan 0,30 m—, así que apoyarlo en la calzada es ponerlo en +0,30, no
-    /// en la altura del cordón: con <see cref="KerbHeight"/> (0,16) las ruedas quedaban enterradas
-    /// 14 cm en el asfalto.
-    /// </summary>
-    private const float CarRestHeight = 0.30f;
-
     private static IReadOnlyList<SceneInstance> CarPlacements() => new[]
     {
         // El auto héroe: estacionado contra la vereda derecha, apenas abierto hacia la calle. Está a
         // la DERECHA del recorrido del tramo 1 a propósito: la cámara pasa por el carril izquierdo y
         // el auto entra en cuadro de costado, sin que el travelling se le meta adentro (ver CameraAt).
-        Placed(new Vector3(3.2f, CarRestHeight, HeroCarZ), 0.30f, 1f),
-        Placed(new Vector3(-3.1f, CarRestHeight, HeroCarZ + 24f), -0.22f, 0.96f),
-        Placed(new Vector3(3.3f, CarRestHeight, HeroCarZ + 46f), 0.16f, 1.02f),
-        Placed(new Vector3(-3.2f, CarRestHeight, HeroCarZ + 71f), -0.30f, 0.94f)
+        Placed(new Vector3(3.2f, 0f, HeroCarZ), 0.30f, 1f),
+        Placed(new Vector3(-3.1f, 0f, HeroCarZ + 24f), -0.22f, 0.96f),
+        Placed(new Vector3(3.3f, 0f, HeroCarZ + 46f), 0.16f, 1.02f),
+        Placed(new Vector3(-3.2f, 0f, HeroCarZ + 71f), -0.30f, 0.94f)
+    };
+
+    /// <summary>
+    /// Escaleras de incendio del kit, montadas sobre cuatro frentes del recorrido. Se eligen filas de
+    /// cuatro pisos o más para que la escalera (9,2 m con el escalado) no asome por encima del
+    /// antepecho, y posiciones Z lejos de los carteles, los faroles de pared y los cables: una
+    /// escalera atravesando un cartel de neón se lee como un error de armado, no como una calle.
+    /// </summary>
+    private static IReadOnlyList<SceneInstance> FireEscapePlacements(IReadOnlyList<NeonFacade.FacadeRow> rows)
+    {
+        // Posiciones elegidas contra el plano real de la cuadra (ver los centros de fila en
+        // LayoutBuildings): lejos de los carteles, los faroles de pared y los cables que cruzan.
+        var targets = new (float Side, float Z)[] { (-1f, 6f), (1f, 33.5f), (-1f, 47f), (1f, 67.5f) };
+        var placements = new List<SceneInstance>(targets.Length);
+        const float scale = 0.94f;
+
+        foreach (var target in targets)
+        {
+            var row = rows
+                .Where(r => r.Side == target.Side && r.Floors >= 4 &&
+                            target.Z > r.Z0 + 2.3f && target.Z < r.Z1 - 2.3f)
+                .OrderBy(r => MathF.Abs((r.Z0 + r.Z1) * 0.5f - target.Z))
+                .FirstOrDefault();
+            if (row.Floors < 4) continue;
+
+            float yaw = row.Side > 0f ? -MathF.PI * 0.5f : MathF.PI * 0.5f;
+            // El fondo de la escalera (z local −0,78) queda apenas dentro del plano del frente; el
+            // resto vuela sobre la vereda, como una escalera de verdad.
+            float x = row.Side * (FacadeOffset - 0.78f * scale);
+            placements.Add(Placed(new Vector3(x, 2.35f, target.Z), yaw, scale));
+        }
+        return placements;
+    }
+
+    /// <summary>Cajas de cartón: un envío recién bajado y unas cajas sueltas contra el cordón.</summary>
+    private static IReadOnlyList<SceneInstance> CardboardPlacements() => new[]
+    {
+        Placed(new Vector3(6.15f, KerbHeight, 6.30f), 0.25f, 1.05f),
+        Placed(new Vector3(6.38f, KerbHeight, 6.62f), -0.55f, 0.92f),
+        Placed(new Vector3(6.20f, KerbHeight + 0.31f, 6.44f), 0.85f, 0.78f),
+        Placed(new Vector3(-6.45f, KerbHeight, 24.10f), 1.35f, 1.00f),
+        Placed(new Vector3(-6.20f, KerbHeight, 37.55f), 0.35f, 0.88f),
+        Placed(new Vector3(6.55f, KerbHeight, 56.05f), -0.70f, 1.10f)
+    };
+
+    /// <summary>Neumáticos viejos de canto contra la pared, en los huecos entre dos frentes.</summary>
+    private static IReadOnlyList<SceneInstance> TyrePlacements() => new[]
+    {
+        Placed(new Vector3(8.12f, KerbHeight, 31.45f), MathF.PI * 0.5f, 1.0f),
+        Placed(new Vector3(-8.10f, KerbHeight, 60.35f), -MathF.PI * 0.5f, 0.95f)
     };
 
     // ---- Faroles: poste sobre la vereda y lámpara de pared sobre la fachada ----
@@ -926,20 +1672,6 @@ public static class NeonScene
         return instances;
     }
 
-    /// <summary>
-    /// Las cajas de cartón van APOYADAS contra una fachada, junto a la puerta de un local: ahí es
-    /// donde están las cajas en una calle. Sueltas en medio de la calzada —como estaban— son basura
-    /// tirada por el decorador.
-    /// </summary>
-    private static IReadOnlyList<SceneInstance> BoxPlacements() => new[]
-    {
-        Placed(new Vector3(-7.5f, KerbHeight, HeroCarZ + 5.6f), 0.55f, 1f),
-        Placed(new Vector3(-7.1f, KerbHeight, HeroCarZ + 6.3f), 2.35f, 0.85f),
-        Placed(new Vector3(-7.6f, KerbHeight + 0.62f, HeroCarZ + 5.9f), 1.15f, 0.78f),
-        Placed(new Vector3(7.4f, KerbHeight, HeroCarZ + 33.5f), 3.05f, 1f),
-        Placed(new Vector3(7.7f, KerbHeight, HeroCarZ + 34.2f), 1.25f, 0.88f)
-    };
-
     // =========================================================================================
     // Luces y sombras de la escena
     // =========================================================================================
@@ -961,11 +1693,11 @@ public static class NeonScene
         // El radio sigue siendo largo a propósito: la caída es suave y un radio corto apaga la luz antes
         // de tocar la fachada, que deja la calle en un túnel de un solo charco de luz por farol.
         lights.Add(new ScenePointLight(new Vector3(-(RoadHalfWidth + PostLampInset), PostLampLanternHeight, 11f),
-            new Vector3(1.0f, 0.74f, 0.44f), 22f, 26f));
+            new Vector3(1.0f, 0.82f, 0.62f), 17f, 23f));
         lights.Add(new ScenePointLight(new Vector3(-(RoadHalfWidth + PostLampInset), PostLampLanternHeight, 28f),
-            new Vector3(1.0f, 0.74f, 0.44f), 19f, 26f));
+            new Vector3(1.0f, 0.82f, 0.62f), 16f, 23f));
         lights.Add(new ScenePointLight(new Vector3(RoadHalfWidth + PostLampInset, PostLampLanternHeight, 51f),
-            new Vector3(1.0f, 0.74f, 0.44f), 17f, 26f));
+            new Vector3(1.0f, 0.82f, 0.62f), 15f, 23f));
 
         // Los carteles tiran su color sobre el frente: son la mitad de la identidad de la calle.
         for (int i = 0; i < SignLayout.Length && lights.Count < SceneDefinition.MaxPointLights; i++)
@@ -974,7 +1706,7 @@ public static class NeonScene
             if (sign.Z > HeroCarZ + 30f) continue;      // los del fondo no entran en el presupuesto
             lights.Add(new ScenePointLight(
                 new Vector3(sign.Side * (FacadeOffset - 0.85f), sign.Y, sign.Z),
-                SignColors[sign.Color], 17f - i * 1.4f, 17f));
+                SignColors[sign.Color], 11f - i * 0.9f, 14f));
         }
 
         return lights;
@@ -1155,7 +1887,7 @@ public static class NeonScene
     /// que le entra saturado —a 3,2 el magenta salía blanco—, así que el neón no se hace más brillante
     /// subiéndole la emisión sino dejándola cerca de 1 y dándole el color puro.
     /// </summary>
-    private const float SignGlow = 0.85f;
+    private const float SignGlow = 0.68f;
 
     /// <summary>
     /// Instancia con tinta propia y fuerzas de material EXPLÍCITAS. Ojo con la trampa: el horneado de
@@ -1226,6 +1958,15 @@ public static class NeonScene
     /// centro y semiextensión.</summary>
     private static void AddSlab(List<SceneVertex> vertices, Vector3 min, Vector3 max, float uvPerMeter = 0f) =>
         AddBox(vertices, (min + max) * 0.5f, (max - min) * 0.5f, uvPerMeter);
+
+    /// <summary>Igual que <see cref="AddSlab"/> pero por CARAS: evita armar el mínimo/máximo a mano en
+    /// los locales, donde el eje X cambia de signo según la vereda y es fácil equivocarse.</summary>
+    private static void AddSpan(
+        List<SceneVertex> vertices, float xA, float xB, float y0, float y1, float z0, float z1,
+        float uvPerMeter = 0f) =>
+        AddSlab(vertices,
+            new Vector3(MathF.Min(xA, xB), y0, MathF.Min(z0, z1)),
+            new Vector3(MathF.Max(xA, xB), y1, MathF.Max(z0, z1)), uvPerMeter);
 
     /// <summary>
     /// Tubo recto de cuatro caras entre dos puntos: bajantes, cables y bolardos. Es lo que da líneas

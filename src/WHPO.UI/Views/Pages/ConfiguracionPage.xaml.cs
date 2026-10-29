@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Navigation;
 using WHPO.Core;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
@@ -19,6 +20,12 @@ namespace WHPO_UI.Views.Pages;
 
 public sealed partial class ConfiguracionPage : Page
 {
+    /// <summary>
+    /// Parámetro de navegación para abrir la pestaña Drivers desde otra página
+    /// (por ejemplo, la badge de temperatura faltante de Sistema).
+    /// </summary>
+    public const string DriversTabParameter = "drivers";
+
     private readonly ISettingsService _settingsService;
     private readonly IThemeService _themeService;
     private readonly IStartupService _startupService;
@@ -26,12 +33,33 @@ public sealed partial class ConfiguracionPage : Page
     private readonly IInstalledGamesService _installedGamesService;
     private readonly IUsbOverclockService _usbOverclockService;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly IPawnIoService _pawnIoService;
     private bool _isLoading;
 
-    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Caché, Desarrollo).
+    // Instalar/desinstalar PawnIO desde esta página: mientras corre no se refresca
+    // la tarjeta, para no pisar el mensaje de progreso ni el resultado.
+    private bool _pawnIoBusy;
+
+    // El driver se carga al abrir LibreHardwareMonitor y se libera al cerrar el
+    // proceso: instalar o desinstalar PawnIO no cambia nada hasta reiniciar WinForge.
+    // La badge y el botón de reinicio salen de este flag (no de un mensaje que se
+    // desvanece a los 4 segundos), así el aviso sigue ahí al volver a la pestaña.
+    private bool _pawnIoRestartPending;
+
+    // Mismo criterio para hidusbf: el refresco de esa tarjeta se saltea mientras
+    // corre una instalación o desinstalación, para no pisar el progreso.
+    private bool _hidUsbfBusy;
+
+    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Drivers, Actualizaciones, Desarrollo).
     // Solo se usa como respaldo: ApplyTabVisibility compara contra el ítem seleccionado,
     // no contra el índice.
     private int _selectedTabIndex;
+
+    // Destino pedido desde otra página (por ejemplo Sistema → badge de PawnIO).
+    // No se aplica en OnNavigatedTo: ahí el SelectorBar todavía no está cargado y
+    // el IsSelected="True" de la pestaña Inicio, al realizarse el XAML, pisa la
+    // selección. Se aplica cuando la página ya está en el árbol (OnLoaded).
+    private bool _pendingDriversTab;
 
     private OnboardingSimulatorWindow? _onboardingSimulator;
 
@@ -54,6 +82,7 @@ public sealed partial class ConfiguracionPage : Page
         _installedGamesService = App.Services.GetRequiredService<IInstalledGamesService>();
         _usbOverclockService = App.Services.GetRequiredService<IUsbOverclockService>();
         _appUpdateService = App.Services.GetRequiredService<IAppUpdateService>();
+        _pawnIoService = App.Services.GetRequiredService<IPawnIoService>();
 
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -94,6 +123,66 @@ public sealed partial class ConfiguracionPage : Page
         // (ver LibraryStyleTile), así que el cambio llega por Checked.
         AttachPickerTileHover(LibraryStyle2DTile);
         AttachPickerTileHover(LibraryStyle3DTile);
+    }
+
+    /// <summary>
+    /// Navegación con destino explícito: Sistema pide "drivers" para que la badge de
+    /// temperatura faltante caiga directamente en la pestaña correcta.
+    /// </summary>
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+
+        if (e.Parameter is string tab
+            && string.Equals(tab, DriversTabParameter, StringComparison.OrdinalIgnoreCase))
+        {
+            _pendingDriversTab = true;
+            TryApplyPendingTab(attemptsLeft: 1);
+        }
+    }
+
+    /// <summary>
+    /// Prepara y aplica el destino pendiente. Si se navega a Configuración por
+    /// primera vez, OnNavigatedTo corre antes del Loaded: los ítems se marcan desde
+    /// ya y el SelectedItem/visibilidad se fijan en OnLoaded, cuando el SelectorBar
+    /// ya realizó su plantilla.
+    ///
+    /// El SelectorBar puede ignorar en silencio un SelectedItem asignado antes de
+    /// terminar de cargar, así que si el destino no quedó aplicado se reintenta en
+    /// la cola de baja prioridad en vez de perder el pedido.
+    /// </summary>
+    private void TryApplyPendingTab(int attemptsLeft)
+    {
+        if (!_pendingDriversTab) return;
+        if (ConfigTabs == null || DriversTabItem == null) return;
+
+        // Se marcan los ítems además de SelectedItem: si el SelectorBar todavía no
+        // aplicó su plantilla, su sincronización inicial parte de IsSelected y el
+        // "Inicio" del XAML volvía a ganar. Con la flecha ya puesta en el ítem, la
+        // selección sobrevive a esa carga.
+        if (HomeTabItem.IsSelected) HomeTabItem.IsSelected = false;
+        if (!DriversTabItem.IsSelected) DriversTabItem.IsSelected = true;
+
+        // Antes del Loaded solo se deja preparado el estado de los ítems; la
+        // visibilidad de los paneles y el refresco se hacen con la página ya
+        // cargada (ver OnLoaded).
+        if (!IsLoaded) return;
+        if (!ReferenceEquals(ConfigTabs.SelectedItem, DriversTabItem))
+            ConfigTabs.SelectedItem = DriversTabItem;
+        ApplyTabVisibility();
+
+        if (ReferenceEquals(ConfigTabs.SelectedItem, DriversTabItem)
+            && DriversTab.Visibility == Visibility.Visible)
+        {
+            _pendingDriversTab = false;
+            return;
+        }
+
+        if (attemptsLeft > 0)
+        {
+            DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low,
+                () => TryApplyPendingTab(attemptsLeft - 1));
+        }
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -144,9 +233,14 @@ public sealed partial class ConfiguracionPage : Page
             Feedback.Set(MinimizedFeedbackText, null);
 
             ApplyConfigTabsLanguage();
+            // La pestaña pedida por navegación se selecciona recién acá: ver
+            // TryApplyPendingTab (OnNavigatedTo llega antes del Loaded). Si el
+            // SelectorBar todavía no realizó sus ítems, el helper reintenta solo.
+            TryApplyPendingTab(attemptsLeft: 2);
             BuildThemePicker();
             UpdateDeveloperLogsSize();
             UpdateCacheSize();
+            RefreshDriversTab();
             App.MainWindowInstance?.UpdateTrayStatus();
             // El chequeo de actualizaciones es global (botón del navbar en MainWindow):
             // acá solo se refleja si esta build es de desarrollo.
@@ -838,6 +932,365 @@ public sealed partial class ConfiguracionPage : Page
         return total;
     }
 
+    // ===================== Drivers del sistema (PawnIO + hidusbf) =====================
+
+    /// <summary>
+    /// Relee el estado de los dos drivers que WinForge usa para acceder al hardware.
+    /// Se llama al abrir la página, al entrar a la pestaña Drivers y al cambiar de idioma.
+    /// </summary>
+    private void RefreshDriversTab()
+    {
+        RefreshPawnIoCard();
+        RefreshHidUsbfCard();
+    }
+
+    /// <summary>
+    /// Refleja el estado real de PawnIO: instalado o no, versión y si el instalador
+    /// que trae WinForge es más nuevo. Nunca se ejecuta mientras hay una
+    /// instalación/desinstalación en curso (el feedback de progreso manda).
+    /// </summary>
+    private void RefreshPawnIoCard()
+    {
+        if (_pawnIoBusy) return;
+
+        var status = _pawnIoService.GetStatus();
+        bool updateAvailable = status.Installed
+            && !SameDriverVersion(status.Version, status.InstallerVersion);
+
+        SetDriverStatusPill(
+            PawnIoStatusPill,
+            PawnIoStatusText,
+            status.Installed ? I18n.T("Instalado") : I18n.T("No instalado"),
+            status.Installed ? Feedback.SuccessBrush : ThemeBrushes.Get("SecondaryTextBrush"));
+
+        PawnIoVersionText.Text = status.Installed
+            ? (updateAvailable
+                ? I18n.T("Versión instalada: {0} · Versión disponible: {1}", status.Version, status.InstallerVersion)
+                : I18n.T("Versión instalada: {0}", status.Version))
+            : I18n.T("Versión {0} disponible", status.InstallerVersion);
+
+        PawnIoInstallButton.Visibility = status.Installed && !updateAvailable
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        PawnIoInstallButton.Content = status.Installed ? I18n.T("Actualizar PawnIO") : I18n.T("Instalar PawnIO");
+        PawnIoUninstallButton.Visibility = status.Installed ? Visibility.Visible : Visibility.Collapsed;
+        PawnIoUninstallButton.Content = I18n.T("Desinstalar PawnIO");
+
+        // Reinicio pendiente: la badge dice qué falta y el botón es la acción.
+        // El feedback de resultado no repite la instrucción.
+        PawnIoRestartButton.Content = I18n.T("Reiniciar WinForge");
+        PawnIoRestartButton.Visibility = _pawnIoRestartPending ? Visibility.Visible : Visibility.Collapsed;
+        PawnIoRestartBadge.Visibility = _pawnIoRestartPending ? Visibility.Visible : Visibility.Collapsed;
+        if (_pawnIoRestartPending)
+        {
+            SetDriverStatusPill(PawnIoRestartBadge, PawnIoRestartBadgeText,
+                I18n.T("Requiere reinicio"), Feedback.WarningBrush);
+        }
+    }
+
+    /// <summary>
+    /// Refleja el estado real de hidusbf: si el servicio y el binario del filtro están
+    /// listos. Si el servicio quedó registrado pero falta el binario, la tarjeta lo
+    /// muestra como instalación incompleta y ofrece repararla.
+    /// </summary>
+    private void RefreshHidUsbfCard()
+    {
+        if (_hidUsbfBusy) return;
+
+        var guard = _usbOverclockService.GetGuardStatus();
+        bool ready = _usbOverclockService.IsComponentReady();
+
+        if (ready)
+        {
+            SetDriverStatusPill(HidUsbfStatusPill, HidUsbfStatusText,
+                I18n.T("Instalado"), Feedback.SuccessBrush);
+
+            string variant = HidUsbfVariantLabel(guard);
+            HidUsbfDetailText.Text = variant.Length > 0
+                ? I18n.T("Variante instalada: {0}", variant)
+                : I18n.T("Servicio del filtro instalado.");
+
+            HidUsbfInstallButton.Visibility = Visibility.Collapsed;
+            HidUsbfUninstallButton.Visibility = Visibility.Visible;
+        }
+        else if (guard.ServiceInstalled)
+        {
+            SetDriverStatusPill(HidUsbfStatusPill, HidUsbfStatusText,
+                I18n.T("Instalación incompleta"), Feedback.WarningBrush);
+            HidUsbfDetailText.Text = I18n.T("El servicio está registrado, pero falta el binario del filtro. Repará la instalación.");
+            HidUsbfInstallButton.Visibility = Visibility.Visible;
+            HidUsbfInstallButton.Content = I18n.T("Reparar instalación");
+            HidUsbfUninstallButton.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            SetDriverStatusPill(HidUsbfStatusPill, HidUsbfStatusText,
+                I18n.T("No instalado"), ThemeBrushes.Get("SecondaryTextBrush"));
+            HidUsbfDetailText.Text = I18n.T("Se descarga el paquete oficial de hidusbf y se verifica el hash SHA-256 antes de instalar.");
+            HidUsbfInstallButton.Visibility = Visibility.Visible;
+            HidUsbfInstallButton.Content = I18n.T("Descargar e instalar");
+            HidUsbfUninstallButton.Visibility = Visibility.Collapsed;
+        }
+
+        HidUsbfUninstallButton.Content = I18n.T("Desinstalar hidusbf");
+    }
+
+    /// <summary>
+    /// Pinta la pastilla de estado de un driver con el color de su estado (verde
+    /// instalado, ámbar incompleto, gris no instalado) y un tinte suave del mismo color.
+    /// </summary>
+    private static void SetDriverStatusPill(Border pill, TextBlock text, string label, SolidColorBrush brush)
+    {
+        text.Text = label;
+        text.Foreground = brush;
+        pill.Background = new SolidColorBrush(brush.Color) { Opacity = 0.14 };
+    }
+
+    /// <summary>Nombre legible de la variante instalada del filtro hidusbf y su techo.</summary>
+    private static string HidUsbfVariantLabel(UsbOverclockGuardStatus guard)
+    {
+        string name = guard.InstalledVariant switch
+        {
+            "nopatch" => "NoPatch",
+            "1khz" => "1 kHz",
+            "2khz-4khz" => "2-4 kHz",
+            "4khz-8khz" => "4-8 kHz",
+            _ => ""
+        };
+
+        return name.Length == 0 || guard.CeilingHz <= 0 ? "" : $"{name} · {guard.CeilingHz} Hz";
+    }
+
+    /// <summary>
+    /// Compara versiones del registro con la del instalador empaquetado sin caer en
+    /// "2.2.0" vs "2.2.0.0" (misma versión): solo importan mayor, menor y build.
+    /// </summary>
+    private static bool SameDriverVersion(string? installed, string bundled)
+    {
+        if (!Version.TryParse(installed, out var a) || !Version.TryParse(bundled, out var b))
+            return string.Equals(installed, bundled, StringComparison.OrdinalIgnoreCase);
+
+        return a.Major == b.Major
+            && a.Minor == b.Minor
+            && Math.Max(a.Build, 0) == Math.Max(b.Build, 0);
+    }
+
+    private async void PawnIoInstallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pawnIoBusy) return;
+        _pawnIoBusy = true;
+
+        bool force = _pawnIoService.GetStatus().Installed;
+        SetPawnIoBusy(true);
+        // persistent: el progreso queda hasta que lo reemplaza el resultado (o falla).
+        Feedback.Set(PawnIoFeedbackText, I18n.T("Descargando e instalando PawnIO…"), Feedback.AccentBrush, persistent: true);
+
+        try
+        {
+            var result = await Task.Run(() => _pawnIoService.InstallAsync(force));
+            if (result.Success)
+            {
+                // Instalar el driver y no reiniciar no sirve de nada: LHM cachea la
+                // versión al arrancar. Se reinicia solo, sin preguntar.
+                Feedback.Success(PawnIoFeedbackText, I18n.T("PawnIO instalado. Reiniciando WinForge…"));
+                _pawnIoRestartPending = true;
+                RefreshDriversTab();
+
+                var main = App.MainWindowInstance;
+                if (main == null || !await main.RestartAppAsync())
+                {
+                    // Si el reinicio no salió, la tarjeta queda con la badge y el botón:
+                    // el driver está instalado, solo falta el proceso nuevo.
+                    Feedback.Error(PawnIoFeedbackText,
+                        I18n.T("PawnIO instalado, pero no se pudo reiniciar WinForge. Usá Reiniciar WinForge."));
+                }
+                return;
+            }
+
+            Feedback.Error(PawnIoFeedbackText, I18n.T("✗ No se pudo instalar PawnIO: {0}", result.Message));
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(PawnIoFeedbackText, I18n.T("✗ No se pudo instalar PawnIO: {0}", ex.Message));
+        }
+        finally
+        {
+            _pawnIoBusy = false;
+            SetPawnIoBusy(false);
+        }
+    }
+
+    private async void PawnIoUninstallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pawnIoBusy || XamlRoot == null) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("Desinstalar PawnIO"),
+            Content = I18n.T("¿Desinstalar PawnIO? La temperatura y la potencia del CPU y los ventiladores de la placa dejan de estar disponibles en WinForge. Otras apps que lo usen, como LibreHardwareMonitor o FanControl, también lo pierden hasta que lo reinstales."),
+            PrimaryButtonText = I18n.T("Desinstalar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        _pawnIoBusy = true;
+        SetPawnIoBusy(true);
+        Feedback.Set(PawnIoFeedbackText, I18n.T("Desinstalando PawnIO…"), Feedback.AccentBrush, persistent: true);
+
+        try
+        {
+            var result = await _pawnIoService.UninstallAsync();
+            if (result.Success)
+            {
+                Feedback.Success(PawnIoFeedbackText, I18n.T("PawnIO desinstalado correctamente."));
+                _pawnIoBusy = false;
+                _pawnIoRestartPending = true;
+                RefreshDriversTab();
+                return;
+            }
+
+            Feedback.Error(PawnIoFeedbackText, I18n.T("✗ No se pudo desinstalar PawnIO: {0}", result.Message));
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(PawnIoFeedbackText, I18n.T("✗ No se pudo desinstalar PawnIO: {0}", ex.Message));
+        }
+        finally
+        {
+            _pawnIoBusy = false;
+            SetPawnIoBusy(false);
+        }
+    }
+
+    private void PawnIoRestartButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!(App.MainWindowInstance?.RestartApp() ?? false))
+            Feedback.Error(PawnIoFeedbackText, I18n.T("No se pudo reiniciar WinForge. Cerralo y abrilo a mano."));
+    }
+
+    private void SetPawnIoBusy(bool busy)
+    {
+        PawnIoProgressRing.IsActive = busy;
+        PawnIoProgressRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        PawnIoInstallButton.IsEnabled = !busy;
+        PawnIoUninstallButton.IsEnabled = !busy;
+    }
+
+    // ===================== hidusbf =====================
+
+    /// <summary>
+    /// Descarga el paquete oficial de hidusbf (verificando el SHA-256 de la variante),
+    /// instala el servicio del filtro y deja la tarjeta lista para Overclock USB.
+    /// </summary>
+    private async void HidUsbfInstallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_hidUsbfBusy) return;
+        _hidUsbfBusy = true;
+        SetHidUsbfBusy(true);
+        Feedback.Set(HidUsbfFeedbackText, I18n.T("Descargando e instalando hidusbf…"), Feedback.AccentBrush);
+
+        try
+        {
+            string? driverPath = await _usbOverclockService.DownloadComponentAsync();
+            if (string.IsNullOrEmpty(driverPath))
+            {
+                string? reason = _usbOverclockService.LastComponentDownloadError;
+                Feedback.Error(HidUsbfFeedbackText,
+                    reason == null
+                        ? I18n.T("No se pudo descargar el componente. Verificá tu conexión a internet e intentá de nuevo.")
+                        : I18n.T("No se pudo descargar el componente.") + " " + I18n.T(reason));
+                return;
+            }
+
+            bool installed = await _usbOverclockService.InstallFilterServiceAsync(driverPath);
+            if (!installed)
+            {
+                Feedback.Error(HidUsbfFeedbackText,
+                    I18n.T("No se pudo instalar el componente. Ejecutá WinForge como administrador e intentá de nuevo."));
+                return;
+            }
+
+            _usbOverclockService.InvalidateFilterServiceCache();
+            Feedback.Success(HidUsbfFeedbackText,
+                I18n.T("✓ hidusbf instalado. Abrí Overclock USB para ajustar tus dispositivos."));
+            _hidUsbfBusy = false;
+            RefreshDriversTab();
+            return;
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(HidUsbfFeedbackText, I18n.T("✗ No se pudo instalar hidusbf: {0}", ex.Message));
+        }
+        finally
+        {
+            _hidUsbfBusy = false;
+            SetHidUsbfBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// Quita el filtro de todos los dispositivos que lo tengan activo, elimina el
+    /// servicio y el binario del sistema, y borra el paquete cacheado. Overclock USB
+    /// vuelve a pedir el driver la próxima vez que se abra.
+    /// </summary>
+    private async void HidUsbfUninstallButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_hidUsbfBusy || XamlRoot == null) return;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("Desinstalar hidusbf"),
+            Content = I18n.T("¿Desinstalar hidusbf? El ajuste de la tasa de sondeo deja de funcionar en todos los dispositivos y el filtro se quita de los que lo tengan activo. Podés reinstalarlo desde acá cuando quieras."),
+            PrimaryButtonText = I18n.T("Desinstalar"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        _hidUsbfBusy = true;
+        SetHidUsbfBusy(true);
+        Feedback.Set(HidUsbfFeedbackText, I18n.T("Desinstalando hidusbf…"), Feedback.AccentBrush);
+
+        try
+        {
+            await Task.Run(() => _usbOverclockService.ClearComponentCache());
+            _usbOverclockService.InvalidateFilterServiceCache();
+
+            if (_usbOverclockService.IsComponentReady())
+            {
+                Feedback.Error(HidUsbfFeedbackText,
+                    I18n.T("No se pudo desinstalar hidusbf: puede estar en uso. Reiniciá Windows e intentá de nuevo."));
+                return;
+            }
+
+            Feedback.Success(HidUsbfFeedbackText,
+                I18n.T("✓ hidusbf desinstalado. Overclock USB vuelve a pedir el driver cuando lo abras."));
+            _hidUsbfBusy = false;
+            RefreshDriversTab();
+            return;
+        }
+        catch (Exception ex)
+        {
+            Feedback.Error(HidUsbfFeedbackText, I18n.T("✗ No se pudo desinstalar hidusbf: {0}", ex.Message));
+        }
+        finally
+        {
+            _hidUsbfBusy = false;
+            SetHidUsbfBusy(false);
+        }
+    }
+
+    private void SetHidUsbfBusy(bool busy)
+    {
+        HidUsbfProgressRing.IsActive = busy;
+        HidUsbfProgressRing.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        HidUsbfInstallButton.IsEnabled = !busy;
+        HidUsbfUninstallButton.IsEnabled = !busy;
+    }
+
     private async void ClearCacheButton_Click(object sender, RoutedEventArgs e)
     {
         if (XamlRoot == null) return;
@@ -1129,6 +1582,7 @@ public sealed partial class ConfiguracionPage : Page
         // Las etiquetas de las muestras de carcasa se arman en código: se rearman traducidas.
         BuildCardSkinPicker();
         UpdateDeveloperLogsSize();
+        RefreshDriversTab();
 
         // La pestaña Actualizaciones arma sus cards en código (textos y fechas): se rehace
         // entera para que quede en el idioma nuevo sin volver a pedir nada al repositorio.
@@ -1220,7 +1674,7 @@ public sealed partial class ConfiguracionPage : Page
     // ===================== Navbar interno (pestañas) =====================
 
     /// <summary>
-    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Caché / Desarrollo).
+    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Drivers / Actualizaciones / Desarrollo).
     /// Los SelectorBarItem pueden no estar realizados en el árbol visual,
     /// así que se traducen por colección lógica (mismo patrón que NucleosPage).
     /// </summary>
@@ -1256,13 +1710,18 @@ public sealed partial class ConfiguracionPage : Page
 
     private void ApplyTabVisibility()
     {
-        if (HomeTab == null || AppearanceTab == null || DevTab == null) return;
+        if (HomeTab == null || AppearanceTab == null || DriversTab == null || DevTab == null) return;
 
         // Cada panel se muestra según el ÍTEM seleccionado (no por índice fijo): así
         // sumar una pestaña en el medio no corre la visibilidad de las demás.
         var selected = ConfigTabs.SelectedItem;
         HomeTab.Visibility = ReferenceEquals(selected, HomeTabItem) ? Visibility.Visible : Visibility.Collapsed;
         AppearanceTab.Visibility = ReferenceEquals(selected, AppearanceTabItem) ? Visibility.Visible : Visibility.Collapsed;
+        bool driversSelected = ReferenceEquals(selected, DriversTabItem);
+        DriversTab.Visibility = driversSelected ? Visibility.Visible : Visibility.Collapsed;
+        // La página usa caché de navegación y el driver pudo instalarse desde el
+        // Workshop o desde otra pestaña: al entrar a Drivers se relee el estado real.
+        if (driversSelected) RefreshDriversTab();
         bool updatesSelected = ReferenceEquals(selected, UpdatesTabItem);
         UpdatesTab.Visibility = updatesSelected ? Visibility.Visible : Visibility.Collapsed;
         DevTab.Visibility = ReferenceEquals(selected, DevelopmentTabItem)

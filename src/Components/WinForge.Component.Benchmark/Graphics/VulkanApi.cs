@@ -323,6 +323,7 @@ internal static class VulkanApi
     {
         internal const int VertexAttributeRead = 4;
         internal const int ShaderRead = 32;
+        internal const int ColorAttachmentRead = 128;
         internal const int ColorAttachmentWrite = 256;
         /// <summary>VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT: la escritura que hace la pasada de
         /// sombras sobre su mapa de profundidad.</summary>
@@ -415,6 +416,8 @@ internal static class VulkanApi
     internal static class VkSampleCount
     {
         internal const int Count1 = 1;
+        internal const int Count2 = 2;
+        internal const int Count4 = 4;
     }
 
     internal static class VkVertexInputRate

@@ -414,6 +414,13 @@ public sealed partial class MainWindow : Window
             };
             BuildTrayMenu(contextMenu);
 
+            // Primera lectura de favoritos ya mismo: si no, el primer clic derecho de la
+            // sesión mostraría el menú armado antes de tener los datos (todavía con los
+            // favoritos huérfanos) y recién se corregiría al abrirlo otra vez. No
+            // bloquea: la lectura de juegos sale de la caché en memoria o en disco y, si
+            // no hay caché, se suma al escaneo de arranque que ya está en curso.
+            _ = RefreshTrayFavNamesAsync();
+
             _notifyIcon.ContextMenuStrip = contextMenu;
         }
         catch (Exception ex)
@@ -463,9 +470,31 @@ public sealed partial class MainWindow : Window
         // Cinturón y tirantes: el servicio ya limpia las entradas vacías, pero filtrar
         // acá también para que ninguna entrada sin exe llegue al menú (sería un ítem
         // sin nombre ni ícono).
-        var favorites = _processService.GetFavorites()
-            .Where(f => !string.IsNullOrWhiteSpace(f))
-            .ToList();
+        // Un favorito sólo entra al menú si hoy corresponde a algo real: un juego que
+        // la biblioteca sigue detectando, una entrada manual o un proceso corriendo.
+        // Un favorito huérfano (el juego se desinstaló y en settings quedó sólo el
+        // nombre del exe) no tiene tarjeta en la biblioteca ni forma de desmarcarse, y
+        // en la bandeja aparecía como un "juego" inventado: el nombre crudo del
+        // ejecutable con el emoji de joystick (ej. UAGame, el exe de Unreal de un
+        // juego de Steam ya desinstalado). No se borra de settings: si el juego
+        // vuelve, el favorito vuelve con él.
+        var manualExes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var (manualExe, _, _) in _processService.GetManualEntries())
+                if (!string.IsNullOrWhiteSpace(manualExe)) manualExes.Add(manualExe);
+        }
+        catch { }
+
+        var favorites = new List<string>();
+        foreach (var exe in _processService.GetFavorites())
+        {
+            if (string.IsNullOrWhiteSpace(exe)) continue;
+            if (!_trayFavoritesReady || IsTrayFavoriteResolvable(exe, manualExes))
+                favorites.Add(exe);
+            else
+                LogHiddenTrayFavorite(exe);
+        }
         if (favorites.Count == 0)
         {
             var none = MakeTrayItem(EmojiGlyph(0x2B50), I18n.T("Sin juegos favoritos"), null);
@@ -711,6 +740,14 @@ public sealed partial class MainWindow : Window
     // exe → juego instalado (para lanzar desde la bandeja con la misma lógica que la biblioteca).
     private readonly Dictionary<string, InstalledGame> _favGames = new(StringComparer.OrdinalIgnoreCase);
 
+    // Los datos de favoritos ya se leyeron al menos una vez en esta sesión. Mientras
+    // sea false el menú no filtra: sin datos frescos no se puede distinguir un
+    // favorito real de uno huérfano, y ocultar todo sería peor que mostrar de más.
+    private bool _trayFavoritesReady;
+
+    // Favoritos ocultos ya avisados en el log (una línea por exe y sesión).
+    private readonly HashSet<string> _hiddenTrayFavorites = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Ruta del banner ya descargado por la biblioteca (misma caché en disco):
     /// Steam/Battle.net → {appId}.jpg, Epic → epic-{ns}-{id}.jpg. Si la biblioteca
@@ -774,7 +811,13 @@ public sealed partial class MainWindow : Window
         try
         {
             var games = await _installedGamesService.GetInstalledGamesAsync();
+            // Se reconstruye todo desde cero: si no, un juego desinstalado conserva su
+            // nombre, su ruta y su banner, y la bandeja seguiría "resolviendo" un
+            // favorito que ya no existe.
             _favGames.Clear();
+            _favNames.Clear();
+            _favPaths.Clear();
+            _favBanners.Clear();
             foreach (var g in games)
             {
                 if (string.IsNullOrEmpty(g.ExeFileName)) continue;
@@ -832,8 +875,42 @@ public sealed partial class MainWindow : Window
                 }
             }
             catch { }
+
+            // Recién acá los datos están completos. Si la lectura de juegos falló antes
+            // (excepción en GetInstalledGamesAsync), el flag queda como estaba y el menú
+            // sigue mostrando los favoritos sin filtrar.
+            _trayFavoritesReady = true;
         }
         catch { }
+    }
+
+    /// <summary>
+    /// ¿Este favorito corresponde hoy a algo real? Sí cuando:
+    ///  - la biblioteca sigue detectando el juego (incluye los alias de stubs);
+    ///  - está en la lista manual, o
+    ///  - su exe está resuelto en disco, o el proceso está corriendo ahora.
+    /// Si nada de eso se cumple, es un favorito huérfano: el juego ya no está y en
+    /// settings quedó sólo el nombre del ejecutable.
+    /// </summary>
+    private bool IsTrayFavoriteResolvable(string exe, HashSet<string> manualExes)
+    {
+        if (_favGames.ContainsKey(exe)) return true;
+        if (manualExes.Contains(exe)) return true;
+        if (_favPaths.TryGetValue(exe, out var path)
+            && !string.IsNullOrWhiteSpace(path) && File.Exists(path)) return true;
+        try
+        {
+            var name = Path.GetFileNameWithoutExtension(exe);
+            if (!string.IsNullOrEmpty(name) && GameLauncher.IsProcessRunning(name)) return true;
+        }
+        catch { }
+        return false;
+    }
+
+    private void LogHiddenTrayFavorite(string exe)
+    {
+        if (!_hiddenTrayFavorites.Add(exe)) return;
+        _loggingService.LogInfo($"Bandeja: {exe} no se muestra como favorito — no está instalado, no es una entrada manual y no está corriendo.");
     }
 
     /// <summary>
@@ -906,34 +983,63 @@ public sealed partial class MainWindow : Window
     /// la bandeja) y lanza el mismo exe con el flag --theme-restart.
     /// </summary>
     public void RestartForThemeChange()
+        => _ = RestartApplication("--theme-restart",
+            "Tema: reiniciando la app para aplicar la apariencia elegida.");
+
+    /// <summary>
+    /// Relanza WinForge sin pasar por la bandeja. Se usa después de instalar
+    /// PawnIO: LHM cachea la versión del driver al arrancar, así que las lecturas
+    /// del CPU recién aparecen en un proceso nuevo. Devuelve false si no se pudo
+    /// lanzar el proceso (en ese caso la app sigue abierta).
+    /// </summary>
+    public bool RestartApp()
+        => RestartApplication("--restart",
+            "Reiniciando WinForge para que LibreHardwareMonitor cargue PawnIO.");
+
+    /// <summary>
+    /// Reinicio automático tras instalar un driver (PawnIO). No se pregunta nada: el
+    /// driver recién instalado no lo ve LibreHardwareMonitor hasta que arranca un
+    /// proceso nuevo, así que instalar y seguir con la app vieja deja al usuario con
+    /// un driver que no sirve para nada hasta el próximo arranque.
+    ///
+    /// El respiro deja pintar el resultado de la instalación y que el instalador
+    /// termine de soltar sus handles antes de que este proceso se cierre.
+    /// </summary>
+    public async Task<bool> RestartAppAsync()
+    {
+        await Task.Delay(900);
+        return RestartApp();
+    }
+
+    private bool RestartApplication(string flag, string logMessage)
     {
         try
         {
-            _loggingService.LogInfo("Tema: reiniciando la app para aplicar la apariencia elegida.");
-            _forceClosePending = true;
+            _loggingService.LogInfo(logMessage);
 
             var exePath = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(exePath))
             {
-                // Sin ruta de exe no hay relanzamiento: cerrar normal (la bandeja
-                // ya no interviene en esta pasada) y que el usuario reabra a mano.
-                Close();
-                return;
+                _loggingService.LogWarning("Reinicio de la app: no se pudo resolver la ruta del ejecutable.");
+                return false;
             }
 
+            _forceClosePending = true;
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = exePath,
-                Arguments = "--theme-restart",
+                Arguments = flag,
                 UseShellExecute = true
             };
             System.Diagnostics.Process.Start(psi);
             Close();
+            return true;
         }
         catch (Exception ex)
         {
-            _loggingService.LogError($"Tema: fallo el reinicio para cambio de apariencia: {ex.Message}", ex);
+            _loggingService.LogError($"Reinicio de la app: fallo al relanzar: {ex.Message}", ex);
             _forceClosePending = false;
+            return false;
         }
     }
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -19,6 +20,11 @@ namespace WHPO.Core.Services.Interfaces;
 /// <param name="IsCurveActive">True si el canal está siendo gobernado por una curva.</param>
 /// <param name="RawName">Nombre genérico de LHM (ej. "Fan #2"), sin nombre personalizado.</param>
 /// <param name="HasCustomName">True si el canal tiene un nombre personalizado guardado.</param>
+/// <param name="TemperatureSourceId">Sensor elegido para el canal (vacío = automático).</param>
+/// <param name="TemperatureSourceName">Nombre del sensor que alimenta la curva en este
+/// momento: el elegido o el automático (CPU para headers de placa, GPU para la video).</param>
+/// <param name="TemperatureSourceSynthetic">True si el sensor es virtual (el máximo de
+/// CPU y GPU), para que la UI lo traduzca en vez de mostrarlo como dato del hardware.</param>
 public record FanControlInfo(
     string Id,
     string ChipName,
@@ -31,7 +37,10 @@ public record FanControlInfo(
     double? Temperature = null,
     bool IsCurveActive = false,
     string RawName = "",
-    bool HasCustomName = false);
+    bool HasCustomName = false,
+    string? TemperatureSourceId = null,
+    string? TemperatureSourceName = null,
+    bool TemperatureSourceSynthetic = false);
 
 /// <summary>
 /// Punto de una curva ventilador: a <c>TemperatureC</c> °C el canal debe ir a
@@ -58,6 +67,46 @@ public record FanCurveDynamics(
     double ResponseSeconds,
     double StepUpPercent,
     double StepDownPercent);
+
+/// <summary>
+/// Grupo de un sensor de temperatura, para ordenar y clasificar el desplegable.
+/// </summary>
+public enum FanTemperatureGroup
+{
+    /// <summary>Paquete, núcleos o CCD del procesador.</summary>
+    Cpu,
+
+    /// <summary>Núcleo, hotspot o memoria de la tarjeta de video.</summary>
+    Gpu,
+
+    /// <summary>Regulador de voltaje de la placa (VRM).</summary>
+    Vrm,
+
+    /// <summary>Placa madre, chipset, sensor T o canales del SuperIO.</summary>
+    Motherboard,
+
+    /// <summary>Almacenamiento, red, fuente u otro hardware.</summary>
+    Other
+}
+
+/// <summary>
+/// Un sensor de temperatura que puede alimentar la curva de un ventilador.
+/// </summary>
+/// <param name="Id">Identificador estable (el del sensor de LHM, o el de un sensor
+/// virtual). Se guarda en settings por canal.</param>
+/// <param name="Name">Nombre visible. Los reales son datos del hardware y NO se traducen;
+/// los virtuales traen una clave en español y la UI los pasa por I18n.T (ver
+/// <paramref name="Synthetic"/>).</param>
+/// <param name="Celsius">Lectura actual en °C, o null si el sensor no reporta.</param>
+/// <param name="Synthetic">True para un sensor virtual: el máximo de CPU y GPU.</param>
+/// <param name="Group">Grupo del sensor (CPU, GPU, VRM, placa u otros). La UI lo usa
+/// para ordenar y para anteponer la clasificación cuando el nombre no la dice.</param>
+public record FanTemperatureSource(
+    string Id,
+    string Name,
+    double? Celsius,
+    bool Synthetic = false,
+    FanTemperatureGroup Group = FanTemperatureGroup.Other);
 
 /// <summary>
 /// Resultado de calibrar un canal: se barre el duty de 0 a 100% y de vuelta
@@ -125,7 +174,7 @@ public record PawnIOInstallResult(bool Success, string Message);
 /// El servicio mantiene su propia instancia de Computer (solo placa madre) y
 /// serializa el acceso a registros con un lock interno.
 /// </summary>
-public interface IFanControlService
+public interface IFanControlService : IDisposable
 {
     /// <summary>Estado del driver PawnIO y del hardware.</summary>
     FanControlStatus GetStatus();
@@ -135,6 +184,29 @@ public interface IFanControlService
     /// Actualiza lecturas (RPM) en cada llamada.
     /// </summary>
     List<FanControlInfo> GetFans();
+
+    /// <summary>
+    /// Todos los sensores de temperatura que pueden alimentar una curva: los reales
+    /// que expone el hardware (CPU, GPU, placa, SuperIO) más el virtual "máximo de
+    /// CPU y GPU" para los ventiladores de caja. Los nombres reales NO se traducen
+    /// (son datos del fabricante); el virtual se marca con Synthetic. Cada sensor
+    /// trae su grupo (CPU, GPU, VRM, placa u otros) para clasificar el selector; los
+    /// que no reportan llegan con Celsius null para que la UI decida si ocultarlos.
+    /// </summary>
+    List<FanTemperatureSource> GetTemperatureSources();
+
+    /// <summary>
+    /// Id del sensor elegido para el canal, o vacío si usa el automático (CPU para
+    /// los headers de la placa, GPU para los canales de la video).
+    /// </summary>
+    string GetTemperatureSource(string fanId);
+
+    /// <summary>
+    /// Guarda el sensor que alimenta la curva del canal (vacío o null = automático).
+    /// Si la curva está activa, el cambio rige desde el próximo tick. Si el sensor
+    /// elegido deja de existir, el motor cae al automático en vez de soltar el canal.
+    /// </summary>
+    void SetTemperatureSource(string fanId, string? sourceId);
 
     /// <summary>
     /// Fija el duty manual del ventilador (0-100). Pone el canal en modo
@@ -219,6 +291,21 @@ public interface IFanControlService
     /// activa, los nuevos valores rigen desde la próxima actualización del motor.
     /// </summary>
     void SetCurveDynamics(string fanId, FanCurveDynamics dynamics);
+
+    /// <summary>
+    /// Piso de duty del canal (0-100), equivalente al "Start %" de FanControl.
+    /// Es el uso mínimo que puede pedir una curva: el rango entre 1% y el piso es
+    /// donde muchos ventiladores no arrancan (consumen y se calientan sin girar).
+    /// Un 0% de la curva sigue apagando el ventilador. 0 = sin piso.
+    /// </summary>
+    /// <remarks>
+    /// Se aplica solo a las curvas. El control manual no se toca: ahí el usuario pide
+    /// un duty concreto y la app no lo corrige a sus espaldas.
+    /// </remarks>
+    double GetMinDuty(string fanId);
+
+    /// <summary>Guarda el piso de duty del canal y lo persiste.</summary>
+    void SetMinDuty(string fanId, double percent);
 
     /// <summary>True si el fail-safe tuvo que soltar este canal al BIOS por perder
     /// la lectura del sensor de temperatura (la curva quedó desactivada).</summary>

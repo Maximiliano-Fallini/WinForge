@@ -63,11 +63,21 @@
                                 <FontIcon Glyph="&#xE9D9;" FontSize="20" Foreground="{ThemeResource AccentBrush}"
                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
-                            <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
-                                <TextBlock Text="Total encontrado" FontSize="12" FontWeight="SemiBold"
-                                           Foreground="{ThemeResource SecondaryTextBrush}"/>
-                                <TextBlock x:Name="ChequeoTotalsText" Text="—" FontSize="21" FontWeight="Bold"
-                                           TextWrapping="Wrap"/>
+                            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="28">
+                                    <StackPanel Spacing="1" VerticalAlignment="Center">
+                                        <TextBlock Text="Total encontrado" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="ChequeoTotalsText" Text="—" FontSize="21" FontWeight="Bold"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <StackPanel Spacing="1" VerticalAlignment="Center">
+                                        <TextBlock Text="Total a limpiar" FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="{ThemeResource SecondaryTextBrush}"/>
+                                        <TextBlock x:Name="ChequeoToCleanText" Text="—" FontSize="21" FontWeight="Bold"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </StackPanel>
                                 <TextBlock x:Name="ChequeoFeedbackText" Text="" FontSize="12"
                                            Foreground="{ThemeResource SecondaryTextBrush}"
                                            TextWrapping="Wrap"

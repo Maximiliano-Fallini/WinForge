@@ -252,6 +252,48 @@ internal sealed class Win32Window : IDisposable
         (Math.Max(640, NativeMethods.GetSystemMetrics(NativeMethods.SM_CXSCREEN)),
          Math.Max(480, NativeMethods.GetSystemMetrics(NativeMethods.SM_CYSCREEN)));
 
+    /// <summary>Rectángulo de un monitor y de su área útil, en coordenadas de escritorio.</summary>
+    internal readonly record struct MonitorBounds(
+        int X, int Y, int Width, int Height,
+        int WorkX, int WorkY, int WorkWidth, int WorkHeight);
+
+    /// <summary>
+    /// Los monitores conectados, en el orden que enumera Windows (1 = el primero). La app no tiene
+    /// UI propia para elegir monitor: el probador usa el índice para mandar la corrida a otra
+    /// pantalla sin mover el cursor, y el resto de la app sigue saliendo donde está el cursor.
+    /// </summary>
+    internal static IReadOnlyList<MonitorBounds> Monitors()
+    {
+        var monitors = new List<MonitorBounds>(2);
+        NativeMethods.MonitorEnumProc callback = (monitor, _, _, _) =>
+        {
+            var info = new NativeMethods.MONITORINFO { cbSize = (uint)Marshal.SizeOf<NativeMethods.MONITORINFO>() };
+            if (monitor != 0 && NativeMethods.GetMonitorInfoW(monitor, ref info))
+            {
+                monitors.Add(new MonitorBounds(
+                    info.rcMonitor.Left, info.rcMonitor.Top,
+                    Math.Max(640, info.rcMonitor.Right - info.rcMonitor.Left),
+                    Math.Max(480, info.rcMonitor.Bottom - info.rcMonitor.Top),
+                    info.rcWork.Left, info.rcWork.Top,
+                    Math.Max(640, info.rcWork.Right - info.rcWork.Left),
+                    Math.Max(480, info.rcWork.Bottom - info.rcWork.Top)));
+            }
+            return true;
+        };
+        NativeMethods.EnumDisplayMonitors(0, 0, callback, 0);
+        // El delegate tiene que seguir vivo durante la llamada nativa; el GC no lo ve si solo
+        // queda referenciado por el puntero de función que pasó a user32.
+        GC.KeepAlive(callback);
+        return monitors;
+    }
+
+    /// <summary>Monitor por índice (0 = el primero). Null si el índice no existe.</summary>
+    internal static MonitorBounds? MonitorAt(int index)
+    {
+        var monitors = Monitors();
+        return index >= 0 && index < monitors.Count ? monitors[index] : null;
+    }
+
     /// <summary>
     /// Rectángulo del monitor donde está el cursor. Los modos de pantalla completa salen ahí y no
     /// siempre en el primario: el componente vive en el AssemblyLoadContext de la app (no es su UI)

@@ -20,6 +20,9 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
 {
     private readonly ISystemInfoService _systemInfoService;
     private readonly ILoggingService _loggingService;
+    private readonly IPawnIoService _pawnIoService;
+    private readonly INavigationService _navigationService;
+    private DateTime _lastCpuDriverBadgeCheckUtc;
     private bool _dataLoaded;
     private bool _monitoringActive;
     private long _totalStorage;
@@ -59,12 +62,18 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
             this.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
             _systemInfoService = App.Services.GetRequiredService<ISystemInfoService>();
             _loggingService = App.Services.GetRequiredService<ILoggingService>();
+            _pawnIoService = App.Services.GetRequiredService<IPawnIoService>();
+            _navigationService = App.Services.GetRequiredService<INavigationService>();
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
 
             // Al cambiar de idioma, re-aplicar los estados de seguridad (la página
             // usa caché de navegación, así que se suscribe una sola vez).
             I18n.LanguageChanged += OnLanguageChanged;
+
+            // La badge depende del driver, no de la carga de datos: se resuelve ya
+            // para que no parpadee cuando termine el skeleton.
+            UpdateCpuDriverBadge();
         }
         catch (Exception ex)
         {
@@ -118,6 +127,9 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
     {
         base.OnNavigatedTo(e);
         _isActive = true;
+        // Al volver de Configuración → Drivers, el driver pudo haberse instalado o
+        // quitado: la badge se recalcula antes de que el usuario mire la card.
+        UpdateCpuDriverBadge();
         StartMonitoring();
     }
 
@@ -428,11 +440,50 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
 
     private void OnLanguageChanged()
     {
+        // El tooltip se arma en código: se rehace con el idioma nuevo aunque la
+        // página todavía no haya cargado los datos.
+        UpdateCpuDriverBadge();
+
         if (_dataLoaded)
         {
             ApplySecurityFeatures();
             // Re-traducir los detalles compuestos que se armaron con el idioma anterior.
             RefreshLocalizedDetails();
+        }
+    }
+
+    /// <summary>
+    /// Muestra la badge de “falta driver” junto al uso del CPU cuando PawnIO no está
+    /// instalado. Es la única forma de leer la temperatura del procesador, así que la
+    /// badge ocupa ese lugar y lleva a Configuración → Drivers.
+    /// </summary>
+    private void UpdateCpuDriverBadge()
+    {
+        try
+        {
+            bool installed = _pawnIoService.GetStatus().Installed;
+            CpuPawnIoMissingBadge.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+            ToolTipService.SetToolTip(CpuPawnIoMissingBadge, I18n.T("Abrir Configuración → Drivers"));
+            _lastCpuDriverBadgeCheckUtc = DateTime.UtcNow;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogDebug($"Sistema: no se pudo actualizar la badge de PawnIO: {ex.Message}");
+        }
+    }
+
+    private void CpuPawnIoMissingBadge_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            _navigationService.NavigateTo("configuracion", ConfiguracionPage.DriversTabParameter);
+            // NavigateTo del servicio no mueve el highlight del navbar: sin esto la
+            // barra seguía marcando Sistema mientras la página mostraba Configuración.
+            App.MainWindowInstance?.HighlightNavigationPage("configuracion");
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Sistema: no se pudo abrir Configuración → Drivers: {ex.Message}");
         }
     }
 
@@ -677,6 +728,12 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
             CpuTempText.Text = metrics.CpuTemperatureCelsius > 0
                 ? $"· {metrics.CpuTemperatureCelsius:F0}°C"
                 : "";
+
+            // El driver puede instalarse o quitarse desde Configuración mientras la
+            // página sigue abierta. No hace falta consultar el registro cada segundo:
+            // con 5 s la badge reacciona sin sumar trabajo al tick de métricas.
+            if ((DateTime.UtcNow - _lastCpuDriverBadgeCheckUtc).TotalSeconds >= 5)
+                UpdateCpuDriverBadge();
 
             // RAM: uso + usados (al lado del %) — el canal y MHz son estáticos, ya cargados
             RamUsageText.Text = $"{metrics.MemoryUsagePercent:F1}%";

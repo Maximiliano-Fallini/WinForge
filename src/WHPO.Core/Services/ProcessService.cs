@@ -93,6 +93,13 @@ public sealed class ProcessService : IProcessService
     private Dictionary<string, string> _resolvedPaths = new(StringComparer.OrdinalIgnoreCase);
     private const string ResolvedPathsKey = "process.resolvedPaths";
 
+    // Registro de lo que se escribió en IFEO (exe de la regla → ejecutables tocados y
+    // su carpeta). Es lo que permite limpiar un juego desinstalado sin poder enumerar
+    // su carpeta. Ver <see cref="BirthPriorityRecord"/>.
+    private const string IfeoRecordKey = "process.ifeoWritten";
+    private readonly object _ifeoRecordLock = new();
+    private Dictionary<string, BirthPriorityRecord>? _ifeoRecords;
+
     // Último estado de regla por exe de la biblioteca (para la UI).
     private readonly object _ruleStatusLock = new();
     private readonly Dictionary<string, GameRuleStatus> _ruleStatuses = new(StringComparer.OrdinalIgnoreCase);
@@ -2246,26 +2253,39 @@ public sealed class ProcessService : IProcessService
         var cpuVal = cpuPriority is int c ? PerfOptionsCpuValue(c) : null;
         var ioVal = ioPriority is int i ? PerfOptionsIoValue(i) : null;
         if (cpuVal == null && ioVal == null) return;
+        // La carpeta anotada ya no existe y no hay una nueva conocida: el juego se fue.
+        // No se reescribe nada; se retira lo que había quedado.
+        if (RecordedFolderMissing(exe) && ExistingKnownFolder(exe) == null)
+        {
+            CleanBirthRecord(exe);
+            return;
+        }
         var targets = new List<string> { exe };
+        string? installDir = null;
         try
         {
             lock (_pathsLock)
             {
-                if (_knownPaths.TryGetValue(exe, out var dir) && !string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                if (_knownPaths.TryGetValue(exe, out var dir) && !string.IsNullOrEmpty(dir))
                 {
-                    // Componentes del sistema: no enumerar su carpeta (System32 tiene miles
-                    // de exes) ni escribir nacimiento para ninguno de sus binarios.
-                    bool systemDir = dir.StartsWith(
-                        Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                        StringComparison.OrdinalIgnoreCase);
-                    if (!systemDir)
-                        targets.AddRange(Directory.EnumerateFiles(dir, "*.exe", SearchOption.AllDirectories)
-                            .Select(Path.GetFileName)
-                            .Where(f => !string.IsNullOrEmpty(f))!);
+                    installDir = dir;
+                    if (Directory.Exists(dir))
+                    {
+                        // Componentes del sistema: no enumerar su carpeta (System32 tiene miles
+                        // de exes) ni escribir nacimiento para ninguno de sus binarios.
+                        bool systemDir = dir.StartsWith(
+                            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                            StringComparison.OrdinalIgnoreCase);
+                        if (!systemDir)
+                            targets.AddRange(Directory.EnumerateFiles(dir, "*.exe", SearchOption.AllDirectories)
+                                .Select(Path.GetFileName)
+                                .Where(f => !string.IsNullOrEmpty(f))!);
+                    }
                 }
             }
         }
         catch { /* sin carpeta conocida: solo el exe de la regla */ }
+        var written = new List<string>();
         foreach (var target in targets.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             // Procesos del sistema: solo en vivo, nunca al nacer (PerfOptions por nombre
@@ -2279,51 +2299,218 @@ public sealed class ProcessService : IProcessService
                 else key.DeleteValue("CpuPriorityClass", throwOnMissingValue: false);
                 if (ioVal != null) key.SetValue("IoPriority", ioVal.Value, RegistryValueKind.DWord);
                 else key.DeleteValue("IoPriority", throwOnMissingValue: false);
+                written.Add(target);
             }
             catch (Exception ex)
             {
                 _logging.LogWarning($"ProcessService: prioridad de nacimiento {target}: {ex.Message}");
             }
         }
+
+        // Se anota qué se escribió y de qué carpeta salió: sin esto, limpiar dependía de
+        // que la carpeta del juego siguiera existiendo (un juego desinstalado dejaba
+        // claves que nadie podía identificar después).
+        RecordBirthTargets(exe, installDir, written);
     }
 
     private void RemoveBirthPriority(string exe)
     {
         // Mismos targets que ApplyBirthPriority: el exe de la regla y todos los exe
         // de su carpeta de instalación (el proceso real suele tener otro nombre).
-        // Antes solo se borraba el PerfOptions del exe de la regla y quedaban
-        // huérfanos que seguían fijando la prioridad al nacer tras quitar la regla.
+        // El registro de lo escrito manda: así se limpia también un juego que ya se
+        // desinstaló, donde la carpeta no está y no se puede enumerar.
         var targets = new List<string> { exe };
+        bool hadRecord;
+        lock (_ifeoRecordLock)
+        {
+            var records = EnsureIfeoRecords();
+            hadRecord = records.TryGetValue(exe, out var rec);
+            if (rec != null)
+            {
+                targets.AddRange(rec.Targets);
+            }
+            else
+            {
+                // Reglas de versiones anteriores (sin registro): se deduce la carpeta.
+                try
+                {
+                    lock (_pathsLock)
+                    {
+                        if (_knownPaths.TryGetValue(exe, out var dir) && !string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                        {
+                            bool systemDir = dir.StartsWith(
+                                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                                StringComparison.OrdinalIgnoreCase);
+                            if (!systemDir)
+                                targets.AddRange(Directory.EnumerateFiles(dir, "*.exe", SearchOption.AllDirectories)
+                                    .Select(Path.GetFileName)
+                                    .Where(f => !string.IsNullOrEmpty(f))!);
+                        }
+                    }
+                }
+                catch { }
+            }
+            records.Remove(exe);
+        }
+
+        foreach (var target in targets.Distinct(StringComparer.OrdinalIgnoreCase))
+            if (!TargetClaimedByOtherRule(target, exe)) DeleteBirthKey(target);
+
+        if (hadRecord) SaveIfeoRecords();
+    }
+
+    // ===== Registro de lo escrito (limpiar sin depender de la carpeta) =====
+
+    private Dictionary<string, BirthPriorityRecord> EnsureIfeoRecords()
+    {
+        lock (_ifeoRecordLock)
+        {
+            if (_ifeoRecords != null) return _ifeoRecords;
+            try
+            {
+                var saved = _settings.Get(IfeoRecordKey,
+                    new Dictionary<string, BirthPriorityRecord>(StringComparer.OrdinalIgnoreCase));
+                // El JSON vuelve con el comparador por defecto (sensible a mayúsculas): se
+                // rearma para que las claves se comparen como el resto del servicio.
+                _ifeoRecords = saved == null
+                    ? new Dictionary<string, BirthPriorityRecord>(StringComparer.OrdinalIgnoreCase)
+                    : new Dictionary<string, BirthPriorityRecord>(saved, StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                _logging.LogWarning($"ProcessService: leer registro de prioridades de nacimiento: {ex.Message}");
+                _ifeoRecords = new Dictionary<string, BirthPriorityRecord>(StringComparer.OrdinalIgnoreCase);
+            }
+            return _ifeoRecords;
+        }
+    }
+
+    private void SaveIfeoRecords()
+    {
+        lock (_ifeoRecordLock)
+        {
+            try
+            {
+                _settings.Set(IfeoRecordKey,
+                    new Dictionary<string, BirthPriorityRecord>(
+                        _ifeoRecords ?? new Dictionary<string, BirthPriorityRecord>(StringComparer.OrdinalIgnoreCase),
+                        StringComparer.OrdinalIgnoreCase));
+                _settings.Save();
+            }
+            catch (Exception ex)
+            {
+                _logging.LogWarning($"ProcessService: guardar registro de prioridades de nacimiento: {ex.Message}");
+            }
+        }
+    }
+
+    private void RecordBirthTargets(string exe, string? installDir, List<string> written)
+    {
+        if (string.IsNullOrWhiteSpace(exe)) return;
+        List<string> stale;
+        lock (_ifeoRecordLock)
+        {
+            var records = EnsureIfeoRecords();
+            records.TryGetValue(exe, out var old);
+            stale = (old?.Targets ?? new List<string>())
+                .Where(t => !written.Contains(t, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+            records[exe] = new BirthPriorityRecord
+            {
+                Exe = exe,
+                InstallPath = installDir ?? old?.InstallPath,
+                Targets = written.Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            };
+        }
+        // Un target que ya no se escribe (p. ej. el exe real cambió) queda huérfano si
+        // no lo reclama otra regla: se retira ahora, mientras sigue identificado.
+        foreach (var target in stale)
+            if (!TargetClaimedByOtherRule(target, exe)) DeleteBirthKey(target);
+        SaveIfeoRecords();
+    }
+
+    private bool TargetClaimedByOtherRule(string target, string ownerExe)
+    {
+        lock (_ifeoRecordLock)
+        {
+            foreach (var rec in EnsureIfeoRecords().Values)
+            {
+                if (string.Equals(rec.Exe, ownerExe, StringComparison.OrdinalIgnoreCase)) continue;
+                if (rec.Targets.Contains(target, StringComparer.OrdinalIgnoreCase)) return true;
+            }
+        }
+        return false;
+    }
+
+    private void DeleteBirthKey(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target) || IsSystemComponent(target)) return;
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey($@"{IfeoKeyPath}\{target}", writable: true);
+            key?.DeleteSubKeyTree("PerfOptions", throwOnMissingSubKey: false);
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"ProcessService: quitar prioridad de nacimiento {target}: {ex.Message}");
+        }
+    }
+
+    /// <summary>Carpeta conocida y existente para el exe (null si no se sabe o ya no está).</summary>
+    private string? ExistingKnownFolder(string exe)
+    {
         try
         {
             lock (_pathsLock)
             {
-                if (_knownPaths.TryGetValue(exe, out var dir) && !string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                {
-                    bool systemDir = dir.StartsWith(
-                        Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                        StringComparison.OrdinalIgnoreCase);
-                    if (!systemDir)
-                        targets.AddRange(Directory.EnumerateFiles(dir, "*.exe", SearchOption.AllDirectories)
-                            .Select(Path.GetFileName)
-                            .Where(f => !string.IsNullOrEmpty(f))!);
-                }
+                if (_knownPaths.TryGetValue(exe, out var dir)
+                    && !string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    return dir;
             }
         }
-        catch { /* sin carpeta conocida: solo el exe de la regla */ }
-        foreach (var target in targets.Distinct(StringComparer.OrdinalIgnoreCase))
+        catch { }
+        return null;
+    }
+
+    /// <summary>true si la carpeta anotada al escribir ya no existe (el juego se fue).</summary>
+    private bool RecordedFolderMissing(string exe)
+    {
+        lock (_ifeoRecordLock)
         {
-            if (IsSystemComponent(target)) continue;
-            try
-            {
-                using var key = Registry.LocalMachine.OpenSubKey($@"{IfeoKeyPath}\{target}", writable: true);
-                key?.DeleteSubKeyTree("PerfOptions", throwOnMissingSubKey: false);
-            }
-            catch (Exception ex)
-            {
-                _logging.LogWarning($"ProcessService: quitar prioridad de nacimiento {target}: {ex.Message}");
-            }
+            if (!EnsureIfeoRecords().TryGetValue(exe, out var rec)) return false;
+            if (string.IsNullOrWhiteSpace(rec.InstallPath)) return false;
+            try { return !Directory.Exists(rec.InstallPath); } catch { return false; }
         }
+    }
+
+    /// <summary>Retira del registro de Windows todo lo escrito para esa regla, usando la
+    /// lista guardada (no depende de la carpeta) y conservando los targets que otra
+    /// regla siga reclamando.</summary>
+    private void CleanBirthRecord(string exe)
+    {
+        List<string> targets;
+        lock (_ifeoRecordLock)
+        {
+            var records = EnsureIfeoRecords();
+            if (!records.TryGetValue(exe, out var rec)) return;
+            targets = new List<string>(rec.Targets) { exe };
+            records.Remove(exe);
+        }
+        foreach (var target in targets.Distinct(StringComparer.OrdinalIgnoreCase))
+            if (!TargetClaimedByOtherRule(target, exe)) DeleteBirthKey(target);
+        SaveIfeoRecords();
+    }
+
+    /// <summary>
+    /// Borra la prioridad de nacimiento que la app escribió para un juego que ya no
+    /// existe (su carpeta anotada desapareció). La regla guardada se conserva: si el
+    /// juego vuelve, la prioridad se reescribe sola.
+    /// </summary>
+    public void CleanupBirthPriorityForMissingGame(string exe)
+    {
+        if (string.IsNullOrWhiteSpace(exe) || !RecordedFolderMissing(exe)) return;
+        CleanBirthRecord(exe);
+        _logging.LogInfo($"ProcessService: prioridad de nacimiento de {exe} retirada (juego inexistente)");
     }
 
     /// <summary>
@@ -2346,7 +2533,7 @@ public sealed class ProcessService : IProcessService
         lock (_pathsLock) return _knownPaths.Count > 0;
     }
 
-    /// <summary>Al iniciar, sincroniza las claves PerfOptions con las reglas guardadas (recupera escrituras interrumpidas).</summary>
+    /// <summary>Al iniciar, sincroniza las claves PerfOptions con las reglas guardadas (recupera escrituras interrumpidas) y limpia lo que quedó de juegos o reglas que ya no existen.</summary>
     private void ReconcileBirthPriorities()
     {
         try
@@ -2355,8 +2542,27 @@ public sealed class ProcessService : IProcessService
             // Esperar a que el mapa exe→carpeta termine de cargar (es asíncrono)
             // para escribir PerfOptions también a los exes reales del juego.
             for (int i = 0; i < 50 && !HasKnownPaths(); i++) Thread.Sleep(200);
-            foreach (var (exe, rule) in GetRules())
+            var rules = GetRules();
+
+            // 1) Reglas que ya no existen (se quitaron con la app cerrada): lo escrito
+            //    quedó anotado, así que se limpia sin depender de ninguna carpeta.
+            List<string> orphanRecords;
+            lock (_ifeoRecordLock)
+                orphanRecords = EnsureIfeoRecords().Keys
+                    .Where(k => !rules.ContainsKey(k)).ToList();
+            foreach (var exe in orphanRecords) CleanBirthRecord(exe);
+
+            foreach (var (exe, rule) in rules)
             {
+                // 2) La regla sigue, pero el juego ya no: la carpeta anotada desapareció y
+                //    no hay una nueva conocida (si la hay, el juego se movió y se reescribe
+                //    abajo). Se retira lo escrito; la regla se conserva.
+                if (RecordedFolderMissing(exe) && ExistingKnownFolder(exe) == null)
+                {
+                    CleanBirthRecord(exe);
+                    _logging.LogDebug($"ProcessService: {exe} ya no está en disco; prioridad de nacimiento retirada");
+                    continue;
+                }
                 try { SyncBirthPriority(exe, rule); } catch (Exception ex) { _logging.LogDebug($"ProcessService: reconciliar prioridad de nacimiento de {exe}: {ex.Message}"); }
             }
         }
@@ -3255,4 +3461,16 @@ public sealed class ProcessService : IProcessService
         _settings.Set("process.deleted", new List<string>());
         _settings.Save();
     }
+}
+
+/// <summary>
+/// Lo que la app escribió en Windows para una regla: los ejecutables cuya prioridad de
+/// nacimiento se fijó y la carpeta de la que salieron. Permite deshacer la escritura sin
+/// depender de que el juego siga instalado (si la carpeta ya no existe, el juego se fue).
+/// </summary>
+public sealed class BirthPriorityRecord
+{
+    public string Exe { get; set; } = "";
+    public string? InstallPath { get; set; }
+    public List<string> Targets { get; set; } = new();
 }
