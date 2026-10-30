@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Foundation;
@@ -22,6 +23,20 @@ public sealed class CartridgeTile : UserControl
     private readonly PlaneProjection _tilt = new();
     private readonly TranslateTransform _lift = new();
     private readonly Border _recess;
+
+    // El hover persigue al puntero en vez de saltar de golpe al entrar o salir. Se
+    // interpola en CompositionTarget.Rendering (el reloj de composición de la app) y el
+    // bucle se corta solo al llegar al objetivo: quieto el mouse, no queda consumiendo
+    // cuadros. Es independiente del refresh del monitor, así se ve igual a 60/144 Hz.
+    private double _hoverTargetX, _hoverTargetY, _hoverTargetLift;
+    private bool _hoverAnimating;
+    private readonly Stopwatch _hoverWatch = new();
+    /// <summary>Multiplicador del offset normalizado del puntero (±0,5): ±7° de inclinación.</summary>
+    private const double HoverTiltRange = 14;
+    /// <summary>Cuánto se levanta el cartucho al hover (px).</summary>
+    private const double HoverLift = -4;
+    /// <summary>Respuesta del suavizado (1/s): ~150 ms para llegar al 95 % del objetivo.</summary>
+    private const double HoverResponse = 20;
 
     public bool IsRemoved { get; private set; }
     /// <summary>Ejecutable del juego que representa la card: la biblioteca lo usa para
@@ -94,7 +109,12 @@ public sealed class CartridgeTile : UserControl
         PointerReleased += Release;
         PointerCaptureLost += Lost;
         PointerCanceled += Lost;
-        PointerExited += (_, _) => ResetTilt();
+        PointerExited += (_, _) =>
+        {
+            // Con un gesto en curso el reset es inmediato: el arrastre manda.
+            if (_pointerId != null) ResetTilt();
+            else EndHover();
+        };
         Unloaded += (_, _) => CancelGesture();
     }
 
@@ -270,9 +290,12 @@ public sealed class CartridgeTile : UserControl
         }
         if (!HoverTiltEnabled || _pointerId != null || IsRemoved || CanInteract?.Invoke() == false) return;
         var p = e.GetCurrentPoint(this).Position;
-        _tilt.RotationY = -Math.Clamp(p.X / Math.Max(1, ActualWidth) - 0.5, -0.5, 0.5) * 14;
-        _tilt.RotationX = Math.Clamp(p.Y / Math.Max(1, ActualHeight) - 0.5, -0.5, 0.5) * 14;
-        _lift.Y = -4;
+        // Solo se fijan los OBJETIVOS: el cuadro de composición interpola los valores
+        // actuales hacia ellos, así entrar o salir no produce un salto instantáneo.
+        _hoverTargetY = -Math.Clamp(p.X / Math.Max(1, ActualWidth) - 0.5, -0.5, 0.5) * HoverTiltRange;
+        _hoverTargetX = Math.Clamp(p.Y / Math.Max(1, ActualHeight) - 0.5, -0.5, 0.5) * HoverTiltRange;
+        _hoverTargetLift = HoverLift;
+        EnsureHoverAnimation();
     }
 
     private void Release(object sender, PointerRoutedEventArgs e)
@@ -305,10 +328,70 @@ public sealed class CartridgeTile : UserControl
         if (wasDragging) DragCompleted?.Invoke(null);
     }
 
+    /// <summary>Vuelve al reposo (y corta el suavizado del hover) sin animar: lo usan los
+    /// gestos, el retiro del cartucho y la descarga del control, donde el estado tiene que
+    /// quedar limpio ya mismo.</summary>
     private void ResetTilt()
     {
+        StopHoverAnimation();
+        _hoverTargetX = _hoverTargetY = _hoverTargetLift = 0;
         _tilt.RotationX = _tilt.RotationY = 0;
         _lift.Y = 0;
+    }
+
+    /// <summary>El puntero salió sin arrastrar: vuelve al reposo suavemente, en vez de
+    /// cortar la inclinación y el levante de un cuadro al otro.</summary>
+    private void EndHover()
+    {
+        _hoverTargetX = _hoverTargetY = _hoverTargetLift = 0;
+        if (Math.Abs(_tilt.RotationX) < 0.01 &&
+            Math.Abs(_tilt.RotationY) < 0.01 &&
+            Math.Abs(_lift.Y) < 0.01)
+        {
+            ResetTilt();
+            return;
+        }
+        EnsureHoverAnimation();
+    }
+
+    private void EnsureHoverAnimation()
+    {
+        if (_hoverAnimating) return;
+        _hoverAnimating = true;
+        _hoverWatch.Restart();
+        CompositionTarget.Rendering += OnHoverRendering;
+    }
+
+    private void StopHoverAnimation()
+    {
+        if (!_hoverAnimating) return;
+        _hoverAnimating = false;
+        CompositionTarget.Rendering -= OnHoverRendering;
+        _hoverWatch.Stop();
+    }
+
+    private void OnHoverRendering(object? sender, object e)
+    {
+        double dt = _hoverWatch.Elapsed.TotalSeconds;
+        _hoverWatch.Restart();
+        // Un salto de tiempo (ventana minimizada, equipo dormido) no debe teletransportar
+        // el cartucho: se trata como un cuadro normal.
+        if (dt <= 0 || dt > 0.25) dt = 1.0 / 60.0;
+
+        double k = 1.0 - Math.Exp(-HoverResponse * dt);
+        _tilt.RotationX += (_hoverTargetX - _tilt.RotationX) * k;
+        _tilt.RotationY += (_hoverTargetY - _tilt.RotationY) * k;
+        _lift.Y += (_hoverTargetLift - _lift.Y) * k;
+
+        if (Math.Abs(_hoverTargetX - _tilt.RotationX) < 0.02 &&
+            Math.Abs(_hoverTargetY - _tilt.RotationY) < 0.02 &&
+            Math.Abs(_hoverTargetLift - _lift.Y) < 0.02)
+        {
+            _tilt.RotationX = _hoverTargetX;
+            _tilt.RotationY = _hoverTargetY;
+            _lift.Y = _hoverTargetLift;
+            StopHoverAnimation();
+        }
     }
 
     private static SolidColorBrush Brush(byte r, byte g, byte b)

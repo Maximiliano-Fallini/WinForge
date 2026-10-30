@@ -491,8 +491,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         _navigationService = App.Services.GetRequiredService<INavigationService>();
         _latencyMonitor = App.Services.GetRequiredService<InputLatencyMonitorService>();
         _latencyTest = App.Services.GetRequiredService<InputLatencyTestService>();
-        _audioLatency = App.Services.GetRequiredService<AudioLatencyService>();
-        _busCadence = App.Services.GetRequiredService<BusCadenceService>();
         _settings = App.Services.GetRequiredService<ISettingsService>();
 
     // La página vive con caché de navegación: suscripciones una sola vez.
@@ -501,36 +499,26 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         // que se rehace cuando cambia (ventana redimensionada, primer layout).
         LatencyDemoBackdrop.SizeChanged += (_, _) => BuildDemoGrid();
         // El desplegable de dispositivos se dimensiona con lo que muestra y con el ancho de la card:
-        // hay que rehacerlo cuando ese ancho cambia (ventana), cuando cambia el texto del botón (dice
-        // "Iniciar test" / "Medir en el bus" / "Medir audio") o aparece el spinner de la corrida.
+        // hay que rehacerlo cuando ese ancho cambia (ventana), cuando cambia el texto del botón
+        // ("Iniciar test" / "Cancelar") o aparece el spinner de la corrida.
         LatencyTestCard.SizeChanged += (_, _) => FitLatencySelectorWidth();
         LatencyTestRunButton.SizeChanged += (_, _) => FitLatencySelectorWidth();
         LatencyTestProgress.SizeChanged += (_, _) => FitLatencySelectorWidth();
-        // Mientras corre la prueba, el teclado es DEL TEST: se frena Espacio/Enter antes de que
-        // lleguen a cualquier control de la card (ver el comentario del manejador).
-        LatencyTestCard.PreviewKeyDown += OnLatencyCardPreviewKeyDown;
         I18n.LanguageChanged += OnLanguageChanged;
     }
 
     // ===================== Test de latencia (una sola card) =====================
-    // Elegís el dispositivo y el tipo, y corrés la prueba. El tipo no es cosmético: cada
-    // periférico reporta distinto, y eso decide qué se puede prometer.
+    // Solo se puede medir el sondeo de los dispositivos que lo tienen disponible: los que
+    // informan POR SU CUENTA mientras los usás, con la badge verde "Sondeo disponible".
     //   • Mouse: emite informes continuos mientras se mueve → mide el polling real.
     //   • Mando: emite continuo mientras se MUEVEN LOS EJES; un botón suelto es UN informe
     //     (por eso el test pide girar el stick: es lo que hace Gamepadla).
-    //   • Teclado: solo manda informe cuando cambia de estado → su polling NO se puede medir
-    //     desde acá; lo que se mide es cada cuánto manda informe (o sea, tu ritmo).
-    // El veredicto detecta ese último caso por la dispersión de la serie, así que sigue
-    // siendo honesto aunque el tipo elegido esté mal.
+    // Teclados y audio quedan afuera: no emiten un flujo continuo comparable y su test se
+    // retiró, así que el botón queda deshabilitado para ellos.
 
     private readonly InputLatencyMonitorService _latencyMonitor;
     private readonly InputLatencyTestService _latencyTest;
-    private readonly AudioLatencyService _audioLatency;
-    private readonly BusCadenceService _busCadence;
     private readonly ISettingsService _settings;
-    // Endpoints de audio vistos al armar el desplegable, por id: la elección no depende de
-    // que una enumeración posterior (al correr el test) devuelva exactamente lo mismo.
-    private readonly Dictionary<string, AudioEndpointInfo> _audioEndpoints = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _latencyTestCts;
     private bool _latencyTestRunning;
     // Tipo del dispositivo elegido al ARRANCAR la corrida. El trazo en vivo lo necesita para
@@ -540,7 +528,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     private InputDeviceKind? _runningLatencyKind;
     private string? _selectedLatencyKey;          // VID/PID del dispositivo elegido
     private InputLatencyTestResult? _shownResult;
-    private AudioLatencyRun? _lastAudioRun;        // última corrida de audio de esta sesión
     private InputLatencyTestResult? _shownPrevious;
     private InputLatencyTestRun? _lastRun;         // última corrida de ESTA sesión
 
@@ -585,9 +572,8 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
         foreach (var device in _devices)
         {
-            // Los dispositivos de AUDIO no van acá: aparecen abajo, tras el separador, como
-            // endpoints WASAPI (que es la vía con la que se miden). Antes un headset USB
-            // quedaba listado entre los teclados y los mouse.
+            // Los dispositivos de AUDIO no van acá: se listan aparte, tras el separador, con
+            // AudioEndpointCatalog (solo para mostrarlos: no tienen test).
             // El ADAPTADOR Bluetooth tampoco: es el transporte, no un dispositivo de entrada,
             // así que no se le puede medir el sondeo (el sondeo es del periférico emparejado,
             // que ya aparece por su cuenta con su transporte Bluetooth).
@@ -615,30 +601,36 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
     /// <summary>Reconstruye el desplegable conservando la elección (por VID/PID, así que
     /// sobrevive a que el dispositivo se reinicie o a que aparezca uno nuevo). Los periféricos
-    /// van primero con su badge de conexión (cable/Bluetooth) y después, tras un separador,
-    /// los endpoints de audio (entradas y salidas) que se miden por otra vía (WASAPI).</summary>
+    /// llevan su badge de conexión (USB/Bluetooth/2,4 GHz) y, si se les puede medir el sondeo,
+    /// la badge verde "Sondeo disponible". Después del separador van los endpoints de audio,
+    /// solo como referencia: no tienen test y no se pueden elegir. Lo mismo vale para teclados
+    /// y cualquier dispositivo sin la badge: se ven apagados y no se seleccionan.</summary>
     private void RefreshLatencyTestDevices()
     {
         if (_latencyTestRunning) return; // no se cambia de dispositivo en plena prueba
 
         var options = CollectLatencyDevices();
         string? keep = _selectedLatencyKey;
+        var pollingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         LatencyTestDeviceSelector.Items.Clear();
         foreach (var option in options)
         {
+            if (PollingAvailableFor(option.DetectedKind)) pollingKeys.Add(option.Key);
             LatencyTestDeviceSelector.Items.Add(MakeLatencyItem(option.Name, option, option.Key));
         }
 
-        // --- Audio: separador + endpoints. La clave "audio:<id>" los aparta del espacio
-        // VID/PID de los periféricos: se derivan a la via de medición WASAPI al correr.
-        List<AudioEndpointInfo>? endpoints = null;
-        try { endpoints = new List<AudioEndpointInfo>(_audioLatency.EnumerateEndpoints()); }
-        catch (Exception ex) { _logging.LogWarning($"Test de latencia: no se pudieron listar endpoints de audio: {ex.Message}"); }
-        if (endpoints is { Count: > 0 })
+        // --- Audio: separador + endpoints. Se enumeran solo para MOSTRARLOS; no tienen
+        // medición (la vía WASAPI se retiró), así que no llevan badge de sondeo.
+        IReadOnlyList<AudioEndpointInfo> endpoints;
+        try { endpoints = AudioEndpointCatalog.Enumerate(); }
+        catch (Exception ex)
         {
-            _audioEndpoints.Clear();
-            foreach (var ep in endpoints) _audioEndpoints[ep.Id] = ep;
+            _logging.LogWarning($"Test de latencia: no se pudieron listar endpoints de audio: {ex.Message}");
+            endpoints = Array.Empty<AudioEndpointInfo>();
+        }
+        if (endpoints.Count > 0)
+        {
             LatencyTestDeviceSelector.Items.Add(new ComboBoxItem
             {
                 IsEnabled = false,
@@ -653,24 +645,24 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             });
             foreach (var ep in endpoints)
             {
-                // El nombre limpio: el rol (Entrada/Salida) y "predeterminado" viajan como
-                // badges dentro del ítem, no pegados al texto.
-                var opt = new LatencyDeviceOption($"audio:{ep.Id}", ep.Name, null, true, InputTransport.Unknown);
-                LatencyTestDeviceSelector.Items.Add(MakeLatencyItem(ep.Name, opt, opt.Key, audio: ep));
+                string key = $"audio:{ep.Id}";
+                var opt = new LatencyDeviceOption(key, ep.Name, null, true);
+                LatencyTestDeviceSelector.Items.Add(MakeLatencyItem(ep.Name, opt, key, ep));
             }
         }
 
-        // Elección: la anterior si sigue existiendo; si no, el PRIMER dispositivo REAL (los
-        // separadores —ej. "— Audio —"— van deshabilitados y sin Tag: seleccionar uno dejaba
-        // el desplegable sin dispositivo y el botón sin nada que medir).
-        int index = -1, firstSelectable = -1;
+        // Elección: la anterior si sigue existiendo Y tiene "Sondeo disponible"; si no, el
+        // primer dispositivo que lo tenga. Los ítems sin badge nacen deshabilitados, así que
+        // nunca pueden quedar como selección: si no hay ninguno medible, la caja queda vacía.
+        int index = -1, firstPolling = -1;
         for (int i = 0; i < LatencyTestDeviceSelector.Items.Count; i++)
         {
             if (LatencyTestDeviceSelector.Items[i] is not ComboBoxItem item || item.Tag is not string tag) continue;
-            if (firstSelectable < 0) firstSelectable = i;
-            if (tag == keep) { index = i; break; }
+            if (!pollingKeys.Contains(tag)) continue; // separador, audio o sin sondeo: no elegible
+            if (firstPolling < 0) firstPolling = i;
+            if (string.Equals(tag, keep, StringComparison.OrdinalIgnoreCase)) { index = i; break; }
         }
-        if (index < 0) index = firstSelectable;
+        if (index < 0) index = firstPolling;
 
         if (index >= 0)
         {
@@ -682,9 +674,15 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         else
         {
             _selectedLatencyKey = null;
+            LatencyTestDeviceSelector.SelectedIndex = -1;
             LatencyTestResultsHost.Children.Clear();
-            SetLatencyTestStatus(I18n.T("No hay dispositivos de entrada para medir."));
+            SetLatencyTestStatus(I18n.T("No hay dispositivos con sondeo disponible para correr el test."));
+            UpdateLatencyHint();
         }
+
+        // El botón depende de la badge del dispositivo elegido: se refresca también cuando la
+        // selección no cambió (el evento no vuelve a avisar si la clave era la misma).
+        if (!_latencyTestRunning) SetLatencyTestRunningUi(false);
 
         // La lista recién armada ya tiene ítems: el ancho de la caja sigue al dispositivo elegido y
         // el del popup queda listo ANTES de abrirlo (si no, se vería crecer en la animación).
@@ -692,27 +690,30 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         FitLatencyPopupWidth();
     }
 
-    /// <summary>Ítem del desplegable: ícono del tipo en azul + badge de conexión (cable o
-    /// Bluetooth) cuando se conoce, y el nombre al lado. Para audio lleva el ícono de
-    /// altavoz/auriculares y la etiqueta Entrada/Salida.</summary>
+    /// <summary>Ítem del desplegable: ícono del tipo en azul + badge de conexión cuando se
+    /// conoce, el nombre al lado y la badge verde de sondeo si el test puede medirlo. Los
+    /// endpoints de audio muestran el rol (Entrada/Salida) y, si corresponde, "predeterminado".
+    /// Sin la badge de sondeo la fila baja de opacidad (conserva sus colores) y el ítem queda
+    /// deshabilitado: se ve apagada y no se puede elegir.</summary>
     private ComboBoxItem MakeLatencyItem(string label, LatencyDeviceOption option, string tag, AudioEndpointInfo? audio = null)
     {
-        var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        // Capacidad del TEST, no del dispositivo: solo mouse y mando emiten un flujo continuo.
+        // Sin esta condición el ítem no se puede elegir, así que la selección nunca cae en un
+        // teclado o un endpoint de audio con el test apagado.
+        bool testable = audio is null && PollingAvailableFor(option.DetectedKind);
+        // El estado Disabled del ComboBoxItem solo cambia el fondo y el Foreground del
+        // ContentPresenter; como nuestros textos e íconos llevan color propio, el apagado se
+        // aplica a la fila completa: los colores se mantienen, solo bajan de intensidad.
+        var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Opacity = testable ? 1.0 : 0.65 };
         line.Children.Add(new FontIcon
         {
-            Glyph = audio is not null && audio.IsInput ? "\uE720"
-                : audio is not null ? "\uE7F6"
+            Glyph = audio is not null
+                ? (audio.IsInput ? "\uE720" : "\uE7F6")
                 : option.DetectedKind is { } kind ? GlyphFor(kind) : GlyphForKind(UsbDeviceKind.Unknown),
             FontSize = 13,
             Foreground = ThemeBrushes.Get("AccentBrush"),
             VerticalAlignment = VerticalAlignment.Center
         });
-        // Rol y conexión como BADGES (pastillas), no como sufijos de texto. El ROL del endpoint
-        // (Entrada/Salida) va ANTES del nombre y separado por el punto medio, como estaba antes:
-        // "Entrada · Altavoces". El nombre queda en el medio de sus datos: el rol adelante y
-        // "predeterminado" atrás, que es el que compara al dispositivo con los demás endpoints.
-        // La CONEXIÓN del periférico va después del nombre: es un dato del dispositivo, no parte
-        // de cómo se llama.
         if (audio is not null)
         {
             var meta = new StackPanel
@@ -732,47 +733,42 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             line.Children.Add(meta);
         }
         line.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
-        if (audio is null)
+        if (audio is not null)
         {
-            // Conexión del periférico, sin afirmar más de lo que se sabe:
-            //   • Bluetooth: sale de la ruta de Raw Input (dato firme).
-            //   • 2,4 GHz: el dispositivo es un receptor inalámbrico (dato firme).
-            //   • USB: cuelga del bus USB. NO se dice "cable": un dongle genérico que no se
-            //     identifica no se puede distinguir de un periférico por cable, y ahí afirmar
-            //     un cable sería mentira para cualquiera.
-            // (El chip de "sin informes" se sacó: confundía estar quieto con no funcionar.)
-            switch (option.Transport)
-            {
-                case InputTransport.Usb:
-                    line.Children.Add(LatencyBadge("USB", glyph: "\uE88E"));
-                    break;
-                case InputTransport.Bluetooth:
-                    // Los dos badges INALÁMBRICOS comparten el mismo ícono (WirelessGlyph), así
-                    // de un vistazo se ve que la medición no va por cable. El texto sigue
-                    // diciendo el enlace real.
-                    line.Children.Add(LatencyBadge(I18n.T("Bluetooth"), glyph: WirelessGlyph));
-                    break;
-                case InputTransport.Wireless24:
-                    // Nombres que no se traducen: son siglas y una frecuencia.
-                    line.Children.Add(LatencyBadge("2,4 GHz", glyph: WirelessGlyph));
-                    break;
-            }
+            if (audio.IsDefault)
+                line.Children.Add(LatencyBadge(I18n.T("predeterminado")));
+            return new ComboBoxItem { Content = line, Tag = tag, IsEnabled = false };
+        }
 
-            // Capacidad del TEST, no del dispositivo: el sondeo se puede medir cuando el aparato
-            // reporta POR SU CUENTA mientras lo usás (el mouse al moverse, el mando al mover los
-            // ejes). El teclado queda afuera a propósito: solo habla cuando cambiás el estado, así
-            // que su intervalo mide tu ritmo y no el suyo. Es indicador de DISPONIBILIDAD (verde),
-            // no un veredicto de calidad.
-            if (option.DetectedKind is InputDeviceKind.Mouse or InputDeviceKind.Gamepad)
-                line.Children.Add(LatencyBadge(I18n.T("Sondeo disponible"), success: true));
-        }
-        else if (audio.IsDefault)
+        // Conexión del periférico, sin afirmar más de lo que se sabe:
+        //   • Bluetooth: sale de la ruta de Raw Input (dato firme).
+        //   • 2,4 GHz: el dispositivo es un receptor inalámbrico (dato firme).
+        //   • USB: cuelga del bus USB. NO se dice "cable": un dongle genérico que no se
+        //     identifica no se puede distinguir de un periférico por cable, y ahí afirmar
+        //     un cable sería mentira para cualquiera.
+        // (El chip de "sin informes" se sacó: confundía estar quieto con no funcionar.)
+        switch (option.Transport)
         {
-            // DESPUÉS del nombre: "predeterminado" es lo que lo distingue de los otros
-            // endpoints, mientras que el rol (adelante) describe al dispositivo mismo.
-            line.Children.Add(LatencyBadge(I18n.T("predeterminado")));
+            case InputTransport.Usb:
+                line.Children.Add(LatencyBadge("USB", glyph: "\uE88E"));
+                break;
+            case InputTransport.Bluetooth:
+                // Los dos badges INALÁMBRICOS comparten el mismo ícono (WirelessGlyph), así
+                // de un vistazo se ve que la medición no va por cable. El texto sigue
+                // diciendo el enlace real.
+                line.Children.Add(LatencyBadge(I18n.T("Bluetooth"), glyph: WirelessGlyph));
+                break;
+            case InputTransport.Wireless24:
+                // Nombres que no se traducen: son siglas y una frecuencia.
+                line.Children.Add(LatencyBadge("2,4 GHz", glyph: WirelessGlyph));
+                break;
         }
-        return new ComboBoxItem { Content = line, Tag = tag };
+
+        // Indicador de DISPONIBILIDAD (verde), no un veredicto de calidad. Solo se dibuja en
+        // los ítems habilitados, así que nunca hay badge verde en una fila apagada.
+        if (testable)
+            line.Children.Add(LatencyBadge(I18n.T("Sondeo disponible"), success: true));
+        return new ComboBoxItem { Content = line, Tag = tag, IsEnabled = testable };
     }
 
     /// <summary>
@@ -983,10 +979,21 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         // temprana: también en la selección que hace la propia página al armar la lista.
         FitLatencySelectorWidth();
         if (LatencyTestDeviceSelector.SelectedItem is not ComboBoxItem item || item.Tag is not string key) return;
+        // Red de seguridad: si algún camino de teclado intenta dejar elegido un ítem
+        // deshabilitado, se vuelve a la selección anterior (o a ninguna). Los ítems sin
+        // "Sondeo disponible" no son una opción del test.
+        if (!item.IsEnabled)
+        {
+            if (e.RemovedItems.Count > 0 && e.RemovedItems[0] is ComboBoxItem previous && previous.IsEnabled)
+                LatencyTestDeviceSelector.SelectedItem = previous;
+            else
+                LatencyTestDeviceSelector.SelectedIndex = -1;
+            return;
+        }
         if (key == _selectedLatencyKey) return;
         _selectedLatencyKey = key;
         UpdateLatencyHint();
-        if (!_latencyTestRunning) SetLatencyTestRunningUi(false); // etiqueta: "Medir en el bus" / "Medir audio" / "Iniciar test"
+        if (!_latencyTestRunning) SetLatencyTestRunningUi(false); // etiqueta del botón y si se puede correr
         // Cambiar de dispositivo limpia el onboarding visual: la cuenta 3·2·1 o el gesto
         // que quedó dibujado son del dispositivo anterior.
         HideLatencyDemo();
@@ -994,23 +1001,21 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     }
 
     /// <summary>True si la clave elegida apunta a un endpoint de audio ("audio:<id>").</summary>
-    private bool IsAudioKey(string? key) => key is not null && key.StartsWith("audio:", StringComparison.OrdinalIgnoreCase);
+    private static bool IsAudioKey(string? key) =>
+        key is not null && key.StartsWith("audio:", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>El endpoint de audio elegido (null si la clave no es de audio o ya no existe).
-    /// Se prefiere el que quedó cacheado al armar el desplegable: si WASAPI no lo enumera en
-    /// este instante (el dispositivo se está reiniciando, otro proceso lo tomó en exclusivo),
-    /// el test igual puede correr con los datos que ya teníamos en vez de decir "no está".</summary>
-    private AudioEndpointInfo? SelectedAudioEndpoint()
-    {
-        if (!IsAudioKey(_selectedLatencyKey)) return null;
-        string id = _selectedLatencyKey!["audio:".Length..];
-        if (_audioEndpoints.TryGetValue(id, out var cached)) return cached;
-        try { return _audioLatency.EnumerateEndpoints().FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase)); }
-        catch { return null; }
-    }
+    /// <summary>Solo mouse y mando informan de forma continua: en ellos el intervalo entre
+    /// informes ES el polling. Es la misma condición que enciende la badge "Sondeo disponible",
+    /// y la que habilita el botón del test.</summary>
+    private static bool PollingAvailableFor(InputDeviceKind? kind) =>
+        kind is InputDeviceKind.Mouse or InputDeviceKind.Gamepad;
 
-    /// <summary>Tipo del dispositivo elegido: lo elegido a mano manda; si está en automático,
-    /// lo que detectó el driver (y si no, lo que dice Raw Input).</summary>
+    /// <summary>Si el dispositivo elegido tiene la badge "Sondeo disponible" (y, por lo tanto,
+    /// se le puede correr el test de latencia).</summary>
+    private bool SelectedSupportsPolling() => PollingAvailableFor(EffectiveLatencyKind());
+
+    /// <summary>Tipo del dispositivo elegido: lo que detectó el driver (y si no, lo que dice
+    /// Raw Input).</summary>
     private InputDeviceKind? DetectLatencyKind(string? key)
     {
         if (string.IsNullOrEmpty(key)) return null;
@@ -1023,13 +1028,15 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     /// (y si no, lo que dice Raw Input), así que la pista y el test apuntan a lo que es.</summary>
     private InputDeviceKind? EffectiveLatencyKind() => DetectLatencyKind(_selectedLatencyKey);
 
-    /// <summary>Instrucción según lo que REALMENTE se mide con ese tipo.</summary>
+    /// <summary>Instrucción según lo que REALMENTE se puede medir con ese dispositivo.</summary>
     private void UpdateLatencyHint()
     {
         string text;
-        if (IsAudioKey(_selectedLatencyKey))
+        if (string.IsNullOrEmpty(_selectedLatencyKey))
         {
-            text = I18n.T("Se mide el motor de audio (WASAPI) y la ida y vuelta del impulso: no hace falta tocar nada.");
+            // Sin selección no hay dispositivo al que atribuir la pista: el estado de la card
+            // ya explica que no hay ninguno con sondeo disponible.
+            text = "";
         }
         else if (EffectiveLatencyKind() == InputDeviceKind.Gamepad)
         {
@@ -1037,14 +1044,17 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             // y repetirlo en texto era ruido — el test se mide girando el stick, no leyendo.
             text = "";
         }
+        else if (IsAudioKey(_selectedLatencyKey))
+        {
+            text = I18n.T("El test de latencia de audio no está disponible: el endpoint aparece solo como referencia.");
+        }
+        else if (!SelectedSupportsPolling())
+        {
+            text = I18n.T("Este dispositivo no tiene la badge \"Sondeo disponible\": el intervalo entre informes no se puede medir con este test.");
+        }
         else
         {
-            text = I18n.T(EffectiveLatencyKind() switch
-            {
-                InputDeviceKind.Mouse => "Mové el mouse en círculos durante la prueba.",
-                InputDeviceKind.Keyboard => "El teclado no emite informes continuos: se mide el bus (cada cuánto manda un informe), no su polling.",
-                _ => "Usá el dispositivo durante la prueba."
-            });
+            text = I18n.T("Mové el mouse en círculos durante la prueba.");
         }
 
         LatencyTestHint.Text = text;
@@ -1053,15 +1063,8 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         LatencyTestHint.Visibility = string.IsNullOrEmpty(text) ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    /// <summary>Etiqueta del botón según qué se va a medir: en teclado es "Medir en el bus"
-    /// (no hay polling que apurar: el test mide la cadencia del bus), en audio "Medir audio"
-    /// y en el resto "Iniciar test".</summary>
-    private string RunButtonLabelKey(bool running)
-    {
-        if (running) return "Cancelar";
-        if (IsAudioKey(_selectedLatencyKey)) return "Medir audio";
-        return EffectiveLatencyKind() == InputDeviceKind.Keyboard ? "Medir en el bus" : "Iniciar test";
-    }
+    /// <summary>Etiqueta del botón: "Cancelar" mientras corre y "Iniciar test" en reposo.</summary>
+    private static string RunButtonLabelKey(bool running) => running ? "Cancelar" : "Iniciar test";
 
     private async void LatencyTestRunButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1078,6 +1081,18 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             return;
         }
 
+        // La misma condición que enciende la badge "Sondeo disponible": sin ella no hay test.
+        if (IsAudioKey(key))
+        {
+            SetLatencyTestStatus(I18n.T("El test de latencia de audio no está disponible: el endpoint aparece solo como referencia."));
+            return;
+        }
+        if (!SelectedSupportsPolling())
+        {
+            SetLatencyTestStatus(I18n.T("Este dispositivo no tiene el test de latencia disponible: el sondeo solo se puede medir en dispositivos que informan de forma continua (mouse o mando)."));
+            return;
+        }
+
         _latencyTestRunning = true;
         _runningLatencyKind = EffectiveLatencyKind();
         _latencyTestCts = new CancellationTokenSource();
@@ -1086,16 +1101,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         _shownResult = null;
         _shownPrevious = null;
         SetLatencyTestStatus("");
-
-        // Vía del BUS (ETW/xHCI): para teclado el test correcto es la cadencia del bus —
-        // el teclado no emite informes continuos, así que el "polling" que ve la app no
-        // existe: lo que se mide es cada cuánto el endpoint ENTREGA transferencias. Sin demo
-        // ni gráfico en vivo (esa UI es del flujo continuo): la ventana es pasiva.
-        if (!IsAudioKey(key) && EffectiveLatencyKind() == InputDeviceKind.Keyboard)
-        {
-            await RunBusCadenceAsync(key);
-            return;
-        }
 
         // Onboarding visual ANTES de medir: la ventana arranca cuando la cuenta terminó.
         await StartLatencyDemoAsync(CurrentDemoKind(), _latencyTestCts.Token);
@@ -1106,72 +1111,11 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             HideLatencyDemo();
             return;
         }
-        // Cancelaron durante el 3·2·1 (que ahora se muestra en TODOS los tipos de test): se
-        // cierra la corrida acá mismo. Sin esto el botón quedaba en "Cancelar" para siempre.
+        // Cancelaron durante el 3·2·1: se cierra la corrida acá mismo. Sin esto el botón
+        // quedaba en "Cancelar" para siempre.
         if (_latencyTestCts.IsCancellationRequested)
         {
             FinishLatencyTest();
-            return;
-        }
-
-        // Vía de AUDIO: se mide por WASAPI (motor + ida y vuelta), no por informes HID, así
-        // que NO se abre el trazo en vivo — ese gráfico dibuja intervalos HID y quedaría
-        // vacío (parecia que el test no hacía nada mientras corría).
-        if (IsAudioKey(key))
-        {
-            LatencyLiveArea.Visibility = Visibility.Collapsed;
-            SetLatencyTestStatus(I18n.T("Midiendo el motor de audio (WASAPI)…"));
-            try
-            {
-                var endpoint = SelectedAudioEndpoint();
-                if (endpoint is null)
-                {
-                    _logging.LogWarning("Test de latencia (audio): el endpoint elegido ya no está disponible.");
-                    SetLatencyTestStatus(I18n.T("Ese endpoint de audio ya no está disponible."));
-                    return;
-                }
-                _logging.LogInfo($"Test de latencia (audio): iniciando sobre {endpoint.Name} ({endpoint.Id}).");
-
-                var progress = new Progress<AudioTestProgress>(p =>
-                    SetLatencyTestStatus(I18n.T(p.RoundTripPhase
-                        ? "Ida y vuelta: intento {0} de {1}…"
-                        : "Motor de audio: {0} muestras…", p.Attempt, p.Attempts)));
-                var run = await _audioLatency.RunAsync(endpoint, AudioLatencyService.DefaultDurationSeconds, progress, _latencyTestCts.Token);
-
-                if (run.Stopped)
-                {
-                    SetLatencyTestStatus("");
-                    LatencyLiveArea.Visibility = Visibility.Collapsed;
-                    ShowStoredLatencyResult();
-                    return;
-                }
-
-                _lastAudioRun = run;
-                SetLatencyTestStatus($"{I18n.T("Última prueba")}: {run.Timestamp.ToLocalTime():g}");
-                RenderAudioLatencyResult(run);
-            }
-            catch (OperationCanceledException)
-            {
-                SetLatencyTestStatus("");
-                // Cancelar no deja medición: el trazo a medias se retira (antes quedaba
-                // dibujado en pantalla hasta la corrida siguiente).
-                ClearLatencyLive();
-                ShowStoredLatencyResult();
-            }
-            catch (Exception ex)
-            {
-                _logging.LogWarning($"Test de latencia (audio): la corrida falló: {ex.Message}");
-                SetLatencyTestStatus(I18n.T("No se pudo completar la prueba."));
-            }
-            finally
-            {
-                _latencyTestRunning = false;
-                _latencyTestCts?.Dispose();
-                _latencyTestCts = null;
-                ClearLatencyLive();
-                HideLatencyDemo();
-                SetLatencyTestRunningUi(false);
-            }
             return;
         }
 
@@ -1261,205 +1205,15 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         ShowStoredLatencyResult();
     }
 
-    // ===== Cadencia de TECLADO medida en el BUS (ETW/xHCI) =====
-
-    /// <summary>
-    /// Corrida de la cadencia de bus: modo pasivo (el usuario sigue usando la PC), con techo
-    /// de 45 s y corte temprano al juntar 12 informes. Cruza los sellos del kernel con los de
-    /// Raw Input para dar además el tramo de host (kernel → app).
-    /// </summary>
-    private async Task RunBusCadenceAsync(string key)
-    {
-        try
-        {
-            // La MISMA cuenta 3·2·1 que el resto de los tests: la ventana del bus arranca
-            // cuando la cuenta terminó, así el 3·2·1 no se come el principio de la captura.
-            await StartLatencyDemoAsync(LatencyDemoKind.Keyboard, _latencyTestCts!.Token);
-            if (!_latencyTestRunning) return;
-
-            // Ventana FIJA de 15 s: dura exactamente lo que dice el reloj de abajo y NO se corta por
-            // cantidad de informes. Cada intento de corte temprano trajo su propio problema: sin
-            // piso de tiempo, seis teclas juntaban los informes justos y la traza quedaba con cuatro
-            // transferencias (el número salía del ritmo de tecleo, no del bus); con piso, seguía
-            // dependiendo de cuánto tecleaste. Una duración fija es comparable entre corridas, que es
-            // lo que hace útil medir dos veces. Cuando no hay pulsaciones, eso lo dice el resultado.
-            const int capSeconds = 15;
-
-            // Captura de sellos de la app durante la MISMA ventana (para cruzar con el kernel):
-            // se abre antes y el servicio la cierra al terminar, vía el proveedor.
-            _latencyMonitor.BeginSampling();
-
-            // Reloj visible: el servicio no reporta avance, así que sin esto la captura parecía
-            // colgada (y en el peor caso se agotaba la ventana sin una sola pulsación). El conteo de
-            // informes va al lado para que se vea que SÍ está capturando, sin que corte nada.
-            var watch = Stopwatch.StartNew();
-            var clock = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-            clock.Tick += (_, _) =>
-            {
-                int reports = _latencyMonitor.GetSamplingStampCount(key);
-                double left = Math.Max(0, capSeconds - watch.Elapsed.TotalSeconds);
-                // Agotada la ventana, todavía falta cerrar el ETW y volcar la traza (más de un
-                // segundo): decir que quedan 0 s mientras eso pasa era otra forma de mentir el reloj.
-                SetLatencyTestStatus(left <= 0.5
-                    ? I18n.T("Analizando la traza del bus…")
-                    : I18n.T("Capturando en el bus: {0} informes · {1} s restantes. Seguí tecleando con normalidad.", reports, (int)Math.Ceiling(left)));
-            };
-            clock.Start();
-            BusCadenceResult result;
-            try
-            {
-                result = await _busCadence.MeasureAsync(key, capSeconds, _latencyTestCts.Token,
-                    appStampsProvider: () => _latencyMonitor.EndSamplingStamps(key));
-            }
-            finally
-            {
-                clock.Stop();
-                watch.Stop();
-            }
-
-            if (_latencyTestCts.IsCancellationRequested)
-            {
-                SetLatencyTestStatus(I18n.T("Captura cancelada."));
-            }
-            else if (result.Error == "no-slot")
-            {
-                // La traza capturó transferencias pero no pudo atribuirlas a este teclado:
-                // el mapeo SlotId→VID/PID sale del evento de enumeración, que solo aparece si
-                // el teclado se (re)conectó DENTRO de la ventana. Se dice qué hacer.
-                SetLatencyTestStatus(I18n.T("La traza vio transferencias pero no pudo identificar este teclado (no hubo evento de enumeración en la ventana). Desconectá y volvé a conectar el teclado, y medí de nuevo: dura 15 segundos."));
-            }
-            else if (!string.IsNullOrEmpty(result.Error))
-            {
-                _logging.LogWarning($"Cadencia por bus: no se pudo medir ({result.Error}).");
-                SetLatencyTestStatus(I18n.T("No se pudo abrir la traza del bus (ETW) en esta máquina."));
-            }
-            else if (!result.HasData)
-            {
-                SetLatencyTestStatus(I18n.T("No hubo ninguna pulsación durante la captura: el teclado solo informa cuando lo tocás. Probá de nuevo (dura 15 segundos) y seguí usando la PC con normalidad."));
-            }
-            else if (!string.Equals(_selectedLatencyKey, key, StringComparison.OrdinalIgnoreCase))
-            {
-                // Cambió el dispositivo elegido durante la captura: el resultado es de otro.
-                SetLatencyTestStatus(I18n.T("Captura descartada: cambiaste de dispositivo mientras medía."));
-            }
-            else
-            {
-                SetLatencyTestStatus("");
-                RenderBusCadence(result);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            SetLatencyTestStatus(I18n.T("Captura cancelada."));
-        }
-        catch (Exception ex)
-        {
-            _logging.LogWarning($"Cadencia por bus: la corrida falló: {ex.Message}");
-            SetLatencyTestStatus(I18n.T("No se pudo completar la medición del bus."));
-        }
-        finally
-        {
-            _latencyTestRunning = false;
-            _latencyTestCts?.Dispose();
-            _latencyTestCts = null;
-            // La corrida del bus también muestra el 3·2·1: sin esto el onboarding visual
-            // quedaba dibujado para siempre al terminar "Medir en el bus".
-            HideLatencyDemo();
-            SetLatencyTestRunningUi(false);
-        }
-    }
-
-    /// <summary>Fila del resultado del BUS: el piso de cadencia como número principal.</summary>
-    private void RenderBusCadence(BusCadenceResult result)
-    {
-        LatencyTestResultsHost.Children.Clear();
-        var (row, refs) = BuildLatencyTestRow();
-        LatencyTestResultsHost.Children.Add(row);
-
-        var device = CollectLatencyDevices().FirstOrDefault(o =>
-            string.Equals(o.Key, _selectedLatencyKey, StringComparison.OrdinalIgnoreCase));
-        int declaredHz = device is { DetectedKind: InputDeviceKind.Keyboard } ? 1000 : 0;
-        double declaredPeriodMs = declaredHz > 0 ? 1000.0 / declaredHz : 0;
-        double floorHz = result.FloorMs > 0 ? 1000.0 / result.FloorMs : 0;
-
-        refs.Icon.Glyph = "\uE765"; // teclado
-        refs.Name.Text = device?.Name ?? _selectedLatencyKey ?? "";
-        // Único veredicto que se sigue mostrando: no es una calificación, dice QUÉ se midió
-        // (las badges Excelente/Aceptable/Inestable se quitaron del resultado).
-        refs.Verdict.Visibility = Visibility.Visible;
-        refs.VerdictText.Text = I18n.T("Medido en el bus");
-        refs.VerdictText.Foreground = ThemeBrushes.Get("AccentBrush");
-        refs.Verdict.BorderBrush = ThemeBrushes.Get("AccentBrush");
-
-        // Columnas propias del bus, con nombres propios: el PISO de cadencia es el número principal
-        // (la magnitud análoga a la del mouse), MÍN es la transferencia más rápida vista, HOST P99 es
-        // el camino kernel → app y TRANSFERENCIAS es sobre cuántas se calculó todo.
-        //
-        // Por qué NO se muestran el MÁX y el P99 del test continuo: este test no tiene una serie de
-        // intervalos propia. Los huecos entre transferencias dependen de cuánto tardás entre tecla y
-        // tecla, así que su máximo y su p99 son TU ritmo, no una latencia — antes esas dos columnas
-        // quedaban en "—" fijo. Ahora se llenan con las magnitudes que el test sí mide.
-        refs.SetLabels(I18n.T("Piso"), I18n.T("Mín"), I18n.T("Host p99"), I18n.T("Hz"), I18n.T("Transferencias"));
-        refs.Avg.Text = $"{result.FloorMs:0.00} ms";
-        refs.Max.Text = result.MinMs > 0 ? $"{result.MinMs:0.00} ms" : "—";
-        refs.P99.Text = result.HasHostPath ? $"{result.HostP99Ms:0.00} ms" : "—";
-        refs.Hz.Text = floorHz > 0 ? $"{floorHz:0} Hz" : "—";
-        refs.Gaps.Text = result.Reports.ToString();
-
-        var notes = new List<string>();
-        notes.Add(I18n.T("Piso de entrega medido por el kernel (ETW/xHCI) sobre {0} transferencias: cada transferencia del endpoint llega sellada por el controlador, y el piso de esos sellos es la cadencia con la que el teclado ENTREGA informes — la misma magnitud que la cadencia de un mouse. No es la latencia de la tecla (t0 → informe): eso no está en ningún log del sistema.", result.Reports));
-
-        // Camino del host (kernel → app): el tramo del retardo que sí ve el software y el que
-        // tocan los tweaks del sistema. Solo se muestra si el cruce dio suficiente confianza.
-        if (!result.HasHostPath)
-        {
-            // Sin cruce no hay número de host, y una columna vacía sin motivo es justo lo que hacía
-            // ilegible este resultado: se dice por qué falta.
-            notes.Add(I18n.T("Camino del host (kernel → app) sin datos en esta corrida: se muestra con al menos 8 informes emparejados entre la traza del kernel y la llegada a la app. Con pocas pulsaciones no hay con qué cruzar; tecleá más en la próxima medición."));
-        }
-        else
-        {
-            notes.Add(I18n.T("Camino del host (kernel → app): mediana {0:0.00} ms · p99 {1:0.00} ms sobre {2} informes emparejados. Es el retardo entre que el kernel sella la transferencia y que Raw Input la entrega a la app — el tramo que tocan los tweaks del sistema. Incluye el sesgo del volcado ETW (~1 ms, fijo): para comparar A/B es válido porque se cancela; para un número absoluto, restalo mentalmente.", result.HostMedianMs, result.HostP99Ms, result.MatchedReports));
-        }
-        if (declaredHz > 0)
-        {
-            // Solo el piso que ALCANZA el declarado es afirmativo. Un piso más lento es
-            // inconclusivo: con tecleo liviano refleja el ritmo de la mano, no el dispositivo —
-            // culpar al firmware sería mentir (el spike lo midió: tecleo suelto da piso ~23 ms).
-            notes.Add(declaredPeriodMs > 0 && result.FloorMs > declaredPeriodMs * 1.5
-                ? I18n.T("El piso ({0:0.00} ms) quedó más lento que lo declarado ({1:0.###} ms): con tecleo liviano eso refleja tu ritmo, no el dispositivo. Para demostrar su cadencia real, generá transiciones rápidas (aplastá y rodá teclas sin parar) y volvé a medir; si aun así no baja del declarado, ahí sí es firmware.", result.FloorMs, declaredPeriodMs)
-                : I18n.T("Coincide con lo declarado ({0:0.###} ms): el endpoint entrega al nivel de su descriptor.", declaredPeriodMs));
-        }
-        if (result.Reports < 10)
-            notes.Add(I18n.T("Pocas transferencias ({0}): la mediana del piso es más frágil con menos de 10. Corrélo de nuevo y tecleá más durante la ventana.", result.Reports));
-        refs.Compare.Text = string.Join(" ", notes);
-    }
-
-    /// <summary>
-    /// Espacio y Enter son las teclas con las que cualquier control enfocado se ACTIVA, y durante el
-    /// test la tarea del usuario es justamente teclear: con el foco en el botón de la prueba —que
-    /// durante la corrida dice "Cancelar"— la barra espaciadora volvía a disparar su Click y el test
-    /// se cortaba solo. El evento PREVIO (túnel) pasa por la card antes que por el control enfocado,
-    /// así que marcarlo como usado deja esas dos teclas para el test y nada más.
-    ///
-    /// No se pierde medición: el medidor recibe las pulsaciones por Raw Input (RIDEV_INPUTSINK), no
-    /// por este evento de la UI, así que la barra espaciadora igual enciende su tecla en pantalla.
-    /// Fuera de una corrida no se toca nada: Espacio/Enter siguen sirviendo para iniciar el test con
-    /// el teclado.
-    /// </summary>
-    private void OnLatencyCardPreviewKeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (!_latencyTestRunning) return;
-        if (e.Key == Windows.System.VirtualKey.Space || e.Key == Windows.System.VirtualKey.Enter)
-            e.Handled = true;
-    }
-
     private void SetLatencyTestRunningUi(bool running)
     {
         LatencyTestRunButtonLabel.Text = I18n.T(RunButtonLabelKey(running));
         LatencyTestRunButtonIcon.Glyph = running ? "\uE711" : "\uE768";
         LatencyTestProgress.IsActive = running;
         LatencyTestProgress.Visibility = running ? Visibility.Visible : Visibility.Collapsed;
+        // Sin la badge "Sondeo disponible" no hay test: el botón queda apagado (salvo que
+        // esté corriendo, donde debe seguir disponible como "Cancelar").
+        LatencyTestRunButton.IsEnabled = running || SelectedSupportsPolling();
     }
 
     // ===== Trazo en vivo y onboarding visual =====
@@ -1587,7 +1341,7 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
     // ---- Onboarding visual: cuenta regresiva 3·2·1 y el gesto que pide cada periférico ----
 
-    private enum LatencyDemoKind { None, Mouse, Keyboard, Gamepad, Audio }
+    private enum LatencyDemoKind { None, Mouse, Gamepad }
 
     private DispatcherTimer? _latencyDemoTimer;
     private int _latencyDemoRun;      // token anti-carrera: solo la ÚLTIMA demo se dibuja
@@ -1595,47 +1349,15 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     private FrameworkElement? _demoOrbit;   // lo que recorre la órbita: el ícono del mouse o el punto del mando
     private double _demoOrbitSize;          // lado del orbe, para centrarlo SOBRE la órbita
     private double _demoOrbitRadiusX, _demoOrbitRadiusY;
-
-    /// <summary>Una tecla dibujada del teclado en pantalla. Guarda su estado (encendida o no) para
-    /// no repintar en cada tick, y el VKey que la enciende: es el de Windows ('A' = 0x41).</summary>
-    private sealed class DemoKeyCap
-    {
-        public Border Cap = null!;
-        public TextBlock Label = null!;
-        public int VKey;
-        public bool Lit;
-        public long LitUntilMs;
-    }
-
-    private readonly List<DemoKeyCap> _demoCaps = new();
-    private readonly Dictionary<int, DemoKeyCap> _demoCapsByVKey = new();
-
-    // Dispositivos del teclado elegido: el teclado en pantalla solo enciende las teclas del que se
-    // está midiendo (varios handles pueden compartir el mismo VID/PID, como las dos mitades de un
-    // receptor inalámbrico).
-    private HashSet<long> _demoKeyDeviceIds = new();
-
-    // Contadores de diagnóstico del teclado en pantalla (cuentan, no guardan QUÉ tecla): dejan ver en
-    // el log si no llega ninguna pulsación, si el filtro por dispositivo las descarta, o si el
-    // problema es solo visual.
-    private long _demoKeysSeen, _demoKeysLit, _demoKeysFiltered;
-
-    private readonly List<Rectangle> _demoWaves = new();
     private Canvas? _demoStage;
 
-    /// <summary>Qué gesto corresponde al dispositivo elegido: los endpoints de audio también
-    /// tienen su gesto (ondas), así TODOS los tipos de test muestran la cuenta 3·2·1.</summary>
-    private LatencyDemoKind CurrentDemoKind()
+    /// <summary>Qué gesto corresponde al dispositivo elegido: solo mouse y mando tienen test.</summary>
+    private LatencyDemoKind CurrentDemoKind() => EffectiveLatencyKind() switch
     {
-        if (IsAudioKey(_selectedLatencyKey)) return LatencyDemoKind.Audio;
-        return EffectiveLatencyKind() switch
-        {
-            InputDeviceKind.Mouse => LatencyDemoKind.Mouse,
-            InputDeviceKind.Keyboard => LatencyDemoKind.Keyboard,
-            InputDeviceKind.Gamepad => LatencyDemoKind.Gamepad,
-            _ => LatencyDemoKind.None
-        };
-    }
+        InputDeviceKind.Mouse => LatencyDemoKind.Mouse,
+        InputDeviceKind.Gamepad => LatencyDemoKind.Gamepad,
+        _ => LatencyDemoKind.None
+    };
 
     /// <summary>
     /// Cuenta regresiva 3·2·1 y después el gesto. La medición arranca cuando esta tarea
@@ -1644,17 +1366,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     private async Task StartLatencyDemoAsync(LatencyDemoKind kind, CancellationToken token)
     {
         if (kind == LatencyDemoKind.None) return;
-
-        // El medidor tiene que estar ESCUCHANDO: su hilo de mensajes y el registro de Raw Input se
-        // abren en Start(), y hasta ahora el único que lo llamaba era el test continuo (mouse/mando).
-        // Un teclado va por la vía del BUS, que no lo llama: el pump nunca arrancaba, así que no
-        // llegaba ni un WM_INPUT y el teclado en pantalla quedaba muerto (y los sellos de la app
-        // para cruzar con el bus, vacíos). Idempotente.
-        _latencyMonitor.Start();
-
-        // Los dispositivos del teclado elegido se resuelven ANTES de la cuenta regresiva: consultar
-        // el bus puede tardar unos milisegundos y no queremos que se note como un tirón en el 3·2·1.
-        _demoKeyDeviceIds = DemoSelectedDeviceIds();
 
         int run = ++_latencyDemoRun;
         try
@@ -1702,121 +1413,10 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     {
         _latencyDemoTimer?.Stop();
         _latencyDemoTimer = null;
-        // Resumen del teclado en pantalla: se registra aunque no se haya encendido NADA, que es
-        // justo el caso que hay que poder diagnosticar desde el log (cuenta, no guarda qué tecla).
-        if (_demoCaps.Count > 0)
-            _logging.LogDebug($"Test de latencia: teclado en pantalla — pulsaciones leídas {_demoKeysSeen}, encendidas {_demoKeysLit}, descartadas por dispositivo {_demoKeysFiltered} (capturadas por el medidor: {_latencyMonitor.KeysCaptured}).");
-
         _demoOrbit = null;
-        _demoCaps.Clear();
-        _demoCapsByVKey.Clear();
-        _demoKeyDeviceIds.Clear();
-        _demoWaves.Clear();
         _demoStage = null;
         LatencyDemoStage.Content = null;
         LatencyDemoHost.Visibility = Visibility.Collapsed;
-    }
-
-    /// <summary>Cuánto queda encendida una tecla después de apretarla (ms).</summary>
-    private const int DemoKeyLitMs = 320;
-
-    /// <summary>
-    /// Teclado en pantalla del onboarding: la distribución real (números, QWERTY, ASDF, ZXCV y la
-    /// barra espaciadora) y cada tecla se ENCIENDE con la que se apretó de verdad durante la prueba.
-    /// Las pulsaciones llegan por Raw Input, así que se prenden aunque la ventana no tenga el foco.
-    ///
-    /// El ancho de tecla sale del alto/ancho real del recuadro, así en ventanas angostas el teclado
-    /// se achica en vez de salirse, y las filas van escalonadas como las de un teclado de verdad
-    /// (cada una centrada en el escenario).
-    /// </summary>
-    private void BuildDemoKeyboard(double stageW, double stageH)
-    {
-        const double gap = 6;
-
-        // VKey de Windows: letras y dígitos usan su ASCII en mayúscula ('A' = 0x41 = VK_A,
-        // '1' = 0x31 = VK_1) y la barra espaciadora es 0x20. Prohibida aparte: las teclas que no
-        // están dibujadas (Enter, flechas, F1…) no encienden nada, y el dibujo no promete más que
-        // lo que muestra.
-        static (string Label, int VKey, double Units)[] Keys(string chars) =>
-            chars.Select(c => (Label: c.ToString(), VKey: (int)c, Units: 1.0)).ToArray();
-
-        var rows = new List<(string Label, int VKey, double Units)[]>
-        {
-            Keys("1234567890"),
-            Keys("QWERTYUIOP"),
-            Keys("ASDFGHJKL"),
-            Keys("ZXCVBNM"),
-            new[] { (Label: "", VKey: 0x20, Units: 5.0) }, // barra espaciadora: bien ancha
-        };
-
-        // La fila más larga son diez teclas: de ahí sale el ancho de UNA tecla.
-        double unit = Math.Clamp((stageW - 9 * gap) / 10.0, 22, 46);
-        double capH = Math.Round(unit * 0.75);
-        double y = (stageH - (rows.Count * capH + (rows.Count - 1) * gap)) / 2;
-        // Se rehace desde cero: sin esto las teclas de la corrida anterior quedaban en la lista
-        // apuntando a bordes ya retirados (y el mapa podía conservar entradas viejas).
-        _demoCaps.Clear();
-        _demoCapsByVKey.Clear();
-        _demoKeysSeen = 0;
-        _demoKeysLit = 0;
-        _demoKeysFiltered = 0;
-
-        foreach (var row in rows)
-        {
-            double rowWidth = row.Sum(k => k.Units) * unit + (row.Length - 1) * gap;
-            double x = (stageW - rowWidth) / 2;
-            foreach (var key in row)
-            {
-                double capW = key.Units * unit;
-                var label = new TextBlock
-                {
-                    Text = key.Label,
-                    FontSize = Math.Max(10, Math.Round(capH * 0.44)),
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                var cap = new Border
-                {
-                    Width = capW,
-                    Height = capH,
-                    CornerRadius = new CornerRadius(5),
-                    BorderThickness = new Thickness(1),
-                    BorderBrush = ThemeBrushes.Get("SensorGridLineBrush"),
-                    Background = ThemeBrushes.GetSurface("SensorGroupFillBrush"),
-                    Child = label
-                };
-                Canvas.SetLeft(cap, x);
-                Canvas.SetTop(cap, y);
-                _demoStage!.Children.Add(cap);
-
-                var entry = new DemoKeyCap { Cap = cap, Label = label, VKey = key.VKey };
-                _demoCaps.Add(entry);
-                _demoCapsByVKey[key.VKey] = entry;
-                x += capW + gap;
-            }
-            y += capH + gap;
-        }
-    }
-
-    /// <summary>Handles de Raw Input del teclado ELEGIDO (pueden ser varios: un receptor expone más
-    /// de una colección HID). Se resuelven una vez por prueba, no en cada tick.</summary>
-    private HashSet<long> DemoSelectedDeviceIds()
-    {
-        var ids = new HashSet<long>();
-        try
-        {
-            string? key = _selectedLatencyKey;
-            if (string.IsNullOrEmpty(key) || IsAudioKey(key)) return ids;
-            foreach (var device in _latencyMonitor.GetKnownDevices())
-                if (string.Equals(device.Handle, key, StringComparison.OrdinalIgnoreCase)) ids.Add(device.DeviceId);
-        }
-        catch (Exception ex)
-        {
-            _logging.LogWarning($"OverclockUSB: no se pudieron resolver los dispositivos del onboarding visual: {ex.Message}");
-        }
-        return ids;
     }
 
     /// <summary>
@@ -1877,19 +1477,15 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
     private void BuildLatencyDemo(LatencyDemoKind kind)
     {
-        // El recuadro mide 264 px de alto: el escenario se dibuja en la parte central con margen,
-        // así el gesto no queda pegado a los bordes. El teclado en pantalla necesita más ancho (son
-        // diez teclas por fila) y lo toma del ancho REAL del recuadro, así en ventanas angostas se
-        // achica en vez de salirse.
-        bool keyboard = kind == LatencyDemoKind.Keyboard;
-        double stageW = keyboard ? Math.Clamp(LatencyDemoBackdrop.ActualWidth - 40, 300, 540) : 380;
-        double stageH = keyboard ? 200 : 176;
+        // El recuadro mide 264 px de alto: el escenario se dibuja en el centro con margen,
+        // así el gesto no queda pegado a los bordes.
+        const double stageW = 380;
+        const double stageH = 176;
         _demoStage = new Canvas { Width = stageW, Height = stageH, HorizontalAlignment = HorizontalAlignment.Center };
         _latencyDemoTick = 0;
         // El orbe se rehace por corrida: si quedara el de una corrida anterior, el tick seguiría
         // moviendo un elemento ya retirado del escenario (con los radios viejos).
         _demoOrbit = null;
-        _demoWaves.Clear();
 
         if (kind == LatencyDemoKind.Mouse)
         {
@@ -1956,29 +1552,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             };
             _demoStage.Children.Add(_demoOrbit);
         }
-        else if (kind == LatencyDemoKind.Keyboard)
-        {
-            BuildDemoKeyboard(stageW, stageH);
-        }
-        else
-        {
-            // Audio: tres ondas que respiran al ritmo del motor.
-            for (int i = 0; i < 3; i++)
-            {
-                var wave = new Rectangle
-                {
-                    Width = 6,
-                    RadiusX = 3,
-                    RadiusY = 3,
-                    Height = 18,
-                    Fill = ThemeBrushes.Get("AccentBrush")
-                };
-                Canvas.SetLeft(wave, (stageW - 38) / 2 + i * 16);
-                _demoWaves.Add(wave);
-                _demoStage.Children.Add(wave);
-            }
-        }
-
         LatencyDemoHost.Visibility = Visibility.Visible;
         LatencyDemoStage.Content = _demoStage;
         _latencyDemoTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
@@ -2004,55 +1577,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             Canvas.SetTop(_demoOrbit, y - _demoOrbitSize / 2);
         }
 
-        if (_demoCaps.Count > 0)
-        {
-            // Las teclas se encienden con lo que se APRIETA de verdad (Raw Input), no con un ciclo
-            // automático de color: cada una queda prendida un instante y se apaga sola.
-            long now = Environment.TickCount64;
-            foreach (var (vkey, deviceId) in _latencyMonitor.DrainKeyPresses())
-            {
-                _demoKeysSeen++;
-                if (!_demoCapsByVKey.TryGetValue(vkey, out var pressed)) continue;
-                // Si el test mide un teclado concreto, solo encienden SUS pulsaciones (el informe
-                // trae el dispositivo). Sin dispositivo identificado todavía se acepta cualquiera,
-                // para que el dibujo no quede muerto por un dato que aún no llegó.
-                // Sin dispositivo (handle 0) el informe NO se puede atribuir a ningún aparato, así
-                // que no puede ser "de otro teclado": descartarlo solo dejaba el dibujo muerto.
-                if (deviceId != 0 && _demoKeyDeviceIds.Count > 0 && !_demoKeyDeviceIds.Contains(deviceId))
-                {
-                    _demoKeysFiltered++;
-                    continue;
-                }
-                _demoKeysLit++;
-                pressed.LitUntilMs = now + DemoKeyLitMs;
-            }
-
-            foreach (var cap in _demoCaps)
-            {
-                bool lit = cap.LitUntilMs > now;
-                if (lit == cap.Lit) continue; // nada que repintar
-                cap.Lit = lit;
-                // El encabezado de la grilla es una superficie (SensorGroupFillBrush): se pide por
-                // GetSurface —vidrio incluido— cuando no está encendido, y por el sólido del acento
-                // cuando lo está.
-                cap.Cap.Background = lit
-                    ? ThemeBrushes.Get("AccentBrush")
-                    : ThemeBrushes.GetSurface("SensorGroupFillBrush");
-                cap.Cap.BorderBrush = ThemeBrushes.Get(lit ? "AccentBrush" : "SensorGridLineBrush");
-                cap.Label.Foreground = ThemeBrushes.Get(lit ? "AccentForegroundBrush" : "SecondaryTextBrush");
-            }
-        }
-
-        if (_demoWaves.Count > 0)
-        {
-            for (int i = 0; i < _demoWaves.Count; i++)
-            {
-                double phase = _latencyDemoTick * 0.12 + i * 0.9;
-                double h = 16 + Math.Abs(Math.Sin(phase)) * 40;
-                _demoWaves[i].Height = h;
-                Canvas.SetTop(_demoWaves[i], (_demoStage.Height - h) / 2);
-            }
-        }
     }
 
     private void SetLatencyTestStatus(string text)
@@ -2068,6 +1592,9 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
     private void SetLatencyCardTexts()
     {
         LatencyTestTitle.Text = I18n.T("Test de latencia");
+        // Con la lista armada solo con dispositivos medibles, la caja puede quedar sin
+        // selección: el placeholder explica por qué en vez de mostrarse vacía.
+        LatencyTestDeviceSelector.PlaceholderText = I18n.T("Sin sondeo disponible");
         LatencyLiveCaptionText.Text = I18n.T("En vivo");
         LatencyLiveMinLabel.Text = I18n.T("Mín");
         LatencyLiveSamplesLabel.Text = I18n.T("Muestras");
@@ -2085,22 +1612,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
         if (string.IsNullOrEmpty(_selectedLatencyKey)) return;
 
-        // La última corrida de audio se muestra aparte: su clave ("audio:<id>") no existe en
-        // el espacio VID/PID del test de periféricos.
-        if (IsAudioKey(_selectedLatencyKey))
-        {
-            if (_lastAudioRun is { } audioRun && string.Equals(_selectedLatencyKey["audio:".Length..], audioRun.Endpoint.Id, StringComparison.OrdinalIgnoreCase))
-            {
-                SetLatencyTestStatus($"{I18n.T("Última prueba")}: {audioRun.Timestamp.ToLocalTime():g}");
-                RenderAudioLatencyResult(audioRun);
-            }
-            else
-            {
-                SetLatencyTestStatus("");
-            }
-            return;
-        }
-
         var stored = _lastRun;
         var result = stored?.Results.FirstOrDefault(r => string.Equals(r.Handle, _selectedLatencyKey, StringComparison.OrdinalIgnoreCase));
         if (result == null)
@@ -2111,65 +1622,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
         SetLatencyTestStatus($"{I18n.T("Última prueba")}: {result.Timestamp.ToLocalTime():g}");
         RenderLatencyResult(result, null);
-    }
-
-    private void RenderAudioLatencyResult(AudioLatencyRun run)
-    {
-        LatencyTestResultsHost.Children.Clear();
-        var (row, refs) = BuildLatencyTestRow();
-        LatencyTestResultsHost.Children.Add(row);
-
-        refs.Icon.Glyph = run.Endpoint.IsInput ? "\uE720" : "\uE7F6";
-        refs.Name.Text = run.Endpoint.Name;
-        var (vText, vBrush) = run.RoundTrip is { } rt
-            ? rt.Verdict switch
-            {
-                AudioRoundTripVerdict.Excellent => (I18n.T("Excelente"), ThemeBrushes.Get("MetricTempBrush")),
-                AudioRoundTripVerdict.Good => (I18n.T("Aceptable"), ThemeBrushes.Get("MetricPowerBrush")),
-                AudioRoundTripVerdict.High => (I18n.T("Latencia alta"), ThemeBrushes.Get("ErrorBrush")),
-                AudioRoundTripVerdict.InsufficientData => (I18n.T("Datos insuficientes"), ThemeBrushes.Get("MutedBrush")),
-                _ => (I18n.T("Sin retorno"), ThemeBrushes.Get("MutedBrush"))
-            }
-            : (I18n.T("Datos insuficientes"), ThemeBrushes.Get("MutedBrush"));
-        refs.VerdictText.Text = vText;
-        refs.VerdictText.Foreground = vBrush;
-        refs.Verdict.BorderBrush = vBrush;
-
-        // Columnas del audio, con nombres propios: la IDA Y VUELTA es el número de la latencia y su
-        // etiqueta dice en qué MODO se midió. Un loopback interno NO es la latencia del dispositivo, y
-        // sin decirlo parecía que los parlantes de un monitor y unos auriculares inalámbricos medían
-        // lo mismo — que es exactamente lo que miden: el motor compartido de Windows.
-        bool rtSoftware = run.RoundTrip?.Mode == AudioRoundTripMode.Software;
-        refs.SetLabels(rtSoftware ? I18n.T("Ida y vuelta (software)") : I18n.T("Ida y vuelta (física)"),
-            I18n.T("Mejor"), I18n.T("Peor"), I18n.T("Motor"), I18n.T("Muestras"));
-        refs.Avg.Text = run.RoundTrip is { } rtr ? $"{rtr.MedianMs:0.00} ms" : "—";
-        // Mejor y Peor son los extremos de la serie de intentos: antes el MÍNIMO viajaba bajo la
-        // etiqueta "P99", que nombra lo peor, no lo mejor.
-        refs.Max.Text = run.RoundTrip is { } rtm ? $"{rtm.MinMs:0.00} ms" : "—";
-        refs.P99.Text = run.RoundTrip is { } rtp ? $"{rtp.MaxMs:0.00} ms" : "—";
-        refs.Hz.Text = run.Engine is { } eng ? $"{1000.0 / Math.Max(eng.PeriodMs, 0.001):0} Hz" : "—";
-        refs.Gaps.Text = run.Engine?.Samples.ToString() ?? "—";
-
-        var notes = new List<string>();
-        if (run.RoundTrip is { } rtd)
-        {
-            // El MODO decide el texto: en loopback interno no hay convertidores del dispositivo en el
-            // medio, así que afirmar "es la latencia que sentís" sería falso — y es justo el caso en el
-            // que dos dispositivos distintos dan el mismo número.
-            notes.Add(rtd.Mode == AudioRoundTripMode.Software
-                ? I18n.T("Ida y vuelta MEDIDA POR LOOPBACK INTERNO: {0:0.00} ms de mediana sobre {1} intentos (el primer impulso se descarta). Se captura el mismo endpoint de salida, así que es el camino de SOFTWARE (motor + búferes) y NO incluye el DAC, el amplificador, el inalámbrico ni el parlante: no es la latencia que sentís. Para medirla de verdad hace falta una vuelta física: cable de salida a entrada, o un micrófono frente al parlante.", rtd.MedianMs, rtd.DetectedAttempts)
-                : I18n.T("Ida y vuelta FÍSICA: {0:0.00} ms de mediana sobre {1} intentos (el primer impulso se descarta). El sonido salió por la salida y volvió por una entrada, así que incluye DAC, amplificador, aire y ADC: es la latencia que sentís al jugar o en una llamada.", rtd.MedianMs, rtd.DetectedAttempts));
-            if (rtd.Verdict == AudioRoundTripVerdict.Good) notes.Add(I18n.T("La ida y vuelta está en el rango típico del hardware de audio: no hay nada que apurar acá."));
-        }
-        else
-        {
-            notes.Add(I18n.T("La ida y vuelta no pudo detectar el retorno: subí el volumen del dispositivo y volvé a medir."));
-        }
-        if (run.Engine is { } en)
-        {
-            notes.Add(I18n.T("Motor (WASAPI): mediana {0:0.00} ms · período {1:0.00} ms · búfer {2:0.0} ms{3}.", en.MedianMs, en.PeriodMs, en.BufferMs, en.EstimatedFromBuffer ? " (estimada del búfer: el driver no reporta latencia)" : ""));
-        }
-        refs.Compare.Text = string.Join(" ", notes);
     }
 
     private void RenderLatencyResult(InputLatencyTestResult result, InputLatencyTestResult? previous)
@@ -2204,25 +1656,6 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         public TextBlock P99 = null!;
         public TextBlock Gaps = null!;
         public TextBlock Compare = null!;
-
-        // Etiquetas de las columnas: el resultado del BUS mide otras magnitudes y necesita nombrarlas
-        // (Piso, Mín, Host p99, Transferencias). Con la etiqueta prestada, una columna que no aplica
-        // queda mentirosa o muerta.
-        public TextBlock LabelAvg = null!;
-        public TextBlock LabelMax = null!;
-        public TextBlock LabelP99 = null!;
-        public TextBlock LabelHz = null!;
-        public TextBlock LabelGaps = null!;
-
-        /// <summary>Renombra las columnas de la fila: cada medición tiene sus propias magnitudes.</summary>
-        public void SetLabels(string avg, string max, string p99, string hz, string gaps)
-        {
-            LabelAvg.Text = avg.ToUpperInvariant();
-            LabelMax.Text = max.ToUpperInvariant();
-            LabelP99.Text = p99.ToUpperInvariant();
-            LabelHz.Text = hz.ToUpperInvariant();
-            LabelGaps.Text = gaps.ToUpperInvariant();
-        }
     }
 
     private static (StackPanel Row, LatencyTestRowRefs Refs) BuildLatencyTestRow()
@@ -2261,11 +1694,11 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         var metrics = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 18 };
         (string Label, TextBlock Caption, TextBlock Target)[] cols =
         {
-            ("AVG", refs.LabelAvg = new TextBlock(), refs.Avg = new TextBlock()),
-            ("MAX", refs.LabelMax = new TextBlock(), refs.Max = new TextBlock()),
-            ("P99", refs.LabelP99 = new TextBlock(), refs.P99 = new TextBlock()),
-            ("HZ",  refs.LabelHz  = new TextBlock(), refs.Hz  = new TextBlock()),
-            (I18n.T("Huecos"), refs.LabelGaps = new TextBlock(), refs.Gaps = new TextBlock()),
+            ("AVG", new TextBlock(), refs.Avg = new TextBlock()),
+            ("MAX", new TextBlock(), refs.Max = new TextBlock()),
+            ("P99", new TextBlock(), refs.P99 = new TextBlock()),
+            ("HZ",  new TextBlock(), refs.Hz  = new TextBlock()),
+            (I18n.T("Huecos"), new TextBlock(), refs.Gaps = new TextBlock()),
         };
         foreach (var (label, caption, target) in cols)
         {
@@ -2574,14 +2007,20 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
 
     // ===================== Listado =====================
 
-    private async Task RefreshDevicesAsync(bool initial = false)
+    /// <param name="preserveStatus">
+    /// No toca StatusText: el refresco posterior a "Aplicar" borraba el resultado
+    /// (incluso el error) y el usuario no llegaba a leerlo. Las llamadas normales
+    /// del botón Refrescar siguen mostrando su propio estado.
+    /// </param>
+    private async Task RefreshDevicesAsync(bool initial = false, bool preserveStatus = false)
     {
         if (_busy) return;
         _busy = true;
         try
         {
             SetBusy(true);
-            Feedback.Running(StatusText, I18n.T(initial ? "Buscando dispositivos USB..." : "Refrescando dispositivos..."), persistent: true);
+            if (!preserveStatus)
+                Feedback.Running(StatusText, I18n.T(initial ? "Buscando dispositivos USB..." : "Refrescando dispositivos..."), persistent: true);
             var devices = await _usb.GetDevicesAsync();
             _devices = devices;
             RebuildRows();
@@ -2614,11 +2053,11 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             else if (_devices.Count > 0)
             {
                 _logging.LogInfo($"OverclockUSB: {_devices.Count} dispositivos (hijos con nombre: {childFilled}, controladoras: {hostFilled})");
-                Feedback.Set(StatusText, null);
+                if (!preserveStatus) Feedback.Set(StatusText, null);
             }
             else
             {
-                Feedback.Set(StatusText, null);
+                if (!preserveStatus) Feedback.Set(StatusText, null);
             }
         }
         catch (Exception ex)
@@ -3121,6 +2560,17 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             });
         }
 
+        if (device.IsComposite)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = I18n.T("Este dispositivo USB es compuesto: el ajuste afecta a todas sus funciones y al reiniciarlo pueden dejar de responder temporalmente. Tené otro dispositivo de entrada disponible."),
+                FontSize = 11,
+                Foreground = Feedback.WarningBrush,
+                TextWrapping = TextWrapping.Wrap
+            });
+        }
+
         if (device.Kind == UsbDeviceKind.Bluetooth)
         {
             // El filtro y el intervalo se aplican sobre la RADIO, no sobre el periférico
@@ -3152,7 +2602,7 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             PrimaryButtonText = I18n.T("Aplicar y reiniciar"),
             SecondaryButtonText = I18n.T("Restaurar de fábrica"),
             CloseButtonText = I18n.T("Cancelar"),
-            DefaultButton = ContentDialogButton.Primary
+            DefaultButton = device.IsComposite ? ContentDialogButton.Close : ContentDialogButton.Primary
         };
 
         var result = await dialog.ShowAsync();
@@ -3188,7 +2638,15 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
             bool ok = await _usb.SetRateAsync(device.InstanceId, rateHz);
             if (!ok)
             {
-                Feedback.Error(StatusText, I18n.T("No se pudo aplicar la tasa. Asegurate de que los componentes estén instalados."));
+                // El motivo real (dispositivo no encontrado, Device Parameters
+                // inaccesible, variante no disponible…) ya está en el servicio.
+                // El mensaje genérico hacía parecer que faltaba instalar algo.
+                string? reason = _usb.LastApplyError;
+                Feedback.Error(StatusText,
+                    string.IsNullOrWhiteSpace(reason)
+                        ? I18n.T("No se pudo aplicar la tasa. Asegurate de que los componentes estén instalados.")
+                        : I18n.T(reason),
+                    persistent: true);
                 return;
             }
 
@@ -3214,18 +2672,60 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
                 return;
             }
 
+            // LowerFilters y el servicio permiten detectar algunos fallos de carga,
+            // pero no prueban que el filtro esté unido a esta pila ni miden los Hz.
+            // PnP puede tardar en volver a enumerar la interfaz y en arrancar el filtro.
+            var (filterOn, driverRunning) = await WaitForFilterStateAsync(device.InstanceId);
 
-            // La tasa efectiva de polling NO se puede medir desde modo usuario leyendo el
-            // descriptor: el filtro parchea los IRPs en vivo y el descriptor crudo sigue
-            // mostrando la tasa nativa (el propio autor sugiere verificar con un
-            // "Mouse Rate Checker"). La verificación honesta acá es de SALUD: el driver
-            // cargó y el dispositivo quedó operativo. Si el descriptor coincide con lo
-            // pedido, ya era la tasa nativa del dispositivo.
-            int descriptorHz = verify.EffectiveHz;
-            if (descriptorHz == rateHz)
-                Feedback.Success(StatusText, I18n.T("Tasa aplicada: {0} Hz. El dispositivo se reinició.", rateHz), persistent: true);
-            else
-                Feedback.Success(StatusText, I18n.T("Tasa aplicada: {0} Hz. El dispositivo se reinició. (El descriptor sigue reportando {1} Hz: el filtro fuerza el sondeo en vivo; verificalo con un medidor de polling.)", rateHz, descriptorHz > 0 ? descriptorHz : rateHz), persistent: true);
+            if (!filterOn || !driverRunning)
+            {
+                _logging.LogWarning(
+                    $"OverclockUSB: tras aplicar {rateHz} Hz el filtro quedó {(filterOn ? "adherido" : "sin adherir")} " +
+                    $"y el servicio {(driverRunning ? "corriendo" : "detenido")}.");
+
+                // El build que parchea USBPORT/USBXHCI no carga en algunos Windows
+                // nuevos. NoPatch no parchea y es el que el autor garantiza para bajar
+                // Hz y para Full Speed: se reintenta una vez con esa variante.
+                if (rateHz <= 1000)
+                {
+                    Feedback.Running(StatusText, I18n.T("El driver no se cargó; probando la variante compatible..."), persistent: true);
+                    if (await _usb.SwitchToNoPatchAsync())
+                    {
+                        bool retryOk = await _usb.SetRateAsync(device.InstanceId, rateHz);
+                        bool retryRestarted = retryOk && await _usb.RestartDeviceAsync(device.InstanceId);
+                        var retryVerify = await _usb.VerifyDeviceAsync(device.InstanceId);
+
+                        if (retryVerify.DeviceProblemCode is int retryProblem && retryProblem != 0)
+                        {
+                            Feedback.Running(StatusText, I18n.T("El dispositivo quedó con un problema; restaurando..."), persistent: true);
+                            await _usb.RestoreDeviceAsync(device.InstanceId);
+                            await _usb.RestartDeviceAsync(device.InstanceId);
+                            Feedback.Error(StatusText, I18n.T("La tasa {0} Hz dejó el dispositivo sin funcionar y se restauró a su estado anterior.", rateHz), persistent: true);
+                            return;
+                        }
+
+                        var (retryFilter, retryRunning) = await WaitForFilterStateAsync(device.InstanceId);
+
+                        if (retryOk && retryRestarted && retryFilter && retryRunning)
+                        {
+                            _logging.LogInfo($"OverclockUSB: {rateHz} Hz aplicados con la variante NoPatch.");
+                            Feedback.Success(StatusText, I18n.T("Tasa configurada: {0} Hz. Verificá la frecuencia real con un medidor de polling.", rateHz), persistent: true);
+                            return;
+                        }
+
+                        _logging.LogWarning(
+                            $"OverclockUSB: el reintento con NoPatch tampoco quedó operativo " +
+                            $"(ok={retryOk}, restart={retryRestarted}, filtro={retryFilter}, servicio={retryRunning}, " +
+                            $"problema={retryVerify.DeviceProblemCode}).");
+                    }
+                }
+
+                Feedback.Error(StatusText, I18n.T("El cambio de {0} Hz quedó guardado, pero el driver no se cargó. Reiniciá Windows; si sigue, reinstalá el componente desde Configuración → Drivers.", rateHz), persistent: true);
+                return;
+            }
+
+            // Ni el descriptor ni el estado global del servicio miden los informes reales.
+            Feedback.Success(StatusText, I18n.T("Tasa configurada: {0} Hz. Verificá la frecuencia real con un medidor de polling.", rateHz), persistent: true);
         }
         catch (Exception ex)
         {
@@ -3235,7 +2735,43 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         finally
         {
             _busy = false;
-            await RefreshDevicesAsync();
+            // El resultado de la aplicación tiene que quedar visible: el refresco
+            // no debe reemplazarlo por "Refrescando dispositivos..." ni borrarlo.
+            await RefreshDevicesAsync(preserveStatus: true);
+        }
+    }
+
+    /// <summary>
+    /// Espera a que PnP termine de re-enumerar y el filtro arranque. Un restart
+    /// devuelve antes de que la pila esté lista; leer una sola vez daba falsos
+    /// negativos y podía disparar el fallback a NoPatch sin necesidad.
+    /// </summary>
+    private async Task<(bool FilterOn, bool Running)> WaitForFilterStateAsync(string instanceId)
+    {
+        bool filterOn = false, running = false;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            filterOn = await IsFilterAttachedAsync(instanceId);
+            running = _usb.IsFilterServiceRunning();
+            if (filterOn && running) break;
+            await Task.Delay(attempt == 0 ? 300 : 500);
+        }
+        return (filterOn, running);
+    }
+
+    /// <summary>Relee el bus y dice si el filtro quedó en LowerFilters del dispositivo.</summary>
+    private async Task<bool> IsFilterAttachedAsync(string instanceId)
+    {
+        try
+        {
+            var devices = await _usb.GetDevicesAsync();
+            return devices.FirstOrDefault(d =>
+                string.Equals(d.InstanceId, instanceId, StringComparison.OrdinalIgnoreCase))?.FilterOn == true;
+        }
+        catch (Exception ex)
+        {
+            _logging.LogDebug($"OverclockUSB: no se pudo releer el filtro de {instanceId}: {ex.Message}");
+            return false;
         }
     }
 
@@ -3282,7 +2818,7 @@ public sealed partial class OverclockUsbPage : Page, IBackgroundPausable
         finally
         {
             _busy = false;
-            await RefreshDevicesAsync();
+            await RefreshDevicesAsync(preserveStatus: true);
         }
     }
 

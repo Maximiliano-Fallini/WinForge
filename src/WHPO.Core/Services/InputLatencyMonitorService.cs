@@ -97,14 +97,6 @@ public sealed class InputLatencyMonitorService : IDisposable
     private volatile bool _running;
     private volatile bool _registered;
 
-    // Últimas teclas apretadas (VKey + dispositivo), para que la UI pueda pintar la tecla en
-    // pantalla. Vive SOLO en memoria y se consume en el acto: no se registra en el log, no se
-    // guarda en disco y no se acumula (el texto que se escribe no se reconstruye ni se conserva).
-    private readonly List<(int VKey, long DeviceId)> _recentKeys = new();
-    private readonly object _keyLock = new();
-    private long _keysCaptured;      // contador para diagnóstico (no guarda QUÉ tecla)
-    private volatile bool _keyReadWarned;
-
     // Ventana de estadísticas: 6000 intervalos ≈ 6 s a 1000 Hz (48 s a 125 Hz).
     private const int WindowSize = 6000;
 
@@ -411,45 +403,6 @@ public sealed class InputLatencyMonitorService : IDisposable
         return result;
     }
 
-    /// <summary>
-    /// Cuántos sellos lleva acumulados la captura para ese dispositivo. Permite cortar la
-    /// ventana del bus en cuanto hay datos suficientes, en vez de esperar un tiempo fijo
-    /// (el usuario sigue usando la PC y la medición termina sola).
-    /// </summary>
-    public int GetSamplingStampCount(string deviceKey)
-    {
-        // Varias entradas pueden compartir la clave (mouse y teclado del mismo receptor): se
-        // devuelve la que MÁS sellos juntó, que es la que está reportando de verdad. Quedarse con
-        // la primera podía devolver 0 y hacer que la ventana del bus creyera que no hay informes.
-        int max = 0;
-        foreach (var kvp in _byHandle)
-        {
-            if (!string.Equals(kvp.Value.Handle, deviceKey, StringComparison.OrdinalIgnoreCase)) continue;
-            int count = kvp.Value.SampledStampCount;
-            if (count > max) max = count;
-        }
-        return max;
-    }
-
-    /// <summary>
-    /// Sellos QPC (µs) de llegada de cada informe del dispositivo con esa clave, cerrando la
-    /// captura (par de EndSampling, para el cruce con la traza ETW del bus). Lista vacía si el
-    /// dispositivo no mandó nada o no tiene captura activa.
-    /// </summary>
-    public long[] EndSamplingStamps(string deviceKey)
-    {
-        // Igual que GetSamplingStampCount: con varias entradas bajo la misma clave, la del cruce
-        // con la traza del bus es la que trae sellos (las demás devuelven vacío).
-        long[] best = Array.Empty<long>();
-        foreach (var kvp in _byHandle)
-        {
-            if (!string.Equals(kvp.Value.Handle, deviceKey, StringComparison.OrdinalIgnoreCase)) continue;
-            var stamps = kvp.Value.EndSamplingStamps();
-            if (stamps.Length > best.Length) best = stamps;
-        }
-        return best;
-    }
-
     /// <summary>Borra TODO (dispositivos y estadísticas). Se usa al cerrar el panel:
     /// al reabrir, el medidor arranca de cero en vez de arrastrar lo anterior.</summary>
     public void ClearAll() => _byHandle.Clear();
@@ -491,13 +444,6 @@ public sealed class InputLatencyMonitorService : IDisposable
         private readonly double[] _testBuf = new double[TestMaxIntervals];
         private int _testHead;    // próxima posición a escribir
         private int _testCount;
-        // Sellos QPC absolutos (µs) de cada llegada durante el test. Sirve para cruzar con la
-        // traza ETW del bus (que trae el sello del KERNEL para cada transferencia): la
-        // diferencia kernel → app es el tramo de host, la parte del camino que los tweaks
-        // pueden tocar. Techo = TestMaxIntervals + 1 sellos.
-        private readonly long[] _testStamps = new long[TestMaxIntervals + 1];
-        private int _stampHead;
-        private int _stampCount;
         public volatile bool Sampling;
 
         public void BeginSampling()
@@ -506,8 +452,6 @@ public sealed class InputLatencyMonitorService : IDisposable
             {
                 _testHead = 0;
                 _testCount = 0;
-                _stampHead = 0;
-                _stampCount = 0;
                 Sampling = true;
             }
         }
@@ -520,17 +464,6 @@ public sealed class InputLatencyMonitorService : IDisposable
             if (_testCount < TestMaxIntervals) _testCount++;
         }
 
-        /// <summary>Guarda el sello QPC (µs) de la llegada, con el mismo descarte de huecos
-        /// que la estadística: un informe tras una pausa no representa el camino del host.</summary>
-        private void AppendStamp(long arrivalUs, double deltaMs)
-        {
-            if (!Sampling) return;
-            if (deltaMs > 1000) return; // hueco (ventana congelada): el sello viejo no cruza bien
-            _testStamps[_stampHead] = arrivalUs;
-            _stampHead = (_stampHead + 1) % _testStamps.Length;
-            if (_stampCount < _testStamps.Length) _stampCount++;
-        }
-
         /// <summary>Cierra la captura y devuelve los intervalos acumulados en orden
         /// cronológico (copia).</summary>
         public double[] EndSampling()
@@ -539,32 +472,6 @@ public sealed class InputLatencyMonitorService : IDisposable
             {
                 Sampling = false;
                 return TestSnapshot();
-            }
-        }
-
-        /// <summary>Sellos acumulados en la captura en curso (para cortar la ventana).</summary>
-        public int SampledStampCount { get { lock (_lock) return _stampCount; } }
-
-        /// <summary>Cierra la captura y devuelve los sellos QPC (µs) de llegada de cada
-        /// informe, en orden cronológico (copia). Par de EndSampling para el cruce con ETW.</summary>
-        public long[] EndSamplingStamps()
-        {
-            lock (_lock)
-            {
-                Sampling = false;
-                if (_stampCount == 0) return Array.Empty<long>();
-                var arr = new long[_stampCount];
-                if (_stampCount == _testStamps.Length)
-                {
-                    int tail = _stampHead;
-                    Array.Copy(_testStamps, tail, arr, 0, _testStamps.Length - tail);
-                    Array.Copy(_testStamps, 0, arr, _testStamps.Length - tail, tail);
-                }
-                else
-                {
-                    Array.Copy(_testStamps, arr, _stampCount);
-                }
-                return arr;
             }
         }
 
@@ -631,14 +538,7 @@ public sealed class InputLatencyMonitorService : IDisposable
                 long last = _lastArrivalUs;
                 _lastArrivalUs = arrivalUs;
                 LastArrivalUs = arrivalUs;
-                if (last == 0)
-                {
-                    // Primer informe: sin intervalo aún, pero el sello entra al buffer de
-                    // cruce (siempre hay un kernel→app para medir) y el intervalo 0 no
-                    // ensucia la estadística.
-                    AppendStamp(arrivalUs, 0);
-                    return;
-                }
+                if (last == 0) return; // primer informe: todavía no hay intervalo
                 double deltaMs = (arrivalUs - last) / 1000.0;
                 // Hueco = ventana congelada/sleep del hilo: fuera de la estadística.
                 if (deltaMs <= 0 || deltaMs > 1000) return;
@@ -654,7 +554,6 @@ public sealed class InputLatencyMonitorService : IDisposable
                 if (_count < WindowSize) _count++;
                 // Captura del test: mismo intervalo, acumulador sin vueltas.
                 AppendTest(deltaMs);
-                AppendStamp(arrivalUs, deltaMs);
             }
         }
 
@@ -759,17 +658,9 @@ public sealed class InputLatencyMonitorService : IDisposable
 
             long handle = header.hDevice.ToInt64();
 
-            // 2) Si el informe es de un TECLADO, se guarda QUÉ tecla se apretó: es lo que enciende la
-            // tecla correspondiente en el teclado en pantalla del onboarding visual. Va ANTES del
-            // descarte de los informes sin dispositivo porque la entrada INYECTADA (y alguna
-            // sintética) llega con handle 0: no sirve para MEDIR —no se puede atribuir a ningún
-            // aparato—, pero el dato de la tecla sí es válido y la UI sabe descartarlo por
-            // dispositivo. Con la captura antes del descarte, el camino completo queda verificable.
-            if (header.dwType == 1) CaptureKeyPress(lParam, handle); // 1 = RIM_TYPEKEYBOARD
-
             if (handle == 0) return; // informe sin dispositivo asociado: no sirve para medir
 
-            // 3) Marca de llegada en µs (QPC): el intervalo entre llegadas consecutivas
+            // 2) Marca de llegada en µs (QPC): el intervalo entre llegadas consecutivas
             // del MISMO dispositivo aproxima el período de polling real. Los informes
             // llegan al sink en orden y sin pasar por la cola de foco, así que el
             // jitter agregado es mínimo (µs).
@@ -779,77 +670,6 @@ public sealed class InputLatencyMonitorService : IDisposable
             samples.AddArrival(arrivalUs);
         }
         catch { /* un informe malo no mata al medidor */ }
-    }
-
-    /// <summary>
-    /// Lee la tecla del informe (RAWINPUT.data.keyboard) y la encola para la UI. Solo se toman las
-    /// PULSACIONES: el bit 0 de Flags (RI_KEY_BREAK) marca el soltado, y VKey 0xFF es un evento sin
-    /// tecla real.
-    ///
-    /// Privacidad: de un teclado se guarda únicamente el código de tecla y el dispositivo, en
-    /// memoria, para pintar la tecla del onboarding; se vacía en cada consulta de la UI (33 ms) y
-    /// nunca se escribe en el log ni en disco. No hay captura de texto ni se conserva historial.
-    /// </summary>
-    private void CaptureKeyPress(IntPtr lParam, long deviceId)
-    {
-        try
-        {
-            uint size = 0;
-            if (GetRawInputData(lParam, RID_INPUT, IntPtr.Zero, ref size, RawInputHeaderSize) == unchecked((uint)-1))
-            {
-                WarnKeyReadOnce();
-                return;
-            }
-            IntPtr buf = Marshal.AllocHGlobal((int)size);
-            try
-            {
-                if (GetRawInputData(lParam, RID_INPUT, buf, ref size, RawInputHeaderSize) == unchecked((uint)-1))
-                {
-                    WarnKeyReadOnce();
-                    return;
-                }
-                var kb = Marshal.PtrToStructure<RAWKEYBOARD>(IntPtr.Add(buf, (int)RawInputHeaderSize));
-                if ((kb.Flags & 1) != 0) return;  // soltado
-                if (kb.VKey == 0xFF) return;      // evento sin tecla
-                lock (_keyLock)
-                {
-                    _recentKeys.Add((kb.VKey, deviceId));
-                    // Tope: la UI consume cada 33 ms, así que una cola larga solo puede venir de un
-                    // problema (UI congelada). Se descartan las más viejas en vez de crecer sin fin.
-                    if (_recentKeys.Count > 64) _recentKeys.RemoveRange(0, _recentKeys.Count - 64);
-                }
-                Interlocked.Increment(ref _keysCaptured);
-            }
-            finally { Marshal.FreeHGlobal(buf); }
-        }
-        catch { /* un informe malo no mata al medidor */ }
-    }
-
-    /// <summary>Cantidad de pulsaciones capturadas desde que arrancó el medidor. Es el contador que
-    /// permite diagnosticar sin guardar QUÉ tecla: 0 significa que no llega ningún informe de
-    /// teclado, y un número que sube con ninguno encendido apunta a la UI.</summary>
-    public long KeysCaptured => Interlocked.Read(ref _keysCaptured);
-
-    /// <summary>Aviso ÚNICO (no por tecla) si el informe no se pudo leer: sin esto, un fallo de la
-    /// API deja el teclado en pantalla muerto sin decir nada en ningún lado.</summary>
-    private void WarnKeyReadOnce()
-    {
-        if (_keyReadWarned) return;
-        _keyReadWarned = true;
-        _logging.LogWarning("InputLatency: no se pudo leer el informe de una tecla (GetRawInputData): el teclado en pantalla del test no se va a encender.");
-    }
-
-    /// <summary>Teclas apretadas desde la última consulta (vacío si no hubo). Quien llama las usa
-    /// para pintar la tecla en pantalla; el dato NO se registra en ningún log.</summary>
-    public List<(int VKey, long DeviceId)> DrainKeyPresses()
-    {
-        lock (_keyLock)
-        {
-            if (_recentKeys.Count == 0) return new List<(int VKey, long DeviceId)>();
-            var copy = new List<(int VKey, long DeviceId)>(_recentKeys);
-            _recentKeys.Clear();
-            return copy;
-        }
     }
 
     /// <summary>Nombre legible de un handle Raw Input (una consulta por dispositivo nuevo).</summary>
@@ -1259,7 +1079,6 @@ public sealed class InputLatencyMonitorService : IDisposable
 
     private const uint WM_INPUT = 0x00FF;
     private const uint RID_HEADER = 0x10000005;
-    private const uint RID_INPUT = 0x10000003;
     private const uint RIDI_DEVICENAME = 0x20000007;
 
     // RIDI_DEVICEINFO llena RID_DEVICE_INFO: para un HID trae VID/PID y la colección de nivel
@@ -1287,20 +1106,6 @@ public sealed class InputLatencyMonitorService : IDisposable
         public uint dwSize;
         public IntPtr hDevice;
         public IntPtr wParam;
-    }
-
-    /// <summary>RAWINPUT.data.keyboard: interesan VKey (qué tecla) y Flags (bit 0 = soltado). El
-    /// campo ExtraInformation va alineado a 8, así que la estructura mide los 24 bytes que espera
-    /// la API en x64.</summary>
-    [StructLayout(LayoutKind.Sequential)]
-    private struct RAWKEYBOARD
-    {
-        public ushort MakeCode;
-        public ushort Flags;
-        public ushort Reserved;
-        public ushort VKey;
-        public uint Message;
-        public ulong ExtraInformation;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

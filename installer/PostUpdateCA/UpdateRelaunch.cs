@@ -117,11 +117,48 @@ namespace PostUpdateCA
                 }
             }
 
+            // msiexec entrega el valor de PROPERTY_PATH SIN las comillas que el
+            // actualizador puso en la línea de comandos. Si la app está en
+            // "C:\Program Files\WinForge", cortar por el primer espacio devolvía
+            // "C:\Program" y el relanzamiento se descartaba en silencio.
+            // La ruta del ejecutable termina en ".exe"; se corta ahí y no en el
+            // primer espacio.
+            var exeEnd = FindExecutableEnd(text);
+            if (exeEnd > 0)
+            {
+                arguments = text.Substring(exeEnd).Trim();
+                return text.Substring(0, exeEnd);
+            }
+
             var space = text.IndexOf(' ');
             if (space < 0) return text;
 
             arguments = text.Substring(space + 1).Trim();
             return text.Substring(0, space);
+        }
+
+        /// <summary>
+        /// Posición inmediatamente después del ".exe" que cierra el ejecutable.
+        /// Se exige que lo que sigue sea el final o un espacio: así no se confunde
+        /// con una ruta de argumento que también contenga ".exe" (por ejemplo
+        /// "--script C:\tmp\foo.exe"). Devuelve -1 si no hay un ejecutable claro.
+        /// </summary>
+        private static int FindExecutableEnd(string text)
+        {
+            var search = 0;
+            while (search < text.Length)
+            {
+                var idx = text.IndexOf(".exe", search, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) return -1;
+
+                var end = idx + 4;
+                if (end == text.Length || char.IsWhiteSpace(text[end]))
+                    return end;
+
+                search = end;
+            }
+
+            return -1;
         }
     }
 }

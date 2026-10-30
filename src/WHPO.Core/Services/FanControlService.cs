@@ -1076,7 +1076,9 @@ public class FanControlService : IFanControlService
         if (hw.HardwareType == HardwareType.Cpu) return FanTemperatureGroup.Cpu;
         if (IsGpu(hw)) return FanTemperatureGroup.Gpu;
         if (sensor.Name.Contains("VRM", StringComparison.OrdinalIgnoreCase)) return FanTemperatureGroup.Vrm;
-        if (hw.HardwareType == HardwareType.Motherboard) return FanTemperatureGroup.Motherboard;
+        // El chip SuperIO (Nuvoton/ITE) vive en la placa: sus canales son de la placa
+        // aunque LHM no sepa a qué punto físico está conectado cada uno.
+        if (hw.HardwareType is HardwareType.Motherboard or HardwareType.SuperIO) return FanTemperatureGroup.Motherboard;
         return FanTemperatureGroup.Other;
     }
 

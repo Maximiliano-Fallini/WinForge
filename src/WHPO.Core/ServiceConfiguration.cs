@@ -53,7 +53,6 @@ public static class ServiceConfiguration
         services.AddSingleton<IMacroService, MacroService>();
         services.AddSingleton<IAutoClickerService, AutoClickerService>();
         services.AddSingleton<IProcessService, ProcessService>();
-        services.AddSingleton<BusCadenceService>();
         services.AddSingleton<IInstalledGamesService, InstalledGamesService>();
         services.AddSingleton<IGameBoostService, GameBoostService>();
         services.AddSingleton<IAppUpdateService, AppUpdateService>();
@@ -64,12 +63,10 @@ public static class ServiceConfiguration
         services.AddSingleton<IStartupManagerService, StartupManagerService>();
         services.AddSingleton<IUsbOverclockService, UsbOverclockService>();
         // Medidor de latencia de entrada (Raw Input): intervalo real entre informes HID
-        // de mouse/teclado/mandos — el "polling tester" nativo de la pestaña Overclock USB.
+        // de mouse y mandos — el "polling tester" nativo de la pestaña Overclock USB.
         services.AddSingleton<InputLatencyMonitorService>();
         // Test de latencia: ventana acotada sobre el monitor y veredicto de regularidad.
         services.AddSingleton<InputLatencyTestService>();
-        // Test de latencia de AUDIO (WASAPI): motor + ida y vuelta por endpoint.
-        services.AddSingleton<AudioLatencyService>();
         // Limpiador de registro (Limpieza personalizada): escaneo, backup .reg y limpieza HKCU.
         services.AddSingleton<IRegistryCleanerService, RegistryCleanerService>();
         // Salud del Modo Juego de Windows: chequeo de que se vaya a activar, reparación

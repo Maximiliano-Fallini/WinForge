@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $root     = Split-Path $PSScriptRoot -Parent
 $wix      = Join-Path $root '.tools\wix\wix.exe'
-$version  = '0.6.6'
+$version  = '0.6.7'
 $out      = Join-Path $PSScriptRoot "WinForge-$version.msi"
 
 if (-not (Test-Path $wix)) {

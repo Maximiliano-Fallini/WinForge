@@ -4,9 +4,9 @@ namespace WHPO.Core.Services.Interfaces;
 /// "Overclock USB": ajusta el intervalo de sondeo (bInterval) de dispositivos USB
 /// (mouses, teclados y mandos) con el mecanismo del filtro:
 /// - El filtro inferior (servicio kernel + binario en %systemroot%\system32\drivers)
-/// se agrega al valor LowerFilters del dispositivo (SetDevNodeProperty).
-/// - El intervalo deseado se guarda como valor DWORD "bInterval" en la clave de
-/// hardware del dispositivo (HKLM\SYSTEM\CurrentControlSet\Enum\...\Device Parameters).
+/// se agrega a la propiedad PnP LowerFilters del dispositivo.
+/// - El intervalo deseado se guarda como DWORD "bInterval" en la clave de
+/// software del dispositivo (DIREG_DRV), que abre el propio driver.
 /// El driver lo lee al cargar la pila (IoOpenDeviceRegistryKey) y parchea en vivo
 /// los IRP de configuración para forzar el nuevo intervalo en los endpoints de
 /// interrupción.
@@ -15,8 +15,7 @@ namespace WHPO.Core.Services.Interfaces;
 /// - En dispositivos high-speed, bInterval no es milisegundos sino un exponente
 /// (intervalo = 2^(N-1) microframes → Hz = 8000/2^(N-1)): la conversión y el
 /// rango válido se resuelven según la velocidad real del dispositivo.
-/// - Al re-arrancar el dispositivo (CM_Reenumerate_DevNode) la pila se re-crea y
-/// el filtro entra con el nuevo intervalo.
+/// - Al reiniciar el dispositivo, la pila puede cargar el filtro y el intervalo.
 /// El overclocking (subir Hz) puede no funcionar en dispositivos Low Speed con
 /// drivers USB no Microsoft (o drivers demasiado nuevos): el downclocking siempre
 /// se aplica. Igual que con el filtro, no se toca ningún otro dispositivo del bus.
@@ -35,8 +34,8 @@ public interface IUsbOverclockService
     Task<UsbPollingCapability> GetPollingCapabilityAsync(string deviceInstanceId);
 
     /// <summary>
-    /// Verifica el estado REAL de un dispositivo tras aplicar un cambio: hercios
-    /// efectivos (leídos del descriptor por el hub) y código de problema del devnode.
+    /// Lee el descriptor y el código de problema del devnode. El descriptor no mide
+    /// la frecuencia efectiva de los informes tras un cambio.
     /// </summary>
     Task<UsbPollingVerify> VerifyDeviceAsync(string deviceInstanceId);
 
@@ -71,6 +70,28 @@ public interface IUsbOverclockService
     /// <summary>True si el servicio del filtro está instalado en el sistema (SCM).</summary>
     bool IsFilterServiceInstalled();
 
+    /// <summary>
+    /// True si el servicio del filtro está CORRIENDO ahora. Un lower filter puede estar
+    /// instalado y con el dispositivo reiniciado sin haber cargado (Windows lo bloquea o
+    /// el binario no es compatible): en ese caso la tasa queda escrita pero no se aplica.
+    /// </summary>
+    bool IsFilterServiceRunning();
+
+    /// <summary>
+    /// Cambia el binario instalado a la variante NoPatch (la que no parchea USBPORT/USBXHCI)
+    /// y deja el servicio listo. Es el reintento cuando el build que parchea no carga en este
+    /// Windows; NoPatch baja Hz y ajusta dispositivos Full Speed, que es lo que el autor
+    /// garantiza sin parchear. Devuelve false si no se pudo obtener o reemplazar el binario.
+    /// </summary>
+    Task<bool> SwitchToNoPatchAsync();
+
+    /// <summary>
+    /// Motivo legible del último fallo de <see cref="SetRateAsync"/> (null si salió bien).
+    /// La UI lo muestra en vez del genérico "no se pudo aplicar": el caso típico —driver
+    /// instalado pero sin cargar— necesita una explicación distinta a "faltan componentes".
+    /// </summary>
+    string? LastApplyError { get; }
+
     /// <summary>True si el servicio del filtro existe Y puede cargar (start pending → ok).</summary>
     bool IsFilterServiceRunnable();
 
@@ -100,7 +121,12 @@ public interface IUsbOverclockService
     /// lista para instalar o null si falló. No instala el servicio: eso lo hace
     /// InstallFilterServiceAsync.
     /// </summary>
-    Task<string?> DownloadComponentAsync();
+    /// <param name="forceDownload">
+    /// Si es true, ignora la copia en caché y vuelve a descargar el paquete para cosechar
+    /// todas las variantes. Lo usa el cambio a NoPatch cuando una instalación vieja solo
+    /// dejó el hidusbf.sys base en el caché.
+    /// </param>
+    Task<string?> DownloadComponentAsync(bool forceDownload = false);
 
     /// <summary>
     /// Motivo del último fallo de <see cref="DownloadComponentAsync"/> cuando devolvió
@@ -188,8 +214,8 @@ public record UsbOverclockGuardStatus(
     bool ServiceInstalled     // el servicio del filtro está instalado en el sistema
 );
 
-/// <summary>Resultado de la verificación post-cambio: hercios efectivos leídos del
-/// descriptor (0 = desconocido) y código de problema del devnode (CM_Get_DevNode_Status;
+/// <summary>Resultado de la verificación post-cambio: hercios del descriptor
+/// (0 = desconocido; no son una medición real) y código de problema del devnode (CM_Get_DevNode_Status;
 /// null = desconocido, 0 = sin problema).</summary>
 public record UsbPollingVerify(
     int EffectiveHz,
@@ -214,5 +240,6 @@ public record UsbPollingDevice(
     IReadOnlyList<UsbChildFunction> Children,  // TODAS las funciones reales del producto (el tooltip de la fila las lista)
     bool IsHighSpeed,         // velocidad alta: bInterval es exponente (2^(N-1) µframes), no ms
     int DescriptorBInterval,  // bInterval crudo del descriptor del endpoint (0 = desconocido)
-    IReadOnlyList<string> InterfaceIds  // interfaces HID del producto (MI_xx): donde se aplica filtro/override
+    IReadOnlyList<string> InterfaceIds, // interfaces HID del producto (MI_xx)
+    bool IsComposite = false // el filtro se aplica al padre y afecta a todas sus funciones
 );

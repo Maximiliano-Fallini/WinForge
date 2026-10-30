@@ -26,7 +26,7 @@ public readonly record struct FrameSample(double FrameMs, double GpuMs, double C
 /// Estadística de una corrida. Es una función PURA sobre las muestras (ver
 /// <see cref="Compute"/>): el veredicto de una medición no puede depender de la
 /// pantalla ni de la placa — se puede verificar con series sintéticas, igual que
-/// InputLatencyAnalysis y AudioLatencyAnalysis de la app.
+/// InputLatencyAnalysis de la app.
 ///
 /// Los umbrales son juicios explícitos y viven acá arriba para poder discutirlos sin
 /// tocar la medición.

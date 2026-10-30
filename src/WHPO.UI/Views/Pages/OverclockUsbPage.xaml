@@ -210,15 +210,13 @@
 
  <!-- ====== MEDIDOR DE LATENCIA (polling real por Raw Input) ======
                  Igual que los medidores web de gamepadla/controllerco, pero nativo:
-                 mide el intervalo real entre informes HID de mouse, teclado y mandos
-                 (µs por QPC) mientras el usuario usa los periféricos con normalidad.
-                 Colapsado por defecto: se abre con el botón de la toolbar. -->
+                 mide el intervalo real entre informes HID de mouse y mandos
+                 (µs por QPC) mientras el usuario usa los periféricos con normalidad. -->
  <!-- ====== TEST DE LATENCIA (card única) ======
-                 Elegís el dispositivo y el tipo, y corrés la prueba. El tipo decide la
-                 instrucción porque cada periférico reporta distinto: el mouse y el mando
-                 (girando los ejes) emiten un flujo continuo, así que su intervalo ES el
-                 polling; un teclado solo manda informe cuando cambia de estado, así que su
-                 polling no se puede medir desde acá y el veredicto lo dice. -->
+                 Elegís el dispositivo y corrés la prueba. Solo se habilita para los que
+                 tienen la badge "Sondeo disponible": mouse y mando emiten un flujo continuo,
+                 así que su intervalo ES el polling. En teclados y audio la fila queda apagada
+                 y no se puede elegir. -->
             <Border x:Name="LatencyTestCard"
                     Grid.Row="2"
                     Margin="24,10,24,0"

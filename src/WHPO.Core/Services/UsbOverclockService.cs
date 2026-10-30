@@ -12,15 +12,12 @@ namespace WHPO.Core.Services;
 /// <summary>
 /// Implementación de "Overclock USB" con un filtro de polling a nivel kernel:
 /// 1) Servicio kernel del filtro instalado a demanda (INF: StartType=3).
-/// 2) El filtro inferior del dispositivo se agrega con CM_Set_DevNode_Registry_PropertyW
-/// sobre la propiedad CM_DRP_LOWERFILTERS.
-/// 3) El intervalo deseado se escribe como valor DWORD "bInterval" en Device Parameters
-/// del dispositivo (HKLM\SYSTEM\CurrentControlSet\Enum\...\Device Parameters): el
-/// driver lo lee vía IoOpenDeviceRegistryKey y fuerza ese bInterval en los endpoints
-/// de interrupción al cargar la pila (overclock y downclock, solo ese dispositivo).
-/// 4) El "Restart" re-arranca el devnode con CM_Reenumerate_DevNode (sincrónico): la
-/// pila se re-crea y el filtro entra con el nuevo intervalo.
-/// El bInterval REAL del endpoint se lee del hub padre con IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX.
+/// 2) El filtro inferior se registra en la propiedad PnP LowerFilters del devnode.
+/// 3) El intervalo se guarda como DWORD "bInterval" en la clave de software del
+/// dispositivo (DIREG_DRV), que el binario abre con IoOpenDeviceRegistryKey.
+/// 4) El dispositivo se reinicia para que PnP cargue el filtro y su configuración.
+/// En dispositivos compuestos se usa el padre, que selecciona la configuración USB.
+/// El bInterval del descriptor se lee del hub padre con IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX.
 /// Las estructuras USB del paquete user-mode van empaquetadas a 1 byte (pshpack1.h) y cada USB_PIPE_INFO mide 11.
 /// El binario del filtro NO se redistribuye dentro de la app: el paquete oficial no
 /// declara ninguna licencia de redistribución. Se descarga desde el repositorio oficial
@@ -41,10 +38,9 @@ public class UsbOverclockService : IUsbOverclockService
     private const uint CM_DRP_LOWERFILTERS = 0x00000013;
     private const uint CR_SUCCESS = 0x00000000;
     private const uint CR_BUFFER_SMALL = 0x0000001A;
+    private const uint CR_NO_SUCH_VALUE = 0x00000025;
     private const uint CM_GETIDLIST_FILTER_ENUMERATOR = 0x00000001;
     private const uint CM_GET_DEVICE_INTERFACE_LIST_PRESENT = 0x00000000;
-    private const uint CM_REENUMERATE_NORMAL = 0x00000000;
-    private const uint CM_REENUMERATE_SYNCHRONOUS = 0x00000001;
 
  // ===== usbioctl (user-mode, pack(1)) =====
     private const uint FILE_DEVICE_USB = 0x00000022;
@@ -79,8 +75,9 @@ public class UsbOverclockService : IUsbOverclockService
  // 24: BOOLEAN DeviceIsHub
  // 25: USHORT DeviceAddress
  // 27: ULONG NumberOfOpenPipes
- // 31: USB_PIPE_INFO PipeList[]
-    private const int ConnInfoHeaderSize = 31;
+ // 31: USB_CONNECTION_STATUS ConnectionStatus
+ // 35: USB_PIPE_INFO PipeList[]
+    private const int ConnInfoHeaderSize = 35;
     private const int ConnInfoBufferSize = ConnInfoHeaderSize + MaxPipes * UsbPipeInfoSize;
 
  // USB_NODE_INFORMATION (pack(1)): USB_HUB_NODE NodeType(4) + USB_HUB_INFORMATION;
@@ -159,17 +156,21 @@ public class UsbOverclockService : IUsbOverclockService
         => Path.Combine(AppContext.BaseDirectory, "Assets", "Drivers", "hidusbf.sys");
 
  // Velocidad del dispositivo según USB_NODE_CONNECTION_INFORMATION_EX.Speed
- // (USB_DEVICE_SPEED: 0=Full, 1=Low, 2=High, 3=Super).
+ // (USB_DEVICE_SPEED: 0=Low, 1=Full, 2=High, 3=Super).
     private const byte UsbSpeedHigh = 2;
-        // USB_DEVICE_SPEED: 1 = Low Speed (1,5 Mbps). Los topes prácticos de cada clase,
-        // según la tabla del autor: LS 125 Hz, FS 1000 Hz, HS 8000 Hz.
-    private const byte UsbSpeedLow = 1;
+    private const byte UsbSpeedLow = 0;
+    private const byte UsbSpeedUnknown = byte.MaxValue;
 
     public UsbOverclockService(ILoggingService logging, ISystemInfoService systemInfo)
     {
         _logging = logging;
         _systemInfo = systemInfo;
     }
+
+    private string? _lastApplyError;
+
+    /// <inheritdoc/>
+    public string? LastApplyError => _lastApplyError;
 
  /// <summary>Estado de VBS/HVCI (Memory Integrity): decide la variante del driver.</summary>
     private readonly ISystemInfoService _systemInfo;
@@ -320,7 +321,7 @@ public class UsbOverclockService : IUsbOverclockService
  // bInterval real del endpoint de interrupción IN (por el hub padre). 0 = desconocido.
  // La velocidad importa: en high-speed bInterval es un exponente, no milisegundos.
         int interval = 0;
-        byte speed = 0;
+        byte speed = UsbSpeedUnknown;
         foreach (var iface in interfaces)
         {
             uint idn = GetDevNode(iface);
@@ -331,12 +332,16 @@ public class UsbOverclockService : IUsbOverclockService
         bool isHighSpeed = speed == UsbSpeedHigh;
         int currentHz = interval > 0 ? HzFromBInterval(interval, isHighSpeed) : 0;
 
+        // El padre compuesto selecciona la configuración USB; su filtro y su clave
+        // son los relevantes para la tasa aplicada al producto.
+        bool isComposite = productSvc.Equals("usbccgp", StringComparison.OrdinalIgnoreCase);
+        var targets = PollingTargetIds(productDn, productId);
         int? activeRaw = null;
         bool filterOn = false;
-        foreach (var iface in interfaces)
+        foreach (var target in targets)
         {
-            activeRaw ??= ReadActiveInterval(iface);
-            filterOn |= IsFilterAttached(iface);
+            activeRaw ??= ReadActiveInterval(target);
+            filterOn |= IsFilterAttached(target);
         }
  // El override se interpreta según la variante instalada: los builds de rango alto
  // reutilizan los códigos 31/62 (31=2000/4000, 62=4000/8000 según el build).
@@ -359,7 +364,8 @@ public class UsbOverclockService : IUsbOverclockService
             Children: children,
             IsHighSpeed: isHighSpeed,
             DescriptorBInterval: interval,
-            InterfaceIds: interfaces);
+            InterfaceIds: interfaces,
+            IsComposite: isComposite);
     }
 
  // ===================== Configuración por dispositivo =====================
@@ -368,27 +374,28 @@ public class UsbOverclockService : IUsbOverclockService
     {
         return await Task.Run(async () =>
         {
+            _lastApplyError = null;
             try
             {
                 uint dn = GetDevNode(deviceInstanceId);
                 if (dn == 0)
                 {
+                    _lastApplyError = "No se pudo aplicar la tasa.";
                     _logging.LogWarning($"OverclockUSB: dispositivo no encontrado: {deviceInstanceId}");
                     return false;
                 }
 
- // La fila es el producto físico: se aplica a todas sus interfaces HID.
-                var targets = InterfaceIdsOf(dn, deviceInstanceId);
-                if (targets.Count == 0) targets.Add(deviceInstanceId);
+ // En un compuesto el padre selecciona la configuración de todas las funciones.
+                var targets = PollingTargetIds(dn, deviceInstanceId);
 
  // Quitar el override: borrar "bInterval" (el driver no fuerza nada).
                 if (rateHz <= 0)
                 {
                     foreach (var t in targets)
                     {
-                        using var dp = OpenDeviceParametersKey(t, writable: true);
-                        if (dp != null && dp.GetValue(ValueBInterval) != null)
-                            dp.DeleteValue(ValueBInterval, throwOnMissingValue: false);
+                        using var key = OpenDeviceDriverKey(t, writable: true);
+                        if (key == null) throw new InvalidOperationException($"No se pudo abrir la clave del driver de {t}.");
+                        key.DeleteValue(ValueBInterval, throwOnMissingValue: false);
                     }
                     _logging.LogInfo($"OverclockUSB: {deviceInstanceId} sin override de bInterval. Falta restart.");
                     return true;
@@ -398,8 +405,13 @@ public class UsbOverclockService : IUsbOverclockService
  // no high-speed depende de poder parchear la pila USB (HVCI lo prohíbe) y del
  // driver xHCI de Microsoft (requisito del autor para los builds 2k/8k).
                 var (_, spd) = GetInterruptInEndpointInfo(targets[0], GetDevNode(targets[0]));
- // spd == 0 significa "desconocida o Full speed" (USB_DEVICE_SPEED Full = 0):
- // en ambos casos el valor se interpreta como ms, igual que el filtro.
+ // Sin descriptor no es seguro elegir la codificación del intervalo: High Speed
+ // usa exponentes y Low/Full Speed usan milisegundos.
+                if (spd == UsbSpeedUnknown)
+                {
+                    _lastApplyError = "No se pudo leer la tasa actual del dispositivo.";
+                    return false;
+                }
                 bool isHighSpeed = spd == UsbSpeedHigh;
 
                 // Integridad de memoria: cuenta tanto si está corriendo como si está configurada
@@ -417,6 +429,7 @@ public class UsbOverclockService : IUsbOverclockService
  // que el dispositivo casi nunca entrega.
                 if (!isHighSpeed && rateHz > MaxHz1khzVariant)
                 {
+                    _lastApplyError = "Este dispositivo va por USB Full Speed: el bus lo sondea como máximo una vez por milisegundo, así que 1000 Hz es el techo de esta conexión. Los que van por High Speed sí llegan a 8000 Hz.";
                     _logging.LogWarning($"OverclockUSB: {rateHz} Hz rechazado para {deviceInstanceId}: el " +
                         "dispositivo va por Low/Full Speed y su bus sondea una vez por milisegundo (máx. 1000 Hz).");
                     return false;
@@ -430,6 +443,7 @@ public class UsbOverclockService : IUsbOverclockService
                               ?? DownloadComponentAsync().GetAwaiter().GetResult();
                     if (sys == null || !InstallFilterServiceAsync(sys).GetAwaiter().GetResult())
                     {
+                        _lastApplyError = "No se pudo aplicar la tasa. Asegurate de que los componentes estén instalados.";
                         _logging.LogWarning("OverclockUSB: el servicio del filtro no está instalado y no se pudo instalar.");
                         return false;
                     }
@@ -440,8 +454,16 @@ public class UsbOverclockService : IUsbOverclockService
  // carga y mantiene todo el rango nativo (byte del descriptor; en high-speed
  // incluye 8000 Hz sin parchear controladora). Los códigos 31/62 de los builds
  // de rango alto solo hacen falta para dispositivos NO high-speed.
+                string installedVariant = InstalledVariant();
                 string wantedVariant;
                 if (hvci) wantedVariant = "nopatch";
+                // Bajar de 1000 Hz con un build de rango alto instalado: esos builds solo
+                // definen 31/62 como códigos propios y no son el build normal de 1 kHz.
+                // Antes se quedaban instalados y el downclock se escribía con una
+                // codificación que ese binario no interpreta igual: volver al 1 kHz.
+                else if (!isHighSpeed && rateHz <= MaxHz1khzVariant
+                         && installedVariant is "2khz-4khz" or "4khz-8khz")
+                    wantedVariant = "1khz";
                 else if (!isHighSpeed && rateHz > MaxHz1khzVariant)
                     wantedVariant = rateHz > MaxHz2kVariant ? "4khz-8khz" : "2khz-4khz";
                 else wantedVariant = "";
@@ -453,11 +475,13 @@ public class UsbOverclockService : IUsbOverclockService
                     string? variantSys = await EnsureVariantAsync(cacheDir, wantedVariant);
                     if (variantSys == null)
                     {
+                        _lastApplyError = "No se pudo aplicar la tasa.";
                         _logging.LogWarning($"OverclockUSB: no se pudo conseguir la variante '{wantedVariant}' verificada del paquete oficial.");
                         return false;
                     }
                     if (!SwapVariantBinary(cacheDir, wantedVariant))
                     {
+                        _lastApplyError = "No se pudo aplicar la tasa.";
                         _logging.LogWarning($"OverclockUSB: no se pudo instalar la variante '{wantedVariant}' (¿binario en uso por otro dispositivo con filtro activo?).");
                         return false;
                     }
@@ -499,16 +523,18 @@ public class UsbOverclockService : IUsbOverclockService
                 {
  // 1) Filtro inferior del dispositivo (mechanism 1 de el filtro).
                     uint tdn = GetDevNode(t);
-                    if (tdn != 0) AttachFilter(tdn, t, attach: true);
+                    if (tdn == 0) throw new InvalidOperationException($"No se encontró {t}.");
 
- // 2) Override de bInterval en Device Parameters (mechanism 2).
-                    using var dp = OpenDeviceParametersKey(t, writable: true);
-                    if (dp == null)
+ // 2) Intervalo en la clave de software del dispositivo (DIREG_DRV).
+                    using var key = OpenDeviceDriverKey(t, writable: true);
+                    if (key == null)
                     {
-                        _logging.LogWarning($"OverclockUSB: Device Parameters inaccesible para {t}");
+                        _lastApplyError = "No se pudo aplicar la tasa.";
+                        _logging.LogWarning($"OverclockUSB: clave de software inaccesible para {t}");
                         return false;
                     }
-                    dp.SetValue(ValueBInterval, intervalToWrite, RegistryValueKind.DWord);
+                    key.SetValue(ValueBInterval, intervalToWrite, RegistryValueKind.DWord);
+                    AttachFilter(tdn, t, attach: true);
                 }
 
                 _logging.LogInfo($"OverclockUSB: {deviceInstanceId} → filtro activo en {targets.Count} interfaz(es), " +
@@ -518,6 +544,7 @@ public class UsbOverclockService : IUsbOverclockService
             }
             catch (Exception ex)
             {
+                _lastApplyError = "No se pudo aplicar la tasa.";
                 _logging.LogError($"OverclockUSB: error configurando {deviceInstanceId}", ex);
                 return false;
             }
@@ -533,22 +560,24 @@ public class UsbOverclockService : IUsbOverclockService
                 uint dn = GetDevNode(deviceInstanceId);
                 if (dn == 0) return false;
 
- // La fila es el producto físico: restaurar todas sus interfaces HID.
-                var targets = InterfaceIdsOf(dn, deviceInstanceId);
-                if (targets.Count == 0) targets.Add(deviceInstanceId);
+ // Quitar también los filtros de interfaces que versiones anteriores pudieran
+ // haber instalado, además del filtro en el padre compuesto.
+                var targets = PollingTargetIds(dn, deviceInstanceId);
+                if (GetStringProperty(dn, CM_DRP_SERVICE)?.Equals("usbccgp", StringComparison.OrdinalIgnoreCase) == true)
+                    targets.AddRange(InterfaceIdsOf(dn, deviceInstanceId).Where(id => !targets.Contains(id, StringComparer.OrdinalIgnoreCase)));
 
                 foreach (var t in targets)
                 {
  // 1) Borrar el override de bInterval.
-                    using (var dp = OpenDeviceParametersKey(t, writable: true))
+                    using (var key = OpenDeviceDriverKey(t, writable: true))
                     {
-                        if (dp != null && dp.GetValue(ValueBInterval) != null)
-                            dp.DeleteValue(ValueBInterval, throwOnMissingValue: false);
+                        if (key == null) throw new InvalidOperationException($"No se pudo abrir la clave del driver de {t}.");
+                        key.DeleteValue(ValueBInterval, throwOnMissingValue: false);
                     }
 
  // 2) Sacar el filtro del dispositivo (LowerFilters vuelve a su valor previo).
                     uint tdn = GetDevNode(t);
-                    if (tdn != 0) AttachFilter(tdn, t, attach: false);
+                    AttachFilter(tdn, t, attach: false);
                 }
 
                 _logging.LogInfo($"OverclockUSB: {deviceInstanceId} restaurado a fábrica ({targets.Count} interfaz(es), sin filtro ni override). Falta restart.");
@@ -657,26 +686,15 @@ public class UsbOverclockService : IUsbOverclockService
                     return false;
                 }
 
-                // El filtro y el override viven en las INTERFACES HID (MI_xx): hay que
-                // reiniciar CADA interfaz. Re-enumerar solo el devnode del PRODUCTO (lo que
-                // se hacía antes) no reconstruye la pila de las interfaces, así que PnP no
-                // vuelve a leer LowerFilters y el filtro queda sin cargar (Stopped): el
-                // polling rate nunca cambiaba, aunque el registro quedara bien escrito.
-                var targets = InterfaceIdsOf(dn, deviceInstanceId);
-                if (targets.Count == 0) targets.Add(deviceInstanceId);
+                // Reiniciar el mismo nodo donde se configuró el filtro. En un USB
+                // compuesto es el padre que envía la selección de configuración.
+                var targets = PollingTargetIds(dn, deviceInstanceId);
 
                 bool allOk = true;
                 foreach (var target in targets)
                     allOk &= RestartDevNode(target);
 
-                if (!allOk)
-                {
-                    // Respaldo: re-enumerar el devnode del producto (comportamiento previo),
-                    // sincrónico: no vuelve hasta que la pila se re-creó.
-                    uint cr = CM_Reenumerate_DevNode(dn, CM_REENUMERATE_SYNCHRONOUS | CM_REENUMERATE_NORMAL);
-                    _logging.LogInfo($"OverclockUSB: restart de respaldo del producto {deviceInstanceId}: CR=0x{cr:X8}");
-                    allOk = cr == CR_SUCCESS;
-                }
+                // Reenumerar el producto no confirma que las interfaces se hayan reiniciado.
                 return allOk;
             }
             catch (Exception ex)
@@ -685,11 +703,26 @@ public class UsbOverclockService : IUsbOverclockService
                 return false;
             }
         });
-    }    /// <summary>
-    /// Reinicia un devnode con DIF_PROPERTYCHANGE/DICS_PROPCHANGE (el mismo "reiniciar
-    /// dispositivo" que pnputil /restart-device). Devuelve false si PnP no lo aceptó.
-    /// </summary>
+    }
+
+    /// <summary>Reinicia la pila sin dejar el dispositivo deshabilitado si falla el reinicio.</summary>
     private bool RestartDevNode(string instanceId)
+    {
+        if (!ChangeDeviceState(instanceId, DICS_PROPCHANGE))
+            return false;
+
+        if (!WaitForDeviceReady(instanceId, 5000))
+        {
+            _logging.LogWarning($"OverclockUSB: {instanceId} no volvió a estado operativo tras el reinicio.");
+            return false;
+        }
+
+        _logging.LogInfo($"OverclockUSB: interfaz {instanceId} reiniciada (DICS_PROPCHANGE).");
+        return true;
+    }
+
+    /// <summary>Solicita un cambio de propiedades al instalador del dispositivo.</summary>
+    private bool ChangeDeviceState(string instanceId, uint state)
     {
         IntPtr set = IntPtr.Zero;
         try
@@ -715,7 +748,7 @@ public class UsbOverclockService : IUsbOverclockService
                     cbSize = (uint)Marshal.SizeOf<SP_CLASSINSTALL_HEADER>(),
                     InstallFunction = DIF_PROPERTYCHANGE
                 },
-                StateChange = DICS_PROPCHANGE,
+                StateChange = state,
                 Scope = DICS_FLAG_GLOBAL,
                 HwProfile = 0
             };
@@ -723,16 +756,15 @@ public class UsbOverclockService : IUsbOverclockService
             if (!SetupDiSetClassInstallParamsW(set, ref data, ref props, (uint)Marshal.SizeOf<SP_PROPCHANGE_PARAMS>())
                 || !SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, set, ref data))
             {
-                _logging.LogWarning($"OverclockUSB: restart de {instanceId} falló (err={Marshal.GetLastWin32Error()}).");
+                _logging.LogWarning($"OverclockUSB: estado 0x{state:X} de {instanceId} falló (err={Marshal.GetLastWin32Error()}).");
                 return false;
             }
 
-            _logging.LogInfo($"OverclockUSB: interfaz {instanceId} reiniciada (DIF_PROPERTYCHANGE).");
             return true;
         }
         catch (Exception ex)
         {
-            _logging.LogWarning($"OverclockUSB: error reiniciando {instanceId}: {ex.Message}");
+            _logging.LogWarning($"OverclockUSB: error cambiando el estado de {instanceId}: {ex.Message}");
             return false;
         }
         finally
@@ -740,6 +772,25 @@ public class UsbOverclockService : IUsbOverclockService
             if (set != IntPtr.Zero && set != InvalidHandleValue)
                 SetupDiDestroyDeviceInfoList(set);
         }
+    }
+
+    /// <summary>Espera a que el devnode vuelva a estar presente y sin código de problema.</summary>
+    private bool WaitForDeviceReady(string instanceId, int timeoutMs)
+    {
+        int waited = 0;
+        while (waited < timeoutMs)
+        {
+            uint dn = GetDevNode(instanceId);
+            if (dn != 0)
+            {
+                uint status = 0, problem = 0;
+                if (CM_Get_DevNode_Status(ref status, ref problem, dn, 0) == CR_SUCCESS && problem == 0)
+                    return true;
+            }
+            Thread.Sleep(150);
+            waited += 150;
+        }
+        return false;
     }
 
     // ===================== Servicio del filtro =====================
@@ -779,6 +830,72 @@ public class UsbOverclockService : IUsbOverclockService
         catch { return false; }
     }
 
+ /// <summary>
+ /// True si el servicio del filtro está corriendo AHORA. Es la diferencia entre
+ /// "instalado" (clave + binario) y "cargado": si Windows no lo cargó, el override
+ /// de bInterval queda escrito pero el polling rate no cambia.
+ /// </summary>
+    public bool IsFilterServiceRunning()
+    {
+        try
+        {
+            IntPtr scm = ScManagerHandle;
+            if (scm == IntPtr.Zero) return false;
+
+            IntPtr svc = OpenServiceW(scm, FilterServiceName, ServiceQueryStatus);
+            if (svc == IntPtr.Zero) return false;
+            try
+            {
+                var status = new SERVICE_STATUS();
+                return QueryServiceStatus(svc, ref status)
+                    && status.dwCurrentState == ServiceRunning;
+            }
+            finally { CloseServiceHandle(svc); }
+        }
+        catch { return false; }
+    }
+
+ /// <summary>
+ /// Cambia el binario instalado a NoPatch y lo deja listo para que PnP lo cargue.
+ /// Es el reintento cuando el build que parchea no carga en este Windows: NoPatch
+ /// no toca USBXHCI/USBPORT y es el que el autor garantiza para downclock.
+ /// </summary>
+    public async Task<bool> SwitchToNoPatchAsync()
+    {
+        _lastApplyError = null;
+        try
+        {
+            if (InstalledVariant() == "nopatch") return true;
+
+            var cacheDir = ComponentCachePath;
+            Directory.CreateDirectory(cacheDir);
+
+            var variantSys = await EnsureVariantAsync(cacheDir, "nopatch");
+            if (variantSys == null)
+            {
+                _lastApplyError = "No se pudo descargar la variante compatible del driver (NoPatch).";
+                _logging.LogWarning("OverclockUSB: no se pudo obtener la variante NoPatch para reintentar.");
+                return false;
+            }
+
+            if (!SwapVariantBinary(cacheDir, "nopatch"))
+            {
+                _lastApplyError = "No se pudo reemplazar el driver por la variante compatible (puede estar en uso).";
+                _logging.LogWarning("OverclockUSB: no se pudo reemplazar el binario por NoPatch.");
+                return false;
+            }
+
+            _logging.LogInfo("OverclockUSB: variante cambiada a NoPatch para reintentar el ajuste.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _lastApplyError = "No se pudo cambiar a la variante compatible del driver.";
+            _logging.LogError("OverclockUSB: error cambiando a NoPatch", ex);
+            return false;
+        }
+    }
+
  /// <summary>True si el servicio del filtro existe Y su binario está presente (la UI muestra la grilla).</summary>
     public bool IsComponentReady()
     {
@@ -809,9 +926,9 @@ public class UsbOverclockService : IUsbOverclockService
                     if (!IsFilterAttached(id)) continue;
                     uint dn = GetDevNode(id);
                     if (dn != 0) AttachFilter(dn, id, attach: false);
-                    using var dp = OpenDeviceParametersKey(id, writable: true);
-                    if (dp != null && dp.GetValue(ValueBInterval) != null)
-                        dp.DeleteValue(ValueBInterval, throwOnMissingValue: false);
+                    using var key = OpenDeviceDriverKey(id, writable: true);
+                    if (key == null) throw new InvalidOperationException($"No se pudo abrir la clave del driver de {id}.");
+                    key.DeleteValue(ValueBInterval, throwOnMissingValue: false);
                 }
                 catch { /* un dispositivo con problemas no corta el resto */ }
             }
@@ -908,7 +1025,7 @@ public class UsbOverclockService : IUsbOverclockService
     /// <inheritdoc/>
     public string? LastComponentDownloadError => _lastComponentDownloadError;
 
-    public async Task<string?> DownloadComponentAsync()
+    public async Task<string?> DownloadComponentAsync(bool forceDownload = false)
     {
         return await Task.Run(async () =>
         {
@@ -921,8 +1038,10 @@ public class UsbOverclockService : IUsbOverclockService
                 var bundled = BundledDriverSysPath;
                 var cachedSys = Path.Combine(cacheDir, "hidusbf.sys");
 
- // 1) Copia previa en caché (instalaciones anteriores), verificada.
-                if (IsKnownDriverBinary(cachedSys))
+ // 1) Copia previa en caché (instalaciones anteriores), verificada. Con
+ //    forceDownload se salta: una instalación vieja puede tener solo el
+ //    binario base y ninguna variante, y el cambio a NoPatch necesita el paquete.
+                if (!forceDownload && IsKnownDriverBinary(cachedSys))
                 {
                     _logging.LogInfo($"OverclockUSB: componente ya en caché ({cachedSys}).");
                     return cachedSys;
@@ -930,7 +1049,7 @@ public class UsbOverclockService : IUsbOverclockService
 
  // 2) Binario opcional junto al exe: se copia al caché (queda disponible
  // también después de "desinstalar componente", sin volver a descargar).
-                if (IsKnownDriverBinary(bundled))
+                if (!forceDownload && IsKnownDriverBinary(bundled))
                 {
                     File.Copy(bundled, cachedSys, overwrite: true);
                     _logging.LogInfo($"OverclockUSB: componente resuelto desde {bundled}.");
@@ -1046,6 +1165,7 @@ public class UsbOverclockService : IUsbOverclockService
                 if (dn == 0) return new UsbPollingCapability(MaxHz1khzVariant, null);
 
                 var (_, spd) = GetInterruptInEndpointInfo(deviceInstanceId, dn);
+                if (spd == UsbSpeedUnknown) return new UsbPollingCapability(MaxHz1khzVariant, null);
                 bool isHighSpeed = spd == UsbSpeedHigh;
 
  // High-speed: el byte nativo del descriptor llega a 8000 Hz (exponente 1) y
@@ -1202,7 +1322,9 @@ public class UsbOverclockService : IUsbOverclockService
         }
 
  // Re-descarga completa (el flujo normal ya cosecha todas las variantes).
-        var resolved = await DownloadComponentAsync();
+ // forceDownload: si el caché solo tenía el binario base, sin esto
+ // DownloadComponentAsync devolvía esa copia y NoPatch nunca se cosechaba.
+        var resolved = await DownloadComponentAsync(forceDownload: true);
         return IsKnownVariantBinary(dest, variant) ? dest
              : (resolved != null && variant == "1khz" ? resolved : null);
     }
@@ -1356,13 +1478,13 @@ public class UsbOverclockService : IUsbOverclockService
 
  // ===================== Registro por dispositivo =====================
 
- /// <summary>Lee el bInterval crudo guardado en Device Parameters (valor "bInterval" DWORD).</summary>
+ /// <summary>Lee el intervalo configurado en la clave de software del dispositivo.</summary>
     private static int? ReadActiveInterval(string deviceInstanceId)
     {
         try
         {
-            using var dp = OpenDeviceParametersKey(deviceInstanceId, writable: false);
-            if (dp?.GetValue(ValueBInterval) is int interval && interval > 0)
+            using var key = OpenDeviceDriverKey(deviceInstanceId, writable: false);
+            if (key?.GetValue(ValueBInterval) is int interval && interval > 0)
                 return interval;
         }
         catch { }
@@ -1373,54 +1495,58 @@ public class UsbOverclockService : IUsbOverclockService
     {
         try
         {
- // Registry64 explícito (consistente con el resto del Core).
-            using var lm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-            using var key = lm.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\" + deviceInstanceId);
-            if (key?.GetValue("LowerFilters") is string[] arr)
-                return arr.Any(v => v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase));
-            if (key?.GetValue("LowerFilters") is string s)
-                return s.Split(SeparatorCharArray, StringSplitOptions.RemoveEmptyEntries)
-                        .Any(v => v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase));
+            uint dn = GetDevNode(deviceInstanceId);
+            return dn != 0 && ReadLowerFilters(dn).Any(v => v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase));
         }
-        catch { }
-        return false;
+        catch { return false; }
     }
 
-    private static readonly char[] SeparatorCharArray = { ',', ';', ' ' };
-
- /// <summary>Agrega o quita el filtro en la propiedad LOWERFILTERS del devnode (igual que SETUP.EXE).</summary>
-    private static void AttachFilter(uint dn, string instanceId, bool attach)
+    private static List<string> ReadLowerFilters(uint dn)
     {
-        var current = new List<string>();
         uint size = 0;
         uint cr = CM_Get_DevNode_Registry_PropertyW(dn, CM_DRP_LOWERFILTERS, IntPtr.Zero, IntPtr.Zero, ref size, 0);
-        if (cr == CR_BUFFER_SMALL && size >= 2)
-        {
-            var buffer = Marshal.AllocHGlobal((int)size);
-            try
-            {
-                if (CM_Get_DevNode_Registry_PropertyW(dn, CM_DRP_LOWERFILTERS, IntPtr.Zero, buffer, ref size, 0) == CR_SUCCESS)
-                    current = ReadMultiSz(buffer, size);
-            }
-            finally { Marshal.FreeHGlobal(buffer); }
-        }
+        if (cr == CR_NO_SUCH_VALUE) return new List<string>();
+        if (cr != CR_BUFFER_SMALL || size < 2)
+            throw new InvalidOperationException($"No se pudo leer LowerFilters (CR=0x{cr:X8}).");
 
-        var desired = current.Where(v => !v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (attach)
-            desired.Add(FilterServiceName);
-
-        if (desired.SequenceEqual(current))
-            return;
-
-        IntPtr native = WriteMultiSz(desired);
+        IntPtr buffer = Marshal.AllocHGlobal((int)size);
         try
         {
-            uint byteLen = (uint)(2 * (desired.Sum(v => v.Length + 1) + 1));
-            uint crSet = CM_Set_DevNode_Registry_PropertyW(dn, CM_DRP_LOWERFILTERS, native, byteLen, 0);
-            if (crSet != CR_SUCCESS)
-                throw new InvalidOperationException($"CM_Set_DevNode_Registry_PropertyW(LOWERFILTERS) = 0x{crSet:X8}");
+            cr = CM_Get_DevNode_Registry_PropertyW(dn, CM_DRP_LOWERFILTERS, IntPtr.Zero, buffer, ref size, 0);
+            if (cr != CR_SUCCESS)
+                throw new InvalidOperationException($"No se pudo leer LowerFilters (CR=0x{cr:X8}).");
+            return ReadMultiSz(buffer, size);
         }
-        finally { Marshal.FreeHGlobal(native); }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    /// <summary>Modifica la propiedad PnP conservando los demás filtros y su orden.</summary>
+    private static void AttachFilter(uint dn, string instanceId, bool attach)
+    {
+        if (dn == 0) throw new InvalidOperationException($"No se encontró {instanceId}.");
+        var current = ReadLowerFilters(dn);
+        bool present = current.Any(v => v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase));
+        if (present != attach)
+        {
+            var desired = current.Where(v => !v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (attach) desired.Add(FilterServiceName);
+            byte[] bytes = desired.Count == 0 ? Array.Empty<byte>() : Encoding.Unicode.GetBytes(string.Join("\0", desired) + "\0\0");
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                if (bytes.Length > 0)
+                {
+                    buffer = Marshal.AllocHGlobal(bytes.Length);
+                    Marshal.Copy(bytes, 0, buffer, bytes.Length);
+                }
+                uint cr = CM_Set_DevNode_Registry_PropertyW(dn, CM_DRP_LOWERFILTERS, buffer, (uint)bytes.Length, 0);
+                if (cr != CR_SUCCESS)
+                    throw new InvalidOperationException($"No se pudo modificar LowerFilters de {instanceId} (CR=0x{cr:X8}).");
+                if (ReadLowerFilters(dn).Any(v => v.Equals(FilterServiceName, StringComparison.OrdinalIgnoreCase)) != attach)
+                    throw new InvalidOperationException($"PnP no confirmó LowerFilters de {instanceId}.");
+            }
+            finally { if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer); }
+        }
     }
 
     private static List<string> ReadMultiSz(IntPtr buffer, uint size)
@@ -1439,25 +1565,20 @@ public class UsbOverclockService : IUsbOverclockService
         return list;
     }
 
-    private static IntPtr WriteMultiSz(List<string> values)
+    private static RegistryKey? OpenDeviceDriverKey(string deviceInstanceId, bool writable)
     {
-        int charCount = values.Sum(v => v.Length + 1) + 1;
-        IntPtr ptr = Marshal.AllocHGlobal(charCount * 2);
-        int offset = 0;
-        foreach (var v in values)
+        IntPtr set = SetupDiCreateDeviceInfoListExW(IntPtr.Zero, IntPtr.Zero, null, IntPtr.Zero);
+        if (set == InvalidHandleValue) return null;
+        try
         {
-            var bytes = Encoding.Unicode.GetBytes(v + "\0");
-            Marshal.Copy(bytes, 0, ptr + offset, bytes.Length);
-            offset += bytes.Length;
+            var data = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
+            if (!SetupDiOpenDeviceInfoW(set, deviceInstanceId, IntPtr.Zero, 0, ref data)) return null;
+            var handle = SetupDiOpenDevRegKey(set, ref data, DICS_FLAG_GLOBAL, 0, 2 /* DIREG_DRV */,
+                writable ? 0x2001Bu /* KEY_READ | KEY_SET_VALUE */ : 0x20019u /* KEY_READ */);
+            if (handle.IsInvalid) { handle.Dispose(); return null; }
+            return RegistryKey.FromHandle(handle, RegistryView.Registry64);
         }
-        Marshal.WriteInt16(ptr + offset, 0);
-        return ptr;
-    }
-
-    private static RegistryKey? OpenDeviceParametersKey(string deviceInstanceId, bool writable)
-    {
-        using var lm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-        return lm.OpenSubKey($@"SYSTEM\CurrentControlSet\Enum\{deviceInstanceId}\Device Parameters", writable);
+        finally { SetupDiDestroyDeviceInfoList(set); }
     }
 
  // ===================== bInterval real (IOCTL al hub padre) =====================
@@ -1498,18 +1619,18 @@ public class UsbOverclockService : IUsbOverclockService
             }
 
  // El último de la cadena es el hub; el anterior es la conexión del hub.
-            if (chain.Count < 2) return (0, 0);
+            if (chain.Count < 2) return (0, UsbSpeedUnknown);
             var hubNode = chain[^1];
             var childOfHub = chain[^2];
 
             string? hubPath = GetDeviceInterfacePaths(GuidDevinterfaceUsbHub, hubNode.Id).FirstOrDefault();
-            if (hubPath == null) return (0, 0);
+            if (hubPath == null) return (0, UsbSpeedUnknown);
 
             using var hub = CreateFileW(hubPath, GenericRead, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
-            if (hub.IsInvalid) return (0, 0);
+            if (hub.IsInvalid) return (0, UsbSpeedUnknown);
 
             int portCount = GetHubPortCount(hub);
-            if (portCount <= 0) return (0, 0);
+            if (portCount <= 0) return (0, UsbSpeedUnknown);
 
  // IDs a comparar con el driver key name del puerto: el nodo hijo directo del
  // hub y (por si acaso) cada ancestro intermedio del dispositivo.
@@ -1538,12 +1659,12 @@ public class UsbOverclockService : IUsbOverclockService
                     && expectedVidPids.Contains((vid, pid)))
                     return ReadConnectionBIntervalAndSpeed(hub, port);
             }
-            return (0, 0);
+            return (0, UsbSpeedUnknown);
         }
         catch (Exception ex)
         {
             _logging.LogDebug($"OverclockUSB: no se pudo leer bInterval de {instanceId}: {ex.Message}");
-            return (0, 0);
+            return (0, UsbSpeedUnknown);
         }
     }
 
@@ -1645,7 +1766,7 @@ public class UsbOverclockService : IUsbOverclockService
  /// <summary>
  /// bInterval del primer endpoint de interrupción IN y velocidad del dispositivo
  /// (USB_NODE_CONNECTION_INFORMATION_EX: Speed en el offset 23 del buffer pack(1)).
- /// Devuelve (0, 0) si no hay datos; (0, speed) si el dispositivo no expone pipes.
+ /// Devuelve velocidad desconocida si no hay datos; (0, speed) si no hay pipes.
  /// </summary>
     private (int Interval, byte Speed) ReadConnectionBIntervalAndSpeed(SafeFileHandle hub, int port)
     {
@@ -1656,21 +1777,21 @@ public class UsbOverclockService : IUsbOverclockService
             int bytes = 0;
             if (!DeviceIoControl(hub, IOCTL_USB_GET_NODE_CONNECTION_INFORMATION_EX,
                     buffer, ConnInfoBufferSize, buffer, ConnInfoBufferSize, ref bytes, IntPtr.Zero))
-                return (0, 0);
-            if (bytes < 16) return (0, 0);
+                return (0, UsbSpeedUnknown);
+            if (bytes < ConnInfoHeaderSize) return (0, UsbSpeedUnknown);
 
  // Layout pack(1): 22 = CurrentConfigurationValue, 23 = Speed.
-            byte speed = bytes >= 24 ? Marshal.ReadByte(buffer, 23) : (byte)0;
+            byte speed = Marshal.ReadByte(buffer, 23);
 
-            int pipeCount = Math.Min(Marshal.ReadInt32(buffer, 27), MaxPipes);
+            int pipeCount = Math.Clamp(Marshal.ReadInt32(buffer, 27), 0,
+                Math.Min(MaxPipes, (bytes - ConnInfoHeaderSize) / UsbPipeInfoSize));
             for (int i = 0; i < pipeCount; i++)
             {
                 int p = ConnInfoHeaderSize + i * UsbPipeInfoSize;
- // USB_PIPE_INFO (pack(1)): ScheduleOffset ULONG + USB_ENDPOINT_DESCRIPTOR(7):
- // bEndpointAddress@+6, bmAttributes@+7, bInterval@+10.
-                byte endpointAddress = Marshal.ReadByte(buffer, p + 6);
-                byte attributes = Marshal.ReadByte(buffer, p + 7);
-                byte bInterval = Marshal.ReadByte(buffer, p + 10);
+ // USB_PIPE_INFO: primero USB_ENDPOINT_DESCRIPTOR(7), después ScheduleOffset.
+                byte endpointAddress = Marshal.ReadByte(buffer, p + 2);
+                byte attributes = Marshal.ReadByte(buffer, p + 3);
+                byte bInterval = Marshal.ReadByte(buffer, p + 6);
  // Interrupt IN: bmAttributes 0x03 y dirección IN (bit 7 de bEndpointAddress).
                 if ((attributes & 0x03) == 0x03 && (endpointAddress & 0x80) != 0 && bInterval > 0)
                     return (bInterval, speed);
@@ -1955,9 +2076,18 @@ public class UsbOverclockService : IUsbOverclockService
         if (iface != null && !string.IsNullOrEmpty(iface.DeviceDesc))
             return iface.DeviceDesc;
         return desc ?? "";
+    }    /// <summary>Devnodes que reciben el filtro y el intervalo configurado.</summary>
+    private static List<string> PollingTargetIds(uint productDn, string productId)
+    {
+        if (GetStringProperty(productDn, CM_DRP_SERVICE)?.Equals("usbccgp", StringComparison.OrdinalIgnoreCase) == true)
+            return new List<string> { productId };
+
+        var ids = InterfaceIdsOf(productDn, productId);
+        if (ids.Count == 0) ids.Add(productId);
+        return ids;
     }
 
- /// <summary>Interfaces HID de un producto (donde se aplica el filtro + override de bInterval).</summary>
+    /// <summary>Interfaces HID de un producto, incluidas las configuradas por versiones anteriores.</summary>
     private static List<string> InterfaceIdsOf(uint productDn, string productId)
     {
         var ids = new List<string>();
@@ -2119,15 +2249,8 @@ public class UsbOverclockService : IUsbOverclockService
     [DllImport("cfgmgr32.dll")]
     private static extern uint CM_Get_DevNode_Registry_PropertyW(uint dnDevInst, uint ulProperty, IntPtr pulRegDataType, IntPtr buffer, ref uint pulLength, uint ulFlags);
 
-    // OJO: a diferencia de la variante Get, la Set NO recibe "pulRegDataType": la firma
-    // real es (dnDevInst, ulProperty, Buffer, ulLength, ulFlags). Declarar el parámetro
-    // extra (copiado de la Get) corría todos los argumentos un lugar y el driver recibía
-    // Buffer = NULL → CR_INVALID_POINTER (0x3): colgar el filtro fallaba SIEMPRE.
     [DllImport("cfgmgr32.dll")]
     private static extern uint CM_Set_DevNode_Registry_PropertyW(uint dnDevInst, uint ulProperty, IntPtr buffer, uint ulLength, uint ulFlags);
-
-    [DllImport("cfgmgr32.dll")]
-    private static extern uint CM_Reenumerate_DevNode(uint dnDevInst, uint ulFlags);
 
     [DllImport("cfgmgr32.dll")]
     private static extern uint CM_Get_DevNode_Status(ref uint pulStatus, ref uint pulProblemNumber, uint dnDevInst, uint ulFlags);
@@ -2173,6 +2296,10 @@ public class UsbOverclockService : IUsbOverclockService
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool SetupDiOpenDeviceInfoW(IntPtr deviceInfoSet, string deviceInstanceId,
         IntPtr hwndParent, uint openFlags, ref SP_DEVINFO_DATA deviceInfoData);
+
+    [DllImport("setupapi.dll", SetLastError = true)]
+    private static extern Microsoft.Win32.SafeHandles.SafeRegistryHandle SetupDiOpenDevRegKey(IntPtr deviceInfoSet,
+        ref SP_DEVINFO_DATA deviceInfoData, uint scope, uint hwProfile, uint keyType, uint samDesired);
 
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool SetupDiSetClassInstallParamsW(IntPtr deviceInfoSet, ref SP_DEVINFO_DATA deviceInfoData,
@@ -2220,6 +2347,22 @@ public class UsbOverclockService : IUsbOverclockService
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool DeleteService(IntPtr hService);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SERVICE_STATUS
+    {
+        public uint dwServiceType;
+        public uint dwCurrentState;
+        public uint dwControlsAccepted;
+        public uint dwWin32ExitCode;
+        public uint dwServiceSpecificExitCode;
+        public uint dwCheckPoint;
+        public uint dwWaitHint;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryServiceStatus(IntPtr hService, ref SERVICE_STATUS lpServiceStatus);
+
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool CloseServiceHandle(IntPtr hSCObject);
 
@@ -2237,6 +2380,8 @@ public class UsbOverclockService : IUsbOverclockService
     private const uint ServiceDemandStart = 3;
     private const uint ServiceErrorNormal = 1;
     private const uint ServiceChangeConfig = 0x0002;
+    private const uint ServiceQueryStatus = 0x0004;
+    private const uint ServiceRunning = 0x00000004;
     private const uint SERVICE_CONFIG_DESCRIPTION = 1;
 
     private const string FilterServiceName = "hidusbf";

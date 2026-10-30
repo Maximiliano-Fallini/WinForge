@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
@@ -119,6 +120,14 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     // comparten la etiqueta, el desplegable y la lectura para que no haya dudas.
     private const string SensorTooltipKey =
         "Sensor de temperatura que alimenta la curva: Automático usa el CPU en los headers de la placa y la GPU en los ventiladores de la video. «Máximo de CPU y GPU» sigue al componente más caliente.";
+
+    // Los canales del SuperIO sin nombre de fábrica llegan de LHM como "Temperature #N".
+    // Se muestran bajo una cabecera "Canales sin etiqueta · <chip>" y cada fila como
+    // "<chip> · Canal #N": no se les inventa un rol (CPU, VRM, chipset…) porque el
+    // chip no publica a qué punto físico está conectado cada uno.
+    private static readonly Regex UnlabeledTemperatureRegex = new(
+        @"^(?<chip>.+?)\s*·\s*Temperature\s*#\s*(?<n>\d+)$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
     // En canales de solo lectura la única lectura posible es el RPM del sensor,
     // que es best-effort (header sin tacómetro, cable de señal no conectado, fan
     // alimentado desde la fuente) y puede faltar aunque el ventilador gire.
@@ -1107,7 +1116,10 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         sensorBox.SelectionChanged += (s, e) =>
         {
             if (card.SuppressSensorEvents) return;
-            var sourceId = (sensorBox.SelectedItem as ComboBoxItem)?.Tag as string ?? string.Empty;
+            // Las cabeceras de grupo no tienen Tag y no representan un sensor: si
+            // llegaran a seleccionarse, no deben guardar "Automático" por error.
+            if (sensorBox.SelectedItem is not ComboBoxItem selectedItem ||
+                selectedItem.Tag is not string sourceId) return;
             try { _fanService.SetTemperatureSource(card.Id, sourceId); }
             catch (Exception ex) { _loggingService.LogWarning($"FanControlPage: guardar sensor de {card.Id} falló: {ex.Message}"); }
             _ = RefreshAsync();
@@ -1462,13 +1474,18 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             // tiene que poder ver qué sensores existen.
             bool anyReporting = _temperatureSources.Any(IsReporting);
 
-            bool selectedFound = false;
-            foreach (var source in _temperatureSources)
-            {
-                bool isSelected = string.Equals(source.Id, selected, StringComparison.Ordinal);
-                if (anyReporting && !IsReporting(source) && !isSelected) continue;
-                if (isSelected) selectedFound = true;
+            // Los canales que LHM entrega sin nombre ("<chip> · Temperature #N") van
+            // al final, agrupados bajo una cabecera por chip: es el mismo orden del
+            // árbol de LHM (chip → canales). Se arman aparte y se agregan después de
+            // los sensores con nombre para que ninguno quede debajo de una cabecera
+            // que no le corresponde, y se ordenan por número de canal (#2 antes que
+            // #10, que el orden alfabético rompería).
+            var unlabeledByChip = new Dictionary<string, List<(int Number, FanTemperatureSource Source)>>(
+                StringComparer.OrdinalIgnoreCase);
+            var unlabeledChipOrder = new List<string>();
 
+            void AddSensorItem(FanTemperatureSource source)
+            {
                 var baseName = ClassifiedSensorName(source);
                 card.SensorBaseNames[source.Id] = baseName;
 
@@ -1477,8 +1494,45 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
                     Content = FormatSensorItem(baseName, source.Celsius),
                     Tag = source.Id
                 };
-                ToolTipService.SetToolTip(item, item.Content as string);
+                // Los canales sin etiqueta explican la limitación en el tooltip; los
+                // sensores con nombre real mantienen el texto de la opción.
+                ToolTipService.SetToolTip(item, UnlabeledChannelTooltip(source) ?? item.Content as string);
                 card.SensorBox.Items.Add(item);
+            }
+
+            bool selectedFound = false;
+            foreach (var source in _temperatureSources)
+            {
+                bool isSelected = string.Equals(source.Id, selected, StringComparison.Ordinal);
+                if (anyReporting && !IsReporting(source) && !isSelected) continue;
+                if (isSelected) selectedFound = true;
+
+                var unlabeled = UnlabeledTemperatureRegex.Match(source.Name);
+                if (unlabeled.Success)
+                {
+                    var chip = unlabeled.Groups["chip"].Value.Trim();
+                    if (chip.Length == 0) chip = I18n.T("Placa Base");
+                    if (!unlabeledByChip.TryGetValue(chip, out var channels))
+                    {
+                        channels = new List<(int, FanTemperatureSource)>();
+                        unlabeledByChip[chip] = channels;
+                        unlabeledChipOrder.Add(chip);
+                    }
+                    int.TryParse(unlabeled.Groups["n"].Value, out int number);
+                    channels.Add((number, source));
+                    continue;
+                }
+
+                AddSensorItem(source);
+            }
+
+            foreach (var chip in unlabeledChipOrder)
+            {
+                card.SensorBox.Items.Add(CreateSensorGroupHeader(I18n.T("Canales sin etiqueta · {0}", chip)));
+                foreach (var (_, source) in unlabeledByChip[chip]
+                             .OrderBy(c => c.Number)
+                             .ThenBy(c => c.Source.Name, StringComparer.OrdinalIgnoreCase))
+                    AddSensorItem(source);
             }
 
             // Sensor guardado que ya no existe en el hardware: se conserva como
@@ -1526,6 +1580,13 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     {
         if (source.Synthetic) return I18n.T(source.Name);
 
+        // Canal genérico del SuperIO: se reemplaza "Temperature #N" por un nombre
+        // que no afirma lo que no se sabe. El chip ya lo dice la cabecera del grupo
+        // (y el tooltip), así que la fila no lo repite.
+        var unlabeled = UnlabeledTemperatureRegex.Match(source.Name);
+        if (unlabeled.Success)
+            return I18n.T("Canal sin etiqueta #{0}", unlabeled.Groups["n"].Value);
+
         var name = source.Name;
         var group = source.Group switch
         {
@@ -1545,6 +1606,33 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         };
 
         return alreadyNamed || group.Length == 0 ? name : $"{group} · {name}";
+    }
+
+    // Cabecera de grupo del desplegable: no tiene Tag, así que no se puede
+    // elegir como sensor; solo ordena visualmente los canales de cada chip.
+    private static ComboBoxItem CreateSensorGroupHeader(string text) => new()
+    {
+        IsEnabled = false,
+        Content = new TextBlock
+        {
+            Text = text,
+            FontSize = 11,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = MutedBrush,
+            Margin = new Thickness(8, 6, 8, 2)
+        }
+    };
+
+    /// <summary>Explicación para un canal del SuperIO que LHM no sabe nombrar: dice
+    /// exactamente lo que no se puede afirmar, sin inventarle un rol.</summary>
+    private static string? UnlabeledChannelTooltip(FanTemperatureSource source)
+    {
+        var m = UnlabeledTemperatureRegex.Match(source.Name);
+        return m.Success
+            ? I18n.T(
+                "Canal del chip {0} sin etiqueta: no hay un nombre fiable de qué mide. Puede ser CPU, chipset, VRM o un sensor externo; la app no lo inventa.",
+                m.Groups["chip"].Value.Trim())
+            : null;
     }
 
     // Texto de la opción: nombre + lectura actual. La temperatura se refresca en
@@ -1568,7 +1656,7 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             {
                 var baseName = ClassifiedSensorName(source);
                 card.SensorBaseNames[id] = baseName;
-                SetSensorItemText(item, FormatSensorItem(baseName, source.Celsius));
+                SetSensorItemText(item, FormatSensorItem(baseName, source.Celsius), UnlabeledChannelTooltip(source));
             }
             else if (card.SensorBaseNames.TryGetValue(id, out var baseName))
             {
@@ -1584,11 +1672,16 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     // Solo toca el ComboBox si el texto cambió: la lectura suele repetirse entre
     // sondeos y reescribir el contenido de todas las opciones cada 2 s hace parpadear
     // el desplegable sin necesidad.
-    private static void SetSensorItemText(ComboBoxItem item, string text)
+    private static void SetSensorItemText(ComboBoxItem item, string text, string? tooltip = null)
     {
-        if (string.Equals(item.Content as string, text, StringComparison.Ordinal)) return;
+        if (string.Equals(item.Content as string, text, StringComparison.Ordinal))
+        {
+            // La lectura no cambió, pero el tooltip explicativo puede ser nuevo.
+            if (tooltip != null) ToolTipService.SetToolTip(item, tooltip);
+            return;
+        }
         item.Content = text;
-        ToolTipService.SetToolTip(item, text);
+        ToolTipService.SetToolTip(item, tooltip ?? text);
     }
 
     /// <summary>
