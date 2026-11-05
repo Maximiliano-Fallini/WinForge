@@ -159,6 +159,12 @@ public class SensorService : ISensorService
 
         foreach (var sensor in hardware.Sensors)
         {
+            // LHM enumera canales de control PWM aunque la placa no devuelva su
+            // valor actual. Antes caían en "Otros" como "Fan #N" con guiones;
+            // sin lectura actual no aportan nada y confunden con los RPM reales.
+            if (sensor.SensorType == SensorType.Control && !sensor.Value.HasValue)
+                continue;
+
             var categoryName = CategoryFor(sensor);
             var category = categories.FirstOrDefault(c => c.Name == categoryName);
             if (category == null)
@@ -242,6 +248,7 @@ public class SensorService : ISensorService
         SensorType.Power => "Potencia",
         SensorType.Voltage => "Voltaje",
         SensorType.Fan => "Ventiladores",
+        SensorType.Control => "Control de ventiladores",
         SensorType.Data or SensorType.SmallData => "Datos",
         SensorType.Throughput => "Transferencia",
         _ => "Otros"
@@ -255,6 +262,7 @@ public class SensorService : ISensorService
         SensorType.Power => "W",
         SensorType.Voltage => "V",
         SensorType.Fan => "RPM",
+        SensorType.Control => "%",
         SensorType.Clock => "MHz",
         SensorType.Data => "GB",
         SensorType.SmallData => "MB",

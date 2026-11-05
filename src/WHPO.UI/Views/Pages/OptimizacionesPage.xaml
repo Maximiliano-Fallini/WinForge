@@ -4,6 +4,47 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <Page.Resources>
+        <!-- Botón sin estados de hover/pressed: mantiene su fondo y no se ilumina
+             al pasar el mouse. Se usa en la entrada al optimizador general y en la
+             cabecera de cada paquete (ahí toda la card abre/cierra el desplegable). -->
+        <Style x:Key="StaticButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="UseSystemFocusVisuals" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid x:Name="Root" Background="Transparent">
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal"/>
+                                    <VisualState x:Name="Disabled">
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Root"
+                                                             Storyboard.TargetProperty="Opacity"
+                                                             To="0.4" Duration="0"/>
+                                        </Storyboard>
+                                    </VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                            <ContentPresenter x:Name="ContentPresenter"
+                                              Background="{TemplateBinding Background}"
+                                              BorderBrush="{TemplateBinding BorderBrush}"
+                                              BorderThickness="{TemplateBinding BorderThickness}"
+                                              CornerRadius="{TemplateBinding CornerRadius}"
+                                              Padding="{TemplateBinding Padding}"
+                                              HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              Content="{TemplateBinding Content}"
+                                              ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Page.Resources>
+
 <!-- ====== HUB DE OPTIMIZACIONES ======
      La página tiene TRES zonas:
        1) cabecera (fila 0): ícono + título + subtítulo, y el botón de volver
@@ -178,6 +219,31 @@
 
                     <TextBlock x:Name="DebugText" Text="" Visibility="Collapsed" FontWeight="SemiBold" FontSize="24"/>
 
+                    <!-- Acceso destacado y separado de la cabecera, antes de las categorías. -->
+                    <Button x:Name="GeneralOptimizerButton"
+                            Style="{StaticResource StaticButtonStyle}"
+                            Click="GeneralOptimizerButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                            Padding="18,14" CornerRadius="10"
+                            Background="{ThemeResource CardBackgroundBrush}">
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE90F;" FontSize="20" FontFamily="Segoe Fluent Icons"
+                                      Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
+                                <TextBlock x:Name="GeneralOptimizerButtonTitle" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="GeneralOptimizerButtonDescription" FontSize="12"
+                                           Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="13" FontFamily="Segoe Fluent Icons"
+                                      Foreground="{ThemeResource AccentBrush}" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Button>
+
 <!-- ====== CARDS DEL HUB ====== -->
                     <StackPanel x:Name="HubSection" Spacing="12">
                         <Grid x:Name="HubGrid" ColumnSpacing="16" RowSpacing="12"/>
@@ -185,6 +251,49 @@
 
 <!-- ====== NOTIFICACIONES ====== -->
                     <StackPanel x:Name="NotificationPanel" Spacing="8"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Vista previa de paquetes del optimizador general. -->
+            <ScrollViewer x:Name="GeneralOptimizerScroll"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Disabled"
+                          Visibility="Collapsed">
+                <StackPanel Margin="24" Spacing="16">
+                    <Border Background="{ThemeResource CardBackgroundBrush}" CornerRadius="10" Padding="18">
+                        <StackPanel Spacing="12">
+                            <StackPanel Spacing="4">
+                                <TextBlock x:Name="GeneralOptimizerActionsTitle" FontSize="15" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="GeneralOptimizerActionsDescription" FontSize="12"
+                                           Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="GeneralOptimizerCompatibilityText" FontSize="12"
+                                           Foreground="{ThemeResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="GeneralOptimizerSaveButton" Grid.Column="0" Click="GeneralOptimizerSaveButton_Click"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Padding="10,8">
+                                    <TextBlock x:Name="GeneralOptimizerSaveText" TextWrapping="Wrap" TextAlignment="Center"/>
+                                </Button>
+                                <Button x:Name="GeneralOptimizerRestoreButton" Grid.Column="1" Click="GeneralOptimizerRestoreButton_Click"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Padding="10,8">
+                                    <TextBlock x:Name="GeneralOptimizerRestoreText" TextWrapping="Wrap" TextAlignment="Center"/>
+                                </Button>
+                                <Button x:Name="GeneralOptimizerApplyButton" Grid.Column="2" Click="GeneralOptimizerApplyButton_Click"
+                                        Style="{StaticResource AccentButtonStyle}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Padding="10,8">
+                                    <TextBlock x:Name="GeneralOptimizerApplyText" TextWrapping="Wrap" TextAlignment="Center"/>
+                                </Button>
+                            </Grid>
+                            <Button x:Name="GeneralOptimizerLoadButton" Click="GeneralOptimizerLoadButton_Click"
+                                    HorizontalAlignment="Left" Padding="10,8"/>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel x:Name="GeneralOptimizerPacks" Spacing="10"/>
                 </StackPanel>
             </ScrollViewer>
 

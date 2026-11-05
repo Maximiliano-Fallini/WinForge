@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,6 +13,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using WHPO.Core;
 using WHPO.Core.Optimizations;
 using WHPO.Core.Services;
 using WHPO.Core.Services.Interfaces;
@@ -41,6 +43,10 @@ public sealed partial class OptimizacionesPage : Page
     private readonly OptimizationCatalogText _catalogText;
     private readonly OptimizationStateService _stateService = new();
     private readonly OptimizationApplier _applier = new();
+    private readonly GeneralOptimizerService _generalOptimizer = new(
+        new WindowsGeneralOptimizerRegistry(), System.IO.Path.Combine(WHPO.Core.AppPaths.RootDir, "optimization-backups"),
+        WindowsIdentity.GetCurrent().User?.Value ?? throw new InvalidOperationException("No se pudo identificar al usuario."));
+    private bool _generalOptimizerDialogOpen;
 
     // Estado REAL del sistema por ajuste (id → estado leído).
     private readonly Dictionary<string, OptimizationSettingState> _states = new(StringComparer.OrdinalIgnoreCase);
@@ -76,6 +82,14 @@ public sealed partial class OptimizacionesPage : Page
         Border Default, TextBlock DefaultText,
         Border Custom, TextBlock CustomText);
 
+    /// <summary>Las pastillas de estado de un paquete del optimizador general.</summary>
+    private sealed record GeneralOptimizerPills(
+        Border Recommended, TextBlock RecommendedText,
+        Border Custom, TextBlock CustomText,
+        Border Default, TextBlock DefaultText,
+        Border Apply, TextBlock ApplyText,
+        Border Applicable, TextBlock ApplicableText);
+
     // Las lecturas del sistema (registro, tareas, powercfg) NO se serializan
     // del todo: el servicio cachea en diccionarios concurrentes y el hub lee
     // las categorías en paralelo, pero con un techo global de lecturas a la vez
@@ -97,7 +111,15 @@ public sealed partial class OptimizacionesPage : Page
         OptimizationFeatureSummary Summary,
         DateTime At);
 
-    private enum HubMode { Hub, Category, Utility }
+    private enum HubMode { Hub, Category, Utility, GeneralOptimizer }
+
+    // Selección y despliegue solo para la vista previa; no modifican el sistema.
+    private readonly HashSet<string> _generalOptimizerSelected = new(StringComparer.OrdinalIgnoreCase);
+    private bool _generalOptimizerSelectionInitialized;
+    private readonly List<CheckBox> _generalOptimizerChecks = new();
+    private readonly HashSet<string> _generalOptimizerExpanded = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TextBlock> _generalOptimizerCurrentValues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, GeneralOptimizerPills> _generalOptimizerPills = new(StringComparer.OrdinalIgnoreCase);
 
     private HubMode _mode = HubMode.Hub;
     private string? _openId;
@@ -282,6 +304,8 @@ public sealed partial class OptimizacionesPage : Page
     {
         BuildHub();
         if (_mode == HubMode.Category && _openId != null) OpenCategory(_openId);
+        else if (_mode == HubMode.GeneralOptimizer) BuildGeneralOptimizer();
+        else if (_mode == HubMode.Hub) ShowHeaderForHub();
     }
 
     // =====================================================================
@@ -637,6 +661,594 @@ public sealed partial class OptimizacionesPage : Page
     }
 
     // =====================================================================
+    // OPTIMIZADOR GENERAL — vista previa, sin ejecución
+    // =====================================================================
+
+    private void GeneralOptimizerButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        _mode = HubMode.GeneralOptimizer;
+        _openId = null;
+        _settingsSuppressed = false;
+        HubScroll.Visibility = Visibility.Collapsed;
+        DetailScroll.Visibility = Visibility.Collapsed;
+        UtilityHost.Visibility = Visibility.Collapsed;
+        GeneralOptimizerScroll.Visibility = Visibility.Visible;
+        GeneralOptimizerButton.Visibility = Visibility.Collapsed;
+        BackButton.Visibility = Visibility.Visible;
+        UpdateFeatureBulkActions();
+        UpdatePendingUi();
+        BuildGeneralOptimizer();
+    }
+
+    // Recupera la lista original; la disponibilidad para ejecutar se comprueba aparte.
+    private static List<OptimizationSetting> GeneralOptimizerCandidates(OptimizationFeature feature)
+        => feature.Settings.Where(s => HasMechanism(s) && HasRecommendedValue(s)
+            && !s.IsSubjectivePreference && !s.RequiresConfirmation
+            && GeneralOptimizerService.IsCompatible(s)).ToList();
+
+    /// <summary>
+    /// Cuántos ajustes del catálogo que podrían optimizarse quedan fuera por ser
+    /// de otra versión de Windows. Se cuentan solo los que tienen un mecanismo y
+    /// un valor recomendado, para que el número refleje lo que el optimizador
+    /// realmente deja de ofrecer en este equipo.
+    /// </summary>
+    private int CountGeneralOptimizerIncompatible()
+        => _catalog.Features.SelectMany(f => f.Settings)
+            .Count(s => HasMechanism(s) && HasRecommendedValue(s)
+                && !s.IsSubjectivePreference && !s.RequiresConfirmation
+                && !GeneralOptimizerService.IsCompatible(s));
+
+    private void BuildGeneralOptimizer()
+    {
+        HeaderIcon.Glyph = "\uE90F";
+        HeaderTitleText.Text = I18n.T("Optimizador general");
+        HeaderSubtitleText.Text = I18n.T("Revisá paquetes de ajustes recomendados");
+        GeneralOptimizerActionsTitle.Text = I18n.T("Acciones del optimizador");
+        GeneralOptimizerActionsDescription.Text = I18n.T("Solo se guardan y modifican los ajustes disponibles y compatibles con la versión de Windows de este equipo. El resto queda pendiente de implementación o no aplica.");
+        int excluded = CountGeneralOptimizerIncompatible();
+        var windowsVersion = WindowsCapabilities.IsWindows11 ? "Windows 11" : "Windows 10";
+        GeneralOptimizerCompatibilityText.Text = excluded > 0
+            ? I18n.T("{0} (build {1}) · {2} ajustes quedan fuera porque no aplican a esta versión de Windows.", windowsVersion, Environment.OSVersion.Version.Build, excluded)
+            : I18n.T("{0} (build {1}) · Todos los ajustes disponibles aplican a esta versión de Windows.", windowsVersion, Environment.OSVersion.Version.Build);
+        GeneralOptimizerSaveText.Text = I18n.T("Guardar configuración actual");
+        GeneralOptimizerRestoreText.Text = I18n.T("Restablecer de fábrica");
+        GeneralOptimizerApplyText.Text = I18n.T("Aplicar");
+        GeneralOptimizerLoadButton.Content = I18n.T("Restaurar copia guardada");
+        if (!_generalOptimizerSelectionInitialized)
+        {
+            foreach (var feature in _catalog.Features.Where(f => GeneralOptimizerCandidates(f).Count > 0))
+                _generalOptimizerSelected.Add(feature.Id);
+            _generalOptimizerSelectionInitialized = true;
+        }
+        GeneralOptimizerPacks.Children.Clear();
+        _generalOptimizerChecks.Clear();
+        _generalOptimizerCurrentValues.Clear();
+        _generalOptimizerPills.Clear();
+
+        foreach (var feature in _catalog.Features.OrderBy(f => f.Order))
+        {
+            var settings = GeneralOptimizerCandidates(feature);
+            if (settings.Count == 0) continue;
+            GeneralOptimizerPacks.Children.Add(BuildGeneralOptimizerPack(feature, settings));
+        }
+        UpdateGeneralOptimizerActions();
+    }
+
+    private void UpdateGeneralOptimizerActions()
+    {
+        var settings = SelectedGeneralOptimizerSettings();
+        bool hasAvailable = settings.Count > 0;
+        GeneralOptimizerSaveButton.IsEnabled = !_busy && hasAvailable;
+        GeneralOptimizerRestoreButton.IsEnabled = !_busy && settings.Any(s => NeedsGeneralOptimizerChange(s, recommended: false));
+        GeneralOptimizerApplyButton.IsEnabled = !_busy && settings.Any(s => NeedsGeneralOptimizerChange(s, recommended: true));
+        GeneralOptimizerLoadButton.IsEnabled = !_busy && (_generalOptimizer.HasSaved || _generalOptimizer.HasAutomatic);
+        foreach (var check in _generalOptimizerChecks) check.IsEnabled = !_busy;
+    }
+
+    private List<OptimizationSetting> SelectedGeneralOptimizerCandidates()
+        => _catalog.Features.Where(f => _generalOptimizerSelected.Contains(f.Id))
+            .SelectMany(GeneralOptimizerCandidates).ToList();
+
+    private List<OptimizationSetting> SelectedGeneralOptimizerSettings()
+        => SelectedGeneralOptimizerCandidates().Where(GeneralOptimizerService.IsApproved).ToList();
+
+    /// <summary>
+    /// True si el ajuste todavía no está en el valor que se va a escribir. Sin
+    /// estado leído se considera pendiente: es más seguro reescribirlo que darlo
+    /// por aplicado sin comprobarlo.
+    /// </summary>
+    private bool NeedsGeneralOptimizerChange(OptimizationSetting setting, bool recommended)
+    {
+        if (!GeneralOptimizerService.IsApproved(setting)) return false;
+        if (!_states.TryGetValue(setting.Id, out var state) || state.IsOn is null) return true;
+        return recommended ? !state.MatchesRecommended : !state.MatchesDefault;
+    }
+
+    private async void GeneralOptimizerSaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _generalOptimizerDialogOpen) return;
+        var settings = SelectedGeneralOptimizerSettings();
+        if (settings.Count == 0 || XamlRoot is null) return;
+        int unavailable = SelectedGeneralOptimizerCandidates().Count - settings.Count;
+        var saveMessage = I18n.T("Se guardarán {0} ajustes disponibles de los paquetes seleccionados. {1} ajustes pendientes no se incluirán en la copia.", settings.Count, unavailable);
+        if (_generalOptimizer.HasSaved)
+            saveMessage += "\n\n" + I18n.T("Ya existe una copia manual. ¿Querés reemplazarla por la configuración actual de los paquetes seleccionados?");
+        if (!await ConfirmGeneralOptimizerAsync(I18n.T("Guardar configuración actual"), saveMessage)) return;
+        if (_busy) return;
+        _busy = true;
+        SetBatchBusy(true);
+        try
+        {
+            await Task.Run(() => _generalOptimizer.Save(settings, automatic: false));
+            AppendConsole(I18n.T("Copia guardada: {0}", _generalOptimizer.SavedPath), ConsoleStatus.Applied);
+        }
+        catch (Exception ex)
+        {
+            AppendConsole(I18n.T("No se pudo guardar la copia: {0}", ex.Message), ConsoleStatus.Error);
+            _loggingService.LogError("Optimizador general: error al guardar copia", ex);
+        }
+        finally { _busy = false; SetBatchBusy(false); }
+    }
+
+    private async void GeneralOptimizerApplyButton_Click(object sender, RoutedEventArgs e)
+        => await RunGeneralOptimizerAsync(recommended: true);
+
+    private async void GeneralOptimizerRestoreButton_Click(object sender, RoutedEventArgs e)
+        => await RunGeneralOptimizerAsync(recommended: false);
+
+    private async Task RunGeneralOptimizerAsync(bool recommended)
+    {
+        if (_busy || _generalOptimizerDialogOpen || XamlRoot is null) return;
+        var allSettings = SelectedGeneralOptimizerSettings();
+        if (allSettings.Count == 0) return;
+        if (allSettings.Any(s => HasPending(s.Id)))
+        {
+            await ShowGeneralOptimizerMessageAsync(I18n.T("Cambios pendientes"),
+                I18n.T("Aplicá o descartá primero los cambios pendientes de los ajustes seleccionados."));
+            return;
+        }
+        var settings = allSettings.Where(s => NeedsGeneralOptimizerChange(s, recommended)).ToList();
+        if (settings.Count == 0)
+        {
+            await ShowGeneralOptimizerMessageAsync(I18n.T("Sin cambios pendientes"),
+                recommended
+                    ? I18n.T("Los ajustes disponibles de los paquetes seleccionados ya están en el valor recomendado.")
+                    : I18n.T("Los ajustes disponibles de los paquetes seleccionados ya están en el valor de fábrica."));
+            return;
+        }
+        var title = recommended ? I18n.T("Aplicar optimizaciones") : I18n.T("Restablecer de fábrica");
+        var message = recommended
+            ? I18n.T("Se aplicarán {0} ajustes de los paquetes seleccionados. Antes se guardará una copia automática de sus valores actuales.", settings.Count)
+            : I18n.T("Se restaurarán {0} ajustes a los valores de fábrica del catálogo, no a tu configuración anterior. Antes se guardará una copia automática.", settings.Count);
+        int unavailable = SelectedGeneralOptimizerCandidates().Count - allSettings.Count;
+        if (unavailable > 0)
+            message += "\n\n" + I18n.T("{0} ajustes seleccionados están pendientes de implementación y no se modificarán ni se guardarán en la copia.", unavailable);
+        if (_generalOptimizer.HasAutomatic)
+            message += "\n\n" + I18n.T("La copia automática anterior será reemplazada. La copia manual no se modifica.");
+        if (!await ConfirmGeneralOptimizerAsync(title, message) || _busy) return;
+
+        _busy = true;
+        SetBatchBusy(true);
+        BeginBatchUi(settings.Count);
+        int ok = 0, failed = 0, skipped = 0;
+        try
+        {
+            // Si no se puede guardar, no se toca ningún ajuste.
+            await Task.Run(() => _generalOptimizer.Save(settings, automatic: true));
+            AppendConsole(I18n.T("Copia automática guardada: {0}", _generalOptimizer.AutomaticPath), ConsoleStatus.Applied);
+            for (int i = 0; i < settings.Count; i++)
+            {
+                var setting = settings[i];
+                var name = _catalogText.SettingName(setting, I18n.Current);
+                var unsupported = OptimizationStateService.GetUnsupportedReason(setting);
+                if (unsupported is not null)
+                {
+                    skipped++;
+                    AppendConsole(I18n.T("{0} de {1}: {2} omitida ({3})", i + 1, settings.Count, name, unsupported), ConsoleStatus.Skipped);
+                    UpdateBatchUi(i + 1, name);
+                    continue;
+                }
+                try
+                {
+                    await Task.Run(() => _generalOptimizer.Apply(setting, recommended));
+                    ok++;
+                    MarkTouched(setting.Id);
+                    AppendConsole(I18n.T("{0} de {1}: {2} aplicada", i + 1, settings.Count, name), ConsoleStatus.Applied);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    AppendConsole(I18n.T("{0} falló: {1}", name, ex.Message), ConsoleStatus.Error);
+                }
+                UpdateBatchUi(i + 1, name);
+            }
+        }
+        catch (Exception ex)
+        {
+            failed++;
+            AppendConsole(I18n.T("No se inició el lote: {0}", ex.Message), ConsoleStatus.Error);
+            _loggingService.LogError("Optimizador general: no se pudo iniciar el lote", ex);
+        }
+        finally
+        {
+            try { await ReloadTouchedFeaturesAsync(); }
+            catch (Exception ex) { AppendConsole(I18n.T("No se pudo actualizar el estado: {0}", ex.Message), ConsoleStatus.Error); failed++; }
+            AppendConsole(I18n.T("{0} aplicadas, {1} omitidas, {2} con error.", ok, skipped, failed), failed > 0 ? ConsoleStatus.Error : ConsoleStatus.Applied);
+            EndBatchUi(failed > 0);
+            _busy = false;
+            SetBatchBusy(false);
+        }
+    }
+
+    private async void GeneralOptimizerLoadButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _generalOptimizerDialogOpen || XamlRoot is null) return;
+        var choice = new ContentDialog
+        {
+            Title = I18n.T("Restaurar copia guardada"),
+            Content = I18n.T("Elegí la copia que querés restaurar. Se recuperan todos los ajustes de esa copia, independientemente de los paquetes seleccionados."),
+            PrimaryButtonText = _generalOptimizer.HasSaved ? I18n.T("Copia manual") : "",
+            SecondaryButtonText = _generalOptimizer.HasAutomatic ? I18n.T("Copia automática") : "",
+            CloseButtonText = I18n.T("Cancelar"), XamlRoot = XamlRoot
+        };
+        _generalOptimizerDialogOpen = true;
+        ContentDialogResult result;
+        try { result = await choice.ShowAsync(); }
+        finally { _generalOptimizerDialogOpen = false; }
+        if (result == ContentDialogResult.None || _busy) return;
+        bool automatic = result == ContentDialogResult.Secondary;
+        var catalog = _catalog.Features.SelectMany(f => f.Settings).ToList();
+        GeneralOptimizerSnapshot snapshot;
+        List<(GeneralOptimizerSnapshotEntry Entry, OptimizationSetting Setting)> items;
+        _busy = true;
+        SetBatchBusy(true);
+        try
+        {
+            snapshot = await Task.Run(() => _generalOptimizer.Load(automatic, catalog));
+            items = snapshot.Entries.Select(e => (e, _settings[e.Id])).ToList();
+            int skippedByVersion = items.Count(x => !GeneralOptimizerService.IsCompatible(x.Setting));
+            var restoreMessage = I18n.T("Se restaurarán {0} ajustes desde la copia del {1}. Los valores actuales serán reemplazados.",
+                items.Count - skippedByVersion, snapshot.CreatedAt.ToLocalTime().ToString("g"));
+            if (skippedByVersion > 0)
+                restoreMessage += "\n\n" + I18n.T("{0} ajustes de la copia no son compatibles con esta versión de Windows y se omitirán.", skippedByVersion);
+            if (!await ConfirmGeneralOptimizerAsync(I18n.T("Restaurar copia guardada"), restoreMessage)) return;
+        }
+        catch (Exception ex)
+        {
+            await ShowGeneralOptimizerMessageAsync(I18n.T("No se pudo leer la copia"), ex.Message);
+            return;
+        }
+        finally { _busy = false; SetBatchBusy(false); }
+        if (items.Any(x => HasPending(x.Setting.Id)))
+        {
+            await ShowGeneralOptimizerMessageAsync(I18n.T("Cambios pendientes"), I18n.T("Aplicá o descartá primero los cambios pendientes de los ajustes seleccionados."));
+            return;
+        }
+        if (_busy) return;
+
+        _busy = true;
+        SetBatchBusy(true);
+        BeginBatchUi(items.Count);
+        int ok = 0, failed = 0, skipped = 0;
+        try
+        {
+            for (int i = 0; i < items.Count; i++)
+            {
+                var (entry, setting) = items[i];
+                var name = _catalogText.SettingName(setting, I18n.Current);
+                var unsupported = OptimizationStateService.GetUnsupportedReason(setting);
+                if (unsupported is not null)
+                {
+                    skipped++;
+                    AppendConsole(I18n.T("{0} de {1}: {2} omitida ({3})", i + 1, items.Count, name, unsupported), ConsoleStatus.Skipped);
+                }
+                else
+                {
+                    try
+                    {
+                        await Task.Run(() => _generalOptimizer.Restore(setting, entry.Value));
+                        ok++;
+                        MarkTouched(setting.Id);
+                        AppendConsole(I18n.T("{0} de {1}: {2} restaurada", i + 1, items.Count, name), ConsoleStatus.Applied);
+                    }
+                    catch (Exception ex) { failed++; AppendConsole(I18n.T("{0} falló: {1}", name, ex.Message), ConsoleStatus.Error); }
+                }
+                UpdateBatchUi(i + 1, name);
+            }
+        }
+        finally
+        {
+            try { await ReloadTouchedFeaturesAsync(); }
+            catch (Exception ex) { AppendConsole(I18n.T("No se pudo actualizar el estado: {0}", ex.Message), ConsoleStatus.Error); failed++; }
+            AppendConsole(I18n.T("{0} aplicadas, {1} omitidas, {2} con error.", ok, skipped, failed), failed > 0 ? ConsoleStatus.Error : ConsoleStatus.Applied);
+            EndBatchUi(failed > 0);
+            _busy = false;
+            SetBatchBusy(false);
+        }
+    }
+
+    private async Task<bool> ConfirmGeneralOptimizerAsync(string title, string message)
+    {
+        if (XamlRoot is null) return false;
+        var dialog = new ContentDialog
+        {
+            Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = I18n.T("Continuar"), CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot
+        };
+        _generalOptimizerDialogOpen = true;
+        try { return await dialog.ShowAsync() == ContentDialogResult.Primary; }
+        finally { _generalOptimizerDialogOpen = false; }
+    }
+
+    private async Task ShowGeneralOptimizerMessageAsync(string title, string message)
+    {
+        if (XamlRoot is null) return;
+        var dialog = new ContentDialog { Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap }, CloseButtonText = I18n.T("Cerrar"), XamlRoot = XamlRoot };
+        _generalOptimizerDialogOpen = true;
+        try { await dialog.ShowAsync(); }
+        finally { _generalOptimizerDialogOpen = false; }
+    }
+
+    private Border BuildGeneralOptimizerPack(OptimizationFeature feature, List<OptimizationSetting> settings)
+    {
+        var featureName = _catalogText.FeatureName(feature, I18n.Current);
+        bool expanded = _generalOptimizerExpanded.Contains(feature.Id);
+
+        // Título y pastillas comparten bloque para que la casilla y la flecha
+        // queden centradas entre la línea del nombre y la del estado.
+        var titleBlock = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        titleBlock.Children.Add(new TextBlock
+        {
+            Text = featureName, FontSize = 15, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap
+        });
+
+        var icon = new FontIcon
+        {
+            Glyph = string.IsNullOrWhiteSpace(feature.Icon) ? "\uE713" : feature.Icon,
+            FontFamily = SymbolFont(), FontSize = 18, Foreground = AccentBrush,
+            VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0)
+        };
+
+        var arrow = new FontIcon
+        {
+            Glyph = expanded ? "\uE70D" : "\uE76B", FontSize = 12, FontFamily = SymbolFont(),
+            Foreground = MutedBrush, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0)
+        };
+
+        var toggleGrid = new Grid();
+        toggleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toggleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        toggleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toggleGrid.Children.Add(icon);
+        Grid.SetColumn(titleBlock, 1);
+        toggleGrid.Children.Add(titleBlock);
+        Grid.SetColumn(arrow, 2);
+        toggleGrid.Children.Add(arrow);
+
+        // La cabecera completa es un botón real: abre y cierra el paquete desde
+        // cualquier punto (texto, ícono, pastillas o flecha), con mouse, toque
+        // y teclado. El borde lo dibuja la card, no el botón.
+        var toggle = new Button
+        {
+            Content = toggleGrid,
+            // Sin hover: la card se lee como superficie, no como botón que se enciende.
+            Style = (Style)Resources["StaticButtonStyle"],
+            Background = TransparentBrush,
+            BorderThickness = new Thickness(0),
+            // Reserva la esquina derecha para la casilla, que va encima.
+            Padding = new Thickness(18, 14, 58, 14),
+            CornerRadius = new CornerRadius(10),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Center
+        };
+
+        var check = new CheckBox
+        {
+            IsChecked = _generalOptimizerSelected.Contains(feature.Id),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 0, 14, 0)
+        };
+        _generalOptimizerChecks.Add(check);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(check,
+            I18n.T("Seleccionar paquete: {0}", featureName));
+        check.Checked += (_, _) => { _generalOptimizerSelected.Add(feature.Id); UpdateGeneralOptimizerActions(); UpdateGeneralOptimizerPills(feature); };
+        check.Unchecked += (_, _) => { _generalOptimizerSelected.Remove(feature.Id); UpdateGeneralOptimizerActions(); UpdateGeneralOptimizerPills(feature); };
+
+        // El botón ocupa TODO el ancho de la card (incluida la zona de la casilla),
+        // así el resaltado de hover cubre la tarjeta entera. La casilla va encima
+        // y conserva su propio clic para seleccionar sin abrir el paquete.
+        var header = new Grid();
+        header.Children.Add(toggle);
+        header.Children.Add(check);
+
+        var rows = new StackPanel
+        {
+            Spacing = 6,
+            Visibility = Visibility.Collapsed,
+            Margin = new Thickness(18, 0, 18, 14)
+        };
+        void PopulateRows()
+        {
+            if (rows.Children.Count > 0) return;
+            foreach (var setting in settings)
+                rows.Children.Add(BuildGeneralOptimizerSetting(setting));
+        }
+        void SetExpanded(bool open)
+        {
+            expanded = open;
+            if (open) { _generalOptimizerExpanded.Add(feature.Id); PopulateRows(); }
+            else _generalOptimizerExpanded.Remove(feature.Id);
+            rows.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            arrow.Glyph = open ? "\uE70D" : "\uE76B";
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle,
+                I18n.T(open ? "Ocultar ajustes de {0}" : "Mostrar ajustes de {0}", featureName));
+        }
+        toggle.Click += (_, _) => SetExpanded(!expanded);
+        SetExpanded(expanded);
+
+        // Las MISMAS pastillas de estado de las cards del hub (glifo, tinte y
+        // radio), para que un paquete se lea igual que una categoría.
+        var pillsHost = new WrapPanel { Spacing = 6 };
+        var rec = BuildStatePill("\uE735", SuccessBrush, Windows.UI.Color.FromArgb(38, 0x4C, 0xAF, 0x50));
+        var cus = BuildStatePill("\uE73E", WarningBrush, Windows.UI.Color.FromArgb(38, 0xFF, 0xB3, 0x00));
+        var def = BuildStatePill("~", MutedBrush, Windows.UI.Color.FromArgb(28, 0x80, 0x80, 0x80), isTextSymbol: true);
+        var apply = BuildStatePill("\uE768", AccentBrush, Windows.UI.Color.FromArgb(40, 0x00, 0x78, 0xD4));
+        var applicablePill = BuildStatePill("\uE8FB", AccentBrush, Windows.UI.Color.FromArgb(28, 0x00, 0x78, 0xD4));
+        pillsHost.Children.Add(rec.Host);
+        pillsHost.Children.Add(cus.Host);
+        pillsHost.Children.Add(def.Host);
+        pillsHost.Children.Add(applicablePill.Host);
+        pillsHost.Children.Add(apply.Host);
+        _generalOptimizerPills[feature.Id] = new GeneralOptimizerPills(
+            rec.Host, rec.Text, cus.Host, cus.Text, def.Host, def.Text,
+            apply.Host, apply.Text, applicablePill.Host, applicablePill.Text);
+        UpdateGeneralOptimizerPills(feature);
+
+        pillsHost.Margin = new Thickness(0, 1, 0, 0);
+        titleBlock.Children.Add(pillsHost);
+
+        var content = new StackPanel { Spacing = 0 };
+        content.Children.Add(header);
+        content.Children.Add(rows);
+        return new Border
+        {
+            Background = CardBrush,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(0),
+            Child = content
+        };
+    }
+
+    private Border BuildGeneralOptimizerSetting(OptimizationSetting setting)
+    {
+        var content = new StackPanel { Spacing = 6 };
+        content.Children.Add(new TextBlock
+        {
+            Text = _catalogText.SettingName(setting, I18n.Current),
+            FontSize = 13, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap
+        });
+        var description = _catalogText.SettingDescription(setting, I18n.Current);
+        if (!string.IsNullOrWhiteSpace(description))
+            content.Children.Add(new TextBlock { Text = description, FontSize = 12, Foreground = MutedBrush, TextWrapping = TextWrapping.Wrap });
+
+        // Valores como las pastillas del componente: recomendado (verde) y actual
+        // (gris), más el aviso de pendiente o de reinicio cuando corresponde.
+        var pills = new WrapPanel { Spacing = 6, Margin = new Thickness(0, 2, 0, 0) };
+        var recommended = BuildStatePill("\uE735", SuccessBrush, Windows.UI.Color.FromArgb(40, 0x4C, 0xAF, 0x50));
+        recommended.Text.Text = $"{I18n.T("Recomendado")}: {DescribeRecommendedValue(setting) ?? I18n.T("No disponible")}";
+        pills.Children.Add(recommended.Host);
+
+        var current = BuildStatePill(null, ThemeBrushes.Get("SecondaryTextBrush"), Windows.UI.Color.FromArgb(22, 0x80, 0x80, 0x80));
+        _generalOptimizerCurrentValues[setting.Id] = current.Text;
+        UpdateGeneralOptimizerCurrentValue(setting, current.Text);
+        pills.Children.Add(current.Host);
+
+        if (!GeneralOptimizerService.IsApproved(setting))
+        {
+            var pending = BuildStatePill("\uE7BA", MutedBrush, Windows.UI.Color.FromArgb(28, 0x80, 0x80, 0x80));
+            pending.Text.Text = I18n.T("Pendiente");
+            ToolTipService.SetToolTip(pending.Host,
+                I18n.T("Pendiente de implementación: no se guardará ni modificará desde aquí."));
+            pills.Children.Add(pending.Host);
+        }
+        if (setting.RequiresRestart)
+        {
+            var restart = BuildStatePill(null, MutedBrush, Windows.UI.Color.FromArgb(28, 0x80, 0x80, 0x80));
+            restart.Text.Text = I18n.T("Requiere reiniciar el equipo");
+            pills.Children.Add(restart.Host);
+        }
+        content.Children.Add(pills);
+
+        return new Border
+        {
+            Background = ThemeBrushes.GetSurface("ExpanderHeaderBackground"),
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 10, 12, 10), Child = content
+        };
+    }
+
+    private void UpdateGeneralOptimizerCurrentValue(OptimizationSetting setting, TextBlock text)
+    {
+        string value;
+        try
+        {
+            if (GeneralOptimizerService.IsApproved(setting))
+            {
+                var current = _generalOptimizer.Read(setting);
+                value = !current.Exists ? I18n.T("No configurado")
+                    : current.Kind == Microsoft.Win32.RegistryValueKind.DWord
+                        ? current.Value.GetInt32() switch { 0 => I18n.T("Desactivado"), 1 => I18n.T("Activado"), _ => I18n.T("Personalizado") }
+                        : I18n.T("Personalizado");
+            }
+            else
+            {
+                value = _states.TryGetValue(setting.Id, out var state)
+                    && (!OptimizationStateService.IsSelection(setting) || state.SelectedOptionIndex is not null)
+                    ? DescribeCurrentValue(setting, state) ?? I18n.T("No disponible")
+                    : I18n.T("No disponible");
+            }
+        }
+        catch { value = I18n.T("No disponible"); }
+        text.Text = $"{I18n.T("Actual")}: {value}";
+    }
+
+    private void UpdateGeneralOptimizerCurrentValues(OptimizationFeature feature)
+    {
+        foreach (var setting in feature.Settings)
+            if (_generalOptimizerCurrentValues.TryGetValue(setting.Id, out var text))
+                UpdateGeneralOptimizerCurrentValue(setting, text);
+        UpdateGeneralOptimizerPills(feature);
+        UpdateGeneralOptimizerActions();
+    }
+
+    private void UpdateGeneralOptimizerPills(OptimizationFeature feature)
+    {
+        if (!_generalOptimizerPills.TryGetValue(feature.Id, out var pills)) return;
+        var settings = GeneralOptimizerCandidates(feature);
+        var applicable = settings.Where(GeneralOptimizerService.IsApproved).ToList();
+        int total = settings.Count, recommended = 0, custom = 0, factory = 0;
+        foreach (var setting in settings)
+        {
+            if (!_states.TryGetValue(setting.Id, out var state)) continue;
+
+            // Sin valor leído todavía no se cuenta en ninguna pastilla (antes de
+            // que llegue la lectura no es "personalizado", simplemente no se sabe).
+            if (OptimizationStateService.IsSelection(setting) ? state.SelectedOptionIndex is null
+                : OptimizationStateService.IsNumeric(setting) ? state.NumericValue is null
+                : state.IsOn is null) continue;
+
+            if (state.MatchesRecommended) recommended++;
+            else if (state.MatchesDefault) factory++;
+            else custom++;
+        }
+
+        string ratio(int value) => $"{value}/{total}";
+        pills.RecommendedText.Text = $"{I18n.T("Recomendado")} {ratio(recommended)}";
+        pills.CustomText.Text = $"{I18n.T("Personalizado")} {ratio(custom)}";
+        pills.DefaultText.Text = $"{I18n.T("De fábrica")} {ratio(factory)}";
+
+        pills.ApplicableText.Text = $"{I18n.T("Aplicables")} {applicable.Count}/{total}";
+        ToolTipService.SetToolTip(pills.Applicable,
+            I18n.T("Ajustes que el optimizador puede escribir en este equipo."));
+        pills.Applicable.Visibility = Visibility.Visible;
+
+        // Estado: todos los ajustes candidatos. Aplicables: los autorizados, que
+        // son los únicos que se pueden escribir. Aplicar: los aplicables que
+        // todavía no están en el valor recomendado.
+        int toApply = applicable.Count(s => NeedsGeneralOptimizerChange(s, recommended: true));
+        pills.ApplyText.Text = $"{I18n.T("A aplicar")} {toApply}";
+
+        pills.Recommended.Visibility = Visibility.Visible;
+        pills.Default.Visibility = Visibility.Visible;
+        pills.Custom.Visibility = custom > 0 ? Visibility.Visible : Visibility.Collapsed;
+        pills.Apply.Visibility = toApply > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // =====================================================================
     // DRILL-DOWN
     // =====================================================================
 
@@ -649,6 +1261,8 @@ public sealed partial class OptimizacionesPage : Page
         _openId = feature.Id;
 
         HubScroll.Visibility = Visibility.Collapsed;
+        GeneralOptimizerScroll.Visibility = Visibility.Collapsed;
+        GeneralOptimizerButton.Visibility = Visibility.Collapsed;
         DetailScroll.Visibility = Visibility.Visible;
         UtilityHost.Visibility = Visibility.Collapsed;
         BackButton.Visibility = Visibility.Visible;
@@ -718,6 +1332,8 @@ public sealed partial class OptimizacionesPage : Page
         _openId = utilityId;
 
         HubScroll.Visibility = Visibility.Collapsed;
+        GeneralOptimizerScroll.Visibility = Visibility.Collapsed;
+        GeneralOptimizerButton.Visibility = Visibility.Collapsed;
         DetailScroll.Visibility = Visibility.Collapsed;
         UtilityHost.Visibility = Visibility.Visible;
         BackButton.Visibility = Visibility.Visible;
@@ -752,6 +1368,7 @@ public sealed partial class OptimizacionesPage : Page
 
     private void BackToHub()
     {
+        if ((_busy || _generalOptimizerDialogOpen) && _mode == HubMode.GeneralOptimizer) return;
         // Al salir del componente (categoría o herramienta) la consola ya cumplió:
         // se cierra sola, salvo que haya un lote corriendo, donde es la única
         // prueba de que la app sigue trabajando.
@@ -762,10 +1379,13 @@ public sealed partial class OptimizacionesPage : Page
         _settingsSuppressed = false;
 
         HubScroll.Visibility = Visibility.Visible;
+        GeneralOptimizerScroll.Visibility = Visibility.Collapsed;
+        GeneralOptimizerButton.Visibility = Visibility.Visible;
         DetailScroll.Visibility = Visibility.Collapsed;
         UtilityHost.Visibility = Visibility.Collapsed;
         BackButton.Visibility = Visibility.Collapsed;
 
+        UpdatePendingUi();
         ShowHeaderForHub();
     }
 
@@ -773,6 +1393,9 @@ public sealed partial class OptimizacionesPage : Page
     {
         HeaderIcon.Glyph = "\uE90F";
         HeaderTitleText.Text = I18n.T("Optimizaciones");
+        GeneralOptimizerButtonTitle.Text = I18n.T("Optimizador general");
+        GeneralOptimizerButtonDescription.Text = I18n.T("Revisá paquetes de ajustes recomendados");
+        GeneralOptimizerButton.IsEnabled = !_busy;
         // Solo se cuentan los ajustes que la app puede leer o aplicar: los que no
         // tienen mecanismo no se muestran, así que tampoco se prometen.
         HeaderSubtitleText.Text = I18n.T(
@@ -1602,6 +2225,9 @@ public sealed partial class OptimizacionesPage : Page
         StateCache[feature.Id] = new CachedStates(states, summary, DateTime.Now);
         UpdateCategoryCard(feature);
 
+        if (_mode == HubMode.GeneralOptimizer)
+            UpdateGeneralOptimizerCurrentValues(feature);
+
         if (_mode == HubMode.Category && string.Equals(_openId, feature.Id, StringComparison.OrdinalIgnoreCase))
         {
             UpdateHeaderSubtitleForCategory(feature);
@@ -1655,7 +2281,7 @@ public sealed partial class OptimizacionesPage : Page
 
         if (ActionBar == null) return;
 
-        ActionBar.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ActionBar.Visibility = count > 0 && _mode != HubMode.GeneralOptimizer ? Visibility.Visible : Visibility.Collapsed;
         if (count == 0) return;
 
         PendingText.Text = I18n.T("{0} cambios pendientes de aplicar", count);
@@ -2536,6 +3162,8 @@ public sealed partial class OptimizacionesPage : Page
             ApplyButton.Content = busy ? I18n.T("Aplicando...") : I18n.T("Aplicar cambios");
         }
         if (DiscardButton != null) DiscardButton.IsEnabled = !busy;
+        if (GeneralOptimizerButton != null) GeneralOptimizerButton.IsEnabled = !busy;
+        if (GeneralOptimizerPacks != null) UpdateGeneralOptimizerActions();
 
         // Los atajos de componente comparten el mismo lote: mientras corre uno,
         // no pueden disparar otro encima.

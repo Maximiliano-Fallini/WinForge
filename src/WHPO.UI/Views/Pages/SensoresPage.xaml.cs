@@ -55,7 +55,8 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
     private static readonly string[] CategoryOrder =
     {
         "Temperatura", "Distancia a TjMax", "Uso", "Velocidad de reloj",
-        "Potencia", "Voltaje", "Ventiladores", "Datos", "Transferencia", "Otros"
+        "Potencia", "Voltaje", "Ventiladores", "Control de ventiladores",
+        "Datos", "Transferencia", "Otros"
     };
 
     // Íconos (Segoe MDL2 Assets) por tipo de hardware.
@@ -506,11 +507,11 @@ public sealed partial class SensoresPage : Page, IBackgroundPausable
     }
 
     // Ícono de categoría: FontIcon monocromo de Segoe MDL2 Assets, salvo
-    // Ventiladores, que es un fan de PC dibujado con geometría vectorial
-    // (no existe un glyph de ventilador en MDL2).
+    // Ventiladores y su control PWM, que usan el fan de PC dibujado con
+    // geometría vectorial (no existe un glyph de ventilador en MDL2).
     private static FrameworkElement CreateCategoryIcon(string categoryName)
     {
-        if (categoryName == "Ventiladores")
+        if (categoryName == "Ventiladores" || categoryName == "Control de ventiladores")
             return CreateFanIcon();
 
         return new FontIcon
