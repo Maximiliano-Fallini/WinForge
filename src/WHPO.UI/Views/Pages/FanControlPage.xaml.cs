@@ -1451,12 +1451,19 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     /// y por último cada sensor real, clasificado por rol y con su lectura al lado.
     /// Los sensores que no reportan no se listan, salvo el que ya está elegido por
     /// el canal (para no mostrar "Automático" y ocultar la configuración real).
-    /// La selección se lee de settings y se aplica con los eventos suprimidos, para
-    /// que armar el combo no dispare un guardado.
+    /// La selección guardada se lee de settings y se aplica con los eventos suprimidos,
+    /// para que armar el combo no dispare un guardado. Si todavía no hay una elección
+    /// personalizada, se preselecciona el sensor real del CPU/GPU que usa el automático.
     /// </summary>
     private void PopulateSensorBox(FanCard card, FanControlInfo fan)
     {
         var selected = _fanService.GetTemperatureSource(card.Id);
+        // Sin sensor personalizado guardado, el desplegable muestra el sensor real
+        // que alimenta el automático (CPU en la placa, GPU en la video). No se
+        // persiste: es solo la selección visible; elegir otro sí lo guarda.
+        var displaySelected = selected;
+        if (string.IsNullOrEmpty(displaySelected))
+            displaySelected = DefaultSensorSourceId(fan) ?? string.Empty;
 
         card.SuppressSensorEvents = true;
         try
@@ -1554,7 +1561,7 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             for (int i = 0; i < card.SensorBox.Items.Count; i++)
             {
                 if (card.SensorBox.Items[i] is ComboBoxItem item &&
-                    string.Equals(item.Tag as string, selected, StringComparison.Ordinal))
+                    string.Equals(item.Tag as string, displaySelected, StringComparison.Ordinal))
                 {
                     index = i;
                     break;
@@ -1566,6 +1573,26 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         {
             card.SuppressSensorEvents = false;
         }
+    }
+
+    /// <summary>
+    /// Sensor que debe aparecer seleccionado mientras el canal está en automático:
+    /// el que el servicio usaría (CPU en la placa, GPU en la video) o, si ese no
+    /// reporta, el primero del mismo grupo con lectura. No se guarda en settings:
+    /// es una preselección; el usuario puede cambiarla por cualquier sensor real.
+    /// </summary>
+    private string? DefaultSensorSourceId(FanControlInfo fan)
+    {
+        var group = fan.IsGpu ? FanTemperatureGroup.Gpu : FanTemperatureGroup.Cpu;
+        if (!string.IsNullOrEmpty(fan.AutomaticTemperatureSourceId))
+        {
+            var exact = _temperatureSources.FirstOrDefault(s =>
+                string.Equals(s.Id, fan.AutomaticTemperatureSourceId, StringComparison.Ordinal));
+            if (exact != null && IsReporting(exact)) return exact.Id;
+        }
+
+        return _temperatureSources
+            .FirstOrDefault(s => !s.Synthetic && s.Group == group && IsReporting(s))?.Id;
     }
 
     // True si el sensor está entregando una lectura utilizable. Los que devuelven

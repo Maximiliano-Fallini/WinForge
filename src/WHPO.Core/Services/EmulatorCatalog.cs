@@ -27,6 +27,22 @@ namespace WHPO.Core.Services;
 /// los emuladores Android (NoxVMHandle.exe en Nox, aow_exe.exe en GameLoop...).
 /// El enganche (reglas de modo juego) los trata como el mismo juego y el mapa de
 /// rutas los registra para que el match por carpeta funcione igual.</param>
+/// <param name="RomArgTemplate">Plantilla de argumentos para lanzar una ROM
+/// concreta, con {rom} como marcador de la RUTA entrecomillada (ej. "-e {rom}")
+/// o {set} como marcador del NOMBRE DE SET sin extensión (MAME/FBNeo: no aceptan
+/// una ruta, solo el nombre corto del set). Null = sin CLI de ROM documentada: el
+/// emulador se lanza vacío, como siempre. Solo se rellena con sintaxis verificada
+/// en docs oficiales o frontends comprobados (auditoría de emuladores, Fase 0).</param>
+/// <param name="RomExtensions">Extensiones de ROM confirmadas para el
+/// emulador (con punto, ej. ".iso"). Null = la plantilla aplica a cualquier
+/// ruta (CLI confirmada, extensiones no exhaustivas en la documentación).</param>
+/// <param name="ChildProcessesInheritRule">Comportamiento de reglas ante un
+/// proceso emulado separado: si el emulador ejecuta el juego en un proceso hijo
+/// (núcleo/GUI separados, helper), ese hijo hereda la regla activa del emulador
+/// (general o por ROM). True por defecto: la topología exacta (single vs child)
+/// NO está verificada en la documentación de ningún emulador de consola, así que
+/// la herencia es el superconjunto seguro (sin hijos, no cambia nada). Poner
+/// False solo si se verifica que un emulador concreto no debe delegar reglas.</param>
 public sealed record EmulatorDefinition(
     string Name,
     string[] ExeNames,
@@ -34,7 +50,10 @@ public sealed record EmulatorDefinition(
     string[] TypicalDirs,
     bool IsMobile = false,
     bool SkipAutoDetect = false,
-    string[]? ProcessNames = null)
+    string[]? ProcessNames = null,
+    string? RomArgTemplate = null,
+    string[]? RomExtensions = null,
+    bool ChildProcessesInheritRule = true)
 {
     /// <summary>Alias de procesos normalizado (nunca null).</summary>
     public string[] HookProcessNames => ProcessNames ?? Array.Empty<string>();
@@ -58,36 +77,46 @@ public static class EmulatorCatalog
             new[] { (@"SOFTWARE\WOW6432Node\RetroArch", "InstallDir"), (@"SOFTWARE\RetroArch", "InstallDir") },
             new[] { "RetroArch", "RetroArch-Win64" }),
 
-        // Dolphin (GameCube/Wii).
+        // Dolphin (GameCube/Wii). CLI oficial: `-b -e <archivo>` (-b sin UI;
+        // -e exige el archivo). El juego corre en el propio Dolphin.exe.
         new EmulatorDefinition("Dolphin",
             new[] { "Dolphin.exe" },
             new[] { (@"SOFTWARE\Dolphin Emulator", "InstallPath"), (@"SOFTWARE\WOW6432Node\Dolphin", "InstallPath") },
-            new[] { "Dolphin", "Dolphin Emulator", "Dolphin-x64" }),
+            new[] { "Dolphin", "Dolphin Emulator", "Dolphin-x64" },
+            RomArgTemplate: "-b -e {rom}", RomExtensions: new[] { ".iso", ".gcz", ".wbfs", ".wia", ".rvz" }),
 
         // PCSX2 (PS2): la rama Qt actual usa pcsx2-qt.exe; se mantienen
-        // variantes históricas para instalaciones antiguas.
+        // variantes históricas para instalaciones antiguas. CLI oficial de la rama
+        // Qt: `-batch` (sin UI) y `--` antes de la ruta (protege guiones/espacios).
+        // El juego corre en el propio pcsx2-qt.exe (GS y EE son hilos, no procesos).
         new EmulatorDefinition("PCSX2",
             new[] { "pcsx2-qt.exe", "pcsx2.exe", "pcsx2-avx2.exe" },
             new[] { (@"SOFTWARE\PCSX2", "Install_Dir"), (@"SOFTWARE\WOW6432Node\PCSX2", "Install_Dir") },
-            new[] { "PCSX2" }),
+            new[] { "PCSX2" },
+            RomArgTemplate: "-batch -- {rom}", RomExtensions: new[] { ".iso", ".cso", ".chd" }),
 
         // RPCS3 (PS3): portable.
         new EmulatorDefinition("RPCS3",
             new[] { "rpcs3.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "RPCS3" }),
+            new[] { "RPCS3" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".bin", ".pkg" }),
 
         // Cemu (Wii U): portable.
         new EmulatorDefinition("Cemu",
             new[] { "Cemu.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Cemu" }),
+            new[] { "Cemu" },
+            RomArgTemplate: "-g {rom}", RomExtensions: new[] { ".wud", ".wux", ".rpx", ".wua" }),
 
-        // MAME (arcade): instalador o portable.
+        // MAME (arcade): instalador o portable. NO acepta una ruta de ROM: recibe
+        // el nombre corto del set (el zip sin extensión) y lo busca en -rompath.
+        // Por eso la plantilla usa {set} y no {rom}.
         new EmulatorDefinition("MAME",
             new[] { "mame64.exe", "mame.exe", "mameui64.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "MAME" }),
+            new[] { "MAME" },
+            RomArgTemplate: "{set}", RomExtensions: new[] { ".zip", ".7z" }),
 
         // PPSSPP (PSP): instalador o portable.
         new EmulatorDefinition("PPSSPP",
@@ -99,13 +128,15 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Ryujinx",
             new[] { "Ryujinx.exe", "Ryujinx.Ava.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Ryujinx" }),
+            new[] { "Ryujinx" },
+            RomArgTemplate: "{rom}"),
 
         // Yuzu (Switch, descontinuado pero muy distribuido): portable.
         new EmulatorDefinition("Yuzu",
             new[] { "yuzu.exe", "yuzu-cmd.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "yuzu" }),
+            new[] { "yuzu" },
+            RomArgTemplate: "-g {rom}"),
 
         // Sudachi / Suyu (forks de Yuzu). Cada uno trae su binario -cmd.
         new EmulatorDefinition("Sudachi",
@@ -115,7 +146,8 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Suyu",
             new[] { "suyu.exe", "suyu-cmd.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "suyu" }),
+            new[] { "suyu" },
+            RomArgTemplate: "-g {rom}"),
 
         // Sucesores activos de Yuzu (2024-2026): Eden, Citron y Torzu.
         // El juego corre dentro del exe del emulador (un solo proceso),
@@ -123,11 +155,13 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Eden",
             new[] { "eden.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Eden", "eden" }),
+            new[] { "Eden", "eden" },
+            RomArgTemplate: "-g {rom}"),
         new EmulatorDefinition("Citron",
             new[] { "citron.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Citron", "citron" }),
+            new[] { "Citron", "citron" },
+            RomArgTemplate: "-g {rom}"),
         new EmulatorDefinition("Torzu",
             new[] { "torzu.exe", "torzu-cmd.exe", "yuzu.exe" },
             Array.Empty<(string, string)>(),
@@ -137,7 +171,8 @@ public static class EmulatorCatalog
         new EmulatorDefinition("shadPS4",
             new[] { "shadPS4.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "shadPS4", "shadps4" }),
+            new[] { "shadPS4", "shadps4" },
+            RomArgTemplate: "{rom}"),
 
         // DOSBox (DOS): core, fork X y Staging. CLI de un solo proceso.
         new EmulatorDefinition("DOSBox",
@@ -160,6 +195,7 @@ public static class EmulatorCatalog
 
         // DuckStation (PS1): el instalador NSIS registra la versión en el
         // DisplayName (Capa 2 de detección) y hay variantes por optimización de CPU.
+        // CLI oficial: `-batch` (sin ventana principal) y `--` antes de la ruta.
         new EmulatorDefinition("DuckStation",
             new[]
             {
@@ -169,25 +205,29 @@ public static class EmulatorCatalog
                 "duckstation.exe"
             },
             Array.Empty<(string, string)>(),
-            new[] { "DuckStation", "duckstation" }),
+            new[] { "DuckStation", "duckstation" },
+            RomArgTemplate: "-batch -- {rom}", RomExtensions: new[] { ".bin", ".cue", ".chd", ".ecm", ".mds", ".mdf", ".ccd", ".pbp" }),
 
         // Xenia (Xbox 360): canary es la rama más distribuida (guion y guion bajo).
         new EmulatorDefinition("Xenia",
             new[] { "xenia.exe", "xenia_canary.exe", "xenia-canary.exe", "xenia_master.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Xenia", "xenia" }),
+            new[] { "Xenia", "xenia" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".xex" }),
 
         // Xemu (Xbox original).
         new EmulatorDefinition("Xemu",
             new[] { "xemu.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "xemu", "Xemu" }),
+            new[] { "xemu", "Xemu" },
+            RomArgTemplate: "-dvd_path {rom}", RomExtensions: new[] { ".iso" }),
 
         // mGBA (GBA/GB/GBC).
         new EmulatorDefinition("mGBA",
             new[] { "mgba-qt.exe", "mgba-sdl.exe", "mgba.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "mGBA" }),
+            new[] { "mGBA" },
+            RomArgTemplate: "{rom}"),
 
         // VisualBoyAdvance-M (GBA/GB/GBC).
         new EmulatorDefinition("VisualBoyAdvance-M",
@@ -199,13 +239,15 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Project64",
             new[] { "Project64.exe", "Project64d.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Project64" }),
+            new[] { "Project64" },
+            RomArgTemplate: "{rom}"),
 
         // RMG (Rosalie's Mupen GUI, N64).
         new EmulatorDefinition("RMG",
             new[] { "RMG.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "RMG" }),
+            new[] { "RMG" },
+            RomArgTemplate: "{rom}"),
 
         // simple64 (N64).
         new EmulatorDefinition("simple64",
@@ -217,7 +259,8 @@ public static class EmulatorCatalog
         new EmulatorDefinition("melonDS",
             new[] { "melonDS.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "melonDS" }),
+            new[] { "melonDS" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".nds" }),
 
         // DeSmuME (NDS).
         new EmulatorDefinition("DeSmuME",
@@ -229,7 +272,8 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Redream",
             new[] { "redream.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Redream" }),
+            new[] { "Redream" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".gdi", ".cdi", ".cue", ".chd" }),
 
         // Demul (Dreamcast/NAOMI).
         new EmulatorDefinition("Demul",
@@ -241,38 +285,46 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Flycast",
             new[] { "flycast.exe", "flycast-dojo.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "flycast" }),
+            new[] { "flycast" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".cdi", ".gdi", ".chd", ".cue", ".bin", ".elf", ".zip", ".7z" }),
 
         // Supermodel (Sega Model 3).
         new EmulatorDefinition("Supermodel",
             new[] { "Supermodel.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Supermodel" }),
+            new[] { "Supermodel" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".zip" }),
 
         // Play! (PS2, alternativa a PCSX2). "Play.exe" es un nombre genérico:
         // la detección requiere que viva en una carpeta típica del catálogo.
         new EmulatorDefinition("Play!",
             new[] { "Play.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Play!", "Play" }),
+            new[] { "Play!", "Play" },
+            RomArgTemplate: "--disc {rom}", RomExtensions: new[] { ".iso", ".chd", ".cso", ".isz", ".cue", ".elf" }),
 
         // Ares (multi-sistema, de Near).
         new EmulatorDefinition("Ares",
             new[] { "ares.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "ares", "Ares" }),
+            new[] { "ares", "Ares" },
+            RomArgTemplate: "{rom}"),
 
         // Mednafen (multi-sistema, CLI).
         new EmulatorDefinition("Mednafen",
             new[] { "mednafen.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "mednafen" }),
+            new[] { "mednafen" },
+            RomArgTemplate: "{rom}"),
 
-        // Vita3K (PS Vita).
+        // Vita3K (PS Vita): `-r <TitleID>` corre un juego YA instalado; pasarle un
+        // .vpk/.pkg lo instala y lo arranca (verificado en el FAQ oficial). Por eso
+        // la plantilla es posicional con esas extensiones, no un title id.
         new EmulatorDefinition("Vita3K",
             new[] { "Vita3K.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Vita3K" }),
+            new[] { "Vita3K" },
+            RomArgTemplate: "{rom}", RomExtensions: new[] { ".vpk", ".pkg" }),
 
         // ScummVM (aventuras gráficas).
         new EmulatorDefinition("ScummVM",
@@ -290,7 +342,8 @@ public static class EmulatorCatalog
         new EmulatorDefinition("Mesen",
             new[] { "Mesen.exe", "Mesen2.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "Mesen" }),
+            new[] { "Mesen" },
+            RomArgTemplate: "{rom}"),
 
         // bsnes (SNES).
         new EmulatorDefinition("bsnes",
@@ -298,11 +351,13 @@ public static class EmulatorCatalog
             Array.Empty<(string, string)>(),
             new[] { "bsnes" }),
 
-        // FBNeo (arcade/FinalBurn Neo).
+        // FBNeo (arcade/FinalBurn Neo): igual que MAME, toma el nombre del set,
+        // no una ruta.
         new EmulatorDefinition("FBNeo",
             new[] { "fbneo.exe", "fbneo64.exe" },
             Array.Empty<(string, string)>(),
-            new[] { "FBNeo", "FinalBurn Neo" }),
+            new[] { "FBNeo", "FinalBurn Neo" },
+            RomArgTemplate: "{set}", RomExtensions: new[] { ".zip", ".7z" }),
 
         // ===================== Móviles (Android) =====================
         // BlueStacks 5 NO va acá como detección (lo detecta ScanStandalone con
@@ -478,6 +533,38 @@ public static class EmulatorCatalog
         return null;
     }
 
+    /// <summary>
+    /// Argumentos para lanzar una ROM concreta con este emulador, o "" si el
+    /// emulador no declara plantilla (sin CLI de ROM documentada: se lanza
+    /// vacío, como siempre) o la ruta no tiene una extensión confirmada.
+    /// La plantilla usa {rom} como marcador: se reemplaza por la ruta
+    /// entrecomillada. Ver <see cref="EmulatorDefinition.RomArgTemplate"/>.
+    /// </summary>
+    public static string BuildRomLaunchArgs(EmulatorDefinition? def, string? romPath)
+    {
+        if (def?.RomArgTemplate is not { } template || string.IsNullOrWhiteSpace(romPath))
+            return "";
+        if (def.RomExtensions is { } exts)
+        {
+            var ext = System.IO.Path.GetExtension(romPath);
+            var known = false;
+            foreach (var e in exts)
+                if (string.Equals(e, ext, StringComparison.OrdinalIgnoreCase)) { known = true; break; }
+            if (!known) return "";
+        }
+        // {set}: MAME/FBNeo reciben el nombre corto del set, sin ruta ni extensión
+        // (la carpeta se resuelve con -rompath). {rom}: ruta completa entrecomillada.
+        var set = System.IO.Path.GetFileNameWithoutExtension(romPath.Trim().Trim('"'));
+        var quoted = "\"" + romPath.Replace("\"", "\\\"") + "\"";
+        return template.Replace("{set}", set).Replace("{rom}", quoted);
+    }
+
+    /// <summary>Igual que <see cref="BuildRomLaunchArgs"/> pero resolviendo el
+    /// emulador desde su ejecutable (ruta completa o solo nombre de archivo).</summary>
+    public static string BuildRomLaunchArgsForExe(string? exePathOrName, string? romPath)
+        => BuildRomLaunchArgs(MatchExeFileNameForPath(exePathOrName), romPath);
+
     /// <summary>¿El exe corresponde a un emulador móvil? Atajo para clasificar.</summary>
     public static bool IsMobile(string? exeFileName) => MatchExeFileName(exeFileName)?.IsMobile ?? false;
+
 }

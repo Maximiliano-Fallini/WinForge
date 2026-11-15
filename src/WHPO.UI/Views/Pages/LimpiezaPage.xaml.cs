@@ -703,29 +703,59 @@ public sealed partial class LimpiezaPage : Page
     }
 
     /// <summary>
-    /// Enumera las apps corriendo en segundo plano: procesos con una ventana
-    /// visible (apps de escritorio abiertas, incluso minimizadas), ordenadas por
-    /// consumo de RAM de mayor a menor. Excluye el proceso propio.
+    /// Enumera las apps del usuario que están corriendo, ordenadas por consumo de RAM
+    /// de mayor a menor.
+    ///
+    /// Antes se filtraba con <see cref="Process.MainWindowHandle"/>, que solo devuelve la
+    /// ventana si está VISIBLE: las apps minimizadas a la bandeja (Discord, Steam, Spotify)
+    /// no aparecían aunque siguieran consumiendo memoria. Al revés, sí aparecían procesos
+    /// del sistema con ventana (Explorer, TextInputHost).
+    ///
+    /// Ahora se enumeran las ventanas top-level (visibles y ocultas, sin ventanas de
+    /// herramienta, sin las clonadas por DWM y sin las internas de IME/DWM/NVIDIA) y se
+    /// descarta todo lo que vive en C:\Windows, que es sistema y no una app del usuario.
+    /// Se deja UNA fila por ejecutable: el mismo .exe suele tener varios procesos.
     /// </summary>
     private static List<(int Pid, string ProcessName, string? Title, double WorkingSetMB)> EnumerateBackgroundApps()
     {
         var apps = new List<(int Pid, string ProcessName, string? Title, double WorkingSetMB)>();
         int ownPid;
         try { ownPid = Environment.ProcessId; } catch { ownPid = -1; }
+
+        var windows = EnumerateAppWindows();
+        var paths = TryGetProcessPaths();
+        var winRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows) + "\\";
+
         Process[] procs;
         try { procs = Process.GetProcesses(); }
         catch { return apps; }
+
+        // Candidatos con su clave de agrupación (ruta del .exe): después se elige, por app,
+        // el proceso con ventana visible y, si no hay, el que más RAM consume.
+        var candidates = new List<(int Pid, string ProcessName, string? Title, double Ram, bool Visible, string Key)>();
+
         foreach (var p in procs)
         {
             try
             {
                 if (p.HasExited || p.Id == ownPid) continue;
-                var handle = p.MainWindowHandle;
-                if (handle == IntPtr.Zero) continue; // sin ventana = servicio/tarea de fondo
-                string? title = null;
-                try { title = p.MainWindowTitle; } catch { }
-                if (string.IsNullOrWhiteSpace(title)) continue;
-                apps.Add((p.Id, p.ProcessName, title, p.WorkingSet64 / (1024.0 * 1024.0)));
+                if (!windows.TryGetValue(p.Id, out var win)) continue; // sin ventana = servicio/tarea de fondo
+
+                string? path = paths.GetValueOrDefault(p.Id);
+
+                // Lo que vive en C:\Windows es sistema (Explorer, TextInputHost, DWM, svchost,
+                // taskhostw, RuntimeBroker…): no es una app del usuario y no se lista.
+                if (!string.IsNullOrEmpty(path)
+                    && path.StartsWith(winRoot, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Sin ruta conocida solo se acepta con ventana VISIBLE: una ventana oculta de
+                // un proceso que no pudimos identificar (corre elevado, es protegido) es ruido.
+                if (string.IsNullOrEmpty(path) && !win.Visible) continue;
+
+                var key = string.IsNullOrEmpty(path) ? p.ProcessName : path;
+                candidates.Add((p.Id, p.ProcessName, win.Title,
+                    p.WorkingSet64 / (1024.0 * 1024.0), win.Visible, key));
             }
             catch { }
             finally
@@ -733,8 +763,152 @@ public sealed partial class LimpiezaPage : Page
                 try { p.Dispose(); } catch { }
             }
         }
-        return apps.OrderByDescending(a => a.WorkingSetMB).ToList();
+
+        return candidates
+            .GroupBy(c => c.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(c => c.Visible).ThenByDescending(c => c.Ram).First())
+            .OrderByDescending(c => c.Ram)
+            .Select(c => (c.Pid, c.ProcessName, c.Title, c.Ram))
+            .ToList();
     }
+
+    /// <summary>
+    /// Ventanas top-level por proceso: título y si está visible. Incluye las ocultas (app
+    /// minimizada a la bandeja), que es justo lo que <see cref="Process.MainWindowHandle"/>
+    /// no expone. Descarta las ventanas de herramienta (controles internos del shell y de
+    /// los propios procesos), las clonadas por DWM (apps UWP suspendidas) y las internas que
+    /// no son de una app: IME, la notificación de DWM, las de NVIDIA y los buffers dummy de
+    /// OpenGL. Si un proceso tiene varias, se queda la visible y, si no hay, la primera.
+    /// </summary>
+    private static Dictionary<int, (string Title, bool Visible)> EnumerateAppWindows()
+    {
+        var result = new Dictionary<int, (string Title, bool Visible)>();
+        try
+        {
+            EnumWindows((hWnd, _) =>
+            {
+                try
+                {
+                    GetWindowThreadProcessId(hWnd, out uint pid);
+                    if (pid == 0) return true;
+
+                    // Ventanas de herramienta: menús, sombras, hosts de XAML del shell.
+                    if ((GetWindowLong(hWnd, GwlExStyle) & WsExToolWindow) != 0) return true;
+                    if (IsCloaked(hWnd)) return true;
+
+                    var title = WindowTitle(hWnd);
+                    if (string.IsNullOrWhiteSpace(title) || IsInternalWindowTitle(title)) return true;
+
+                    bool visible = IsWindowVisible(hWnd);
+                    if (!result.TryGetValue((int)pid, out var existing) || (!existing.Visible && visible))
+                        result[(int)pid] = (title, visible);
+                }
+                catch { }
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch { }
+        return result;
+    }
+
+    private static string WindowTitle(IntPtr hWnd)
+    {
+        try
+        {
+            int length = GetWindowTextLength(hWnd);
+            if (length <= 0) return string.Empty;
+            var sb = new System.Text.StringBuilder(length + 2);
+            GetWindowText(hWnd, sb, sb.Capacity);
+            return sb.ToString();
+        }
+        catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// Títulos que NO son de una app: los pone Windows o un driver para ventanas internas.
+    /// Sin este filtro, enumerar las ocultas llenaba la lista de "Default IME", "MSCTFIME UI",
+    /// "DWM Notification Window", "NvContainerWindowClass…", "BroadcastListenerWindow",
+    /// "NVOGLDC invisible" y el placeholder "Sin título"/"Untitled" (ventana sin identidad: la
+    /// usa steam.exe, mientras que la UI real de Steam la lleva steamwebhelper).
+    /// </summary>
+    private static bool IsInternalWindowTitle(string title)
+        => title is "Default IME" or "MSCTFIME UI" or "Temp Window" or "DWM Notification Window"
+            or "BroadcastListenerWindow" or "Sin título" or "Untitled"
+        || title.StartsWith("__wgl", StringComparison.Ordinal)
+        || title.StartsWith("NvContainerWindowClass", StringComparison.Ordinal)
+        || title.StartsWith("NVOGLDC", StringComparison.Ordinal);
+
+    private static bool IsCloaked(IntPtr hWnd)
+    {
+        try
+        {
+            // DWMWA_CLOAKED: ventana "cerrada" por el compositor (app UWP suspendida u otro
+            // escritorio virtual). Existe pero no es una app abierta.
+            return DwmGetWindowAttribute(hWnd, DwmwaCloaked, out int cloaked, sizeof(int)) == 0
+                && cloaked != 0;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Ruta del .exe de cada proceso, en UNA consulta WMI (funciona cruzando elevación: la
+    /// app corre como administrador y Process.MainModule falla en los procesos elevados).
+    /// Si WMI no está disponible se devuelve un diccionario vacío y el llamador se queda con
+    /// el criterio conservador.
+    /// </summary>
+    private static Dictionary<int, string> TryGetProcessPaths()
+    {
+        var paths = new Dictionary<int, string>();
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                "SELECT ProcessId, ExecutablePath FROM Win32_Process");
+            foreach (var obj in searcher.Get())
+            {
+                using (obj)
+                {
+                    try
+                    {
+                        if (obj["ProcessId"] is not { } pidValue) continue;
+                        if (obj["ExecutablePath"] is not string path || string.IsNullOrEmpty(path)) continue;
+                        paths[Convert.ToInt32(pidValue)] = path;
+                    }
+                    catch { }
+                }
+            }
+        }
+        catch { }
+        return paths;
+    }
+
+    // ===== Ventanas top-level (apps visibles y minimizadas a la bandeja) =====
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowTextLength(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int maxCount);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int index);
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int size);
+
+    private const int GwlExStyle = -20;
+    private const int WsExToolWindow = 0x00000080;
+    private const int DwmwaCloaked = 14;
 
     /// <summary>RAM legible: MB si es chico, GB si pasa de 1024 MB.</summary>
     private static string FormatRam(double mb)
@@ -986,7 +1160,13 @@ public sealed partial class LimpiezaPage : Page
     /// </summary>
     private void UpdateChequeoCleanButton()
     {
-        int selected = _chequeoItems.Count(c => c.Check.IsChecked == true);
+        // Se cuentan las DOS fuentes que borra la limpieza (ver ChequeoCleanButton_Click y
+        // UpdateChequeoTotalFromChecks): navegadores y carpetas del dispositivo. Contando
+        // solo _chequeoItems, un análisis con las carpetas del dispositivo tildadas y sin
+        // navegadores dejaba el botón "Limpiar" deshabilitado aunque hubiera elementos
+        // para borrar.
+        int selected = _chequeoItems.Count(c => c.Check.IsChecked == true)
+                     + _custom.Count(c => c.Check.IsChecked == true);
         ChequeoPhaseActionButton.Content = selected > 0
             ? I18n.T("Limpiar ({0})", selected)
             : I18n.T("Limpiar");

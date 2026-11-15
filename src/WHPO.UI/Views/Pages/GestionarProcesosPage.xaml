@@ -129,7 +129,6 @@
                               VerticalAlignment="Center"
                               Background="{ThemeResource TextControlBackground}"
                               SelectionChanged="FilterComboBox_SelectionChanged">
-                        <ComboBoxItem x:Name="FilterAllItem" Content="Todos"/>
                         <ComboBoxItem x:Name="FilterGamesItem" Content="Videojuegos"/>
                         <ComboBoxItem x:Name="FilterConsoleEmulatorsItem" Content="Emuladores de consolas"/>
                         <ComboBoxItem x:Name="FilterMobileEmulatorsItem" Content="Emuladores de celular"/>

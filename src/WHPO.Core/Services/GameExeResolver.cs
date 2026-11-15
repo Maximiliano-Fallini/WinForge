@@ -91,7 +91,27 @@ public static class GameExeResolver
         "autoplay",
         "install",
         // DOS4GW: extensor DOS de 16 bits (no es el juego; el juego lo invoca)
-        "dos4gw"
+        "dos4gw",
+        // Utilidades que viajan en carpetas de juegos y nunca son el juego
+        "7z", "7za", "7zfm",
+        "elytra-setup",
+        "embark-crash-helper",
+        "redengineerrorreporter"
+    };
+
+    // Prefijos de nombre: el match exacto no agarra las variantes que agregan sufijos
+    // (UEPrereqSetup_x64, vc_redist.x64) ni los instaladores de anti-cheat
+    // (AntiCheatInstaller, EasyAntiCheat_EOS_Setup). Se usan igual que los nombres:
+    // ninguno de estos es un juego, ni el exe que hay que priorizar al nacer.
+    private static readonly string[] StubExeNamePrefixes =
+    {
+        "easyanticheat",
+        "anticheat",
+        "ueprereqsetup",
+        "ue4prereqsetup",
+        "vc_redist",
+        "vcredist",
+        "unins",
     };
 
     // Fragmentos de ruta (carpeta) que identifican stubs/instaladores anidados.
@@ -135,7 +155,7 @@ public static class GameExeResolver
         try
         {
             var name = Path.GetFileNameWithoutExtension(path);
-            if (StubExeNames.Contains(name)) return true;
+            if (IsStubName(name)) return true;
             foreach (var frag in StubFolderFragments)
                 if (path.IndexOf(frag, StringComparison.OrdinalIgnoreCase) >= 0)
                     return true;
@@ -152,7 +172,17 @@ public static class GameExeResolver
     public static bool IsStubExeName(string path)
     {
         if (string.IsNullOrEmpty(path)) return false;
-        return StubExeNames.Contains(Path.GetFileNameWithoutExtension(path));
+        return IsStubName(Path.GetFileNameWithoutExtension(path));
+    }
+
+    /// <summary>Nombre (sin extensión) de stub: match exacto o por prefijo conocido.</summary>
+    private static bool IsStubName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return false;
+        if (StubExeNames.Contains(name)) return true;
+        foreach (var prefix in StubExeNamePrefixes)
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     /// <summary>

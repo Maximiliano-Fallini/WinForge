@@ -69,9 +69,6 @@ public static class ServiceConfiguration
         services.AddSingleton<InputLatencyTestService>();
         // Limpiador de registro (Limpieza personalizada): escaneo, backup .reg y limpieza HKCU.
         services.AddSingleton<IRegistryCleanerService, RegistryCleanerService>();
-        // Salud del Modo Juego de Windows: chequeo de que se vaya a activar, reparación
-        // del caso "solo deshabilitado" y activación por partida con snapshot.
-        services.AddSingleton<IWindowsGameModeHealthService, WindowsGameModeHealthService>();
         // Driver PawnIO: ciclo de vida compartido por Sensores y Ventiladores.
         // Se registra antes de FanControlService porque ese servicio lo consume.
         services.AddSingleton<IPawnIoService, PawnIoService>();

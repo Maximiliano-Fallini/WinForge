@@ -196,6 +196,10 @@ public class FanControlService : IFanControlService
                     var owner = channel.Owner;
                     var chipName = channel.ChipName;
                     var isGpu = IsGpu(owner);
+                    // Sensor que usaría el modo automático. La UI lo muestra como
+                    // selección inicial; si el usuario elige otro, ese queda guardado
+                    // como personalizado y el motor usa el elegido.
+                    var automaticSourceId = DefaultTemperatureSourceId(owner);
 
                     // 1) Canales con control PWM: el sensor de control lleva el
                     //    nombre del fan y su IControl escribe el duty. Igual en el
@@ -238,7 +242,8 @@ public class FanControlService : IFanControlService
                             HasCustomName: HasCustomName(id),
                             TemperatureSourceId: selectedSource,
                             TemperatureSourceName: channelSource,
-                            TemperatureSourceSynthetic: channelSynthetic));
+                            TemperatureSourceSynthetic: channelSynthetic,
+                            AutomaticTemperatureSourceId: automaticSourceId));
                     }
 
                     // 2) Canales SIN control en LHM: GPUs Intel (IGCL solo publica
@@ -275,7 +280,8 @@ public class FanControlService : IFanControlService
                             HasCustomName: HasCustomName(id),
                             TemperatureSourceId: selectedSource,
                             TemperatureSourceName: channelSource,
-                            TemperatureSourceSynthetic: channelSynthetic));
+                            TemperatureSourceSynthetic: channelSynthetic,
+                            AutomaticTemperatureSourceId: automaticSourceId));
                     }
                 }
             }
@@ -969,6 +975,19 @@ public class FanControlService : IFanControlService
             .Where(s => s.SensorType == SensorType.Temperature)
             .OrderBy(s => s.Name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .FirstOrDefault();
+
+    /// <summary>
+    /// Sensor real que usaría el modo automático para un canal: GPU Core en los
+    /// ventiladores de video y paquete/CCD/Tctl del CPU en los headers de la placa.
+    /// Alimenta solo la preselección de la UI; el motor sigue resolviendo el
+    /// automático en cada tick y el usuario puede reemplazarlo por otro sensor.
+    /// </summary>
+    private string? DefaultTemperatureSourceId(IHardware owner)
+    {
+        if (IsGpu(owner))
+            return GpuTemperatureSensor(owner)?.Identifier?.ToString();
+        return CpuTemperatureSensor()?.Identifier?.ToString();
+    }
 
     // Sensor de temperatura del CPU: paquete/CCD/Tctl y, si no hay, la lectura más
     // alta (más representativa que el promedio para gobernar un cooler).

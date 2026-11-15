@@ -30,7 +30,6 @@ public sealed record GameBoostApplyResult(
     int ServicesOptimized,     // servicios CONFIRMADOS como detenidos por la partida (se restauran al cerrar)
     int ProcessesOptimized,    // procesos CONFIRMADOS con prioridad baja / Efficiency Mode
     int ProcessesKilled,       // procesos CONFIRMADOS como cerrados
-    bool GameModeWarning = false,                    // Modo Juego de WINDOWS no se pudo activar (huérfano/Game Bar)
     IReadOnlyList<string>? ServicesResisted = null,  // servicios que seguían corriendo al verificar
     int ProcessesResisted = 0);                      // procesos que no aceptaron la optimización
 
@@ -54,6 +53,9 @@ public interface IGameBoostService
     /// viejo cuando el juego ya se cerró en otra pestaña.
     /// </summary>
     bool IsActive { get; }
+
+    /// <summary>Se dispara cuando cambia el switch, desde la UI o desde la bandeja.</summary>
+    event Action<bool>? EnabledChanged;
 
     /// <summary>Activa/desactiva la optimización (persistida en settings). Al desactivar con un boost activo, restaura.</summary>
     void SetEnabled(bool enabled);

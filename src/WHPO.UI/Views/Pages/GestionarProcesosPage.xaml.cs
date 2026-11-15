@@ -76,16 +76,36 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private static readonly Windows.UI.Color BetaColor = Windows.UI.Color.FromArgb(255, 255, 212, 0);
     private const int GridColumns = 3;
     private const double MaxCardWidth3D = 205;
+    // En Emuladores de consolas la grilla muestra hardware, no cartuchos: con menos
+    // columnas y cards más anchas la consola se ve a un tamaño que se aprecia.
+    // La card de un emulador es horizontal (consola a la izquierda, ficha a la
+    // derecha): necesita menos columnas y más ancho para que el equipo se vea grande.
+    private const int ConsoleColumns3D = 1;
+    private const double MaxCardWidthConsole3D = 1200;
+    // Vistas del giro de la consola en la card (360° / DeviceSpinFrames por paso).
+    // Con una sola card por fila la consola se ve grande y el paso fino se nota.
+    private const int DeviceSpinFrames = 16;
+    // Porción del ancho de la card que ocupa el arte de la consola.
+    private const double ConsoleCardArtShare = 0.62;
+    // Relleno de la placa del emulador (y colchón entre el arte y la ficha).
+    private const double ConsoleCardPad = 14;
+    private const double ConsoleCardGap = 18;
     private const double MaxCardWidthVanilla = 360;
     private const double MinCardWidth3D = 140;
     private const double MinCardWidthVanilla = 230;
     private const double GridCardSpacing = 16;
     // Búsqueda por nombre (filtro de la grilla); vacío = mostrar todo.
     private string _searchQuery = "";
- // Filtro de categoría: "all", "games", "console_emu", "mobile_emu".
- // Por defecto "all" (todos). La clasificación de cada item se hace en
+ // Filtro de categoría: "games", "console_emu", "mobile_emu" (sin "Todos" y sin "all").
+ // Por defecto "games" (Videojuegos). La clasificación de cada item se hace en
  // GetItemCategory: los emuladores se dividen en consola vs celular por nombre.
-    private string _currentFilter = "all";
+    private string _currentFilter = "games";
+
+    /// <summary>¿La categoría activa es de emuladores? Ahí la grilla muestra hardware
+    /// (consolas/teléfonos) y se ocultan el dock y el pie desacoplados.</summary>
+    private bool IsEmulatorFilter => _currentFilter != "games";
+    private bool IsConsoleFilter => _currentFilter == "console_emu";
+
 
     private List<InstalledGame> _installed = new();
     private List<(string Exe, string? Name, string? InstallPath)> _manual = new();
@@ -99,15 +119,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private readonly List<(StackPanel Host, List<Border> Cards)> _wrapSectionGroups = new();
     private int _currentGridCols;
     // Contenedor del skeleton (filas de cards placeholder): se agrega/remueve del
-    // LibraryPanel. El render de la biblioteca usa filas de StackPanel puros (3 por
-    // fila), no ItemsWrapGrid, para garantizar el layout en cualquier contexto.
+    // LibraryPanel. El render de la biblioteca usa filas de StackPanel puros, no
+    // ItemsWrapGrid, para garantizar el layout en cualquier contexto.
     private StackPanel? _skeletonPanel;
+    // El skeleton imita UNA sección real (cabecera + cuerpo), no solo la grilla:
+    // así las cards de carga arrancan exactamente donde arrancarán las de verdad
+    // y no quedan pegadas a los filtros.
+    private StackPanel? _skeletonSection;
+    private FrameworkElement? _skeletonHeader;
     // Botones "Iniciar" de todas las cards, por exe: el estado de ejecución se
     // refleja en el propio botón (sin badge aparte) y se actualiza con los eventos
     // WMI (RunningGamesChanged), sin reconstruir la grilla. CanLaunch = se puede
     // lanzar (exe o launcher encontrado); si el juego está corriendo, el botón
     // muestra "En ejecución" y queda deshabilitado (no se puede relanzar).
     private readonly List<(string Exe, Button Btn, bool CanLaunch)> _gameLaunchButtons = new();
+    // LED de encendido de las consolas/teléfonos de la grilla (por exe del emulador).
+    private readonly List<(string Exe, Microsoft.UI.Xaml.Shapes.Ellipse Led)> _deviceLeds = new();
     // Detalle 3D (Opción 1): cartucho real (Cartridge3D, D3D) montado sobre RootGrid.
     private Grid? _detail3DPanel;
     private bool _detail3DCloseHooked;
@@ -130,6 +157,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // y la próxima visita fuerza skeleton + re-escaneo, aunque otro servicio ya la
     // haya vuelto a llenar mientras tanto.
     private int _seenCacheClearVersion;
+    // La versión vista sobrevive al reinicio: una limpieza de caché ya consumida no
+    // vuelve a mostrar el skeleton en cada apertura de la app.
+    private const string SeenCacheClearVersionKey = "biblioteca.seenCacheClearVersion";
     private bool _skeletonActive;
     private long _skeletonShownAtMs;
     private const int MinSkeletonVisibleMs = 550;
@@ -233,14 +263,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
         _gameBoostService = App.Services.GetRequiredService<IGameBoostService>();
         _settings = App.Services.GetRequiredService<ISettingsService>();
+        _seenCacheClearVersion = Math.Max(0, _settings.Get(SeenCacheClearVersionKey, 0));
         CleanupLegacyIconCacheDirs();
 
         // Sombra de las cards de la biblioteca: una sola ThemeShadow compartida
         // por todas las cards (casters), proyectada sobre el Border receptor
         // del XAML (WinUI 3: colección Receivers). La elevación (z de
         // card.Translation) se activa al hover.
-        _cardShadow.Receivers.Add(CardShadowReceiver);        // Selección inicial del desplegable de categorías («Todos»). El
-        // SelectionChanged no reconstruye la grilla porque _currentFilter ya es "all".
+        _cardShadow.Receivers.Add(CardShadowReceiver);        // Selección inicial del desplegable de categorías («Videojuegos», índice 0).
+        // El SelectionChanged no reconstruye la grilla porque _currentFilter ya es "games".
         FilterComboBox.SelectedIndex = 0;
         ApplyLibraryFilterLanguage();
         UpdateInstalledCount();
@@ -299,10 +330,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _gameBoostService.BoostApplied -= OnBoostApplied;
         _gameBoostService.BoostCancelled -= OnBoostCancelled;
         _gameBoostService.BoostRestored -= OnBoostRestored;
+        _gameBoostService.EnabledChanged -= OnGameBoostEnabledChanged;
         _gameBoostService.BoostApplying += OnBoostApplying;
         _gameBoostService.BoostApplied += OnBoostApplied;
         _gameBoostService.BoostCancelled += OnBoostCancelled;
         _gameBoostService.BoostRestored += OnBoostRestored;
+        _gameBoostService.EnabledChanged += OnGameBoostEnabledChanged;
 
         // Si la partida terminó mientras estábamos en otra pestaña, el evento no se
         // recibió: el resumen quedaría en pantalla aunque el boost ya se restauró.
@@ -321,6 +354,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // porque el acento del tema vive en recursos de XAML y los pintores corren en
         // segundo plano. Al volver de Configuración → Apariencia ya toma el color nuevo.
         CardSkin.Refresh();
+        // Modelo de consola elegido en Apariencia: define tapa y grosor de la malla.
+        ConsoleModel.Set(_settings.Get(ConsoleModel.SettingKey, ConsoleModel.DefaultId));
         // UN solo rebuild coalescado por visita: RequestCartridgeDockUpdate hace
         // early-out solo si la card ya vive en el dock armado
         // (GameBoostCardSettledInDock). La generación invalida el callback
@@ -344,7 +379,21 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // escanear y se muestra el skeleton.
         int cacheClearVersion = _installedGamesService.CacheClearVersion;
         bool cacheCleared = cacheClearVersion != _seenCacheClearVersion;
-        _seenCacheClearVersion = cacheClearVersion;
+        if (cacheCleared)
+        {
+            // Guardar la versión vista permite que el reinicio no olvide que la
+            // limpieza ya se mostró, y que una limpieza nueva sí vuelva a mostrarla.
+            _seenCacheClearVersion = cacheClearVersion;
+            try
+            {
+                _settings.Set(SeenCacheClearVersionKey, cacheClearVersion);
+                _settings.Save();
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"GestionarProcesosPage: guardar versión de caché: {ex.Message}");
+            }
+        }
         _ = RefreshAsync(
             showSkeleton: cacheCleared || !_installedGamesService.HasCachedResult,
             refreshCache: cacheCleared);
@@ -404,6 +453,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _gameBoostService.BoostApplied -= OnBoostApplied;
         _gameBoostService.BoostCancelled -= OnBoostCancelled;
         _gameBoostService.BoostRestored -= OnBoostRestored;
+        _gameBoostService.EnabledChanged -= OnGameBoostEnabledChanged;
         // Si se sale de la página (cacheada) estando en la vista de configuración,
         // volver al estado base para que el próximo ingreso muestre la biblioteca.
         if (BoostConfigView.Visibility == Visibility.Visible)
@@ -449,7 +499,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// </summary>
     private void ApplyLibraryFilterLanguage()
     {
-        FilterAllItem.Content = I18n.T("Todos");
         FilterGamesItem.Content = I18n.T("Videojuegos");
         FilterConsoleEmulatorsItem.Content = I18n.T("Emuladores de consolas");
         FilterMobileEmulatorsItem.Content = I18n.T("Emuladores de celular");
@@ -467,6 +516,21 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         foreach (var item in items)
             if (item.Tag is string key)
                 item.Content = I18n.T(key);
+    }
+
+    /// <summary>
+    /// El switch también se puede cambiar desde la bandeja: el servicio avisa y la
+    /// perilla se sincroniza aunque la biblioteca esté visible en ese momento.
+    /// </summary>
+    private void OnGameBoostEnabledChanged(bool enabled)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _boostSwitchInitialized = false;
+            GameBoostSwitch.IsChecked = enabled;
+            _boostSwitchInitialized = true;
+            VisualStateManager.GoToState(GameBoostSwitch, enabled ? "Checked" : "Unchecked", true);
+        });
     }
 
     private void GameBoostSwitch_Toggled(object sender, RoutedEventArgs e)
@@ -657,11 +721,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 caveats.Add(I18n.T("No se confirmó la detención de: {0}.", string.Join(", ", resisted)));
             if (result.ProcessesResisted > 0)
                 caveats.Add(I18n.T("No se confirmó la optimización de {0} procesos (siguen con prioridad normal).", result.ProcessesResisted));
-            if (result.GameModeWarning)
-                // El Modo Juego de WINDOWS no se pudo activar (huérfano: faltan archivos
-                // de Game Bar): aviso claro en vez de éxito falso. El boost de WinForge
-                // (procesos/servicios) igual se aplicó.
-                caveats.Add(I18n.T("El Modo Juego de Windows no se pudo activar (faltan archivos de Game Bar). Reinstalá Game Bar desde la Microsoft Store."));
 
             if (caveats.Count == 0)
                 Feedback.Success(StatusText, msg, persistent: true);
@@ -680,282 +739,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// con doble clic (sin tipear nombres a mano).
     /// </summary>
     private void GameBoostSettingsButton_Click(object sender, RoutedEventArgs e) => OpenBoostConfigView();
-
-    // ===================== Salud del Modo Juego de Windows =====================
-
-    /// <summary>
-    /// Card de la pestaña "Salud del Modo Juego" (configuración del boost): muestra
-    /// el estado del Modo Juego de WINDOWS (no el de WinForge) en un banner con
-    /// paleta profesional de TRES estados:
-    ///  · Verde "Funcional": todo correcto, se activará al iniciar un juego.
-    ///  · Ámbar "Activable": solo están deshabilitadas las reglas del registro
-    ///    (estilo AtlasOS) — un clic lo deja listo sin reinstalar nada.
-    ///  · Rojo "Crítico": falta infraestructura de Game Bar (Appx
-    ///    XboxGamingOverlay o GameBarPresenceWriter.dll — debloat extremo):
-    ///    ninguna regla de registro puede revivirlo, hay que reinstalar Game Bar.
-    /// </summary>
-    private UIElement BuildGameModeHealthTab()
-    {
-        var muted = Feedback.MutedBrush;
-
-        // Tint de un pincel de estado del tema (no colores hardcodeados): se usa
-        // para el fondo y el borde del banner en el color del estado actual.
-        static SolidColorBrush Tint(SolidColorBrush brush, byte alpha)
-        {
-            var c = brush.Color;
-            return new SolidColorBrush(Windows.UI.Color.FromArgb(alpha, c.R, c.G, c.B));
-        }
-
-        // Banner de estado: ícono grande + título del estado + resumen, sobre un
-        // fondo tintado con el borde del color del estado (verde/ámbar/rojo).
-        var statusIcon = new FontIcon { Glyph = "\uE9CE", FontSize = 26 };
-        var statusTitle = new TextBlock { FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
-        var statusSummary = new TextBlock { FontSize = 12, Foreground = muted, TextWrapping = TextWrapping.Wrap, Opacity = 0.95 };
-        var statusBanner = new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(14),
-            BorderThickness = new Thickness(1),
-            Child = new Grid { ColumnSpacing = 14, ColumnDefinitions =
-            {
-                new ColumnDefinition { Width = GridLength.Auto },
-                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }
-            } }
-        };
-        var bannerGrid = (Grid)statusBanner.Child!;
-        bannerGrid.Children.Add(statusIcon);
-        var statusTexts = new StackPanel { Spacing = 3, Children = { statusTitle, statusSummary } };
-        Grid.SetColumn(statusTexts, 1);
-        bannerGrid.Children.Add(statusTexts);
-
-        // Checks individuales (registro / Appx / DLL): check o cruz + nombre — detalle.
-        var checksHost = new StackPanel { Spacing = 8 };
-
-        // Acciones según estado (solo una visible a la vez):
-        //  · "Activable" → reactivar las reglas de registro (el Enable Game Mode.reg de AtlasOS).
-        //  · "Crítico" → abrir Game Bar en la Microsoft Store (reinstalar es la única salida).
-        var actionHost = new StackPanel { Spacing = 8 };
-        var repairButton = new Button
-        {
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                Children =
-                {
-                    new FontIcon { Glyph = "\uE777", FontSize = 13 },
-                    new TextBlock { Text = I18n.T("Reactivar ahora"), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }
-                }
-            },
-            Padding = new Thickness(16, 8, 16, 8),
-            CornerRadius = new CornerRadius(6),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Background = Feedback.WarningBrush,
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 30, 24, 10))
-        };
-        // Construido una sola vez; los handlers se suman abajo.
-        var storeButton = new Button
-        {
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 8,
-                Children =
-                {
-                    new FontIcon { Glyph = "\uE8B7", FontSize = 13 },
-                    new TextBlock { Text = I18n.T("Reinstalar Game Bar"), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold }
-                }
-            },
-            Padding = new Thickness(16, 8, 16, 8),
-            CornerRadius = new CornerRadius(6),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Background = Feedback.ErrorBrush,
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255))
-        };
-        var repairFeedback = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-
-        var content = new StackPanel { Spacing = 14 };
-        content.Children.Add(statusBanner);
-        content.Children.Add(checksHost);
-        content.Children.Add(actionHost);
-        content.Children.Add(repairFeedback);
-
-        var scroll = new ScrollViewer
-        {
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Padding = new Thickness(0, 0, 10, 0),
-            Content = content
-        };
-
-        var card = MakeSettingsCard(scroll);
-
-        async Task LoadAsync()
-        {
-            var health = App.Services.GetRequiredService<IWindowsGameModeHealthService>();
-
-            // Cargando: banner neutro mientras se lee registro + Appx + archivos.
-            statusIcon.Glyph = "\uE9CE";
-            statusIcon.Foreground = muted;
-            statusTitle.Text = I18n.T("Chequeando...");
-            statusTitle.Foreground = muted;
-            statusSummary.Text = I18n.T("Leyendo el registro, el paquete Appx y los archivos del Modo Juego...");
-            checksHost.Children.Clear();
-            actionHost.Children.Clear();
-            repairFeedback.Visibility = Visibility.Collapsed;
-            statusBanner.Background = Tint(muted, 12);
-            statusBanner.BorderBrush = muted;
-
-            var info = await health.CheckAsync();
-
-            // Paleta profesional: verde=Funcional · ámbar=Activable · rojo=Crítico.
-            var (glyph, title, color) = info.Status switch
-            {
-                WindowsGameModeHealth.Ok => ("\uE73E", I18n.T("Funcional"), Feedback.SuccessBrush),
-                WindowsGameModeHealth.DisabledByRules => ("\uE7BA", I18n.T("Activable"), Feedback.WarningBrush),
-                WindowsGameModeHealth.Orphaned => ("\uE783", I18n.T("Crítico"), Feedback.ErrorBrush),
-                _ => ("\uE9CE", I18n.T("Estado desconocido"), Feedback.WarningBrush)
-            };
-            statusIcon.Glyph = glyph;
-            statusIcon.Foreground = color;
-            statusTitle.Text = title;
-            statusTitle.Foreground = color;
-            statusSummary.Text = info.Status switch
-            {
-                WindowsGameModeHealth.Ok => I18n.T("Todo correcto: el Modo Juego de Windows se activará al iniciar un juego."),
-                WindowsGameModeHealth.DisabledByRules => I18n.T("Solo está deshabilitado por las reglas del registro (estilo AtlasOS): se puede reactivar al instante sin reinstalar nada."),
-                WindowsGameModeHealth.Orphaned => I18n.T("Faltan archivos de Game Bar (Appx XboxGamingOverlay o GameBarPresenceWriter.dll). Sin Game Bar el Modo Juego no puede funcionar: reinstalalo desde la Microsoft Store."),
-                _ => I18n.T("No se pudo verificar el estado del Modo Juego. Reintentá más tarde.")
-            };
-            // Fondo y borde del banner tintados con el color del estado.
-            statusBanner.Background = Tint(color, 24);
-            statusBanner.BorderBrush = Tint(color, 128);
-
-            checksHost.Children.Clear();
-            foreach (var (component, present, detail) in info.Checks)
-            {
-                // Grid en vez de StackPanel horizontal: "component — detalle" es un
-                // texto largo que con StackPanel se mide con ancho infinito y se corta;
-                // la columna "*" lo limita y TextWrapping.Wrap lo envuelve.
-                var row = new Grid { ColumnSpacing = 8 };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.Children.Add(new FontIcon
-                {
-                    Glyph = present ? "\uE73E" : "\uE783", // CheckMark / Error
-                    FontSize = 13,
-                    Foreground = present ? Feedback.SuccessBrush : Feedback.ErrorBrush,
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                var checkText = new TextBlock
-                {
-                    // Los textos vienen del servicio en Core (español crudo): traducir
-                    // cada parte por separado — el compuesto no es clave conocida del
-                    // diccionario y quedaría sin traducir en cualquier idioma no-es.
-                    Text = $"{I18n.T(component)} — {I18n.T(detail)}",
-                    FontSize = 12,
-                    TextWrapping = TextWrapping.Wrap,
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                Grid.SetColumn(checkText, 1);
-                row.Children.Add(checkText);
-                checksHost.Children.Add(row);
-            }
-
-            // Acción según el estado: reactivación de reglas (ámbar) o reinstalación
-            // de Game Bar en la Microsoft Store (rojo). Verde/desconocido: nada.
-            actionHost.Children.Clear();
-            if (info.Status == WindowsGameModeHealth.DisabledByRules)
-                actionHost.Children.Add(repairButton);
-            else if (info.Status == WindowsGameModeHealth.Orphaned)
-                actionHost.Children.Add(storeButton);
-        }
-
-        repairButton.Click += async (_, _) =>
-        {
-            repairButton.IsEnabled = false;
-            try
-            {
-                var health = App.Services.GetRequiredService<IWindowsGameModeHealthService>();
-                var fixedInfo = await health.EnableGameModeAsync();
-                repairFeedback.Visibility = Visibility.Visible;
-                if (fixedInfo.Status == WindowsGameModeHealth.Ok)
-                {
-                    repairFeedback.Text = I18n.T("Modo Juego de Windows reactivado: se activará al iniciar un juego.");
-                    repairFeedback.Foreground = Feedback.SuccessBrush;
-                }
-                else
-                {
-                    repairFeedback.Text = I18n.T(fixedInfo.Summary);
-                    repairFeedback.Foreground = Feedback.WarningBrush;
-                }
-                await LoadAsync();
-            }
-            finally
-            {
-                repairButton.IsEnabled = true;
-            }
-        };
-
-        // Estado "Crítico": el único camino es reinstalar Game Bar. El botón abre
-        // su ficha en la Microsoft Store (ProductId de Xbox Game Bar = 9NZKPSTSNW4P).
-        // La Store depende de Windows Update para instalar: si está desactivado por
-        // el perfil de WHPO, se avisa primero y se habilita (perfil recomendado).
-        storeButton.Click += async (_, _) =>
-        {
-            try
-            {
-                var wu = App.Services.GetRequiredService<IWindowsUpdateService>();
-                var policy = wu.GetCurrentPolicy();
-                if (policy.Mode == WindowsUpdateMode.Disabled && XamlRoot is not null)
-                {
-                    // Aviso ANTES de tocar nada: sin Windows Update la Store no instala nada.
-                    var dialog = new ContentDialog
-                    {
-                        Title = I18n.T("Habilitar Windows Update"),
-                        Content = I18n.T("La Microsoft Store necesita Windows Update activo para poder instalar Game Bar. WinForge lo va a habilitar antes de abrir la Store (podés volver a desactivarlo después desde la pestaña de Windows Update)."),
-                        PrimaryButtonText = I18n.T("Habilitar y abrir la Store"),
-                        CloseButtonText = I18n.T("Cancelar"),
-                        DefaultButton = ContentDialogButton.Primary,
-                        XamlRoot = XamlRoot
-                    };
-                    if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-                    repairFeedback.Visibility = Visibility.Visible;
-                    repairFeedback.Foreground = muted;
-                    repairFeedback.Text = I18n.T("Habilitando Windows Update...");
-
-                    var result = await wu.ApplyPolicyAsync(WindowsUpdateMode.Recommended);
-                    if (!result.Success)
-                    {
-                        repairFeedback.Foreground = Feedback.ErrorBrush;
-                        repairFeedback.Text = result.Message;
-                        _loggingService.LogWarning($"GameModeHealth: no se pudo habilitar Windows Update: {result.Message}");
-                        return;
-                    }
-                    repairFeedback.Foreground = Feedback.SuccessBrush;
-                    repairFeedback.Text = I18n.T("Windows Update habilitado. Abriendo la Microsoft Store...");
-                }
-
-                _ = Windows.System.Launcher.LaunchUriAsync(
-                    new Uri("ms-windows-store://pdp/?ProductId=9NZKPSTSNW4P"));
-            }
-            catch (Exception ex)
-            {
-                _loggingService.LogWarning($"GameModeHealth: no se pudo abrir la Microsoft Store: {ex.Message}");
-            }
-        };
-
-        // Primera carga: UpdateMode la dispara al entrar en la pestaña
-        // vía LoadGameModeHealthAsync().
-        _loadGameModeHealth = () => _ = LoadAsync();
-        return card;
-    }
-
-    /// <summary>Acción de recarga de la pestaña Salud del Modo Juego (se setea al construirla).</summary>
-    private Action? _loadGameModeHealth;
-
-    /// <summary>Punto de entrada de recarga llamado por UpdateMode al entrar a la pestaña.</summary>
-    private void LoadGameModeHealthAsync() => _loadGameModeHealth?.Invoke();
 
  // Listas en edición mientras la vista de configuración está abierta: solo se
  // persisten en el servicio al presionar "Guardar" (volver descarta los cambios).
@@ -1472,10 +1255,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // FrameworkElement sí (Border/Grid/StackPanel lo son) y es lo que piden las
         // llamadas Grid.SetRow/SetColumn de más abajo.
         FrameworkElement servicesTabCard = (FrameworkElement)BuildServicesTab();
- // Pestaña "Salud del Modo Juego": estado del Modo Juego de Windows (interruptor
- // de registro, Appx XboxGamingOverlay y GameBarPresenceWriter.dll) con la
- // reparación de un clic para el caso "solo deshabilitado".
-        FrameworkElement healthTabCard = (FrameworkElement)BuildGameModeHealthTab();
  // Pestaña "Tareas": tareas programadas a pausar por partida (whitelist de
  // mantenimiento + agregadas por el usuario).
         FrameworkElement tasksTabCard = (FrameworkElement)BuildScheduledTasksTab();
@@ -1944,7 +1723,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // Selector segmentado: radio de esquina 4 en las mitades para encajar dentro
  // de la píldora (radio 6 con padding 2). Con radio 6 las esquinas quedaban
  // "cortadas" contra el borde de la píldora. Cuatro modos: eficiencia / cerrar /
- // servicios / salud del Modo Juego de Windows.
+ // servicios / tareas programadas.
  // Cada pestaña es una pastilla propia (radio 5, con 4 px de aire entre una y
  // otra): al llevar fondo, las inactivas dejaban de leerse como un bloque
  // continuo y hacía falta separarlas. Etiqueta corta a propósito: el título
@@ -1952,7 +1731,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var efficiencyButton = new Button { Content = I18n.T("Eficiencia"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
         var killButton = new Button { Content = I18n.T("Cerrar"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
         var servicesButton = new Button { Content = I18n.T("Servicios"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
-        var healthButton = new Button { Content = I18n.T("Salud"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
         var tasksButton = new Button { Content = I18n.T("Tareas"), Height = 34, BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(5), FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Center };
 
  // Columna derecha: card destino estirando (ocupa todo el sobrante). Se crea
@@ -1968,7 +1746,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             var efficiency = selectedTarget == "efficiency";
             var services = selectedTarget == "services";
-            var health = selectedTarget == "health";
             var tasks = selectedTarget == "tasks";
  // Cada pestaña lleva SU fondo (la activa en acento y las demás con el relleno
  // de card): así el selector se lee como una barra de pestañas y no como
@@ -1981,48 +1758,40 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             PaintTab(efficiencyButton, efficiency);
             PaintTab(killButton, selectedTarget == "kill");
             PaintTab(servicesButton, services);
-            PaintTab(healthButton, health);
             PaintTab(tasksButton, tasks);
 
             // Ícono del bloque de título: cambia con la pestaña activa.
             modeIcon.Glyph = efficiency ? "\uE950"
                 : selectedTarget == "kill" ? "\uE711"
-                : selectedTarget == "health" ? "\uE9CE"
                 : tasks ? "\uE787"
                 : "\uE713";
             modeIcon.Foreground = accentForeground;
-            modeTitle.Text = I18n.T(efficiency ? "Modo eficiencia" : selectedTarget == "kill" ? "Cerrar al iniciar" : selectedTarget == "health" ? "Salud del Modo Juego" : tasks ? "Tareas programadas" : "Servicios");
+            modeTitle.Text = I18n.T(efficiency ? "Modo eficiencia" : selectedTarget == "kill" ? "Cerrar al iniciar" : tasks ? "Tareas programadas" : "Servicios");
             modeDescription.Text = efficiency
                 ? I18n.T("Se baja la prioridad y se activa el modo ahorro de energía de estos procesos mientras jugás.")
                 : selectedTarget == "kill"
                 ? I18n.T("Agregá procesos acá. Se cierran automáticamente al lanzar un juego para liberar recursos.")
-                : selectedTarget == "health"
-                ? I18n.T("Verifica que el Modo Juego de Windows se va a activar correctamente al iniciar un juego (interruptor, archivos y componentes).")
                 : tasks
                 ? I18n.T("Tareas programadas que el boost deshabilita mientras jugás y re-habilita al cerrar el juego. El antivirus (Defender en vivo) no se toca.")
                 : I18n.T("Todos los servicios de Windows con su estado real. Cambiá el modo de arranque (Desactivado / Manual / Activado); el cambio se aplica al momento.");
-            var processesVisible = services || health || tasks ? Visibility.Collapsed : Visibility.Visible;
+            var processesVisible = services || tasks ? Visibility.Collapsed : Visibility.Visible;
             pickerCard.Visibility = processesVisible;
             right.Visibility = processesVisible;
             servicesTabCard.Visibility = services ? Visibility.Visible : Visibility.Collapsed;
-            healthTabCard.Visibility = health ? Visibility.Visible : Visibility.Collapsed;
             tasksTabCard.Visibility = tasks ? Visibility.Visible : Visibility.Collapsed;
             if (services) _ = LoadAllServicesAsync(servicesTabCard);
-            if (health) LoadGameModeHealthAsync();
             RefreshTargetRows();
             RefreshPicker(); // las badges dependen del modo: re-listar al cambiar de pestaña
         }
         efficiencyButton.Click += (_, _) => { selectedTarget = "efficiency"; UpdateMode(); };
         killButton.Click += (_, _) => { selectedTarget = "kill"; UpdateMode(); };
         servicesButton.Click += (_, _) => { selectedTarget = "services"; UpdateMode(); };
-        healthButton.Click += (_, _) => { selectedTarget = "health"; UpdateMode(); };
         tasksButton.Click += (_, _) => { selectedTarget = "tasks"; UpdateMode(); };
 
-        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(8), Padding = new Thickness(3), Child = new Grid { ColumnSpacing = 4, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton, healthButton, tasksButton } } };
+        var modeSelector = new Border { BorderBrush = borderBrush, BorderThickness = new Thickness(1), Background = secondaryFill, CornerRadius = new CornerRadius(8), Padding = new Thickness(3), Child = new Grid { ColumnSpacing = 4, ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition(), new ColumnDefinition() }, Children = { efficiencyButton, killButton, servicesButton, tasksButton } } };
         Grid.SetColumn(killButton, 1);
         Grid.SetColumn(servicesButton, 2);
-        Grid.SetColumn(healthButton, 3);
-        Grid.SetColumn(tasksButton, 4);
+        Grid.SetColumn(tasksButton, 3);
 
  // Layout de 2 filas: selector arriba (Auto, centrado sobre la derecha) y las
  // dos cards lado a lado estirando al * restante. Ambas cards reciben el mismo
@@ -2043,11 +1812,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         Grid.SetRow(servicesTabCard, 1);
         columns.Children.Add(servicesTabCard);
         servicesTabCard.Visibility = Visibility.Collapsed;
-        Grid.SetColumn(healthTabCard, 0);
-        Grid.SetColumnSpan(healthTabCard, 2);
-        Grid.SetRow(healthTabCard, 1);
-        columns.Children.Add(healthTabCard);
-        healthTabCard.Visibility = Visibility.Collapsed;
         Grid.SetColumn(tasksTabCard, 0);
         Grid.SetColumnSpan(tasksTabCard, 2);
         Grid.SetRow(tasksTabCard, 1);
@@ -3331,6 +3095,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                         }
                     }
                 }
+                foreach (var (ledExe, led) in _deviceLeds)
+                {
+                    bool on = _runningExes.Contains(ledExe);
+                    led.Fill = new SolidColorBrush(on
+                        ? Windows.UI.Color.FromArgb(255, 96, 208, 128)
+                        : Windows.UI.Color.FromArgb(72, 255, 255, 255));
+                }
                 if (_cards3D) RequestCartridgeDockUpdate();
                 if (_counterStatusVisible)
                 {
@@ -3570,6 +3341,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     private async Task RefreshAsync(bool showSkeleton = false, bool refreshCache = false)
     {
+        // Una carga de la visita anterior no puede pisar la actual: si mientras el
+        // escaneo estaba en curso se salió y volvió a entrar (o se limpió la caché),
+        // la respuesta vieja no debe ocultar el skeleton ni repintar la biblioteca.
+        int navGen = _navGeneration;
         try
         {
             RedetectButton.IsEnabled = false;
@@ -3580,7 +3355,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
             // Juegos instalados (launchers) + manuales. Con refreshCache=true (botón
             // Re-detectar) se re-escanean los launchers; si no, se usa la caché.
-            _installed = await _installedGamesService.GetInstalledGamesAsync(refreshCache);
+            var installed = await _installedGamesService.GetInstalledGamesAsync(refreshCache);
+            if (navGen != _navGeneration) return;
+            _installed = installed;
             _manual = _processService.GetManualEntries();
             var knownExes = new HashSet<string>(
                 _installed.Where(g => !string.IsNullOrEmpty(g.ExeFileName)).Select(g => g.ExeFileName!),
@@ -3618,6 +3395,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         catch (Exception ex)
         {
             _loggingService.LogWarning($"GestionarProcesosPage: no se pudo escanear juegos: {ex.GetType().Name}: {ex.Message} | {ex.StackTrace}");
+            if (navGen != _navGeneration) return;
             StatusText.Text = I18n.T("No se pudieron escanear los juegos: {0}", ex.Message);
             StatusText.Foreground = Feedback.ErrorBrush;
             StatusText.Visibility = Visibility.Visible;
@@ -3637,8 +3415,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         finally
         {
-            RedetectButton.IsEnabled = true;
-            HideSkeleton();
+            // Solo la visita vigente puede apagar el skeleton; una carga vieja que
+            // termina tarde ya no toca la UI de la visita actual.
+            if (navGen == _navGeneration)
+            {
+                RedetectButton.IsEnabled = true;
+                HideSkeleton();
+            }
         }
     }
 
@@ -3671,6 +3454,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// </summary>
     private async Task RefreshLibraryInBackgroundAsync()
     {
+        // Si la carga principal está mostrando el skeleton, su escaneo ya es la
+        // comprobación de esta visita. Un segundo refresco podría terminar antes y
+        // retirar el skeleton que el usuario tiene que ver.
+        if (_skeletonActive) return;
         // Sin caché, la carga normal ya está escaneando: no duplicar el trabajo.
         if (!_installedGamesService.HasCachedResult) return;
         if (Interlocked.Exchange(ref _backgroundScanRunning, 1) == 1) return;
@@ -3701,6 +3488,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // app había escrito para él en Windows. La regla se conserva.
             CleanupMissingGames(before, fresh);
 
+            if (_skeletonActive) return;
             _loggingService.LogDebug("GestionarProcesosPage: escaneo de entrada detectó cambios; se repinta la biblioteca");
             await RefreshAsync(showSkeleton: false, refreshCache: false);
         }
@@ -3808,7 +3596,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// </summary>
     private void ShowSkeleton()
     {
-        if (_skeletonActive) return;
+        // Si quedó un skeleton activo de una visita anterior, se reinicia para que
+        // vuelva a verse al limpiar la caché. Se descarta la sección completa (la
+        // cabecera y los márgenes dependen del modo actual) y las cards placeholder
+        // se reutilizan, así que no queda una animación huérfana.
+        if (_skeletonActive)
+        {
+            StopSkeletonPulse();
+            _skeletonActive = false;
+            if (_skeletonSection != null)
+                LibraryPanel.Children.Remove(_skeletonSection);
+            _skeletonSection = null;
+            _skeletonPanel = null;
+            _skeletonHeader = null;
+        }
         _skeletonActive = true;
         _skeletonShownAtMs = Environment.TickCount64;
 
@@ -3826,8 +3627,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             _wrapSectionGroups.Clear();
             _launcherButtons.Clear();
             _gameLaunchButtons.Clear();
+            _deviceLeds.Clear();
             _orderedLibraryGames.Clear();
+            _skeletonSection = null;
             _skeletonPanel = null;
+            _skeletonHeader = null;
         }
         EmptyStatePanel.Visibility = Visibility.Collapsed;
 
@@ -3848,7 +3652,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // y 3 en clásico. Antes eran siempre 3 placeholders por fila, así que
             // en 3D la primera fila ocupaba solo 3/5 del ancho y no coincidía con
             // la grilla de cartuchos.
-            int count = Math.Clamp(GetEffectiveColumns() * 2, 6, 12);
+            // En emuladores la card es una por fila y enorme: dos placeholders alcanzan.
+            // Emuladores: una card por fila, así que el esqueleto muestra una sola pieza
+            // del tamaño real en vez de seis miniaturas que no existen.
+            int count = IsEmulatorFilter ? 1 : Math.Clamp(GetEffectiveColumns() * 2, 6, 12);
             for (int i = 0; i < count; i++)
             {
                 var (card, body, blocks) = BuildSkeletonCard(_cards3D);
@@ -3856,17 +3663,23 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             }
         }
 
-        if (_skeletonPanel == null)
+        if (_skeletonSection == null || _skeletonPanel == null)
         {
-            // Re-mostrar skeletons ya construidos (el panel se limpió en RebuildCards).
-            _skeletonPanel = new StackPanel { Spacing = GridCardSpacing };
-            LibraryPanel.Children.Add(_skeletonPanel);
+            // Re-mostrar skeletons ya construidos dentro de una sección completa:
+            // la cabecera reserva el mismo alto que la sección real.
+            if (_skeletonSection != null)
+                LibraryPanel.Children.Remove(_skeletonSection);
+            _skeletonSection = BuildSkeletonSection();
+            LibraryPanel.Children.Add(_skeletonSection);
         }
         // Mismo espaciado y mismas columnas que la grilla real. ReflowSkeleton
         // desengancha las cards de su fila anterior antes de re-colgarlas: sin eso
         // el árbol tira "Element is already the child of another element".
         ReflowSkeleton(GetEffectiveColumns());
         UpdateCardWidth();
+        // Al volver de Configuración la página cacheada conserva el scroll: si el
+        // usuario estaba más abajo, el skeleton quedaría fuera del viewport.
+        try { LibraryScroll.ChangeView(null, 0, null, disableAnimation: true); } catch { }
         StartSkeletonPulse();
     }
 
@@ -3886,7 +3699,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _skeletonPanel.Children.Clear();
         for (int i = 0; i < _skeletonCards.Count; i += perRow)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = GridCardSpacing };
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = GridCardSpacing,
+                HorizontalAlignment = perRow == 1 ? HorizontalAlignment.Center : HorizontalAlignment.Left
+            };
             for (int j = i; j < Math.Min(i + perRow, _skeletonCards.Count); j++)
             {
                 var card = _skeletonCards[j].Card;
@@ -3905,9 +3723,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         StopSkeletonPulse();
         // RebuildCards ya limpia el panel; esto cubre el caso de error antes de
         // reconstruir (que queden skeletons huérfanos).
+        if (_skeletonSection != null)
+            LibraryPanel.Children.Remove(_skeletonSection);
+        else if (_skeletonPanel != null)
+            LibraryPanel.Children.Remove(_skeletonPanel);
         if (_skeletonPanel != null)
         {
-            LibraryPanel.Children.Remove(_skeletonPanel);
             // Las filas se van con el panel, pero las cards son de la página (se reusan en el
             // próximo skeleton): se las suelta ahora para que no queden con padre colgado.
             foreach (var (card, _, _) in _skeletonCards)
@@ -3916,39 +3737,52 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     parent.Children.Remove(card);
             }
         }
+        _skeletonSection = null;
         _skeletonPanel = null;
+        _skeletonHeader = null;
     }
 
     /// <summary>
-    /// Anima cada bloque de las cards del skeleton con un pulso de opacidad suave
-    /// (mismo patrón que el skeleton de SistemaPage): 1.0 → 0.35 en 900 ms con
-    /// auto-reverse infinito, aplicado a cada bloque por separado.
+    /// Anima las cards del skeleton con un pulso de opacidad suave: 1.0 → 0.58
+    /// en 1150 ms con auto-reverse infinito. Menos contraste y más lento que el
+    /// 1.0 → 0.35 anterior, que parpadeaba y se sentía como un error de carga.
     /// </summary>
     private void StartSkeletonPulse()
     {
         try
         {
+            // Evita duplicar storyboards si el skeleton se re-mostró sin recrear
+            // los bloques. Stop también devuelve las opacidades a su base.
+            StopSkeletonPulse();
+
             foreach (var (_, _, blocks) in _skeletonCards)
-            {
                 foreach (var block in blocks)
+                    AddPulse(block, 0.58);
+
+            // La cabecera acompaña el pulso de las cards, pero un poco más tenue:
+            // se lee como contexto y no compite con los placeholders.
+            if (_skeletonHeader != null)
+                AddPulse(_skeletonHeader, 0.66);
+
+            void AddPulse(FrameworkElement block, double to)
+            {
+                var sb = new Storyboard
                 {
-                    var sb = new Storyboard
-                    {
-                        RepeatBehavior = RepeatBehavior.Forever,
-                        AutoReverse = true
-                    };
-                    var anim = new DoubleAnimation
-                    {
-                        From = 1.0,
-                        To = 0.35,
-                        Duration = new Duration(TimeSpan.FromMilliseconds(900))
-                    };
-                    Storyboard.SetTarget(anim, block);
-                    Storyboard.SetTargetProperty(anim, "Opacity");
-                    sb.Children.Add(anim);
-                    _skeletonStoryboards.Add(sb);
-                    sb.Begin();
-                }
+                    RepeatBehavior = RepeatBehavior.Forever,
+                    AutoReverse = true
+                };
+                var anim = new DoubleAnimation
+                {
+                    From = 1.0,
+                    To = to,
+                    Duration = new Duration(TimeSpan.FromMilliseconds(1150)),
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                };
+                Storyboard.SetTarget(anim, block);
+                Storyboard.SetTargetProperty(anim, "Opacity");
+                sb.Children.Add(anim);
+                _skeletonStoryboards.Add(sb);
+                sb.Begin();
             }
         }
         catch (Exception ex)
@@ -3967,6 +3801,63 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         foreach (var (_, _, blocks) in _skeletonCards)
             foreach (var b in blocks)
                 b.Opacity = 1.0;
+        if (_skeletonHeader != null)
+            _skeletonHeader.Opacity = 1.0;
+    }
+
+    /// <summary>
+    /// Envoltorio de carga con la misma estructura que <see cref="BuildLibrarySection"/>:
+    /// cabecera + separación + cuerpo. Sin esto las cards placeholder arrancaban
+    /// pegadas a los filtros y, al llegar las cards reales, todo “saltaba” hacia
+    /// abajo. El cuerpo usa el mismo margen inferior por modo que una sección real.
+    /// </summary>
+    private StackPanel BuildSkeletonSection()
+    {
+        var section = new StackPanel { Spacing = 8 };
+        _skeletonHeader = BuildSkeletonHeader();
+        section.Children.Add(_skeletonHeader);
+
+        _skeletonPanel = new StackPanel { Spacing = GridCardSpacing };
+        section.Children.Add(new Border
+        {
+            Child = _skeletonPanel,
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Margin = new Thickness(0, 6, 0, _cards3D ? 36 : 10)
+        });
+        return section;
+    }
+
+    /// <summary>
+    /// Cabecera fantasma con las mismas medidas que el botón de sección real:
+    /// chevron, icono y título. Solo insinúa la estructura; no muestra texto.
+    /// </summary>
+    private static FrameworkElement BuildSkeletonHeader()
+    {
+        var brush = ThemeBrushes.Get("ControlFillColorSecondaryBrush");
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Margin = new Thickness(4, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        row.Children.Add(SkeletonBar(12, 12, 3, 0.55));
+        row.Children.Add(SkeletonBar(16, 16, 4, 0.8));
+        row.Children.Add(SkeletonBar(126, 15, 4, 1.0));
+
+        Border SkeletonBar(double width, double height, double radius, double opacity) => new()
+        {
+            Width = width,
+            Height = height,
+            CornerRadius = new CornerRadius(radius),
+            Background = brush,
+            Opacity = opacity,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var header = new Grid { Height = 32 };
+        header.Children.Add(row);
+        return header;
     }
 
     /// <summary>
@@ -4077,29 +3968,93 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             return (card3D, body, new FrameworkElement[] { header, art, code });
         }
 
+        // Banner placeholder con capas, en vez de un rectángulo gris liso: base,
+        // brillo diagonal, silueta de imagen y degradado inferior. La card conserva
+        // el fondo de superficie real para que el pulso no deje un hueco negro.
         var banner = new Border
         {
             Background = skeletonBrush,
             // Mismo radio que la card real: las cuatro esquinas redondeadas.
-            CornerRadius = new CornerRadius(12),
-            // Tamaño intrínseco: visible aunque el layout de la grilla aún no haya
-            // corrido (primera apertura); UpdateCardWidth lo refina después.
-            Height = 150
+            CornerRadius = new CornerRadius(12)
         };
-        // Título simulado al pie del banner (como el título real de la card).
+        var sheen = new Border
+        {
+            CornerRadius = new CornerRadius(12),
+            IsHitTestVisible = false,
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(1, 1),
+                GradientStops =
+                {
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(24, 255, 255, 255), Offset = 0 },
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(0, 255, 255, 255), Offset = 0.55 }
+                }
+            }
+        };
+        var imageGlyph = new FontIcon
+        {
+            Glyph = "\uE8B9", // imagen: el hueco se lee como banner, no como error
+            FontSize = 30,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            Opacity = 0.32,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 16),
+            IsHitTestVisible = false
+        };
+        var titleScrim = new Border
+        {
+            Height = 76,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            CornerRadius = new CornerRadius(0, 0, 12, 12),
+            IsHitTestVisible = false,
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new Windows.Foundation.Point(0, 0),
+                EndPoint = new Windows.Foundation.Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(0, 0, 0, 0), Offset = 0 },
+                    new GradientStop { Color = Windows.UI.Color.FromArgb(118, 0, 0, 0), Offset = 1 }
+                }
+            }
+        };
+        var titleRow = new Grid
+        {
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(10, 0, 10, 10)
+        };
+        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.7, GridUnitType.Star) });
+        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var titleBar = new Border
         {
-            Background = skeletonBrush,
-            Width = 110,
-            Height = 13,
+            Height = 12,
             CornerRadius = new CornerRadius(4),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(10, 0, 0, 9),
-            VerticalAlignment = VerticalAlignment.Bottom
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(154, 255, 255, 255)),
+            VerticalAlignment = VerticalAlignment.Center
         };
-        var bannerGrid = new Grid();
+        Grid.SetColumn(titleBar, 0);
+        titleRow.Children.Add(titleBar);
+        var launcherBadge = new Border
+        {
+            Width = 18,
+            Height = 18,
+            CornerRadius = new CornerRadius(5),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(96, 255, 255, 255)),
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(launcherBadge, 2);
+        titleRow.Children.Add(launcherBadge);
+
+        var bannerGrid = new Grid { Height = 150 };
         bannerGrid.Children.Add(banner);
-        bannerGrid.Children.Add(titleBar);
+        bannerGrid.Children.Add(sheen);
+        bannerGrid.Children.Add(imageGlyph);
+        bannerGrid.Children.Add(titleScrim);
+        bannerGrid.Children.Add(titleRow);
 
         var card = new Border
         {
@@ -4113,8 +4068,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = bannerGrid
         };
-        // Los bloques animables: banner y barra de título (cada uno con su pulso).
-        return (card, banner, new FrameworkElement[] { banner, titleBar });
+        // El banner pulsa como una sola pieza para que sus capas no se desincronicen.
+        return (card, bannerGrid, new FrameworkElement[] { bannerGrid });
     }
 
     // Re-detectar: re-escanea los launchers a propósito y actualiza la caché
@@ -4398,8 +4353,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _wrapSectionGroups.Clear();
         _launcherButtons.Clear();
         _gameLaunchButtons.Clear();
+        _deviceLeds.Clear();
         _orderedLibraryGames.Clear();
-        _skeletonPanel = null; // el skeleton (si estaba) se fue con el clear del panel
+        // El skeleton (si estaba) se fue con el clear del panel.
+        _skeletonSection = null;
+        _skeletonPanel = null;
+        _skeletonHeader = null;
 
         var hidden = _processService.GetHiddenExes();
         var deleted = _processService.GetDeletedGames();
@@ -4418,14 +4377,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 .Where(i => (i.name ?? i.exe).Contains(q, StringComparison.OrdinalIgnoreCase))
                 .ToList();
         }
- // Filtro de categoría: "all" (todos), "games", "console_emu", "mobile_emu".
- // GetItemCategory clasifica cada item; "all" no filtra nada.
-        if (_currentFilter != "all")
-        {
-            items = items
-                .Where(i => GetItemCategory(i.game) == _currentFilter)
-                .ToList();
-        }
+ // Filtro de categoría ("games", "console_emu", "mobile_emu"): GetItemCategory
+ // clasifica cada item y la grilla muestra solo la categoría elegida.
+        items = items
+            .Where(i => GetItemCategory(i.game) == _currentFilter)
+            .ToList();
 
         // Tres secciones con el MISMO desplegable simple: Favoritos / Detectados /
         // Ocultos. Dentro de cada grupo, primero los que están corriendo,
@@ -4476,13 +4432,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (g != null)
             {
  // Filtrar por categoría: solo mostrar ocultos del tipo correcto.
-                if (_currentFilter != "all" && GetItemCategory(g) != _currentFilter) continue;
+                if (GetItemCategory(g) != _currentFilter) continue;
                 hiddenItems.Add((g, g.ExeFileName, g.Name, false, g.InstallPath));
                 continue;
             }
  // Juegos manuales ocultos: siempre son "games" (no emuladores),
- // solo se muestran en "Todos" o "Videojuegos".
-            if (_currentFilter != "all" && _currentFilter != "games") continue;
+ // solo se muestran en "Videojuegos".
+            if (_currentFilter != "games") continue;
             var m = _manual.FirstOrDefault(mm => string.Equals(mm.Exe, hExe, StringComparison.OrdinalIgnoreCase));
             hiddenItems.Add((null, hExe, m.Name ?? hExe, m.Exe != null, m.InstallPath));
         }
@@ -4555,23 +4511,58 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// Desplegable de categorías (Todos / Videojuegos / Emuladores de consolas /
+    /// Desplegable de categorías (Videojuegos / Emuladores de consolas /
     /// Emuladores de celular): aplica el filtro seleccionado a la grilla.
-    /// El índice 0 («Todos») mapea a "all"; el guard evita rebuilds redundantes.
+    /// El guard evita rebuilds redundantes. Al entrar a emuladores, el dock y
+    /// el pie se ocultan (UpdateCategoryChrome): la vista queda solo hardware.
     /// </summary>
     private void FilterComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         string filter = FilterComboBox.SelectedIndex switch
         {
-            1 => "games",
-            2 => "console_emu",
-            3 => "mobile_emu",
-            _ => "all"
+            1 => "console_emu",
+            2 => "mobile_emu",
+            _ => "games"
         };
         if (_currentFilter == filter) return;
         _currentFilter = filter;
+        UpdateCategoryChrome();
         UpdateInstalledCount();
         RebuildCards();
+    }
+
+    /// <summary>
+    /// Ajusta el marco visual al cambiar de categoría. En Videojuegos todo sigue
+    /// como antes (dock + pie desacoplados). En emuladores la vista pasa a SOLO
+    /// hardware: el dock y el pie de la sección se ocultan y la grilla recupera
+    /// todo el alto (ver UpdateCardWidth, que deja de reservar el margen del dock).
+    /// Si hay un cartucho conectado y su juego ya cerró, se retira antes de ocultar
+    /// el dock (mismo estado que al arrastrarlo hacia afuera); si el juego sigue
+    /// corriendo, queda conectado y el dock vuelve con él al regresar a Videojuegos.
+    /// </summary>
+    private void UpdateCategoryChrome()
+    {
+        if (IsEmulatorFilter)
+        {
+            var c = _connectedCartridge;
+            if (c != null && !_runningExes.Contains(c.Exe))
+            {
+                _connectedCartridge = null;
+                _dockMessage = null;
+                _dockLaunchFailed = false;
+            }
+            // La card de Modo rendimiento vive en el ala derecha del dock: al
+            // ocultar la consola hay que devolverla a su casa en el header para
+            // que no quede huérfana dentro del host colapsado.
+            SafeRestoreGameBoostCardHome();
+            CartridgeDockHost.Visibility = Visibility.Collapsed;
+            if (_cards3D) GameRuleStatusBar.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            UpdateCartridgeDock();
+            if (_lastGameRuleStatus != null) ApplyGameRuleStatus(_lastGameRuleStatus);
+        }
     }
 
     // Emuladores de celular conocidos (por nombre del InstalledGame.Name).
@@ -4603,6 +4594,18 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         return "games";
     }
 
+    /// <summary>Tipo de hardware 3D/2D del item: la MISMA clasificación que
+    /// GetItemCategory, expresada como DeviceKind para la geometría, la silueta y
+    /// el pintado. Los manuales (game==null) son cartuchos de videojuego.</summary>
+    private static DeviceKind GetItemKind(InstalledGame? game) => GetItemCategory(game) switch
+    {
+        "mobile_emu" => DeviceKind.Phone,
+        // El modelo elegido en Apariencia manda: los perfiles son consolas y «Retro»
+        // es el gabinete arcade.
+        "console_emu" => ConsoleModel.CurrentKind,
+        _ => DeviceKind.Cartridge
+    };
+
     /// <summary>
     /// Actualiza el contador según la categoría activa. El texto cambia:
     /// «Instalados: N» (todos), «Juegos instalados: N» (videojuegos),
@@ -4616,10 +4619,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         foreach (var g in _installed)
         {
             if (hidden.Contains(g.ExeFileName) || deleted.Contains(g.ExeFileName)) continue;
-            if (_currentFilter == "all" || GetItemCategory(g) == _currentFilter) count++;
+            if (GetItemCategory(g) == _currentFilter) count++;
         }
     // Los manuales (sin game) son siempre videojuegos.
-        if (_currentFilter == "all" || _currentFilter == "games")
+        if (_currentFilter == "games")
         {
             foreach (var (exe, _, _) in _manual)
             {
@@ -4850,7 +4853,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         panel.Children.Clear();
         for (int i = 0; i < cards.Count; i += perRow)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = GridCardSpacing };
+            // Una sola card por fila (emuladores) se centra; con varias columnas la
+            // grilla arranca a la izquierda y las filas incompletas no se corren.
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = GridCardSpacing,
+                HorizontalAlignment = perRow == 1 ? HorizontalAlignment.Center : HorizontalAlignment.Left
+            };
             for (int j = i; j < Math.Min(i + perRow, cards.Count); j++)
             {
                 var card = cards[j];
@@ -5115,6 +5125,31 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             launchFile = $"uplay://launch/{game.AppId}/0";
             launchArgs = "";
         }
+        else if (game?.Launcher == "Amazon" && !string.IsNullOrEmpty(game.AppId))
+        {
+            // Amazon Games: el id del producto (amzn1.adg.product.<uuid>) va en
+            // la URI; el cliente se abre solo y arranca el juego con su sesión.
+            launchFile = $"amazon-games://play/{game.AppId}";
+            launchArgs = "";
+        }
+        else if (game?.Launcher == "EA")
+        {
+            // EA app: el exe directo falla en la mayoría de los títulos (valida
+            // entitlement/updates). Se pide por origin2 con el contentID del
+            // instalador; sin él, exe directo como último recurso.
+            var offerIds = GameLauncher.FindEaOfferIds(installPath);
+            launchFile = offerIds != null
+                ? $"origin2://game/launch/?offerIds={offerIds}"
+                : exePath ?? "";
+            launchArgs = "";
+        }
+        else if (game?.Launcher == "Rockstar")
+        {
+            // Rockstar no tiene URI de título: el stub Play<Juego>.exe de la
+            // carpeta es el acceso oficial y levanta el launcher.
+            launchFile = GameLauncher.FindRockstarPlayStub(installPath) ?? exePath ?? "";
+            launchArgs = "";
+        }
         else if (riotLaunch)
         {
             // Riot: el lanzamiento lo hace el Riot Client con el id de producto
@@ -5132,21 +5167,23 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         else
         {
-            // Battle.net, GOG y el resto: el exe del juego se lanza directo (en
-            // Battle.net DESPUÉS de asegurar que el launcher esté corriendo, y en
-            // GOG solo si GOG Galaxy está abierto — ver LaunchGameAsync).
+            // Battle.net, GOG, Xbox y el resto: el exe del juego se lanza directo.
+            // Battle.net corre DESPUÉS de asegurar su launcher; GOG es DRM-free y
+            // Xbox se activa por shell:AppsFolder, así que ninguno exige cliente
+            // abierto (ver LaunchGameAsync).
             launchFile = exePath ?? "";
             launchArgs = "";
         }
 
         // Para juegos con launcher externo el botón comunica el estado real y se
         // actualiza en vivo (timer): "Iniciar" si ya está corriendo, o "<Launcher>
-        // no iniciado" si hay que abrirlo primero. Battle.net y Epic se abren solos
-        // (el juego se lanza después de que levante); GOG Galaxy y Xbox NO se abren
-        // solos: si el launcher está cerrado, el botón queda deshabilitado.
+        // no iniciado" si hay que abrirlo primero. Battle.net, Epic, Ubisoft, EA y
+        // Amazon se abren solos (el juego se lanza después de que levante).
         bool epicLaunch = game?.Launcher == "Epic" && !string.IsNullOrEmpty(game.EpicAppName);
-        bool gogLaunch = game?.Launcher == "GOG";
-        bool xboxLaunch = game?.Launcher == "Xbox";
+        bool ubisoftLaunch = game?.Launcher == "Ubisoft";
+        bool eaLaunch = game?.Launcher == "EA";
+        bool amazonLaunch = string.Equals(game?.Launcher, "Amazon", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(game?.Launcher, "Amazon Games", StringComparison.OrdinalIgnoreCase);
         string? battleNetLauncher = blizzardCode != null ? GameLauncher.FindBattleNetLauncher() : null;
         string? launcherProc = null;
         bool launcherFound = true;
@@ -5164,19 +5201,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // al shell del usuario, porque la app corre elevada).
             launcherFound = true;
         }
-        else if (gogLaunch)
+        else if (ubisoftLaunch)
         {
-            launcherProc = "GalaxyClient";
-            launcherFound = GameLauncher.FindGogLauncher() != null;
-            autoOpen = false;
-        }
-        else if (xboxLaunch)
-        {
-            // El launcher de Xbox es el app de la Store: si hay juegos instalados,
-            // el app existe. El estado real lo gobierna el proceso en ejecución.
-            launcherProc = "Xbox";
+            launcherProc = "upc";
             launcherFound = true;
-            autoOpen = false;
+        }
+        else if (eaLaunch)
+        {
+            launcherProc = "EADesktop";
+            launcherFound = true;
+        }
+        else if (amazonLaunch)
+        {
+            launcherProc = "Amazon Games";
+            launcherFound = true;
         }
         else if (riotLaunch)
         {
@@ -5390,7 +5428,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     ///   cartucho se levanta y se arrastra fuera del hueco.
     /// - Imagen de cartucho completo (carcasa con muescas laterales, pestaña superior,
     ///   etiqueta con logo del launcher, carátula, franja inferior de código y flecha).
-    /// - Al mover el mouse encima, el cartucho se levanta, se inclina hasta ±10° hacia el
+    /// - Al mover el mouse encima, el cartucho se inclina hasta ±7° hacia el
     ///   puntero con PlaneProjection y muestra un reflejo radial suave.
     /// - Al arrastrar (> 8 px), se levanta el cartucho flotando con balanceo por velocidad:
     ///   soltarlo en el Dock inferior lo inserta e inicia el juego; soltarlo afuera lo
@@ -5419,27 +5457,169 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         string code = CartridgeModel.Code(launcher, game?.AppId, name);
 
 
-        var tile = new CartridgeTile(name, launcher)
+        var kind = GetItemKind(game);
+        bool draggable = kind == DeviceKind.Cartridge;
+        var tile = new CartridgeTile(name, launcher, kind)
         {
             GameExe = exe,
-            HoverTiltEnabled = _cards3DTilt,
+            // La consola es la máquina, no un cartucho: no se arrastra ni se enchufa.
+            // El clic abre la inspección igual.
+            Draggable = draggable,
+            // El pozo con reborde es la bandeja del cartucho; la consola apoya sobre
+            // su placa, sin hueco.
+            SlotVisible = draggable,
+            HoverTiltEnabled = _cards3DTilt && draggable,
             CoordinateRoot = RootGrid,
             CanInteract = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
                 && !string.Equals(_connectedCartridge?.Exe, exe, StringComparison.OrdinalIgnoreCase)
         };
         // Sin sombra proyectada en el cartucho: se veía como un halo gris alrededor
         // del plástico. El volumen lo dan el tilt, el lift y la silueta del propio arte.
+        // Presentación de los dispositivos: consola a la izquierda y, a la derecha,
+        // nombre, tipo y botón Iniciar. La consola no es un cartucho: se presenta
+        // como un equipo con su ficha, no como una carátula muda.
+        UIElement cardContent = tile;
+        if (!draggable)
+        {
+            bool encendido = _runningExes.Contains(exe);
+            var led = new Microsoft.UI.Xaml.Shapes.Ellipse
+            {
+                Width = 10,
+                Height = 10,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 4, 4, 0),
+                StrokeThickness = 1,
+                Stroke = new SolidColorBrush(Windows.UI.Color.FromArgb(110, 0, 0, 0)),
+                Fill = new SolidColorBrush(encendido
+                    ? Windows.UI.Color.FromArgb(255, 96, 208, 128)
+                    : Windows.UI.Color.FromArgb(72, 255, 255, 255)),
+                IsHitTestVisible = false
+            };
+            _deviceLeds.Add((exe, led));
+
+            // Giro real: al pasar el mouse se monta el MISMO control 3D de la
+            // inspección sobre el PNG tranquilo de la card. Así el arrastre gira en vivo,
+            // con inercia y asentado, en vez de saltar entre vistas pre-renderizadas.
+            // Se monta uno solo a la vez (el de la card apuntada).
+            string? caratulaViva = ResolveBannerFile(game, iconPath2, exe);
+            var headerVivo = GameLook.Header(exe);
+            Cartridge3D? live = null;
+            tile.PointerEntered += (s, e) =>
+            {
+                if (live != null || tile.IsRemoved) return;
+                var control = new Cartridge3D { ScrollFriendly = true, ZoomOnWheel = false };
+                control.SetCard(name, launcher, code, caratulaViva, header: headerVivo, kind: kind);
+                tile.AttachLiveView(control);
+                live = control;
+                // Recién cuando hay un cuadro dibujado se tapa el PNG: sin esto la pieza
+                // desaparecía un instante al entrar y al salir el mouse.
+                if (control.HasFirstFrame) tile.HideArtworkForLiveView();
+                else control.FirstFrameRendered += () =>
+                {
+                    if (ReferenceEquals(live, control)) tile.HideArtworkForLiveView();
+                };
+            };
+            tile.PointerExited += (s, e) =>
+            {
+                if (live == null || live.IsDragging) return;
+                // Con el botón apretado el arrastre sigue (puede salirse de la card a
+                // mitad del giro): sacar el control en vivo ahí cortaba el gesto.
+                if (e.GetCurrentPoint(tile).Properties.IsLeftButtonPressed) return;
+                tile.DetachLiveView(live);
+                live = null;
+            };
+            tile.Tapped += (s, e) => ShowGame3DDetail(game, exe, name, installPath, isManual);
+
+            var deviceName = new TextBlock
+            {
+                Text = name,
+                FontSize = 18,
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
+                Foreground = ThemeBrushes.Get("PrimaryTextBrush"),
+                TextWrapping = TextWrapping.Wrap,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 2
+            };
+            // La ficha también abre la inspección; el botón Iniciar queda aparte.
+            deviceName.Tapped += (s, e) => ShowGame3DDetail(game, exe, name, installPath, isManual);
+            var deviceKind = new TextBlock
+            {
+                Text = I18n.T(kind == DeviceKind.Phone ? "Emuladores de celular" : "Emuladores de consolas"),
+                FontSize = 12.5,
+                Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 1
+            };
+            deviceKind.Tapped += (s, e) => ShowGame3DDetail(game, exe, name, installPath, isManual);
+            bool puedeLanzar = !string.IsNullOrWhiteSpace(exePath2) && File.Exists(exePath2);
+            var deviceLaunchBtn = new Button
+            {
+                Content = I18n.T("Iniciar"),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(0, 6, 0, 0),
+                Padding = new Thickness(20, 8, 20, 8),
+                CornerRadius = new CornerRadius(7),
+                FontSize = 13.5,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Background = ThemeBrushes.Get("AccentBrush"),
+                Foreground = ThemeBrushes.Get("AccentForegroundBrush"),
+                IsEnabled = puedeLanzar
+            };
+            ApplyCardButtonHover(deviceLaunchBtn, accent: true);
+            if (!puedeLanzar)
+                ToolTipService.SetToolTip(deviceLaunchBtn, I18n.T("Ejecutable no encontrado"));
+            deviceLaunchBtn.Click += async (s, e) => await LaunchGameAsync(
+                exePath2, null, null, installPath, exe, game?.Launcher);
+            _gameLaunchButtons.Add((exe, deviceLaunchBtn, puedeLanzar));
+            if (encendido)
+            {
+                deviceLaunchBtn.Content = I18n.T("En ejecución");
+                deviceLaunchBtn.IsEnabled = false;
+            }
+
+            var ficha = new StackPanel
+            {
+                Spacing = 2,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 2, 6, 2),
+                Children = { deviceName, deviceKind, deviceLaunchBtn }
+            };
+            var split = new Grid { ColumnSpacing = ConsoleCardGap };
+            split.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = new GridLength(ConsoleCardArtShare, GridUnitType.Star)
+            });
+            split.ColumnDefinitions.Add(new ColumnDefinition
+            {
+                Width = new GridLength(1 - ConsoleCardArtShare, GridUnitType.Star)
+            });
+            Grid.SetColumn(tile, 0);
+            Grid.SetColumn(ficha, 1);
+            split.Children.Add(tile);
+            split.Children.Add(ficha);
+            cardContent = new Grid { Children = { split, led } };
+        }
+
         var card = new Border
         {
-            Tag = "no-reveal", Padding = new Thickness(4), Child = tile,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            CornerRadius = new CornerRadius(10)
+            Tag = "no-reveal",
+            Padding = new Thickness(draggable ? 4 : ConsoleCardPad),
+            Child = cardContent,
+            // La ficha del dispositivo lleva placa propia; el cartucho va a sangre.
+            Background = draggable
+                ? new SolidColorBrush(Microsoft.UI.Colors.Transparent)
+                : ThemeBrushes.GetSurface("CardBackgroundBrush"),
+            CornerRadius = new CornerRadius(draggable ? 10 : 12)
         };
-        tile.DragStarted += (point, grab) => StartCartridgeDrag(
-            card, tile.CartridgeVisual, tile.Artwork.Source, game, exe, name, installPath, isManual,
-            grab.X, grab.Y, point);
-        tile.DragMoved += MoveCartridgeDrag;
-        tile.DragCompleted += EndCartridgeDrag;
+        if (draggable)
+        {
+            tile.DragStarted += (point, grab) => StartCartridgeDrag(
+                card, tile.CartridgeVisual, tile.Artwork.Source, game, exe, name, installPath, isManual,
+                grab.X, grab.Y, point, kind: kind);
+            tile.DragMoved += MoveCartridgeDrag;
+            tile.DragCompleted += EndCartridgeDrag;
+        }
         tile.InspectRequested += () => ShowGame3DDetail(game, exe, name, installPath, isManual);
 
         _cartridgeVisuals.Add((exe, tile.CartridgeVisual));
@@ -5447,11 +5627,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         string? defenderFolder = !string.IsNullOrEmpty(installPath) ? installPath
             : (!string.IsNullOrEmpty(exePath2) ? Path.GetDirectoryName(exePath2) : null);
         string? cfgExe = !string.IsNullOrEmpty(iconPath2) ? Path.GetFileName(iconPath2) : exe;
-        card.RightTapped += (s, e) => ShowRuleMenu(card, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe);
+        card.RightTapped += (s, e) => ShowRuleMenu(card, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe, e.GetPosition(card));
         // Sin tooltip en las cards 3D: el cartel al hover se pidió quitar.
 
         // Renderiza y cachea la imagen completa del cartucho (con banner/ícono cuando esté listo)
-        _ = LoadCartridgeGridImageAsync(tile.Artwork, game, name, launcher, code, iconPath2, exe);
+        _ = LoadCartridgeGridImageAsync(tile, game, name, launcher, code, iconPath2, exe, kind);
 
         _cards.Add((card, tile));
         return card;
@@ -5462,10 +5642,67 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// y de la clave de caché: al tocar `CartridgeModel` hay que subirla, si no la grilla
     /// sigue sirviendo los PNG viejos y el cambio no se ve hasta borrar la caché a mano.
     /// </summary>
-    private const string GridShellCacheVersion = "v11";
+    private const string GridShellCacheVersion = "v45";
 
     private static string GridShellCacheDir =>
         Path.Combine(WHPO.Core.AppPaths.RootDir, $"cartshells-{GridShellCacheVersion}");
+
+    private static string SpinFrameFile(string hash, int index) =>
+        Path.Combine(GridShellCacheDir, $"spin-{hash}-{index}.png");
+
+    /// <summary>
+    /// Hornea las vistas del giro en segundo plano (solo las que falten) y, al terminar,
+    /// habilita el giro en la card. Antes se generaban dentro del mismo Task de la imagen
+    /// principal y con 15 renders a 900 px la card tardaba en aparecer.
+    /// </summary>
+    private static async Task BakeSpinFramesAsync(
+        CartridgeTile tile, DeviceKind kind, string title, string launcher, string code,
+        string? artFile, string hash)
+    {
+        try
+        {
+            await Task.Run(() =>
+            {
+                Directory.CreateDirectory(GridShellCacheDir);
+                var plastic = CartridgeModel.PlasticColor(title, artFile);
+                using var face = CartridgeModel.PaintFace(title, launcher, code, artFile, plastic,
+                    flat: true, header: GameLook.Header(tile.GameExe ?? ""), kind: kind);
+                using var back = CartridgeModel.PaintBack(launcher, code, plastic, flat: true, kind: kind);
+                var (_, _, viewW, viewH) = CartridgeModel.DeviceViewRect(kind);
+                // 640 px alcanza: las vistas se ven mientras gira y se decodifican a ese
+                // tamaño, así no compiten con la imagen principal de la card.
+                int pw = 640;
+                int ph = Math.Max(1, (int)Math.Round(pw * (double)viewH / viewW));
+                for (int i = 1; i < DeviceSpinFrames; i++)
+                {
+                    string path = SpinFrameFile(hash, i);
+                    if (File.Exists(path)) continue;
+                    using var frame = DevicePreview.Render(kind, face, back, plastic, pw, ph,
+                        pitchDeg: -30f, yawDeg: i * (360f / DeviceSpinFrames));
+                    string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    try
+                    {
+                        frame.Save(temp, System.Drawing.Imaging.ImageFormat.Png);
+                        File.Move(temp, path, overwrite: true);
+                    }
+                    finally
+                    {
+                        if (File.Exists(temp)) File.Delete(temp);
+                    }
+                }
+            });
+        }
+        catch { return; }
+
+        var files = new List<string>(DeviceSpinFrames - 1);
+        for (int i = 1; i < DeviceSpinFrames; i++)
+        {
+            string path = SpinFrameFile(hash, i);
+            if (!File.Exists(path)) return;
+            files.Add(path);
+        }
+        if (files.Count == DeviceSpinFrames - 1) tile.SpinFrameFiles = files;
+    }
 
     /// <summary>
     /// Asegura el archivo de arte (banner de Steam/Epic o ícono del ejecutable) y
@@ -5473,8 +5710,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// en segundo plano, guardándola en caché para que la grilla cargue al instante.
     /// </summary>
     private async Task LoadCartridgeGridImageAsync(
-        Image target, InstalledGame? game, string title, string launcher, string code, string? iconPath, string exe)
+        CartridgeTile tile, InstalledGame? game, string title, string launcher, string code, string? iconPath, string exe, DeviceKind kind)
     {
+        Image target = tile.Artwork;
+        // Consola, teléfono y gabinete arcade son dispositivos: su card es el render 3D
+        // de la pieza, no el canvas pintado del cartucho.
+        bool isDevice = kind != DeviceKind.Cartridge;
         try
         {
             // Publish a solid cartridge FIRST. Network art must never gate the shell.
@@ -5498,7 +5739,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 stamp = $"{Path.GetFileName(artFile)}-{fi.Length}-{fi.LastWriteTimeUtc.Ticks}";
             }
             GameHeader header = GameLook.Header(exe);
-            string hash = HashString($"{GridShellCacheVersion}|{title}|{launcher}|{code}|{stamp}|{CardSkin.Current.Key}|{header.Signature}");
+            string hash = HashString($"{GridShellCacheVersion}|{kind}|{title}|{launcher}|{code}|{stamp}|{CardSkin.Current.Key}|{ConsoleModel.CurrentId}|{header.Signature}");
             string cachedPng = Path.Combine(GridShellCacheDir, $"shell-{hash}.png");
 
             if (!File.Exists(cachedPng) || !IsValidImageFile(cachedPng))
@@ -5507,17 +5748,50 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 {
                     Directory.CreateDirectory(GridShellCacheDir);
                     var plastic = CartridgeModel.PlasticColor(title, artFile);
-                    using var bmp = CartridgeModel.PaintFace(title, launcher, code, artFile, plastic, flat: false, header: header);
-                    string temp = cachedPng + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    bool device = kind != DeviceKind.Cartridge;
+                    // La card de un dispositivo es el MISMO modelo 3D que el popup: se
+                    // pinta la cara completa y se renderiza con la malla, la cámara y el
+                    // encuadre del detalle (DevicePreview), cacheado como PNG. Así la
+                    // biblioteca y la vista de inspección muestran la misma pieza.
+                    using var bmp = CartridgeModel.PaintFace(title, launcher, code, artFile, plastic,
+                        flat: device, header: header, kind: kind);
+                    System.Drawing.Bitmap? view = null;
                     try
                     {
-                        bmp.Save(temp, System.Drawing.Imaging.ImageFormat.Png);
-                        File.Move(temp, cachedPng, overwrite: true);
+                        if (device)
+                        {
+                            var (_, _, viewW, viewH) = CartridgeModel.DeviceViewRect(kind);
+                            // Una sola card por fila: la consola se ve grande, pero el
+                            // render se mantiene moderado porque hay varias cards a la vez
+                            // y el rasterizado es CPU.
+                            // El gabinete es alto: 900 px de ancho daban un PNG de 1870 de
+                            // alto que la card muestra a 236 de ancho. 560 alcanza y sobra.
+                            int pw = kind == DeviceKind.Arcade ? 560 : 900;
+                            int ph = Math.Max(1, (int)Math.Round(pw * (double)viewH / viewW));
+                            using var back = CartridgeModel.PaintBack(launcher, code, plastic, flat: true, kind: kind);
+                            // MISMA cámara que el control en vivo (RestPitch): de frente y
+                            // con el mismo zoom. Si el PNG va girado, al pasar el mouse la
+                            // pieza "se endereza" y parece que estaba deformada. El gabinete
+                            // va a pitch 0 (parado de frente), la consola desde arriba.
+                            float pitch = CartridgeModel.RestPitch(kind);
+                            view = DevicePreview.Render(kind, bmp, back, plastic, pw, ph, pitchDeg: pitch);
+                        }
+                        string temp = cachedPng + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                        try
+                        {
+                            (view ?? bmp).Save(temp, System.Drawing.Imaging.ImageFormat.Png);
+                            File.Move(temp, cachedPng, overwrite: true);
+                        }
+                        finally
+                        {
+                            if (File.Exists(temp)) File.Delete(temp);
+                        }
+
+                        // Las vistas del giro NO se generan acá: bloqueaban la carga de
+                        // la card. Se hornean aparte, después de mostrar la principal.
+
                     }
-                    finally
-                    {
-                        if (File.Exists(temp)) File.Delete(temp);
-                    }
+                    finally { view?.Dispose(); }
                 });
             }
 
@@ -5525,10 +5799,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             {
                 // Stream loading verifies the actual decode, not just the PNG signature.
                 using var stream = File.OpenRead(cachedPng).AsRandomAccessStream();
-                var bi = new BitmapImage { DecodePixelWidth = 360 };
+                var bi = new BitmapImage { DecodePixelWidth = isDevice ? 900 : 360 };
                 await bi.SetSourceAsync(stream);
                 target.Source = bi;
             }
+
+            // El giro ya no usa vistas pre-renderizadas: lo hace el control 3D en
+            // vivo que la card monta al pasar el mouse.
         }
     }
 
@@ -5921,6 +6198,28 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             launchFile = $"uplay://launch/{game.AppId}/0";
         }
+        else if (game?.Launcher == "Amazon" && !string.IsNullOrEmpty(game.AppId))
+        {
+            // Amazon Games publica el id del producto en GameInstallInfo.sqlite
+            // (DbSet.Id, "amzn1.adg.product.<uuid>") y el cliente lo lanza por URI.
+            launchFile = $"amazon-games://play/{game.AppId}";
+        }
+        else if (game?.Launcher == "EA")
+        {
+            // La EA app no acepta el exe directo en la mayoría de los títulos
+            // (valida entitlement y actualizaciones): se pide el lanzamiento con
+            // el contentID del instalador, que es el offerId de origin2.
+            var offerIds = GameLauncher.FindEaOfferIds(installPath);
+            launchFile = offerIds != null
+                ? $"origin2://game/launch/?offerIds={offerIds}"
+                : exePath ?? "";
+        }
+        else if (game?.Launcher == "Rockstar")
+        {
+            // Rockstar no expone URI de título: el stub Play<Juego>.exe de la
+            // carpeta es el camino oficial y él levanta el launcher.
+            launchFile = GameLauncher.FindRockstarPlayStub(installPath) ?? exePath ?? "";
+        }
         else if (riotLaunch)
         {
             launchFile = GameLauncher.FindRiotLauncher() ?? "";
@@ -5932,8 +6231,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
 
         bool epicLaunch = game?.Launcher == "Epic" && !string.IsNullOrEmpty(game.EpicAppName);
-        bool gogLaunch = game?.Launcher == "GOG";
-        bool xboxLaunch = game?.Launcher == "Xbox";
+        bool ubisoftLaunch = game?.Launcher == "Ubisoft";
+        bool eaLaunch = game?.Launcher == "EA";
+        bool amazonLaunch = string.Equals(game?.Launcher, "Amazon", StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(game?.Launcher, "Amazon Games", StringComparison.OrdinalIgnoreCase);
         string? battleNetLauncher = blizzardCode != null ? GameLauncher.FindBattleNetLauncher() : null;
         string? launcherProc = null;
         bool launcherFound = true;
@@ -5952,17 +6253,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // al shell del usuario, porque la app corre elevada).
             launcherFound = true;
         }
-        else if (gogLaunch)
+        else if (ubisoftLaunch)
         {
-            launcherProc = "GalaxyClient";
-            launcherFound = GameLauncher.FindGogLauncher() != null;
-            autoOpen = false;
-        }
-        else if (xboxLaunch)
-        {
-            launcherProc = "Xbox";
+            // La URI uplay:// abre el cliente si está cerrado, pero el comando se
+            // pierde si llega antes de que levante: GameLauncher hace el handshake.
+            launcherProc = "upc";
             launcherFound = true;
-            autoOpen = false;
+        }
+        else if (eaLaunch)
+        {
+            launcherProc = "EADesktop";
+            launcherFound = true;
+        }
+        else if (amazonLaunch)
+        {
+            launcherProc = "Amazon Games";
+            launcherFound = true;
         }
         else if (riotLaunch)
         {
@@ -5982,17 +6288,29 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         return (launchFile, launchArgs, blizzardCode, launcherProc, launcherFound, autoOpen, canLaunch);
     }
 
+
+
     private void StartCartridgeDrag(
         Border card, UIElement sourceVisual, ImageSource? imgSource,
         InstalledGame? game, string exe, string name, string? installPath, bool isManual,
         double grabX, double grabY, Windows.Foundation.Point pointerInRoot,
-        double cardWOverride = 0, double homeScale = 1, bool fromDock = false)
+        double cardWOverride = 0, double homeScale = 1, bool fromDock = false,
+        DeviceKind kind = DeviceKind.Cartridge)
     {
         if (_cartridgeFlight || _dockLaunching) return;
         // cardWOverride: el arrastre que sale del dock usa el tamaño del cartucho
         // sentado y crece hasta su tamaño de biblioteca (homeScale) al volver a casa.
         double cardW = cardWOverride > 0 ? cardWOverride : Math.Max(1, card.ActualWidth - 8);
-        double cardH = cardW * CartridgeHeightRatio;
+        // La proporción sale del TIPO, igual que en la grilla: la consola y el teléfono
+        // usan su vista recortada (ancha y baja). Con la relación vertical del cartucho,
+        // el fantasma del arrastre estiraba el arte del dispositivo.
+        double dragRatio = CartridgeHeightRatio;
+        if (kind != DeviceKind.Cartridge)
+        {
+            var view = CartridgeModel.DeviceViewRect(kind);
+            dragRatio = view.H / view.W;
+        }
+        double cardH = cardW * dragRatio;
 
         Windows.Foundation.Point homePos = new(pointerInRoot.X - grabX * cardW, pointerInRoot.Y - grabY * cardH);
         try
@@ -6055,7 +6373,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         };
 
         var proxyVisual = CartridgeTile.CreateVisual(
-            name, string.IsNullOrWhiteSpace(game?.Launcher) ? "Manual" : game.Launcher, proxyImg);
+            name, string.IsNullOrWhiteSpace(game?.Launcher) ? "Manual" : game.Launcher, proxyImg, kind);
         // El proxy arrastrable tampoco proyecta sombra (coherente con la grilla).
         var proxyHost = new Border
         {
@@ -6294,7 +6612,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             c.InstallPath, c.IsManual, grab.X, grab.Y, pointInRoot,
             cardWOverride: DockCardWidth,
             homeScale: Math.Max(1, entry.Card.ActualWidth - 8) / DockCardWidth,
-            fromDock: true);
+            fromDock: true,
+            kind: entry.Body is CartridgeTile grabbedTile ? grabbedTile.Kind : DeviceKind.Cartridge);
     }
 
     /// <summary>
@@ -6932,6 +7251,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             CartridgeDockHost.Visibility = Visibility.Collapsed;
             return;
         }
+        // En categorías de emuladores la sección queda solo hardware: el dock
+        // (consola) y el pie no se muestran, igual que si estuviéramos en vanilla.
+        // La card de Modo rendimiento se devuelve al header en ese caso.
+        if (IsEmulatorFilter)
+        {
+            SafeRestoreGameBoostCardHome();
+            CartridgeDockHost.Visibility = Visibility.Collapsed;
+            return;
+        }
 
         CartridgeDockHost.Visibility = Visibility.Visible;
         // Keep the bay stable while a cartridge is sliding behind its lip or while a
@@ -6987,7 +7315,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         bool hasRunning = activeExe != null && _runningExes.Contains(activeExe);
         bool hasConnected = _connectedCartridge != null;
 
-        // Indicador LED (verde con un cartucho puesto o jugando, gris en espera).
+        // Indicador LED (verde con un cartucho puesto o jugando, negro apagado en espera).
         // Con regla activa la luz sigue a LA REGLA (amarilla esperando, verde solo
         // aplicada): va en un host para cambiarla sin reconstruir la consola.
         _dockLedConnected = hasConnected;
@@ -7243,17 +7571,35 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         string launcherDetalle = string.IsNullOrWhiteSpace(game?.Launcher) ? "Manual" : game!.Launcher!;
         string code = CartridgeModel.Code(launcherDetalle, game?.AppId, name);
+        DeviceKind detailKind = GetItemKind(game);
+        bool detailIsDevice = detailKind != DeviceKind.Cartridge;
 
         // ── Columna izquierda: Cartucho 3D real (frente + cantos + dorso con contactos dorados) ──
+        // El dispositivo usa la MISMA proporción que su card de la biblioteca (la vista
+        // del cuerpo, no el canvas vertical del cartucho): así la consola no queda chica
+        // dentro de una caja alta ni se ve distinta de la grilla. El teléfono se acota en
+        // alto para no desbordar el diálogo.
+        double cartridgeWidth = detailIsDevice ? 360 : 310;
+        double cartridgeHeight = 454;
+        if (detailIsDevice)
+        {
+            var (_, _, viewW, viewH) = CartridgeModel.DeviceViewRect(detailKind);
+            cartridgeHeight = Math.Round(cartridgeWidth * viewH / viewW);
+            if (cartridgeHeight > 460)
+            {
+                cartridgeHeight = 460;
+                cartridgeWidth = Math.Round(cartridgeHeight * viewW / viewH);
+            }
+        }
         var cartridge = new Cartridge3D
         {
-            Width = 310,
-            Height = 454,
+            Width = cartridgeWidth,
+            Height = cartridgeHeight,
             HorizontalAlignment = HorizontalAlignment.Center
         };
         cartridge.Logger = m => _loggingService.LogInfo($"Cartridge3D[{name}]: {m}");
         string? initialCover = ResolveBannerFile(game, iconPath, exe);
-        cartridge.SetCard(name, launcherDetalle, code, initialCover, header: GameLook.Header(exe));
+        cartridge.SetCard(name, launcherDetalle, code, initialCover, header: GameLook.Header(exe), kind: detailKind);
         // Entrada con giro: el cartucho se pone en su lugar girando 180° (dorso → frente).
         cartridge.PlayIntro();
         // Si el arte todavía no estaba descargado en disco, asegurarlo y refrescar el 3D
@@ -7263,7 +7609,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (!string.IsNullOrEmpty(ensured) && ensured != initialCover)
             {
                 DispatcherQueue.TryEnqueue(() =>
-                    cartridge.SetCard(name, launcherDetalle, code, ensured, header: GameLook.Header(exe)));
+                    cartridge.SetCard(name, launcherDetalle, code, ensured, header: GameLook.Header(exe), kind: detailKind));
             }
         });
 
@@ -7306,7 +7652,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         var leftColumn = new StackPanel
         {
-            Width = 330,
+            Width = Math.Max(330, cartridgeWidth),
             Spacing = 10,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -7321,7 +7667,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // ── Columna derecha: Cabecera, botón Iniciar/Favorito y todos los parámetros de WinForge ──
         var eyebrowTxt = new TextBlock
         {
-            Text = $"{launcherDetalle.ToUpperInvariant()} · {code}",
+            // En un emulador el "launcher" es el propio emulador: repetir
+            // "EMULADOR · EMULADOR - PS1" no dice nada. Va el tipo de hardware.
+            Text = detailIsDevice
+                ? I18n.T(detailKind == DeviceKind.Phone ? "Emuladores de celular" : "Emuladores de consolas").ToUpperInvariant()
+                : $"{launcherDetalle.ToUpperInvariant()} · {code}",
             FontSize = 11,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
             Foreground = DetailBrush("AccentBrush"),
@@ -7367,7 +7717,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         bool isRunningNow = _runningExes.Contains(exe);
         var playBtn = new Button
         {
-            Content = isRunningNow ? I18n.T("En ejecución") : I18n.T("Conectar e iniciar"),
+            Content = isRunningNow ? I18n.T("En ejecución")
+                : detailIsDevice ? I18n.T("Iniciar") : I18n.T("Conectar e iniciar"),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(20, 10, 20, 10),
@@ -7383,9 +7734,25 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             UpdateLauncherButton(playBtn, spec.LauncherProc, spec.LauncherFound,
                 spec.LauncherFound && IsLauncherRunning(spec.LauncherProc), spec.AutoOpen);
         }
-        playBtn.Click += (s, e) =>
+        playBtn.Click += async (s, e) =>
         {
             CloseGame3DDetail();
+            // Un emulador no se enchufa: se inicia directo. El ritual de arrastrar el
+            // cartucho al dock no aplica (y en este filtro el dock está oculto).
+            if (detailIsDevice)
+            {
+                if (isRunningNow) return;
+                try
+                {
+                    await LaunchGameAsync(spec.LaunchFile, spec.LaunchArgs, spec.BlizzardCode,
+                        game?.InstallPath ?? installPath, exe, game?.Launcher);
+                }
+                catch (Exception exLaunch)
+                {
+                    _loggingService.LogWarning($"Emulador '{name}': {exLaunch.Message}");
+                }
+                return;
+            }
             // Keyboard/accessibility alternative uses the SAME insertion pipeline as dragging.
             if (_connectedCartridge != null || _cartridgeFlight || _dockLaunching) return;
             var source = _cartridgeVisuals.FirstOrDefault(x => string.Equals(x.Exe, exe, StringComparison.OrdinalIgnoreCase));
@@ -7394,7 +7761,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             var slot = GetDockSlotCenterInRoot();
             StartCartridgeDrag(cardEntry.Card, source.Visual,
                 (cardEntry.Body as CartridgeTile)?.Artwork.Source, game, exe, name, installPath, isManual, 0.5, 0.5,
-                new Windows.Foundation.Point(RootGrid.ActualWidth * 0.5, RootGrid.ActualHeight * 0.5));
+                new Windows.Foundation.Point(RootGrid.ActualWidth * 0.5, RootGrid.ActualHeight * 0.5),
+                kind: (cardEntry.Body as CartridgeTile)?.Kind ?? DeviceKind.Cartridge);
             EndCartridgeDrag(slot);
         };
 
@@ -7486,7 +7854,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             string? art = GameLook.CustomArt(exe)
                 ?? await EnsureGameArtFileAsync(game, iconPath, exe)
                 ?? ResolveBannerFile(game, iconPath, exe);
-            cartridge.SetCard(name, launcherDetalle, code, art, header: GameLook.Header(exe));
+            cartridge.SetCard(name, launcherDetalle, code, art, header: GameLook.Header(exe), kind: detailKind);
 
             var tile = _cards
                 .Select(c => c.Body)
@@ -7494,7 +7862,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 .FirstOrDefault(t => string.Equals(t.GameExe, exe, StringComparison.OrdinalIgnoreCase));
             if (tile == null) return;
 
-            await LoadCartridgeGridImageAsync(tile.Artwork, game, name, launcherDetalle, code, iconPath, exe);
+            await LoadCartridgeGridImageAsync(tile, game, name, launcherDetalle, code, iconPath, exe, GetItemKind(game));
             if (_connectedCartridge != null &&
                 string.Equals(_connectedCartridge.Exe, exe, StringComparison.OrdinalIgnoreCase))
             {
@@ -7567,6 +7935,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         Grid.SetColumn(headerBtn, 1);
         lookRow.Children.Add(coverBtn);
         lookRow.Children.Add(headerBtn);
+        // Carátula y encabezado de etiqueta son conceptos de cartucho: en la consola el
+        // logo sale del ícono del emulador, así que la fila no aplica.
+        lookRow.Visibility = detailIsDevice ? Visibility.Collapsed : Visibility.Visible;
 
         // ── Controles de parámetros (Prioridad CPU, Prioridad GPU, Prioridad E/S, Afinidad, Plan de energía, Defender, CFG) ──
         var rules = _processService.GetRulesCached();
@@ -7575,6 +7946,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         int procCount = _processService.ProcessorCount;
         long fullMask = procCount >= 64 ? -1L : ((1L << procCount) - 1);
         bool scopeAlways = true; // Por defecto edita "Siempre" (aplica siempre); "Actual" aplica solo al lanzar desde WinForge
+
+        // Una sola regla por emulador: se aplica al proceso y, por lo tanto, a
+        // cualquier ROM que tenga cargada. No se editan reglas por ROM.
 
         bool RuleIsEmptyLocal(ProcessRule? r)
             => r == null
@@ -7907,6 +8281,134 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         SyncControlsFromScope();
 
+        // ===== Perfil recomendado =====
+        // Preconfigura SOLO las tres prioridades que ya existen en el modelo de
+        // reglas. No toca afinidad ni plan de energía: son decisiones del usuario
+        // y cambiarlas en silencio sería peor que no ofrecer el perfil.
+        const int RecommendedCpu = 4; // High
+        const int RecommendedGpu = 4; // AboveNormal
+        const int RecommendedIo = 2;  // Normal
+
+        var recommendedBtn = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE945", FontSize = 13 },
+                    new TextBlock
+                    {
+                        Text = I18n.T("Aplicar perfil recomendado"),
+                        FontSize = 12,
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                    }
+                }
+            },
+            HorizontalAlignment = HorizontalAlignment.Left,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 7, 14, 7),
+            Background = DetailBrush("AccentBrush"),
+            Foreground = DetailBrush("AccentForegroundBrush")
+        };
+        ApplyCardButtonHover(recommendedBtn, accent: true);
+
+        var resetDefaultsBtn = new Button
+        {
+            Content = I18n.T("Restaurar por defecto"),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(14, 7, 14, 7),
+            FontSize = 12,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255)),
+            Foreground = DetailBrush("PrimaryTextBrush")
+        };
+        ApplyCardButtonHover(resetDefaultsBtn, accent: false);
+
+        recommendedBtn.Click += (s, e) =>
+        {
+            if (scopeAlways)
+                rule = new ProcessRule(RecommendedCpu, rule.AffinityMask, RecommendedGpu, rule.PowerPlanGuid, RecommendedIo);
+            else
+                sessionRule = new ProcessRule(RecommendedCpu, sessionRule.AffinityMask, RecommendedGpu, sessionRule.PowerPlanGuid, RecommendedIo);
+
+            SyncControlsFromScope();
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+            detailStatus.Text = I18n.T("Perfil recomendado aplicado a {0}.", exe);
+            detailStatus.Foreground = DetailBrush("SuccessBrush");
+            detailStatus.Visibility = Visibility.Visible;
+        };
+
+        // Restaura SOLO el alcance seleccionado. El botón inferior "Eliminar reglas"
+        // sigue borrando ambos alcances y la prioridad de nacimiento.
+        resetDefaultsBtn.Click += (s, e) =>
+        {
+            if (scopeAlways)
+                rule = new ProcessRule(null, null, null);
+            else
+                sessionRule = new ProcessRule(null, null, null);
+
+            SyncControlsFromScope();
+            ApplyRuleChanges(sessionScope: !scopeAlways);
+            detailStatus.Text = I18n.T("Alcance restaurado por defecto para {0}.", exe);
+            detailStatus.Foreground = DetailBrush("MutedBrush");
+            detailStatus.Visibility = Visibility.Visible;
+        };
+
+        var presetActionsRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Children = { recommendedBtn, resetDefaultsBtn }
+        };
+
+        // Aviso para emuladores (propuesta 6): la regla se aplica al juego y a su
+        // motor gráfico cuando arrancan, no al launcher. Va antes de los ajustes.
+        var emulatorBadge = new Border
+        {
+            Background = ThemeBrushes.GetSurface("ChipBackgroundBrush"),
+            BorderBrush = ThemeBrushes.Get("AccentBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(9, 4, 9, 4),
+            Visibility = EmulatorCatalog.MatchExeFileName(exe) != null ? Visibility.Visible : Visibility.Collapsed,
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 7,
+                Children =
+                {
+                    new FontIcon
+                    {
+                        Glyph = "\uE946",
+                        FontSize = 12,
+                        Foreground = ThemeBrushes.Get("AccentBrush"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    },
+                    new TextBlock
+                    {
+                        Text = I18n.T("Se aplica al juego y su motor gráfico, no al launcher"),
+                        FontSize = 11.5,
+                        TextWrapping = TextWrapping.Wrap,
+                        Foreground = DetailBrush("PrimaryTextBrush"),
+                        VerticalAlignment = VerticalAlignment.Center
+                    }
+                }
+            }
+        };
+        ToolTipService.SetToolTip(emulatorBadge, new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = I18n.T("Las reglas se aplican al motor gráfico y al proceso del juego cuando se inician, no al launcher del emulador. Así la configuración sí se aprovecha."),
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 420
+            },
+            Placement = PlacementMode.Bottom
+        });
+
         // Cargar planes de energía en segundo plano
         _ = Task.Run(() =>
         {
@@ -7928,73 +8430,204 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             catch { }
         });
 
-        // Botones de Windows Defender y Control Flow Guard
-        var defenderBtn = new Button
+        // ===== Windows Defender y Control Flow Guard =====
+        // Switches con el estado en palabras (Excluido / No excluido, Activo /
+        // Desactivado) e info en tooltip, con el mismo estilo que el Modo
+        // rendimiento. Encendido = exclusión aplicada / CFG activo.
+        StackPanel InfoTip(string title, string body)
         {
-            Content = I18n.T("Consultando Windows Defender..."),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(12, 7, 12, 7),
-            FontSize = 12,
-            IsEnabled = !string.IsNullOrEmpty(defenderFolder)
+            var tip = new StackPanel { Spacing = 6, MaxWidth = 430 };
+            tip.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap
+            });
+            tip.Children.Add(new TextBlock
+            {
+                Text = body,
+                FontSize = 12,
+                Foreground = Feedback.MutedBrush,
+                TextWrapping = TextWrapping.Wrap
+            });
+            return tip;
+        }
+
+        Border BuildSystemRow(string title, ToggleSwitch toggle, TextBlock description, FrameworkElement info)
+        {
+            var titleText = new TextBlock
+            {
+                Text = title,
+                FontSize = 12,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = DetailBrush("PrimaryTextBrush"),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            // Título e info juntos a la izquierda; el estado debajo. El switch
+            // queda centrado a la derecha contra el bloque entero, no contra la
+            // primera línea, que era lo que se veía descolgado en la tarjeta.
+            var titleRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 2,
+                Children = { titleText, info }
+            };
+            description.FontSize = 11.5;
+            description.Foreground = DetailBrush("SecondaryTextBrush");
+            var texts = new StackPanel
+            {
+                Spacing = 1,
+                VerticalAlignment = VerticalAlignment.Center,
+                Children = { titleRow, description }
+            };
+            toggle.VerticalAlignment = VerticalAlignment.Center;
+            toggle.HorizontalAlignment = HorizontalAlignment.Right;
+            var grid = new Grid { ColumnSpacing = 10 };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(texts, 0);
+            Grid.SetColumn(toggle, 1);
+            grid.Children.Add(texts);
+            grid.Children.Add(toggle);
+            return new Border
+            {
+                Background = ThemeBrushes.GetSurface("ChipBackgroundBrush"),
+                BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 7, 8, 7),
+                Child = grid
+            };
+        }
+
+        var defenderSwitch = new ToggleSwitch
+        {
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 0,
+            IsEnabled = false,
+            VerticalAlignment = VerticalAlignment.Center
         };
+        var defenderState = new TextBlock { Text = I18n.T("Consultando...") };
+        bool defenderSyncing = false;
+        void SetDefenderVisual(bool? excluded)
+        {
+            defenderSyncing = true;
+            defenderSwitch.IsEnabled = excluded != null;
+            defenderSwitch.IsOn = excluded == true;
+            defenderState.Text = excluded switch
+            {
+                true => I18n.T("Excluido"),
+                false => I18n.T("No excluido"),
+                null => I18n.T("Consultando...")
+            };
+            defenderSyncing = false;
+        }
+        var defenderInfo = TooltipStyles.CreateInfoButton(InfoTip(
+            I18n.T("Windows Defender"),
+            I18n.T("Excluye la carpeta del juego para que Windows Defender no la escanee en vivo mientras jugás. Activado: la carpeta queda excluida. Desactivado: no está excluida.")));
+        var defenderRow = BuildSystemRow(I18n.T("Windows Defender"), defenderSwitch, defenderState, defenderInfo);
         if (!string.IsNullOrEmpty(defenderFolder))
         {
             string defTarget = defenderFolder.TrimEnd('\\');
             _ = Task.Run(async () =>
             {
                 bool ex = await DefenderService.IsPathExcludedAsync(defTarget);
-                DispatcherQueue.TryEnqueue(() =>
-                    defenderBtn.Content = I18n.T(ex ? "Quitar exclusión de Windows Defender" : "Excluir de Windows Defender"));
+                DispatcherQueue.TryEnqueue(() => SetDefenderVisual(ex));
             });
-            defenderBtn.Click += async (s, e) =>
+            defenderSwitch.Toggled += async (s, e) =>
             {
-                bool ex = await DefenderService.IsPathExcludedAsync(defTarget);
-                var (ok, _) = ex
-                    ? await DefenderService.RemovePathExclusionAsync(defTarget)
-                    : await DefenderService.AddPathExclusionAsync(defTarget);
+                if (defenderSyncing) return;
+                bool want = defenderSwitch.IsOn;
+                defenderSwitch.IsEnabled = false;
+                var (ok, _) = want
+                    ? await DefenderService.AddPathExclusionAsync(defTarget)
+                    : await DefenderService.RemovePathExclusionAsync(defTarget);
                 if (ok)
                 {
-                    bool nowEx = !ex;
-                    defenderBtn.Content = I18n.T(nowEx ? "Quitar exclusión de Windows Defender" : "Excluir de Windows Defender");
-                    detailStatus.Text = I18n.T(nowEx ? "Excepción de Windows Defender agregada" : "Excepción de Windows Defender quitada");
+                    SetDefenderVisual(want);
+                    detailStatus.Text = I18n.T(want ? "Excepción de Windows Defender agregada" : "Excepción de Windows Defender quitada");
                     detailStatus.Foreground = DetailBrush("SuccessBrush");
-                    detailStatus.Visibility = Visibility.Visible;
                 }
+                else
+                {
+                    SetDefenderVisual(!want);
+                    detailStatus.Text = I18n.T("No se pudo cambiar la excepción de Windows Defender: {0}", defTarget);
+                    detailStatus.Foreground = DetailBrush("ErrorBrush");
+                }
+                detailStatus.Visibility = Visibility.Visible;
             };
         }
-
-        var cfgBtn = new Button
+        else
         {
-            Content = I18n.T("Consultando Control Flow Guard..."),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(12, 7, 12, 7),
-            FontSize = 12,
-            IsEnabled = !string.IsNullOrEmpty(cfgExe)
+            defenderState.Text = I18n.T("No disponible");
+            defenderSwitch.IsEnabled = false;
+        }
+
+        var cfgSwitch = new ToggleSwitch
+        {
+            OnContent = "",
+            OffContent = "",
+            MinWidth = 0,
+            IsEnabled = false,
+            VerticalAlignment = VerticalAlignment.Center
         };
+        var cfgState = new TextBlock { Text = I18n.T("Consultando...") };
+        bool cfgSyncing = false;
+        void SetCfgVisual(bool? disabled)
+        {
+            cfgSyncing = true;
+            cfgSwitch.IsEnabled = disabled != null;
+            // El switch representa la DESACTIVACIÓN (el tweak de rendimiento):
+            // apagado = CFG activo, encendido = CFG desactivado.
+            cfgSwitch.IsOn = disabled == true;
+            cfgState.Text = disabled switch
+            {
+                false => I18n.T("Activo"),
+                true => I18n.T("Desactivado"),
+                null => I18n.T("Consultando...")
+            };
+            cfgSyncing = false;
+        }
+        var cfgInfo = TooltipStyles.CreateInfoButton(InfoTip(
+            I18n.T("Control Flow Guard"),
+            I18n.T("Control Flow Guard es una protección de Windows contra exploits. Apagado: la protección sigue activa. Encendido: se desactiva para este ejecutable, lo que puede mejorar el rendimiento.")));
+        var cfgRow = BuildSystemRow(I18n.T("Control Flow Guard"), cfgSwitch, cfgState, cfgInfo);
         if (!string.IsNullOrEmpty(cfgExe))
         {
             string cfgTarget = cfgExe;
             _ = Task.Run(async () =>
             {
                 bool dis = await CfgService.IsDisabledAsync(cfgTarget);
-                DispatcherQueue.TryEnqueue(() =>
-                    cfgBtn.Content = I18n.T(dis ? "Activar Control Flow Guard" : "Desactivar Control Flow Guard"));
+                DispatcherQueue.TryEnqueue(() => SetCfgVisual(dis));
             });
-            cfgBtn.Click += async (s, e) =>
+            cfgSwitch.Toggled += async (s, e) =>
             {
-                bool dis = await CfgService.IsDisabledAsync(cfgTarget);
-                var (ok, _) = await CfgService.SetAsync(cfgTarget, !dis);
+                if (cfgSyncing) return;
+                bool disable = cfgSwitch.IsOn;
+                cfgSwitch.IsEnabled = false;
+                var (ok, _) = await CfgService.SetAsync(cfgTarget, disabled: disable);
                 if (ok)
                 {
-                    bool nowDis = !dis;
-                    cfgBtn.Content = I18n.T(nowDis ? "Activar Control Flow Guard" : "Desactivar Control Flow Guard");
-                    detailStatus.Text = I18n.T(nowDis ? "Control Flow Guard desactivado para {0}" : "Control Flow Guard activado para {0}", cfgTarget);
+                    SetCfgVisual(disable);
+                    detailStatus.Text = I18n.T(disable ? "Control Flow Guard desactivado para {0}" : "Control Flow Guard activado para {0}", cfgTarget);
                     detailStatus.Foreground = DetailBrush("SuccessBrush");
-                    detailStatus.Visibility = Visibility.Visible;
                 }
+                else
+                {
+                    // Revertir: el switch vuelve a representar el estado anterior.
+                    SetCfgVisual(!disable);
+                    detailStatus.Text = I18n.T("No se pudo cambiar Control Flow Guard: {0}", cfgTarget);
+                    detailStatus.Foreground = DetailBrush("ErrorBrush");
+                }
+                detailStatus.Visibility = Visibility.Visible;
             };
+        }
+        else
+        {
+            cfgState.Text = I18n.T("No disponible");
+            cfgSwitch.IsEnabled = false;
         }
 
         // Botones inferiores: Restablecer reglas / Ocultar
@@ -8050,7 +8683,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             }
         };
 
-        var prioGrid = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
+        // 8 en vez de 10: compacta las filas de prioridades para que el bloque
+        // completo entre en el alto del panel sin generar un scroll falso.
+        var prioGrid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
         prioGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         prioGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         prioGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -8085,10 +8720,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var sysGrid = new Grid { ColumnSpacing = 12 };
         sysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         sysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        Grid.SetColumn(defenderBtn, 0);
-        Grid.SetColumn(cfgBtn, 1);
-        sysGrid.Children.Add(defenderBtn);
-        sysGrid.Children.Add(cfgBtn);
+        Grid.SetColumn(defenderRow, 0);
+        Grid.SetColumn(cfgRow, 1);
+        sysGrid.Children.Add(defenderRow);
+        sysGrid.Children.Add(cfgRow);
 
         var scopeRow = new StackPanel
         {
@@ -8126,14 +8761,17 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         var paramsStack = new StackPanel
         {
-            Spacing = 14,
+            // 8 en vez de 10: la badge de emuladores sumó una fila y el bloque
+            // volvía a pasarse por pocos píxeles (scrollbar sin recorrido real).
+            Spacing = 8,
             Children =
             {
                 scopeRow,
+                presetActionsRow,
+                emulatorBadge,
                 prioGrid,
                 sysGrid,
-                bottomActionsRow,
-                detailStatus
+                bottomActionsRow
             }
         };
 
@@ -8141,7 +8779,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            MaxHeight = 380,
+            // 380 → 405: absorbe la fila de la badge de emuladores sin que el
+            // contenido tenga que scrollear por un par de píxeles.
+            MaxHeight = 405,
             Content = paramsStack
         };
 
@@ -8177,7 +8817,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     Height = 1,
                     Background = new SolidColorBrush(Windows.UI.Color.FromArgb(35, 255, 255, 255))
                 },
-                paramsScroll
+                paramsScroll,
+                // El feedback vive fuera del ScrollViewer: si estuviera adentro,
+                // aparecer al guardar/cambiar Defender alargaba el contenido y
+                // hacía saltar la barra de scroll del panel.
+                detailStatus
             }
         };
 
@@ -8741,6 +9385,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             "GalaxyClient" => "GOG Galaxy",
             "Xbox" => "Xbox",
             "RiotClientServices" => "Riot Client",
+            "upc" => "Ubisoft Connect",
+            "EADesktop" => "EA app",
+            "Amazon Games" => "Amazon Games",
             _ => processName
         };
         if (!launcherFound)
@@ -8990,7 +9637,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     private int GetEffectiveColumns()
     {
-        int baseCols = _cards3D ? GridColumns3D : GridColumns;
+        int baseCols = _cards3D ? (IsEmulatorFilter ? ConsoleColumns3D : GridColumns3D) : GridColumns;
         double w = LibraryScroll?.ActualWidth ?? 0;
         if (w <= 0) return baseCols;
 
@@ -8998,7 +9645,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         double avail = w - (ScrollBarReserve + sidePad * 2);
         if (avail <= 0) return baseCols;
 
-        double maxCardW = _cards3D ? MaxCardWidth3D : MaxCardWidthVanilla;
+        double maxCardW = _cards3D ? (IsEmulatorFilter ? MaxCardWidthConsole3D : MaxCardWidth3D) : MaxCardWidthVanilla;
         double minCardW = _cards3D ? MinCardWidth3D : MinCardWidthVanilla;
 
         // Si la ventana es más ancha (p. ej. maximizada o en pantalla completa),
@@ -9041,7 +9688,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         if (_skeletonActive && _skeletonPanel != null && cols != _skeletonGridCols)
             ReflowSkeleton(cols);
         double avail = w - reserve;
-        double maxCardW = _cards3D ? MaxCardWidth3D : MaxCardWidthVanilla;
+        double maxCardW = _cards3D ? (IsEmulatorFilter ? MaxCardWidthConsole3D : MaxCardWidth3D) : MaxCardWidthVanilla;
         double minCardW = _cards3D ? MinCardWidth3D : MinCardWidthVanilla;
         double rawCardWidth = (avail - GridCardSpacing * (cols - 1)) / cols;
         double cardWidth = Math.Clamp(rawCardWidth, minCardW, maxCardW);
@@ -9054,7 +9701,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // consola; sin esto la card se cortaba contra el chasis y nunca aparecía.
         if (LibraryPanel != null)
             LibraryPanel.Margin = new Thickness(sidePad, _cards3D ? 18 : 8, ScrollBarReserve + sidePad,
-                _cards3D ? DockFooterHeight + DockProtrusion + 18 : 8);
+                _cards3D && !IsEmulatorFilter ? DockFooterHeight + DockProtrusion + 18 : 8);
         if (LibraryContentGrid != null)
             LibraryContentGrid.Margin = new Thickness(0);
         double bannerMin = 100;
@@ -9065,7 +9712,21 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // Alto IDÉNTICO para todas las cards. Vanilla: ratio panorámico 460:215
             // (el del header de Steam), así los banners de Steam se ven COMPLETOS y
             // sin recortes horizontales. 3D: relación vertical del propio cartucho,
-            // así el modelo entra completo y sin deformarse.
+            // así el modelo entra completo y sin deformarse. Los dispositivos usan su
+            // vista recortada (consola ancha y baja), así la tile la muestra a tamaño
+            // completo en vez de chica dentro de la caja vertical.
+            if (body is CartridgeTile devTile && devTile.Kind != DeviceKind.Cartridge)
+            {
+                // Card horizontal de tamaño FIJO para todo el hardware: la placa y el
+                // alto salen de la columna de arte de la card (la del PS1), no del modelo.
+                // La pieza se acomoda adentro (Uniform): el gabinete y el teléfono, que son
+                // altos, no agrandan ni estiran la card.
+                var cv = CartridgeModel.DeviceViewRect(DeviceKind.Console);
+                double artW = Math.Max(60, (cardWidth - ConsoleCardPad * 2) * ConsoleCardArtShare - ConsoleCardGap);
+                devTile.Width = artW;
+                body.Height = Math.Round(artW * (cv.H / cv.W));
+                continue;
+            }
             body.Height = _cards3D
                 ? (cardWidth - 8) * CartridgeHeightRatio
                 : bannerWidth * BannerHeightRatio;
@@ -9073,11 +9734,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // Misma geometría para el skeleton (si está visible en la grilla). En 3D el
         // cuerpo mide lo mismo que el cartucho real: ancho de card menos el padding
         // de 4 px por lado, multiplicado por el Aspect del modelo.
+        // Alto del placeholder de consola: el de su card horizontal, no el del cartucho.
+        var deviceVr = CartridgeModel.DeviceViewRect(DeviceKind.Console);
+        double deviceRatio = deviceVr.H / deviceVr.W;
         foreach (var (card, body, _) in _skeletonCards)
         {
             card.Width = cardWidth;
             body.Height = _cards3D
-                ? Math.Max(bannerMin, (cardWidth - 8) * CartridgeHeightRatio)
+                ? Math.Max(bannerMin, IsEmulatorFilter
+                    ? (cardWidth - ConsoleCardPad * 2) * ConsoleCardArtShare * deviceRatio
+                    : (cardWidth - 8) * CartridgeHeightRatio)
                 : Math.Max(bannerMin, bannerWidth * BannerHeightRatio);
         }
     }
@@ -9133,7 +9799,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     // ===== Tuerca → desplegable simple (submenús) =====
 
-    private void ShowRuleMenu(FrameworkElement target, string exe, string name, bool isManual, string? defenderFolder = null, string? cfgExe = null)
+    private void ShowClassicRuleMenu(FrameworkElement target, string exe, string name, bool isManual, string? defenderFolder = null, string? cfgExe = null)
     {
         // Diagnóstico de latencia de apertura: mide (1) lectura de reglas+sesión,
         // (2) construcción del árbol del menú, (3) hasta que ShowAt retorna. Cada
@@ -9767,6 +10433,624 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         buildClock.Stop();
         _loggingService.LogInfo(
             $"ShowRuleMenu '{exe}': reglas={rulesMs} ms, construcción+ShowAt={buildClock.ElapsedMilliseconds - rulesMs} ms, total={buildClock.ElapsedMilliseconds} ms");
+    }
+
+    /// <summary>
+    /// Paleta de reglas: buscador arriba, ajustes a la izquierda y valores a la derecha.
+    /// Es el reemplazo del menú de tres niveles: el alcance (Actual / Siempre) queda como
+    /// selector del panel derecho en vez de un submenú dentro de cada ajuste. Si algo falla
+    /// al armarla, cae al menú clásico para no dejar la card sin acciones.
+    /// </summary>
+    private RulePalette? _rulePalette;
+
+    private void ShowRuleMenu(FrameworkElement target, string exe, string name, bool isManual,
+        string? defenderFolder = null, string? cfgExe = null, Windows.Foundation.Point? at = null)
+    {
+        try
+        {
+            var rules = _processService.GetRulesCached();
+            var rule = rules.TryGetValue(exe, out var r) ? r : new ProcessRule(null, null, null);
+            var sessionRule = _processService.GetSessionRule(exe) ?? new ProcessRule(null, null, null);
+            int procCount = _processService.ProcessorCount;
+            long fullMask = procCount >= 64 ? -1L : ((1L << procCount) - 1);
+            int scope = 1; // arranca en "Siempre" (guardada): 0 = Actual, 1 = Siempre
+
+            string? launchLauncher = _installed
+                .FirstOrDefault(g => string.Equals(g.ExeFileName, exe, StringComparison.OrdinalIgnoreCase))?.Launcher;
+            if (string.IsNullOrWhiteSpace(launchLauncher) && isManual)
+                launchLauncher = _processService.GetManualGameLauncher(exe);
+            bool hasLauncher = !string.IsNullOrWhiteSpace(launchLauncher)
+                && !string.Equals(launchLauncher, "Independiente", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(launchLauncher, "Emulador", StringComparison.OrdinalIgnoreCase);
+
+            void Notify(string text, SolidColorBrush brush)
+            {
+                StatusText.Text = text;
+                StatusText.Foreground = brush;
+                StatusText.Visibility = Visibility.Visible;
+                _rulePalette?.SetStatus(text, ReferenceEquals(brush, Feedback.WarningBrush));
+            }
+
+            bool RuleIsEmpty(ProcessRule? rr)
+                => rr == null
+                || (rr.CpuPriority == null && rr.AffinityMask == null && rr.GpuPriority == null
+                    && string.IsNullOrEmpty(rr.PowerPlanGuid) && rr.IoPriority == null);
+
+            void ApplyEffectiveToRunning(bool sessionScope)
+            {
+                var apps = _processService.FindRunningProcessesForRule(exe);
+                if (apps.Count == 0)
+                {
+                    Notify(sessionScope
+                        ? hasLauncher
+                            ? I18n.T("Reglas de sesión listas. Se aplicarán al proceso del juego cuando aparezca (launcher: {0}).", launchLauncher)
+                            : I18n.T("Reglas de sesión listas. Se aplicarán cuando el juego se abra.")
+                        : I18n.T("Reglas guardadas. Se aplicarán cuando el juego esté en ejecución."),
+                        Feedback.MutedBrush);
+                    return;
+                }
+
+                var effective = _processService.GetEffectiveRule(exe);
+                var anyFailed = new RuleApplyFeedback(false, false, false);
+                foreach (var app in apps)
+                {
+                    var fb = RuleIsEmpty(effective)
+                        ? _processService.ApplyRuleWithFeedback(app, new ProcessRule(2, fullMask, 3, null, 2))
+                        : _processService.ApplyRuleWithFeedback(app, effective);
+                    anyFailed = anyFailed with
+                    {
+                        CpuFailed = anyFailed.CpuFailed || fb.CpuFailed,
+                        AffinityFailed = anyFailed.AffinityFailed || fb.AffinityFailed,
+                        GpuFailed = anyFailed.GpuFailed || fb.GpuFailed,
+                        IoFailed = anyFailed.IoFailed || fb.IoFailed
+                    };
+                }
+
+                if (RuleIsEmpty(effective))
+                    _processService.RevertPowerPlanIfApplied(exe);
+                else if (!string.IsNullOrEmpty(effective.PowerPlanGuid))
+                    _processService.ApplyPowerPlanIfRunning(exe, effective.PowerPlanGuid);
+                else
+                    _processService.RevertPowerPlanIfApplied(exe);
+
+                if (anyFailed.AnyFailed)
+                {
+                    var parts = new List<string>();
+                    if (anyFailed.CpuFailed) parts.Add(I18n.T("prioridad de CPU"));
+                    if (anyFailed.AffinityFailed) parts.Add(I18n.T("afinidad"));
+                    if (anyFailed.GpuFailed) parts.Add(I18n.T("prioridad de GPU"));
+                    if (anyFailed.IoFailed) parts.Add(I18n.T("prioridad de E/S"));
+                    Notify(I18n.T("No se pudo aplicar {0} en vivo a {1} (proceso protegido o cerrado). La prioridad de CPU queda fijada al nacer por registro.",
+                        string.Join(", ", parts), name), Feedback.WarningBrush);
+                }
+                else
+                {
+                    Notify(RuleIsEmpty(_processService.GetEffectiveRule(exe))
+                        ? I18n.T("Valores por defecto restaurados en {0}", exe)
+                        : sessionScope
+                            ? I18n.T("Reglas de sesión aplicadas a {0}", exe)
+                            : I18n.T("Reglas aplicadas a {0}", exe),
+                        Feedback.SuccessBrush);
+                }
+            }
+
+            void ApplyAndSave(ProcessRule newRule)
+            {
+                _processService.SaveRule(exe, newRule);
+                ApplyEffectiveToRunning(sessionScope: false);
+            }
+
+            void ApplySessionAndNotify()
+            {
+                _processService.SetSessionRule(exe, sessionRule);
+                ApplyEffectiveToRunning(sessionScope: true);
+            }
+
+            string[] cpuNames = { "Por defecto", "Mínima", "Baja", "Normal", "Por encima de lo normal", "Alta", "Tiempo real" };
+            string[] gpuNames = { "Por defecto", "Baja", "Normal", "Alta" };
+            string[] ioNames = { "Por defecto", "Muy baja", "Baja", "Normal", "Alta", "Crítica" };
+
+            ProcessRule CurrentRule() => scope == 0 ? sessionRule : rule;
+            // La descripción muestra la regla EFECTIVA (sesión sobre guardada): si el
+            // juego solo tiene regla guardada, la sesión está vacía y el resumen se
+            // veía "Por defecto" en todos los ajustes.
+            ProcessRule EffectiveRule() => new(
+                sessionRule.CpuPriority ?? rule.CpuPriority,
+                sessionRule.AffinityMask ?? rule.AffinityMask,
+                sessionRule.GpuPriority ?? rule.GpuPriority,
+                sessionRule.PowerPlanGuid ?? rule.PowerPlanGuid,
+                sessionRule.IoPriority ?? rule.IoPriority);
+            void ReplaceRule(ProcessRule nr)
+            {
+                if (scope == 0) { sessionRule = nr; ApplySessionAndNotify(); }
+                else { rule = nr; ApplyAndSave(rule); }
+            }
+
+            List<PaletteOption> BuildValueOptions(string[] names, int[] values, int selected, Func<int?, ProcessRule> makeRule)
+            {
+                var list = new List<PaletteOption>();
+                for (int i = 0; i < names.Length; i++)
+                {
+                    int idx = i;
+                    list.Add(new PaletteOption
+                    {
+                        Text = I18n.T(names[i]),
+                        IsChecked = idx == selected,
+                        Invoke = () => ReplaceRule(makeRule(idx <= 0 ? null : values[idx - 1]))
+                    });
+                }
+                return list;
+            }
+
+            string Summary(string[] names, int[] values, int? current)
+            {
+                if (current == null) return I18n.T("Por defecto");
+                int idx = Array.IndexOf(values, current);
+                return idx >= 0 && idx + 1 < names.Length ? I18n.T(names[idx + 1]) : current.Value.ToString();
+            }
+
+            var sections = new List<PaletteSection>();
+
+            // ===== Prioridad de CPU =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Prioridad de CPU"),
+                Glyph = "\uE950",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Summary = () => Summary(cpuNames, CpuPriorityValues, EffectiveRule().CpuPriority),
+                BuildOptions = () => BuildValueOptions(cpuNames, CpuPriorityValues,
+                    CurrentRule().CpuPriority is int cp ? Array.IndexOf(CpuPriorityValues, cp) + 1 : 0,
+                    v => new ProcessRule(v, CurrentRule().AffinityMask, CurrentRule().GpuPriority, CurrentRule().PowerPlanGuid, CurrentRule().IoPriority))
+            });
+
+            // ===== Afinidad de CPU (multiselección de núcleos) =====
+            long? CurrentMask() => CurrentRule().AffinityMask;
+            string AffinitySummary()
+            {
+                var mask = EffectiveRule().AffinityMask;
+                if (mask == null || mask == fullMask) return I18n.T("Todos los núcleos");
+                int count = 0;
+                for (int i = 0; i < 64; i++) if ((mask.Value & (1L << i)) != 0) count++;
+                return I18n.T("{0} núcleos", count);
+            }
+
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Afinidad de CPU"),
+                Glyph = "\uE7F8",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Note = I18n.T("Clic en un núcleo para incluirlo o quitarlo. Todos marcados = sin restricción."),
+                OptionsPerRow = 8,
+                Summary = AffinitySummary,
+                BuildOptions = () =>
+                {
+                    var mask = CurrentMask();
+                    bool all = mask == null || mask == fullMask;
+                    var list = new List<PaletteOption>();
+                    for (int i = 0; i < procCount; i++)
+                    {
+                        int ci = i;
+                        list.Add(new PaletteOption
+                        {
+                            Text = I18n.T("Núcleo {0}", ci + 1),
+                            IsChecked = all || ((mask ?? fullMask) & (1L << ci)) != 0,
+                            Invoke = () =>
+                            {
+                                long current = (CurrentMask() == null || CurrentMask() == fullMask) ? fullMask : CurrentMask()!.Value;
+                                long next = current ^ (1L << ci);
+                                if (next == 0) next = fullMask; // ningún núcleo = sin restricción
+                                ReplaceRule(new ProcessRule(CurrentRule().CpuPriority, next, CurrentRule().GpuPriority, CurrentRule().PowerPlanGuid, CurrentRule().IoPriority));
+                            }
+                        });
+                    }
+                    return list;
+                }
+            });
+
+            // ===== Prioridad de GPU =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Prioridad de GPU"),
+                Glyph = "\uE7F4",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Summary = () => Summary(gpuNames, GpuPriorityValues, EffectiveRule().GpuPriority),
+                BuildOptions = () => BuildValueOptions(gpuNames, GpuPriorityValues,
+                    CurrentRule().GpuPriority is int gp ? Array.IndexOf(GpuPriorityValues, gp) + 1 : 0,
+                    v => new ProcessRule(CurrentRule().CpuPriority, CurrentRule().AffinityMask, v, CurrentRule().PowerPlanGuid, CurrentRule().IoPriority))
+            });
+
+            // ===== Prioridad de E/S =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Prioridad de E/S"),
+                Glyph = "\uE8B7",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Summary = () => Summary(ioNames, IoPriorityValues, EffectiveRule().IoPriority),
+                BuildOptions = () => BuildValueOptions(ioNames, IoPriorityValues,
+                    CurrentRule().IoPriority is int io ? Array.IndexOf(IoPriorityValues, io) + 1 : 0,
+                    v => new ProcessRule(CurrentRule().CpuPriority, CurrentRule().AffinityMask, CurrentRule().GpuPriority, CurrentRule().PowerPlanGuid, v))
+            });
+
+            // ===== Plan de energía (se carga al entrar, no al abrir) =====
+            List<PowerPlanInfo>? plans = null;
+            bool plansLoading = false;
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Plan de energía"),
+                Glyph = "\uE945",
+                Note = I18n.T("Se activa cuando corre el juego y vuelve al plan anterior al cerrarlo."),
+                Summary = () => string.IsNullOrEmpty(sessionRule.PowerPlanGuid)
+                    ? I18n.T("Por defecto")
+                    : plans?.FirstOrDefault(p => string.Equals(p.Guid, sessionRule.PowerPlanGuid, StringComparison.OrdinalIgnoreCase))?.Name ?? I18n.T("Personalizado"),
+                OnSelected = refresh =>
+                {
+                    if (plans != null || plansLoading) return;
+                    plansLoading = true;
+                    _ = Task.Run(() =>
+                    {
+                        List<PowerPlanInfo>? loaded = null;
+                        try { loaded = _cpuPowerService.GetPowerPlans()?.ToList(); }
+                        catch (Exception ex) { _loggingService.LogWarning($"GestionarProcesosPage: planes de energía para {exe}: {ex.Message}"); }
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            plans = loaded ?? new List<PowerPlanInfo>();
+                            plansLoading = false;
+                            refresh();
+                        });
+                    });
+                },
+                BuildOptions = () =>
+                {
+                    var list = new List<PaletteOption>
+                    {
+                        new()
+                        {
+                            Text = I18n.T("Por defecto"),
+                            IsChecked = string.IsNullOrEmpty(sessionRule.PowerPlanGuid),
+                            Invoke = () =>
+                            {
+                                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, sessionRule.GpuPriority, null, sessionRule.IoPriority);
+                                ApplySessionAndNotify();
+                            }
+                        }
+                    };
+                    if (plans == null)
+                    {
+                        list.Add(new PaletteOption { Text = I18n.T("Consultando planes de energía..."), IsEnabled = false });
+                        return list;
+                    }
+                    foreach (var plan in plans)
+                    {
+                        var p = plan;
+                        list.Add(new PaletteOption
+                        {
+                            Text = p.Name,
+                            IsChecked = string.Equals(sessionRule.PowerPlanGuid, p.Guid, StringComparison.OrdinalIgnoreCase),
+                            Invoke = () =>
+                            {
+                                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, sessionRule.GpuPriority, p.Guid, sessionRule.IoPriority);
+                                ApplySessionAndNotify();
+                            }
+                        });
+                    }
+                    return list;
+                }
+            });
+
+            // ===== Windows Defender =====
+            bool? defenderExcluded = null;
+            bool defenderLoaded = false;
+            string DefenderSummary() => string.IsNullOrEmpty(defenderFolder)
+                ? I18n.T("Carpeta del juego no encontrada")
+                : defenderExcluded switch
+                {
+                    true => I18n.T("Excluido"),
+                    false => I18n.T("No excluido"),
+                    _ => I18n.T("Consultando...")
+                };
+            // Se consulta al armar la paleta, no al seleccionar: si no, el resumen
+            // queda en "Consultando…" hasta que el usuario entra al ajuste.
+            void LoadDefenderState(Action? refresh = null)
+            {
+                if (defenderLoaded || string.IsNullOrEmpty(defenderFolder)) return;
+                defenderLoaded = true;
+                string folder = defenderFolder!;
+                _ = Task.Run(async () =>
+                {
+                    bool? state = null;
+                    try { state = await DefenderService.IsPathExcludedAsync(folder); }
+                    catch { /* sin permisos: quedan los dos botones habilitados */ }
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        defenderExcluded = state;
+                        refresh?.Invoke();
+                        _rulePalette?.Refresh();
+                    });
+                });
+            }
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Windows Defender"),
+                Glyph = "\uEA18",
+                IsEnabled = !string.IsNullOrEmpty(defenderFolder),
+                Note = I18n.T("Excluye la carpeta del juego para que Defender no la escanee en vivo."),
+                Summary = DefenderSummary,
+                OnSelected = refresh => LoadDefenderState(refresh),
+                BuildOptions = () => new List<PaletteOption>
+                {
+                    new()
+                    {
+                        Text = I18n.T("Excluir de Windows Defender"),
+                        IsChecked = defenderExcluded == true,
+                        IsEnabled = defenderExcluded != true,
+                        Invoke = async () =>
+                        {
+                            if (defenderExcluded == true || string.IsNullOrEmpty(defenderFolder)) return;
+                            try
+                            {
+                                var (ok, _) = await DefenderService.AddPathExclusionAsync(defenderFolder);
+                                if (ok)
+                                {
+                                    defenderExcluded = true;
+                                    Notify(I18n.T("Excepción de Windows Defender agregada"), Feedback.SuccessBrush);
+                                }
+                                else Notify(I18n.T("No se pudo cambiar la excepción de Windows Defender: {0}", defenderFolder), Feedback.ErrorBrush);
+                            }
+                            catch (Exception ex2)
+                            {
+                                _loggingService.LogWarning($"GestionarProcesosPage: excepción de Defender {exe}: {ex2.Message}");
+                            }
+                            _rulePalette?.Refresh();
+                        }
+                    },
+                    new()
+                    {
+                        Text = I18n.T("Quitar exclusión de Windows Defender"),
+                        IsChecked = defenderExcluded == false,
+                        IsEnabled = defenderExcluded != false,
+                        Invoke = async () =>
+                        {
+                            if (defenderExcluded == false || string.IsNullOrEmpty(defenderFolder)) return;
+                            try
+                            {
+                                var (ok, _) = await DefenderService.RemovePathExclusionAsync(defenderFolder);
+                                if (ok)
+                                {
+                                    defenderExcluded = false;
+                                    Notify(I18n.T("Excepción de Windows Defender quitada"), Feedback.SuccessBrush);
+                                }
+                                else Notify(I18n.T("No se pudo cambiar la excepción de Windows Defender: {0}", defenderFolder), Feedback.ErrorBrush);
+                            }
+                            catch (Exception ex2)
+                            {
+                                _loggingService.LogWarning($"GestionarProcesosPage: excepción de Defender {exe}: {ex2.Message}");
+                            }
+                            _rulePalette?.Refresh();
+                        }
+                    }
+                }
+            });
+            LoadDefenderState();
+
+            // ===== Control Flow Guard =====
+            bool? cfgDisabled = null;
+            bool cfgLoaded = false;
+            string CfgSummary() => string.IsNullOrEmpty(cfgExe)
+                ? I18n.T("Ejecutable del juego no encontrado")
+                : cfgDisabled switch
+                {
+                    true => I18n.T("Control Flow Guard desactivado"),
+                    false => I18n.T("Control Flow Guard activo"),
+                    _ => I18n.T("Consultando Control Flow Guard...")
+                };
+            void LoadCfgState(Action? refresh = null)
+            {
+                if (cfgLoaded || string.IsNullOrEmpty(cfgExe)) return;
+                cfgLoaded = true;
+                string exeName = cfgExe!;
+                _ = Task.Run(async () =>
+                {
+                    bool? state = null;
+                    try { state = await CfgService.IsDisabledAsync(exeName); }
+                    catch { /* sin permisos: quedan los dos botones habilitados */ }
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        cfgDisabled = state;
+                        refresh?.Invoke();
+                        _rulePalette?.Refresh();
+                    });
+                });
+            }
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Control Flow Guard"),
+                Glyph = "\uE72E",
+                IsEnabled = !string.IsNullOrEmpty(cfgExe),
+                Note = I18n.T("El CFG inspecciona el código gráfico de DirectX; desactivarlo evita micro-cortes."),
+                Summary = CfgSummary,
+                OnSelected = refresh => LoadCfgState(refresh),
+                BuildOptions = () => new List<PaletteOption>
+                {
+                    new()
+                    {
+                        Text = I18n.T("Activar Control Flow Guard"),
+                        IsChecked = cfgDisabled == false,
+                        IsEnabled = cfgDisabled != false,
+                        Invoke = async () =>
+                        {
+                            if (cfgDisabled == false || string.IsNullOrEmpty(cfgExe)) return;
+                            try
+                            {
+                                var (ok, _) = await CfgService.SetAsync(cfgExe, false);
+                                if (ok)
+                                {
+                                    cfgDisabled = false;
+                                    Notify(I18n.T("Control Flow Guard activado para {0}", cfgExe), Feedback.SuccessBrush);
+                                }
+                                else Notify(I18n.T("No se pudo cambiar el Control Flow Guard: {0}", cfgExe), Feedback.ErrorBrush);
+                            }
+                            catch (Exception ex2)
+                            {
+                                _loggingService.LogWarning($"GestionarProcesosPage: CFG {exe}: {ex2.Message}");
+                            }
+                            _rulePalette?.Refresh();
+                        }
+                    },
+                    new()
+                    {
+                        Text = I18n.T("Desactivar Control Flow Guard"),
+                        IsChecked = cfgDisabled == true,
+                        IsEnabled = cfgDisabled != true,
+                        Invoke = async () =>
+                        {
+                            if (cfgDisabled == true || string.IsNullOrEmpty(cfgExe)) return;
+                            try
+                            {
+                                var (ok, _) = await CfgService.SetAsync(cfgExe, true);
+                                if (ok)
+                                {
+                                    cfgDisabled = true;
+                                    Notify(I18n.T("Control Flow Guard desactivado para {0}", cfgExe), Feedback.SuccessBrush);
+                                }
+                                else Notify(I18n.T("No se pudo cambiar el Control Flow Guard: {0}", cfgExe), Feedback.ErrorBrush);
+                            }
+                            catch (Exception ex2)
+                            {
+                                _loggingService.LogWarning($"GestionarProcesosPage: CFG {exe}: {ex2.Message}");
+                            }
+                            _rulePalette?.Refresh();
+                        }
+                    }
+                }
+            });
+            LoadCfgState();
+
+            // ===== Eliminar reglas =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Eliminar reglas"),
+                Glyph = "\uE74D",
+                IsDestructive = true,
+                Invoke = async () =>
+                {
+                    var confirm = new ContentDialog
+                    {
+                        XamlRoot = XamlRoot,
+                        Title = I18n.T("Eliminar reglas"),
+                        Content = I18n.T("¿Eliminar las reglas de {0}? También se quitará la prioridad de nacimiento del registro.", name),
+                        PrimaryButtonText = I18n.T("Eliminar"),
+                        CloseButtonText = I18n.T("Cancelar"),
+                        DefaultButton = ContentDialogButton.Close
+                    };
+                    if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+                    _processService.RemoveRule(exe);
+                    _processService.ClearSessionRule(exe);
+                    rule = new ProcessRule(null, null, null);
+                    sessionRule = new ProcessRule(null, null, null);
+                    var app = _processService.FindRunningProcess(exe);
+                    if (app != null)
+                    {
+                        _processService.ApplyCpuPriority(app.Id, 2);
+                        _processService.ApplyAffinity(app.Id, fullMask);
+                        _processService.ApplyGpuPriority(app.Id, 3);
+                        _processService.ApplyIoPriority(app.Id, 2);
+                    }
+                    _processService.RevertPowerPlanIfApplied(exe);
+                    Notify(I18n.T("Reglas eliminadas para {0}", exe), Feedback.MutedBrush);
+                    _rulePalette?.Refresh();
+                }
+            });
+
+            // ===== Ocultar / Mostrar =====
+            bool isHidden = _processService.GetHiddenExes().Contains(exe, StringComparer.OrdinalIgnoreCase);
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T(isHidden ? "Mostrar en la biblioteca" : "Ocultar de la biblioteca"),
+                Glyph = isHidden ? "\uE7B3" : "\uE7B2",
+                Invoke = async () =>
+                {
+                    if (isHidden)
+                    {
+                        _processService.UnhideExe(exe);
+                        Notify(I18n.T("{0} volvió a la biblioteca.", name), Feedback.MutedBrush);
+                        await RefreshAsync();
+                        return;
+                    }
+                    var dialog = new ContentDialog
+                    {
+                        XamlRoot = XamlRoot,
+                        Title = I18n.T("Ocultar de la biblioteca"),
+                        Content = I18n.T("¿Ocultar {0}? Podés volver a mostrarlo desde la sección Ocultos.", name),
+                        PrimaryButtonText = I18n.T("Ocultar"),
+                        CloseButtonText = I18n.T("Cancelar"),
+                        DefaultButton = ContentDialogButton.Close
+                    };
+                    if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                    {
+                        _processService.HideExe(exe);
+                        _processService.ClearSessionRule(exe);
+                        await RefreshAsync();
+                    }
+                }
+            });
+
+            // ===== Eliminar de la biblioteca =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Eliminar de la biblioteca"),
+                Glyph = "\uE74D",
+                IsDestructive = true,
+                Invoke = async () =>
+                {
+                    var dialog = new ContentDialog
+                    {
+                        XamlRoot = XamlRoot,
+                        Title = I18n.T("Eliminar de la biblioteca"),
+                        Content = isManual
+                            ? I18n.T("¿Eliminar {0} de la biblioteca? No se desinstala. Al ser un juego manual, no volverá a aparecer con «Re-detectar».", name)
+                            : I18n.T("¿Eliminar {0} de la biblioteca? No se desinstala. Podés re-detectarlo con el botón «Re-detectar».", name),
+                        PrimaryButtonText = I18n.T("Eliminar"),
+                        CloseButtonText = I18n.T("Cancelar"),
+                        DefaultButton = ContentDialogButton.Close
+                    };
+                    if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+                    if (isManual)
+                    {
+                        _processService.RemoveManualExe(exe);
+                        _processService.DeleteGame(exe);
+                        Notify(I18n.T("{0} eliminado de la biblioteca. Al ser manual, no se re-detectará.", name), Feedback.MutedBrush);
+                    }
+                    else
+                    {
+                        _processService.DeleteGame(exe);
+                        Notify(I18n.T("{0} eliminado de la biblioteca. Podés re-detectarlo con «Re-detectar».", name), Feedback.MutedBrush);
+                    }
+                    await RefreshAsync();
+                }
+            });
+
+            var palette = new RulePalette();
+            palette.TitleText.Text = name;
+            palette.SubtitleText.Text = hasLauncher
+                ? I18n.T("{0} · se lanza con {1}", exe, launchLauncher)
+                : exe;
+            _rulePalette = palette;
+            palette.Show(target, sections, at);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"GestionarProcesosPage: paleta de reglas {exe}: {ex.Message}");
+            ShowClassicRuleMenu(target, exe, name, isManual, defenderFolder, cfgExe);
+        }
     }
 
     /// <summary>

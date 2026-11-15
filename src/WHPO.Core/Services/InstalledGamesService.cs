@@ -58,6 +58,9 @@ public sealed class InstalledGamesService : IInstalledGamesService
     private List<InstalledGame>? _cache;
     private Task<List<InstalledGame>>? _scanTask;
     private int _cacheClearVersion;
+    // La versión de limpieza se persiste para que la biblioteca muestre el skeleton
+    // aunque la app se reinicie o ProcessService repueble la caché antes de abrirla.
+    private const string CacheClearVersionKey = "games.cacheClearVersion";
 
     /// <summary>True si hay una biblioteca cacheada en memoria (no hace falta re-escannear).</summary>
     public bool HasCachedResult
@@ -115,10 +118,22 @@ public sealed class InstalledGamesService : IInstalledGamesService
     /// </summary>
     public void ClearCache()
     {
+        int version;
         lock (_lock)
         {
             _cache = null;
-            _cacheClearVersion++;
+            version = ++_cacheClearVersion;
+        }
+        // La versión es la señal que consume la biblioteca: se guarda antes de
+        // tocar los archivos para que un fallo de borrado no la pierda.
+        try
+        {
+            _settings.Set(CacheClearVersionKey, version);
+            _settings.Save();
+        }
+        catch (Exception ex)
+        {
+            _logging.LogWarning($"InstalledGames: no se pudo persistir la limpieza de caché: {ex.Message}");
         }
         try
         {
@@ -138,6 +153,7 @@ public sealed class InstalledGamesService : IInstalledGamesService
     {
         _logging = logging;
         _settings = settings;
+        _cacheClearVersion = Math.Max(0, _settings.Get(CacheClearVersionKey, 0));
     }
 
     /// <summary>

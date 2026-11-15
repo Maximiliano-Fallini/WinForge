@@ -47,6 +47,10 @@ public static class GameLauncher
         bool epic = string.Equals(launcher, "Epic", StringComparison.OrdinalIgnoreCase);
         bool gog = string.Equals(launcher, "GOG", StringComparison.OrdinalIgnoreCase);
         bool xbox = string.Equals(launcher, "Xbox", StringComparison.OrdinalIgnoreCase);
+        bool ubisoft = string.Equals(launcher, "Ubisoft", StringComparison.OrdinalIgnoreCase);
+        bool ea = string.Equals(launcher, "EA", StringComparison.OrdinalIgnoreCase);
+        bool amazon = string.Equals(launcher, "Amazon", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(launcher, "Amazon Games", StringComparison.OrdinalIgnoreCase);
 
         // Abre la sesión justo antes de lanzar (no al entrar acá): si el lanzamiento
         // se cancela —launcher cerrado, ejecutable faltante—, no queda una sesión
@@ -83,18 +87,14 @@ public static class GameLauncher
             if (gameBoost != null) _ = gameBoost.ApplyAsync();
         }
 
-        // GOG Galaxy y Xbox: el launcher NO se abre solo. Si está cerrado, no se
-        // lanza el juego (los de Xbox son paquetes MSIX que exigen el app activo;
-        // los de GOG no garantizamos el lanzamiento sin el launcher).
+        // GOG y Xbox se lanzan SIN exigir el launcher abierto:
+        // - GOG es DRM-free: el exe del juego arranca solo, Galaxy es opcional
+        //   (antes se cancelaba el lanzamiento si Galaxy estaba cerrado).
+        // - Xbox/Microsoft Store se activa por shell:AppsFolder; Gaming Services
+        //   levanta el paquete solo y el app de Xbox no necesita estar abierto
+        //   (solo la primera vez pide sesión/licencia).
         if (gog || xbox)
         {
-            string procName = gog ? "GalaxyClient" : "Xbox";
-            string displayName = gog ? "GOG Galaxy" : "Xbox";
-            if (!IsLauncherRunning(processes, procName))
-            {
-                SetStatus(status, I18n.T("Abrí {0} y probá de nuevo.", displayName), LaunchStatusKind.Warning);
-                return;
-            }
             if (string.IsNullOrEmpty(fileName))
             {
                 SetStatus(status, I18n.T("Ejecutable no encontrado"), LaunchStatusKind.Warning);
@@ -103,43 +103,23 @@ public static class GameLauncher
             BeginSession();
             // Solo después de que el proceso/URI arrancó sin excepción: si el
             // lanzamiento falla, no hay partida que optimizar.
-            if (StartProcess(fileName, arguments))
+            if (StartProcessLogged(fileName, arguments, msg => { try { log.LogWarning(msg); } catch { } }))
                 ApplyBoost();
             if (!string.IsNullOrEmpty(exeFileName))
                 processes.ApplyLaunchChainRule(exeFileName);
             return;
         }
-        // Blacksmith (launcher oficial de Dark and Darker de Ironmace): el juego
-        // NO se puede lanzar por su exe directo — el anti-cheat Tavern lo cierra
-        // al instante (ExitCode -65535) si no lo lanza el launcher. El launcher no
-        // expone un comando CLI para lanzar el juego, así que la única vía es:
-        // 1) abrir el launcher (si no está corriendo), 2) el usuario aprieta Play
-        // adentro. No se espera la ventana del launcher (tarda en cargar y no es
-        // necesario para el flujo).
-        if (string.Equals(launcher, "Blacksmith", StringComparison.OrdinalIgnoreCase))
-        {
-            string? blacksmithExe = FindBlacksmithLauncher();
-            if (blacksmithExe == null)
-            {
-                SetStatus(status, I18n.T("No se encontró el launcher Blacksmith. Asegurate de que esté instalado."), LaunchStatusKind.Warning);
-                return;
-            }
-            BeginSession("Blacksmith");
-            if (!IsLauncherRunning(processes, "Blacksmith"))
-            {
-                SetStatus(status, I18n.T("Abriendo Blacksmith..."), LaunchStatusKind.Info);
-                StartProcess(blacksmithExe, "");
-            }
-            // Sin boost: el juego lo lanza el usuario DESDE Blacksmith y desde acá no
-            // se puede confirmar que haya arrancado; aplicarlo dejaba optimizaciones
-            // activas con solo abrir el launcher.
-            SetStatus(status, I18n.T("Abrí Blacksmith y apretá Play para iniciar Dark and Darker."), LaunchStatusKind.Info);
-            if (!string.IsNullOrEmpty(exeFileName))
-                processes.ApplyLaunchChainRule(exeFileName);
-            return;
-        }
+        // Sin código personalizado por juego: cualquier launcher se saltea. El
+        // juego se lanza por su exe directo y la sesión de lanzamiento de
+        // ProcessService sigue la cadena launcher→juego aplicando las reglas de
+        // propiedades solo al proceso final (nunca al launcher: ver
+        // IsLaunchChainNoise en ProcessService), mientras que ApplyBoost de
+        // abajo aplica el Modo rendimiento cuando el exe arranca. Desde la
+        // bandeja vale lo mismo: ambos caminos pasan por LaunchGameAsync.
 
-        if (blizzardCode == null && !epic)
+        // Los launchers con handshake (Ubisoft/EA/Amazon) tienen un camino propio
+        // más abajo: acá solo cae el lanzamiento directo por exe.
+        if (blizzardCode == null && !epic && !ubisoft && !ea && !amazon)
         {
             // Log de diagnóstico: registrar qué exe se intenta abrir y cualquier
             // error (StartProcess silenciaba todo con Debug.WriteLine).
@@ -163,6 +143,45 @@ public static class GameLauncher
         if (epic)
         {
             await LaunchEpicGameAsync(gameBoost, log, processes, fileName, installPath, exeFileName, status);
+            return;
+        }
+
+        // Ubisoft Connect, EA app y Amazon Games: el comando de lanzamiento solo
+        // funciona con el cliente levantado y logueado. Si se manda antes de que
+        // termine de arrancar, se pierde (abre la página del juego o no hace
+        // nada), así que se usa el mismo handshake que Battle.net: abrir el
+        // launcher, esperar su ventana y reintentar el comando hasta que el
+        // proceso real del juego exista. El launcher nunca recibe las reglas
+        // (ProcessService.IsLaunchChainNoise lo excluye).
+        if (ubisoft || ea || amazon)
+        {
+            // Sin URI de launcher (instalación sin AppId) no hay handshake que
+            // hacer: se lanza el exe directo, como cualquier juego independiente.
+            if (!IsProtocolUri(fileName))
+            {
+                if (!string.IsNullOrEmpty(fileName)) BeginSession();
+                if (StartProcessLogged(fileName, arguments, msg => { try { log.LogWarning(msg); } catch { } }))
+                    ApplyBoost();
+                if (!string.IsNullOrEmpty(exeFileName))
+                    processes.ApplyLaunchChainRule(exeFileName);
+                return;
+            }
+
+            if (ubisoft)
+                await LaunchThroughLauncherAsync(gameBoost, log, processes, "Ubisoft Connect",
+                    FindUbisoftLauncher(), new[] { "upc", "UbisoftConnect" },
+                    () => (fileName, arguments), installPath, exeFileName, status);
+            else if (ea)
+                // La URI origin2 la resuelve el protocolo registrado (Link2EA/
+                // EALauncher) desde el shell del usuario; EALauncher.exe solo se
+                // usa para levantar el cliente si está cerrado.
+                await LaunchThroughLauncherAsync(gameBoost, log, processes, "EA app",
+                    FindEaLauncher(), new[] { "EADesktop", "EALauncher" },
+                    () => (fileName, ""), installPath, exeFileName, status);
+            else
+                await LaunchThroughLauncherAsync(gameBoost, log, processes, "Amazon Games",
+                    FindAmazonGamesLauncher(), new[] { "Amazon Games", "Amazon Games UI" },
+                    () => (fileName, arguments), installPath, exeFileName, status);
             return;
         }
 
@@ -320,7 +339,7 @@ public static class GameLauncher
     /// el shell del usuario en vez de este proceso elevado. Devuelve false si ni
     /// siquiera se pudo iniciar explorer (el llamador decide el respaldo).
     /// </summary>
-    private static bool StartProcessAtUserLevel(string target)
+    private static bool StartProcessAtUserLevel(string target, string arguments = "")
     {
         if (string.IsNullOrEmpty(target)) return false;
         try
@@ -328,7 +347,10 @@ public static class GameLauncher
             // Ruta absoluta: no depende del PATH del proceso elevado.
             var explorer = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
-            var psi = new ProcessStartInfo(explorer, $"\"{target}\"")
+            var command = string.IsNullOrWhiteSpace(arguments)
+                ? $"\"{target}\""
+                : $"\"{target}\" {arguments}";
+            var psi = new ProcessStartInfo(explorer, command)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true
@@ -342,8 +364,153 @@ public static class GameLauncher
         }
     }
 
+    /// <summary>
+    /// Igual que <see cref="WaitForProcessWindowAsync"/> pero aceptando varios
+    /// nombres: los clientes nuevos cambian de binario (upc.exe vs
+    /// UbisoftConnect.exe, EADesktop vs EALauncher).
+    /// </summary>
+    public static async Task<bool> WaitForAnyProcessWindowAsync(string[] processNames, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            foreach (var name in processNames)
+            {
+                try
+                {
+                    foreach (var p in Process.GetProcessesByName(name))
+                    {
+                        if (p.MainWindowHandle != IntPtr.Zero) return true;
+                    }
+                }
+                catch { }
+            }
+            await Task.Delay(500);
+        }
+        return false;
+    }
+
     private static void SetStatus(Action<string, LaunchStatusKind>? status, string message, LaunchStatusKind kind)
         => status?.Invoke(message, kind);
+
+    /// <summary>
+    /// Lanzamiento con handshake de launcher (Ubisoft Connect, EA app, Amazon Games):
+    /// abre el cliente si está cerrado, espera a que tenga ventana y recién entonces
+    /// manda el comando, reintentándolo hasta que el proceso del juego aparezca.
+    /// Los clientes no toleran el comando en frío: la URI sola abre la página del
+    /// juego, o se la come el arranque del cliente.
+    /// </summary>
+    /// <param name="launcherPath">Exe del cliente (puede ser null: se sigue con la URI).</param>
+    /// <param name="launcherProcs">Nombres de proceso que representan al cliente.</param>
+    /// <param name="launchCommand">Comando a repetir: (exe o URI, argumentos).</param>
+    private static async Task LaunchThroughLauncherAsync(
+        IGameBoostService? gameBoost,
+        ILoggingService log,
+        IProcessService processes,
+        string launcherName,
+        string? launcherPath,
+        string[] launcherProcs,
+        Func<(string Command, string Arguments)> launchCommand,
+        string? installPath,
+        string? exeFileName,
+        Action<string, LaunchStatusKind>? status)
+    {
+        bool LauncherUp()
+        {
+            foreach (var name in launcherProcs)
+                if (IsProcessRunning(name)) return true;
+            return false;
+        }
+
+        if (!LauncherUp())
+        {
+            if (launcherPath != null)
+            {
+                SetStatus(status, I18n.T("Abriendo el launcher de {0}...", launcherName), LaunchStatusKind.Info);
+                if (!StartProcessAtUserLevel(launcherPath, ""))
+                {
+                    SetStatus(status, I18n.T("No se pudo abrir el launcher de {0}.", launcherName), LaunchStatusKind.Warning);
+                    return;
+                }
+                // El cliente tarda en levantar ventana (login, auto-update): sin esta
+                // espera el primer comando siempre se pierde.
+                if (!await WaitForAnyProcessWindowAsync(launcherProcs, TimeSpan.FromSeconds(45)))
+                {
+                    SetStatus(status, I18n.T("El launcher de {0} no respondió a tiempo. Verificá que estés logueado y probá de nuevo.", launcherName), LaunchStatusKind.Warning);
+                    return;
+                }
+            }
+            else
+            {
+                // No se encontró el exe del cliente (instalación en otra ruta): se
+                // intenta con la URI, que el protocolo registrado resuelve solo.
+                SetStatus(status, I18n.T("Abriendo el launcher de {0}...", launcherName), LaunchStatusKind.Info);
+                var (probeCommand, probeArgs) = launchCommand();
+                if (string.IsNullOrEmpty(probeCommand))
+                {
+                    SetStatus(status, I18n.T("No se encontró el launcher de {0}.", launcherName), LaunchStatusKind.Warning);
+                    return;
+                }
+                StartProcessAtUserLevel(probeCommand, probeArgs);
+
+                var waitLauncher = DateTime.UtcNow.AddSeconds(45);
+                while (DateTime.UtcNow < waitLauncher && !LauncherUp()
+                       && !IsGameProcessRunning(processes, installPath, exeFileName))
+                    await Task.Delay(1000);
+
+                if (!LauncherUp())
+                {
+                    if (IsGameProcessRunning(processes, installPath, exeFileName))
+                    {
+                        if (!string.IsNullOrEmpty(exeFileName)) processes.ApplyLaunchChainRule(exeFileName);
+                        if (gameBoost != null) _ = gameBoost.ApplyAsync();
+                        SetStatus(status, "", LaunchStatusKind.Hide);
+                        return;
+                    }
+                    SetStatus(status, I18n.T("El launcher de {0} no respondió a tiempo. Verificá que estés logueado y probá de nuevo.", launcherName), LaunchStatusKind.Warning);
+                    return;
+                }
+            }
+        }
+
+        SetStatus(status, I18n.T("Iniciando el juego..."), LaunchStatusKind.Info);
+        if (!string.IsNullOrEmpty(exeFileName))
+            processes.BeginLaunchSession(exeFileName, launcherName, installPath);
+
+        var deadline = DateTime.UtcNow.AddSeconds(120);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (IsGameProcessRunning(processes, installPath, exeFileName))
+            {
+                if (!string.IsNullOrEmpty(exeFileName))
+                    processes.ApplyLaunchChainRule(exeFileName);
+                // Recién acá hay partida: el proceso del juego existe.
+                if (gameBoost != null) _ = gameBoost.ApplyAsync();
+                SetStatus(status, "", LaunchStatusKind.Hide);
+                return;
+            }
+            // Si el usuario cerró el launcher mientras esperaba, no se reabre:
+            // se cancela (misma regla que Battle.net).
+            if (!LauncherUp())
+            {
+                SetStatus(status, I18n.T("Se cerró el launcher de {0} — se cancela el lanzamiento.", launcherName), LaunchStatusKind.Warning);
+                return;
+            }
+            var (command, arguments) = launchCommand();
+            if (!string.IsNullOrEmpty(command))
+            {
+                if (!StartProcessAtUserLevel(command, arguments))
+                {
+                    // Respaldo: si explorer no pudo, se intenta directo (mejor
+                    // intentarlo que no hacer nada).
+                    StartProcessLogged(command, arguments, msg => { try { log.LogWarning(msg); } catch { } });
+                }
+            }
+            await Task.Delay(9000);
+        }
+
+        SetStatus(status, I18n.T("El juego no arrancó. Verificá que estés logueado en {0} y probá de nuevo.", launcherName), LaunchStatusKind.Warning);
+    }
 
     /// <summary>
     /// Inicia un exe o URI. Devuelve true solo si <see cref="Process.Start(ProcessStartInfo)"/>
@@ -354,6 +521,23 @@ public static class GameLauncher
         if (string.IsNullOrEmpty(fileName)) return false;
         try
         {
+            // shell:AppsFolder\<AUMID> (juegos de la Store/Xbox) no es un archivo ni
+            // un protocolo registrado: el camino documentado es el shell, o sea
+            // `explorer.exe "shell:AppsFolder\..."`. Con Process.Start directo
+            // funciona según la versión de Windows; por explorer es siempre igual.
+            if (fileName.StartsWith("shell:", StringComparison.OrdinalIgnoreCase))
+            {
+                var shell = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+                var shellInfo = new ProcessStartInfo(shell, $"\"{fileName}\"")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                Process.Start(shellInfo);
+                return true;
+            }
+
             var psi = new ProcessStartInfo(fileName)
             {
                 UseShellExecute = true,
@@ -362,7 +546,7 @@ public static class GameLauncher
             // El working directory solo aplica a exes reales: para URIs de launcher
             // (steam://, com.epicgames.launcher://) y AUMIDs de Xbox
             // (shell:AppsFolder\...) no hay directorio real.
-            if (string.IsNullOrEmpty(arguments) && File.Exists(fileName))
+            if (File.Exists(fileName))
             {
                 psi.WorkingDirectory = Path.GetDirectoryName(fileName) ?? "";
             }
@@ -415,12 +599,28 @@ public static class GameLauncher
         }
         try
         {
+            // shell:AppsFolder\<AUMID>: se entrega al shell por explorer.exe (ver
+            // StartProcess); no es una ruta de archivo.
+            if (fileName.StartsWith("shell:", StringComparison.OrdinalIgnoreCase))
+            {
+                var shell = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+                var shellInfo = new ProcessStartInfo(shell, $"\"{fileName}\"")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                Process.Start(shellInfo);
+                logWarning?.Invoke($"GameLauncher: lanzado OK (shell): {fileName}");
+                return true;
+            }
+
             var psi = new ProcessStartInfo(fileName)
             {
                 UseShellExecute = true,
                 Arguments = arguments
             };
-            if (string.IsNullOrEmpty(arguments) && !IsProtocolUri(fileName))
+            if (!IsProtocolUri(fileName) && File.Exists(fileName))
             {
                 var dir = Path.GetDirectoryName(fileName) ?? "";
                 if (Directory.Exists(dir)) psi.WorkingDirectory = dir;
@@ -580,6 +780,147 @@ public static class GameLauncher
         return null;
     }
 
+    /// <summary>
+    /// Busca el ejecutable del cliente de Ubisoft Connect. El binario residente es
+    /// upc.exe; UbisoftConnect.exe es el que arranca el cliente desde cero. Se mira
+    /// primero el registro (Ubisoft registra su carpeta de instalación) y después
+    /// las rutas típicas.
+    /// </summary>
+    public static string? FindUbisoftLauncher()
+    {
+        try
+        {
+            using var reg = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Ubisoft\Launcher");
+            var dir = reg?.GetValue("InstallDir") as string;
+            if (!string.IsNullOrEmpty(dir))
+            {
+                var exe = Path.Combine(dir, "UbisoftConnect.exe");
+                if (File.Exists(exe)) return exe;
+            }
+        }
+        catch { }
+        foreach (var root in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
+        })
+        {
+            foreach (var sub in new[] { "Ubisoft\\Ubisoft Game Launcher", "Ubisoft\\Ubisoft Connect" })
+            {
+                try
+                {
+                    var exe = Path.Combine(root, sub, "UbisoftConnect.exe");
+                    if (File.Exists(exe)) return exe;
+                }
+                catch { }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Busca EALauncher.exe (el stub oficial de la EA app): arranca EA Desktop si
+    /// está cerrado y acepta la URI origin2://game/launch/?offerIds=... por línea
+    /// de comandos. Devuelve null si no está instalado (la URI igual la resuelve
+    /// el protocolo registrado).
+    /// </summary>
+    public static string? FindEaLauncher()
+    {
+        foreach (var root in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+        })
+        {
+            foreach (var sub in new[]
+            {
+                "Electronic Arts\\EA Desktop\\EA Desktop",
+                "Electronic Arts\\EA Desktop",
+                "Electronic Arts\\EA Core"
+            })
+            {
+                try
+                {
+                    var exe = Path.Combine(root, sub, "EALauncher.exe");
+                    if (File.Exists(exe)) return exe;
+                }
+                catch { }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// contentID del instalador de un juego de EA (el offerId que espera
+    /// origin2://game/launch): vive en &lt;carpeta&gt;\__Installer\installerdata.xml
+    /// como &lt;contentID&gt;. Null si no hay instalador (juego movido/copiado).
+    /// </summary>
+    /// <summary>
+    /// offerIds de un juego de EA, en el orden del instalador. El manifiesto
+    /// (&lt;carpeta&gt;\__Installer\installerdata.xml) trae VARIOS &lt;contentID&gt; en
+    /// &lt;contentIDs&gt;, y la EA app espera la lista completa separada por comas: con
+    /// un solo id muchos títulos no arrancan (queda en "no tenés acceso" o abre la
+    /// ficha sin lanzar). Null si el juego no tiene manifiesto (movido/copiado).
+    /// </summary>
+    public static string? FindEaOfferIds(string? installPath)
+    {
+        if (string.IsNullOrEmpty(installPath)) return null;
+        try
+        {
+            var manifest = Path.Combine(installPath, "__Installer", "installerdata.xml");
+            if (!File.Exists(manifest)) return null;
+            var doc = System.Xml.Linq.XDocument.Load(manifest);
+            var ids = doc.Descendants("contentID")
+                .Select(e => e.Value?.Trim())
+                .Where(v => !string.IsNullOrEmpty(v))
+                .Select(v => v!)
+                .Distinct()
+                .ToList();
+            return ids.Count == 0 ? null : string.Join(",", ids);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Stub de lanzamiento de Rockstar (PlayGTAV.exe, PlayRDR2.exe…): es el exe
+    /// que crea el instalador y el que abre el launcher con el juego elegido.
+    /// Null si no hay ningún Play*.exe en la raíz de la instalación.
+    /// </summary>
+    public static string? FindRockstarPlayStub(string? installPath)
+    {
+        if (string.IsNullOrEmpty(installPath)) return null;
+        try
+        {
+            foreach (var exe in Directory.EnumerateFiles(installPath, "Play*.exe", SearchOption.TopDirectoryOnly))
+                return exe;
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>Busca el cliente de Amazon Games (instalación por usuario, en LocalAppData).</summary>
+    public static string? FindAmazonGamesLauncher()
+    {
+        foreach (var root in new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)
+        })
+        {
+            foreach (var sub in new[] { "Amazon Games\\App", "Amazon Games" })
+            {
+                try
+                {
+                    var exe = Path.Combine(root, sub, "Amazon Games.exe");
+                    if (File.Exists(exe)) return exe;
+                }
+                catch { }
+            }
+        }
+        return null;
+    }
+
     /// <summary>Busca el ejecutable del launcher de GOG Galaxy (registro o rutas típicas).</summary>
     public static string? FindGogLauncher()
     {
@@ -677,85 +1018,6 @@ public static class GameLauncher
         // Default típico: raíz del disco del sistema.
         var def = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\", "Riot Games", "Riot Client", "RiotClientServices.exe");
         return File.Exists(def) ? def : null;
-    }
-
-    /// <summary>
-    /// Busca el ejecutable del launcher Blacksmith (launcher oficial de Dark and Darker
-    /// de Ironmace). El binario real del launcher es BlacksmithIM.exe (el proceso que
-    /// aparece en Task Manager); "Blacksmith.exe" se mantiene como variante clásica.
-    /// Se instala en IRONMACE\Blacksmith (raíz de unidad, Program Files o LocalAppData);
-    /// también se acepta lo que apunte el registro de desinstalación.
-    /// </summary>
-    public static string? FindBlacksmithLauncher()
-    {
-        var exeNames = new[] { "BlacksmithIM.exe", "Blacksmith.exe" };
-
-        // Raíces a revisar: Program Files, Program Files (x86), LocalAppData y cada
-        // unidad de disco fijo (el launcher suele ir en la raíz, ej. C:\IRONMACE\Blacksmith).
-        var roots = new List<string>
-        {
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-        };
-        try
-        {
-            foreach (var drive in DriveInfo.GetDrives())
-            {
-                if (drive.DriveType == DriveType.Fixed)
-                    roots.Add(drive.Name.TrimEnd('\\'));
-            }
-        }
-        catch { }
-
-        foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var dirs = new[]
-                {
-                    Path.Combine(root, "IRONMACE", "Blacksmith"),
-                    Path.Combine(root, "Ironmace", "Blacksmith"),
-                    Path.Combine(root, "IRONMACE"),
-                    Path.Combine(root, "Blacksmith")
-                };
-                foreach (var dir in dirs)
-                {
-                    foreach (var exeName in exeNames)
-                    {
-                        var f = Path.Combine(dir, exeName);
-                        if (File.Exists(f)) return f;
-                    }
-                }
-            }
-            catch { }
-        }
-
-        // Clave propia del launcher (si la deja).
-        try
-        {
-            foreach (var keyPath in new[]
-            {
-                @"SOFTWARE\Ironmace\Blacksmith",
-                @"SOFTWARE\WOW6432Node\Ironmace\Blacksmith"
-            })
-            {
-                using var reg = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(keyPath);
-                var installDir = reg?.GetValue("InstallDir") as string
-                    ?? reg?.GetValue("InstallLocation") as string;
-                if (!string.IsNullOrEmpty(installDir))
-                {
-                    foreach (var exeName in exeNames)
-                    {
-                        var f = Path.Combine(installDir, exeName);
-                        if (File.Exists(f)) return f;
-                    }
-                }
-            }
-        }
-        catch { }
-
-        return null;
     }
 
     /// <summary>

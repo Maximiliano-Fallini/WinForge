@@ -170,6 +170,13 @@ public sealed class ProcessService : IProcessService
     private static readonly HashSet<string> LauncherNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Battle.net", "EpicGamesLauncher", "GalaxyClient", "Steam", "Xbox", "XboxStub", "GamingApp",
+        // Ubisoft Connect (upc.exe residente / UbisoftConnect.exe bootstrap),
+        // EA app (EADesktop / EALauncher) y Amazon Games: se lanzan con handshake
+        // de launcher y NUNCA reciben las reglas del juego (son compartidos).
+        "upc", "UbisoftConnect", "EADesktop", "EALauncher", "Amazon Games", "Amazon Games UI",
+        // Rockstar: el stub Play<Juego>.exe levanta el launcher; los procesos del
+        // cliente que quedan vivos no son el juego.
+        "RockstarGamesLauncher", "LauncherPatcher",
         // Blacksmith (Dark and Darker): el binario real del launcher de Ironmace es
         // BlacksmithIM.exe; "Blacksmith" se mantiene por compatibilidad.
         "Blacksmith", "BlacksmithIM"
@@ -1980,25 +1987,74 @@ public sealed class ProcessService : IProcessService
     /// Si un proceso no matchea la regla directamente, hereda la de un ancestro que
     /// sí (el juego real lanza anti-cheat/hijos con otro nombre). El launcher queda
     /// afuera: si el ancestro no tiene RuleKey, no se propaga nada.
+    /// Si el ancestro es un emulador, el hijo es el proceso emulado (núcleo/GUI
+    /// separados): hereda su regla activa según
+    /// EmulatorDefinition.ChildProcessesInheritRule.
     /// </summary>
+    /// <summary>
+    /// True si el padre directo del proceso es un emulador del catálogo. Cubre el
+    /// caso "el juego corre en un proceso aparte de la UI del emulador"
+    /// (TeknoParrot y su juego, el QtLauncher de shadPS4 y su shadPS4.exe): el hijo
+    /// no está en la carpeta del emulador ni en una carpeta de juego conocida, así
+    /// que sin este indicio el caminado de ancestros ni siquiera se intentaba y el
+    /// juego se quedaba sin la regla que sí tenía la UI.
+    /// El mapa de padres se puede pasar ya armado cuando se recorre una lista de
+    /// procesos (una sola instantánea de Toolhelp para todos).
+    /// </summary>
+    private bool IsChildOfEmulatorProcess(int pid, Dictionary<int, int>? parentMap = null)
+    {
+        try
+        {
+            var map = parentMap ?? GetParentPidMap();
+            if (!map.TryGetValue(pid, out var ppid) || ppid <= 0 || ppid == pid) return false;
+            using var parent = Process.GetProcessById(ppid);
+            string pname = parent.ProcessName + ".exe";
+            TryGetProcessPath(parent, out var ppath);
+            return EmulatorCatalog.MatchExeFileNameForPath(ppath ?? pname) != null
+                || EmulatorCatalog.MatchExeFileName(pname) != null;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>True si hay alguna sesión de lanzamiento viva (lanzamiento desde
+    /// WinForge en curso). Barato: solo mira el diccionario y los plazos.</summary>
+    private bool HasActiveLaunchSessions()
+    {
+        var now = DateTime.UtcNow;
+        lock (_launchSessionLock)
+            return _launchSessions.Values.Any(s => s.DeadlineUtc > now);
+    }
+
     private string? FindAncestorRuleKey(int pid, Dictionary<string, ProcessRule> rules, Dictionary<string, ProcessRule> session)
     {
         var keys = EffectiveKeys(rules, session);
-        if (keys.Count == 0) return null;
+        // Sin claves guardadas igual puede haber algo que heredar: el padre recibió
+        // una regla de SESIÓN (emulador lanzado desde WinForge) y su hijo es el juego.
+        if (keys.Count == 0 && !HasActiveLaunchSessions()) return null;
 
         var visited = new HashSet<int> { pid };
         int current = pid;
-        // 4 niveles alcanzan para game → stub → juego; caminar todo el árbol de un
-        // proceso ajeno (explorer → userinit → …) sería caro y no aporta.
+        // Un solo snapshot para toda la caminata (antes era uno por nivel).
+        var parentMap = GetParentPidMap();
+        // 4 niveles cubren launcher→stub→juego y la UI viva de un emulador que
+        // lanza el juego como hijo (TeknoParrot). Un emulador Android con VM
+        // separada no necesita herencia: su núcleo matchea por alias
+        // (HookProcessNames) o por carpeta de instalación. Más allá hay más
+        // ruido que señal y la regla ya no tiene sentido.
         for (int depth = 0; depth < 4; depth++)
         {
-            current = GetParentPid(current);
+            current = parentMap.TryGetValue(current, out var ppid) ? ppid : -1;
             if (current <= 0 || !visited.Add(current)) return null;
 
             lock (_eventLock)
             {
                 if (_procGames.TryGetValue(current, out var parent) && parent.RuleKey != null)
+                {
+                    // Un emulador con herencia desactivada no delega su regla.
+                    var pdef = EmulatorCatalog.MatchExeFileNameForPath(parent.Path ?? parent.ProcessName);
+                    if (pdef != null && !pdef.ChildProcessesInheritRule) return null;
                     return parent.RuleKey;
+                }
             }
 
             try
@@ -2010,16 +2066,39 @@ public sealed class ProcessService : IProcessService
                 // uno en la cadena, se corta.
                 if (IsLaunchChainNoise(pname)) return null;
                 TryGetProcessPath(p, out var ppath);
+
+                // Ancestro emulador: respetar su comportamiento de herencia.
+                var adef = EmulatorCatalog.MatchExeFileNameForPath(ppath ?? pname);
+                if (adef != null && !adef.ChildProcessesInheritRule) return null;
+
                 foreach (var key in keys)
                     if (MatchesRuleKey(pname, ppath, key)) return key;
 
                 // Si el ancestro tiene ruta legible y está fuera de una carpeta de
                 // juego conocida, no es parte de la cadena del juego: cortar.
-                if (!string.IsNullOrEmpty(ppath) && !IsKnownGameFolder(ppath)) return null;
+                if (!string.IsNullOrEmpty(ppath) && !IsKnownGameFolder(ppath) && !IsEmulatorInstallFolder(ppath)) return null;
             }
             catch { }
         }
         return null;
+    }
+
+    /// <summary>True si la ruta está dentro de la carpeta de instalación de un
+    /// emulador conocido (su exe está en la biblioteca): el proceso puede ser su
+    /// núcleo/hijo emulado aunque su carpeta no sea "de juego".</summary>
+    private bool IsEmulatorInstallFolder(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        lock (_pathsLock)
+        {
+            foreach (var kv in _knownPaths)
+            {
+                if (EmulatorCatalog.MatchExeFileName(kv.Key) == null) continue;
+                if (!string.IsNullOrEmpty(kv.Value) && path.StartsWith(kv.Value, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>Quita un pid de las sesiones activas (el proceso murió).</summary>
@@ -2043,6 +2122,15 @@ public sealed class ProcessService : IProcessService
     public Dictionary<string, ProcessRule> GetRules()
     {
         var rules = _settings.Get("process.rules", new Dictionary<string, ProcessRule>()) ?? new();
+        // Las reglas por ROM ("exe|rom") ya no existen: se descartan al leer para
+        // que no sigan aplicándose por atrás (y se persiste la limpieza una vez).
+        if (rules.Keys.Any(k => k.Contains('|')))
+        {
+            foreach (var key in rules.Keys.Where(k => k.Contains('|')).ToList())
+                rules.Remove(key);
+            _settings.Set("process.rules", rules);
+            _settings.Save();
+        }
         // Migrar en la lectura las reglas guardadas con el nombre del stub al exe
         // real (mismo caso que los favoritos): así la regla de CS2 guardada como
         // vconsole2.exe sigue aplicando a cs2.exe y a toda su carpeta.
@@ -2343,6 +2431,13 @@ public sealed class ProcessService : IProcessService
                                 StringComparison.OrdinalIgnoreCase);
                             if (!systemDir)
                                 targets.AddRange(Directory.EnumerateFiles(dir, "*.exe", SearchOption.AllDirectories)
+                                    // Anti-cheat, instaladores, redistribuibles, crash reporters y
+                                    // consolas de debug NO llevan prioridad de nacimiento: no son
+                                    // el juego y escribirles PerfOptions deja al anti-cheat con
+                                    // prioridad alta, que es justo lo que no se quiere tocar.
+                                    // La misma lista que usa la biblioteca para resolver el exe
+                                    // real (GameExeResolver), para no tener dos verdades.
+                                    .Where(f => !GameExeResolver.IsStubExe(f))
                                     .Select(Path.GetFileName)
                                     .Where(f => !string.IsNullOrEmpty(f))!);
                         }
@@ -2579,22 +2674,34 @@ public sealed class ProcessService : IProcessService
     /// </summary>
     public bool IsLauncherRunning(string procName)
     {
-        // Blacksmith (Dark and Darker): el proceso real del launcher es
-        // BlacksmithIM.exe (no existe Blacksmith.exe); se aceptan ambos.
-        bool blacksmithQuery = procName.Equals("Blacksmith", StringComparison.OrdinalIgnoreCase);
+        // Los clientes modernos cambian de binario según la versión: se consultan
+        // todos los alias conocidos del launcher pedido.
+        var aliases = procName switch
+        {
+            // Blacksmith (Dark and Darker): el proceso real es BlacksmithIM.exe
+            // (no existe Blacksmith.exe); se aceptan ambos.
+            "Blacksmith" => new[] { "Blacksmith", "BlacksmithIM" },
+            "Ubisoft" => new[] { "upc", "UbisoftConnect", "Ubisoft Connect" },
+            "EA" => new[] { "EADesktop", "EALauncher", "Origin" },
+            "Amazon" or "Amazon Games" => new[] { "Amazon Games", "Amazon Games UI", "Amazon Games Services" },
+            "Rockstar" => new[] { "RockstarGamesLauncher", "LauncherPatcher" },
+            _ => new[] { procName }
+        };
+
         if (WmiEventsActive)
         {
             lock (_launcherLock)
             {
-                if (_runningLaunchers.Contains(procName)) return true;
-                if (blacksmithQuery && _runningLaunchers.Contains("BlacksmithIM")) return true;
+                foreach (var alias in aliases)
+                    if (_runningLaunchers.Contains(alias)) return true;
                 return false;
             }
         }
         try
         {
-            if (Process.GetProcessesByName(procName).Length > 0) return true;
-            return blacksmithQuery && Process.GetProcessesByName("BlacksmithIM").Length > 0;
+            foreach (var alias in aliases)
+                if (Process.GetProcessesByName(alias).Length > 0) return true;
+            return false;
         }
         catch { return false; }
     }
@@ -2739,6 +2846,9 @@ public sealed class ProcessService : IProcessService
             var keys = EffectiveKeys(rules, session);
 
             var runningNow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Una sola instantánea de Toolhelp para el indicio "hijo de emulador"
+            // durante todo el recorrido de arranque (una por proceso sería carísimo).
+            var seedParentMap = GetParentPidMap();
             bool anyRuleActivity = false;
             foreach (var p in Process.GetProcesses())
             {
@@ -2777,7 +2887,8 @@ public sealed class ProcessService : IProcessService
                         // de stub): recorrer todos los procesos del arranque costaba
                         // varias instantáneas de Toolhelp por cada uno.
                         if (ruleKey == null && !IsSystemProcessName(pname)
-                            && (ppath == null || IsKnownGameFolder(ppath) || GameExeResolver.IsStubExeName(pname)))
+                            && (ppath == null || IsKnownGameFolder(ppath) || GameExeResolver.IsStubExeName(pname)
+                                || IsEmulatorInstallFolder(ppath) || IsChildOfEmulatorProcess(p.Id, seedParentMap)))
                             ruleKey = FindAncestorRuleKey(p.Id, rules, session);
                     }
                     if (isKnown || ruleKey != null)
@@ -2899,8 +3010,11 @@ public sealed class ProcessService : IProcessService
         // guardadas, la sesión abierta es lo único que hay que atender.
         LaunchMatchQuality preQuality = LaunchMatchQuality.None;
         var preSession = noise ? null : FindLaunchSessionForProcess(pname, ppath, out preQuality);
-        if (!isKnown && rules.Count == 0 && preSession == null) return;
+        if (!isKnown && rules.Count == 0 && preSession == null
+            && !(HasActiveLaunchSessions() && IsChildOfEmulatorProcess(pid)))
+            return;
         string? ruleKey = null;
+        bool inheritedFromAncestor = false;
         if (!noise)
         {
             foreach (var key in EffectiveKeys(rules, session))
@@ -2918,8 +3032,12 @@ public sealed class ProcessService : IProcessService
             // (carpeta conocida, ruta ilegible o stub): hacerlo por cada proceso del
             // sistema era caro y no aportaba.
             if (ruleKey == null && !IsSystemProcessName(pname)
-                && (ppath == null || IsKnownGameFolder(ppath) || GameExeResolver.IsStubExeName(pname)))
+                && (ppath == null || IsKnownGameFolder(ppath) || GameExeResolver.IsStubExeName(pname)
+                    || IsEmulatorInstallFolder(ppath) || IsChildOfEmulatorProcess(pid)))
+            {
                 ruleKey = FindAncestorRuleKey(pid, rules, session);
+                inheritedFromAncestor = ruleKey != null;
+            }
         }
 
         // Sesión de lanzamiento: si hay una abierta y este proceso es el juego, la
@@ -2964,7 +3082,17 @@ public sealed class ProcessService : IProcessService
             }
             else if (!noise)
             {
-                var feedback = ApplyEffectiveRule(pid, ruleKey, session, rules);
+                // El hijo de un emulador puede heredar una regla de SESIÓN de su
+                // padre (el emulador se lanzó desde WinForge con "Actual"): es la
+                // misma partida, así que se aplica. El matching de fondo normal
+                // sigue sin ver reglas de sesión (session vacío).
+                var sessionForApply = session;
+                if (inheritedFromAncestor)
+                {
+                    var snapshot = GetSessionRulesSnapshot();
+                    if (snapshot.ContainsKey(ruleKey)) sessionForApply = snapshot;
+                }
+                var feedback = ApplyEffectiveRule(pid, ruleKey, sessionForApply, rules);
                 ReportGameRuleApplied(ruleKey, null, pname, feedback);
             }
         }
@@ -3032,6 +3160,22 @@ public sealed class ProcessService : IProcessService
             {
                 var current = GetGameRuleStatus(key);
                 SetGameRuleStatus(new GameRuleStatus(key, GameRuleState.None, current?.Launcher, current?.ProcessName));
+            }
+        }
+
+        // Un emulador que se cierra sin ROM detectada deja su estado en espera:
+        // sin instancias, vuelve a None (comportamiento de los juegos sin detectar).
+        if (proc.ExeName != null)
+        {
+            var waiting = GetGameRuleStatus(proc.ExeName);
+            if (waiting is { State: GameRuleState.Waiting })
+            {
+                bool stillRunning;
+                lock (_eventLock)
+                    stillRunning = _procGames.Values.Any(v =>
+                        v.ExeName != null && v.ExeName.Equals(proc.ExeName, StringComparison.OrdinalIgnoreCase));
+                if (!stillRunning)
+                    SetGameRuleStatus(new GameRuleStatus(proc.ExeName, GameRuleState.None, waiting.Launcher, waiting.ProcessName));
             }
         }
 

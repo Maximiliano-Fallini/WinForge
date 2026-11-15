@@ -217,9 +217,9 @@ public static class CartridgeDock
     public static Grid CreateLed(bool connected, bool running, bool failed)
     {
         // Verde en cuanto hay un cartucho puesto (insertado o ya corriendo): es la señal de
-        // "la consola tiene un juego". Gris en espera y rojo si el último lanzamiento falló.
-        string core = failed ? "#FFE07059" : running || connected ? "#FF83E8AE" : "#FF62746B";
-        string shade = failed ? "#FF4B211C" : running || connected ? "#FF1E4A38" : "#FF213C32";
+        // "la consola tiene un juego". Negro apagado en espera y rojo si el último lanzamiento falló.
+        string core = failed ? "#FFE07059" : running || connected ? "#FF83E8AE" : "#FF0D1014";
+        string shade = failed ? "#FF4B211C" : running || connected ? "#FF1E4A38" : "#FF020305";
         return BuildLed(core, shade, LitLedSize);
     }
 

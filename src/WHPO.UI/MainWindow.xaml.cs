@@ -464,6 +464,27 @@ public sealed partial class MainWindow : Window
             ShowWindow();
         }));
 
+        // Modo rendimiento: el MISMO switch de la biblioteca (gameboost.enabled),
+        // para activarlo o desactivarlo sin abrir la ventana. Va inmediatamente
+        // debajo de la biblioteca, sin separador: son las dos acciones de juego.
+        // El menú se reconstruye en cada apertura, así que el texto siempre refleja
+        // el estado real, incluso si se cambió desde la UI. Al desactivar con una
+        // partida activa, el servicio restaura servicios y prioridades como siempre.
+        if (_gameBoostService != null)
+        {
+            var boostService = _gameBoostService;
+            bool boostEnabled = boostService.IsEnabled;
+            menu.Items.Add(MakeTrayItem(
+                EmojiGlyph(0x26A1, 0xFE0F),
+                $"{I18n.T("Modo rendimiento")} · {I18n.T(boostEnabled ? "Activado" : "Desactivado")}",
+                (s, e) =>
+                {
+                    bool enabled = !boostService.IsEnabled;
+                    boostService.SetEnabled(enabled);
+                    _loggingService.LogInfo($"Bandeja: Modo rendimiento {(enabled ? "activado" : "desactivado")}.");
+                }));
+        }
+
         menu.Items.Add(new ToolStripSeparator());
 
         // Juegos favoritos (ya refrescados por el evento Opening antes de armar el menú).
@@ -540,20 +561,13 @@ public sealed partial class MainWindow : Window
         // Salir (ícono de encendido/apagado ⏻).
         menu.Items.Add(MakeTrayItem(EmojiGlyph(0x23FB, 0xFE0F), I18n.T("Salir"), (s, e) =>
         {
-            // Restaurar el escaneo Wi-Fi si el optimizador WLAN quedó activo, así
-            // el bloqueo de fondo / modo streaming no queda aplicado tras cerrar la app.
-            try
-            {
-                var wlan = App.Services.GetService<WHPO_UI.Services.WlanOptimizerService>();
-                if (wlan != null && (wlan.BlockScanActive || wlan.StreamingActive))
-                {
-                    foreach (var a in wlan.GetAdapters())
-                        wlan.RestoreDefaults(a.Guid);
-                }
-            }
-            catch { }
-            _notifyIcon?.Dispose();
-            WinUIApp.Current.Exit();
+            // Salir tiene que recorrer el cierre REAL de la ventana: ahí App.OnWindowClosed
+            // restaura WLAN, GameBoost, ventiladores, sensores y el mutex. Application.Exit
+            // corta el bucle de mensajes y puede saltearse ese cierre; Close() con
+            // _forceClosePending pasa por AppWindow_Closing sin volver a la bandeja.
+            // Se encola para no destruir el menú contextual dentro de su propio clic.
+            if (!DispatcherQueue.TryEnqueue(ExitFromTray))
+                ExitFromTray();
         }));
     }
 
@@ -616,15 +630,32 @@ public sealed partial class MainWindow : Window
                 launchFile = $"uplay://launch/{game.AppId}/0";
                 launchArgs = "";
             }
+            else if (game.Launcher == "Amazon" && !string.IsNullOrEmpty(game.AppId))
+            {
+                launchFile = $"amazon-games://play/{game.AppId}";
+                launchArgs = "";
+            }
+            else if (game.Launcher == "EA")
+            {
+                // EA app: se pide por origin2 con el contentID del instalador; sin
+                // él se cae al exe directo (el launcher hace el handshake).
+                var offerIds = GameLauncher.FindEaOfferIds(game.InstallPath);
+                launchFile = offerIds != null
+                    ? $"origin2://game/launch/?offerIds={offerIds}"
+                    : exePath ?? "";
+                launchArgs = "";
+            }
+            else if (game.Launcher == "Rockstar")
+            {
+                // Rockstar no tiene URI de título: el stub Play<Juego>.exe es el
+                // acceso oficial y levanta el launcher.
+                launchFile = GameLauncher.FindRockstarPlayStub(game.InstallPath) ?? exePath ?? "";
+                launchArgs = "";
+            }
             else if (riot)
             {
                 launchFile = GameLauncher.FindRiotLauncher() ?? "";
                 launchArgs = $"--launch-product={game.AppId} --launch-patchline=live";
-            }
-            else if (game.Launcher == "Blacksmith")
-            {
-                launchFile = exePath ?? "";
-                launchArgs = "";
             }
             else
             {
@@ -974,6 +1005,37 @@ public sealed partial class MainWindow : Window
 
     // Reinicio real pendiente: el próximo cierre de la ventana no va a la bandeja.
     private bool _forceClosePending;
+
+    /// <summary>
+    /// Salida pedida desde la bandeja: cierra la ventana principal por el mismo camino
+    /// que el cierre real (AppWindow_Closing → Window.Closed), no con Application.Exit(),
+    /// para que App.OnWindowClosed restaure WLAN, GameBoost, ventiladores y sensores.
+    /// </summary>
+    private void ExitFromTray()
+    {
+        try
+        {
+            _forceClosePending = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            // Último recurso: si cerrar la ventana falla, no dejar la app viva sin salida.
+            _loggingService.LogError("Bandeja: no se pudo cerrar la ventana al salir.", ex);
+            try
+            {
+                var wlan = App.Services.GetService<WHPO_UI.Services.WlanOptimizerService>();
+                if (wlan != null && (wlan.BlockScanActive || wlan.StreamingActive))
+                {
+                    foreach (var a in wlan.GetAdapters())
+                        wlan.RestoreDefaults(a.Guid);
+                }
+            }
+            catch { }
+            _notifyIcon?.Dispose();
+            WinUIApp.Current.Exit();
+        }
+    }
 
     /// <summary>
     /// Reinicio de la app para aplicar un cambio de apariencia/tema: el tema nuevo

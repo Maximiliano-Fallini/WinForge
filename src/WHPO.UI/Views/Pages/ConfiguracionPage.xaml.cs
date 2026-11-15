@@ -207,8 +207,11 @@ public sealed partial class ConfiguracionPage : Page
 
             // Paleta de la apariencia 3D antes de pintar las miniaturas y las muestras.
             WHPO_UI.Controls.CardSkin.Refresh();
+            WHPO_UI.Controls.ConsoleModel.Set(_settingsService.Get(
+                WHPO_UI.Controls.ConsoleModel.SettingKey, WHPO_UI.Controls.ConsoleModel.DefaultId));
             PaintLibraryStylePreviews();
             BuildCardSkinPicker();
+            BuildConsoleModelPicker();
 
             // Pestaña Apariencia: los controles reflejan el ajuste VIGENTE (el que tienen
             // puesto las superficies ahora mismo), no el guardado en disco: ese se escribe
@@ -430,6 +433,138 @@ public sealed partial class ConfiguracionPage : Page
     /// para reconstruir la grilla: el cambio se ve al volver, sin reiniciar la app.
     /// El guard de carga evita que reflejar el valor guardado lo vuelva a escribir.
     /// </summary>
+    // Modelo de consola: una tarjeta por opci贸n con su silueta (cuerpo + tapa).
+    private readonly List<(string Id, RadioButton Tile)> _consoleModelTiles = new();
+    private bool _buildingConsoleModel;
+
+    /// <summary>
+    /// Arma el selector del modelo de consola con las opciones de
+    /// <see cref="ConsoleModel"/>. La silueta es un diagrama (alto = grosor, círculo =
+    /// tapa), no el render: los diseños definitivos viven en CartridgeModel.
+    /// </summary>
+    private void BuildConsoleModelPicker()
+    {
+        if (ConsoleModelHost == null) return;
+        WHPO_UI.Controls.ConsoleModel.Set(_settingsService.Get(
+            WHPO_UI.Controls.ConsoleModel.SettingKey, WHPO_UI.Controls.ConsoleModel.DefaultId));
+        _buildingConsoleModel = true;
+        try
+        {
+            ConsoleModelHost.Children.Clear();
+            _consoleModelTiles.Clear();
+            string current = WHPO_UI.Controls.ConsoleModel.CurrentId;
+            foreach (var option in WHPO_UI.Controls.ConsoleModel.Options)
+            {
+                var tile = new RadioButton
+                {
+                    GroupName = "ConsoleModel",
+                    Tag = option.Id,
+                    IsChecked = string.Equals(option.Id, current, StringComparison.OrdinalIgnoreCase)
+                };
+                if (Resources.TryGetValue("LibraryStyleTile", out var styleValue) && styleValue is Style tileStyle)
+                    tile.Style = tileStyle;
+                tile.Content = BuildConsoleModelTile(option);
+                tile.Checked += (s, e) => SelectConsoleModel(option.Id);
+                _consoleModelTiles.Add((option.Id, tile));
+                ConsoleModelHost.Children.Add(tile);
+            }
+        }
+        finally
+        {
+            _buildingConsoleModel = false;
+        }
+    }
+
+    private FrameworkElement BuildConsoleModelTile(WHPO_UI.Controls.ConsoleModel.Option option)
+    {
+        var preview = new Grid { Width = 168, Height = 120 };
+        preview.Children.Add(new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Background = ThemeBrushes.Get("CardHoverBrush"),
+            BorderBrush = ThemeBrushes.Get("SensorGridLineBrush"),
+            BorderThickness = new Thickness(1)
+        });
+        // La pieza REAL del modelo: la misma cara pintada y la misma malla 3D que la
+        // biblioteca, renderizada acá. Nada de diagramas de cajas.
+        var shot = ConsoleModelPreview(option);
+        if (shot != null)
+        {
+            preview.Children.Add(new Image
+            {
+                Source = shot,
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(3)
+            });
+        }
+
+        var labels = new StackPanel { Spacing = 1, Margin = new Thickness(2, 0, 0, 0) };
+        labels.Children.Add(new TextBlock
+        {
+            Text = I18n.T(option.Label),
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        labels.Children.Add(new TextBlock
+        {
+            Text = I18n.T(option.Hint),
+            FontSize = 12,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 168
+        });
+        return new StackPanel { Spacing = 10, Children = { preview, labels } };
+    }
+
+    private static readonly Dictionary<string, BitmapImage> _consoleModelShots = new();
+
+    /// <summary>Render del modelo para el selector: cara pintada + malla + cámara, a
+    /// 2× del tamaño de la miniatura. Se cachea por modelo y por paleta, porque pintar
+    /// y rasterizar cuesta y la página se reconstruye al cambiar el estilo.</summary>
+    private static BitmapImage? ConsoleModelPreview(WHPO_UI.Controls.ConsoleModel.Option option)
+    {
+        string key = $"{option.Id}|{WHPO_UI.Controls.CardSkin.Current.Key}";
+        if (_consoleModelShots.TryGetValue(key, out var cached)) return cached;
+
+        string prev = WHPO_UI.Controls.ConsoleModel.CurrentId;
+        try
+        {
+            // La malla y el pintado leen el modelo vigente: se pone este y se restaura.
+            WHPO_UI.Controls.ConsoleModel.Set(option.Id);
+            var plastic = WHPO_UI.Controls.CartridgeModel.PlasticColor("WINFORGE", null);
+            using var face = WHPO_UI.Controls.CartridgeModel.PaintFace(
+                I18n.T(option.Label), "WinForge", "WINFORGE · CONSOLA", artPath: null, plastic,
+                flat: true, header: GameLook.DefaultHeader, kind: option.Kind);
+            using var back = WHPO_UI.Controls.CartridgeModel.PaintBack(
+                "WinForge", "WINFORGE · CONSOLA", plastic, flat: true, kind: option.Kind);
+            using var view = WHPO_UI.Controls.DevicePreview.Render(option.Kind, face, back, plastic,
+                336, 240, pitchDeg: WHPO_UI.Controls.CartridgeModel.RestPitch(option.Kind));
+            using var ms = new MemoryStream();
+            view.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            ms.Position = 0;
+            var image = new BitmapImage();
+            image.SetSource(ms.AsRandomAccessStream());
+            _consoleModelShots[key] = image;
+            return image;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            WHPO_UI.Controls.ConsoleModel.Set(prev);
+        }
+    }
+
+    private void SelectConsoleModel(string id)
+    {
+        if (_buildingConsoleModel) return;
+        WHPO_UI.Controls.ConsoleModel.Set(id);
+        _settingsService.Set(WHPO_UI.Controls.ConsoleModel.SettingKey, WHPO_UI.Controls.ConsoleModel.CurrentId);
+        _settingsService.Save();
+    }
+
     private void LibraryStyleTile_Checked(object sender, RoutedEventArgs e)
     {
         bool threeD = ReferenceEquals(sender, LibraryStyle3DTile);
@@ -440,6 +575,9 @@ public sealed partial class ConfiguracionPage : Page
         // El color de carcasa solo tiene sentido con cartuchos: en 2D no hay qué teñir.
         if (CardSkinCard != null)
             CardSkinCard.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
+        // El modelo de consola tampoco existe en 2D: no hay equipo que mostrar.
+        if (ConsoleModelCard != null)
+            ConsoleModelCard.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
         if (_isLoading) return;
         _settingsService.Set("biblioteca.cards3D", threeD);
         _settingsService.Save();
@@ -1309,6 +1447,11 @@ public sealed partial class ConfiguracionPage : Page
         {
             long freed = GetCacheSizeBytes();
 
+            // Biblioteca cacheada (memoria + disco): se limpia PRIMERO porque es la
+            // señal que dispara el skeleton y el re-escaneo al volver a la biblioteca.
+            // Si borrar banners/íconos falla, la limpieza de la biblioteca no se pierde.
+            _installedGamesService.ClearCache();
+
             // Banners e íconos de juegos: se re-descargan/re-extraen al abrir la biblioteca.
             var bannerDir = GestionarProcesosPage.BannerCacheDir;
             if (Directory.Exists(bannerDir))
@@ -1316,9 +1459,6 @@ public sealed partial class ConfiguracionPage : Page
                 // Íconos de procesos en memoria: apuntan a archivos recién borrados;
                 // invalidar para que se re-extraigan sin reiniciar la app.
                 ProcesosPage.ClearIconCache();
-
-            // Biblioteca cacheada (memoria + disco): re-escaneo en la próxima visita.
-            _installedGamesService.ClearCache();
 
  // Componente de Overclock USB: se borra la copia descargada para que la
  // próxima vez que haga falta (reparar/reinstalar) se vuelva a descargar.

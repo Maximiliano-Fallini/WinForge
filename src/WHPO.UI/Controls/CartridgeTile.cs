@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Foundation;
@@ -22,7 +23,13 @@ public sealed class CartridgeTile : UserControl
     private bool _dragging;
     private readonly PlaneProjection _tilt = new();
     private readonly TranslateTransform _lift = new();
-    private readonly Border _recess;
+    private readonly Grid _recess;
+    private readonly TextBlock _recessLabel;
+    private bool _slotVisible;
+    private DeviceKind _kind = DeviceKind.Cartridge;
+    // Piezas del fallback 2D que cambian según el tipo de dispositivo.
+    private UIElement? _fallbackTab, _fallbackArrow;
+    private TextBlock? _fallbackCode;
 
     // El hover persigue al puntero en vez de saltar de golpe al entrar o salir. Se
     // interpola en CompositionTarget.Rendering (el reloj de composición de la app) y el
@@ -33,8 +40,9 @@ public sealed class CartridgeTile : UserControl
     private readonly Stopwatch _hoverWatch = new();
     /// <summary>Multiplicador del offset normalizado del puntero (±0,5): ±7° de inclinación.</summary>
     private const double HoverTiltRange = 14;
-    /// <summary>Cuánto se levanta el cartucho al hover (px).</summary>
-    private const double HoverLift = -4;
+    /// <summary>Hover sin elevación: el cartucho solo se inclina hacia el puntero.
+    /// Antes se levantaba 4 px; se quitó para que no "salte" al pasar el mouse.</summary>
+    private const double HoverLift = 0;
     /// <summary>Respuesta del suavizado (1/s): ~150 ms para llegar al 95 % del objetivo.</summary>
     private const double HoverResponse = 20;
 
@@ -43,16 +51,94 @@ public sealed class CartridgeTile : UserControl
     /// encontrar la tile al refrescar la carátula o el encabezado personalizados.</summary>
     public string? GameExe { get; set; }
     /// <summary>El cartucho montado en el dock va clavado: con esto en false el hover
-    /// no lo inclina ni lo levanta (el clic para inspeccionar y el arrastre hacia
-    /// afuera siguen funcionando igual).</summary>
+    /// no lo inclina (el hover tampoco lo levanta). El clic para inspeccionar y el
+    /// arrastre hacia afuera siguen funcionando igual.</summary>
     public bool HoverTiltEnabled { get; set; } = true;
     /// <summary>Manito de agarre al hover, SIN mover la card: solo se usa en el asiento
     /// del dock (que ya no hace tilt). Si es null no se toca el cursor (cards de la grilla).</summary>
     public Func<bool>? GrabHintAllowed { get; set; }
-    public Border Recess => _recess;
+    public Grid Recess => _recess;
+
+    /// <summary>
+    /// Muestra el POZO con la silueta del cartucho detrás de la card (el mismo material
+    /// de las cards). Lo encienden las cards de la grilla; el asiento del dock no, porque
+    /// ahí el cartucho va metido en el puerto y no flota sobre un pozo.
+    /// </summary>
+    public bool SlotVisible
+    {
+        get => _slotVisible;
+        set { _slotVisible = value; UpdateRecessVisibility(); }
+    }
+
+    /// <summary>Tipo de hardware de la pieza (cartucho, consola o teléfono): cambia la
+    /// silueta del pozo y del fallback 2D. En la grilla la imagen ya viene pintada con el
+    /// tipo por el loader de la página.</summary>
+    public DeviceKind Kind
+    {
+        get => _kind;
+        set { _kind = value; ApplyKind(); }
+    }
 
     public UIElement? CoordinateRoot { get; set; }
     public Func<bool>? CanInteract { get; set; }
+    /// <summary>La consola y el teléfono no se arrastran: son la máquina, no un cartucho
+    /// que se inserta. Un clic sigue abriendo la inspección.</summary>
+    public bool Draggable { get; set; } = true;
+    /// <summary>Con el control 3D en vivo montado, el puntero lo maneja ÉL (gira la
+    /// consola como en la inspección): la tile no captura el gesto.</summary>
+    public bool LiveView { get; private set; }
+
+    /// <summary>Muestra el control 3D en vivo sobre el arte quieto (que es un PNG).</summary>
+    public void AttachLiveView(FrameworkElement view)
+    {
+        LiveView = true;
+        // El PNG queda a la vista DEBAJO hasta que el control publique su primer cuadro
+        // (los dos están en la misma pose, así que el cambio no se nota). Taparlo acá
+        // dejaba un hueco de un cuadro al entrar con el mouse.
+        view.HorizontalAlignment = HorizontalAlignment.Stretch;
+        view.VerticalAlignment = VerticalAlignment.Stretch;
+        // El control va HERMANO de la capa visual, encima y fuera de ella: la capa nace
+        // en no-hit-test (el arte quieto no recibe el puntero) y además lleva la
+        // proyección del tilt, donde el hit-test no es confiable. En la raíz de la tile
+        // ocupa la misma área y recibe el arrastre como en la inspección.
+        if (Content is Grid root)
+        {
+            if (!root.Children.Contains(view)) root.Children.Add(view);
+        }
+        else if (!CartridgeVisual.Children.Contains(view))
+        {
+            CartridgeVisual.Children.Add(view);
+        }
+    }
+
+    /// <summary>Tapa el PNG cuando el control en vivo ya dibujó su primer cuadro.</summary>
+    public void HideArtworkForLiveView()
+    {
+        if (LiveView) Artwork.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>Saca el control en vivo y vuelve al PNG de la biblioteca.</summary>
+    public void DetachLiveView(FrameworkElement view)
+    {
+        LiveView = false;
+        if (Content is Grid root) root.Children.Remove(view);
+        CartridgeVisual.Children.Remove(view);
+        Artwork.Visibility = Visibility.Visible;
+    }
+    /// <summary>Archivos de las vistas del giro (la 0 es el arte principal, ya cargado).
+    /// Se decodifican recién al acercar el puntero y se sueltan al salir, así una grilla
+    /// con varias consolas no tiene todas las vistas en memoria.</summary>
+    public IReadOnlyList<string>? SpinFrameFiles { get; set; }
+    private List<ImageSource>? _spinFrames;
+    private ImageSource? _baseSource;
+    private bool _spinLoading;
+    // Solo la última card apuntada conserva las vistas decodificadas.
+    private static CartridgeTile? _spinOwner;
+    // Píxeles de arrastre por vista girada.
+    private const double SpinStepPx = 14;
+    private int _spinIndex;
+    private int _spinBase;
+    private int _spinStep;
     public Grid CartridgeVisual { get; }
     public Image Artwork { get; }
     public string Title { get; }
@@ -62,30 +148,71 @@ public sealed class CartridgeTile : UserControl
     public event Action<Point?>? DragCompleted;
     public event Action? InspectRequested;
 
-    public CartridgeTile(string title, string launcher)
+    public CartridgeTile(string title, string launcher, DeviceKind kind = DeviceKind.Cartridge)
     {
         Title = title;
         Launcher = launcher;
+        _kind = kind;
         Tag = "no-reveal";
         Background = new SolidColorBrush(Colors.Transparent);
         ManipulationMode = ManipulationModes.None;
-        Artwork = new Image { Stretch = Stretch.Fill, IsHitTestVisible = false };
-        CartridgeVisual = CreateVisual(title, launcher, Artwork);
+        // El dispositivo conserva la proporción de su render (el gabinete arcade es alto
+        // y angosto); el cartucho llena el marco como siempre.
+        Artwork = new Image
+        {
+            Stretch = kind == DeviceKind.Cartridge ? Stretch.Fill : Stretch.Uniform,
+            IsHitTestVisible = false
+        };
+        // Giro: se prepara al acercar el puntero y se libera al alejarlo.
+        PointerEntered += (_, _) => LoadSpinFramesAsync();
+        PointerExited += (_, _) => ReleaseSpinFrames();
+        CartridgeVisual = CreateVisual(title, launcher, Artwork, kind);
+        // El fallback se construyó con el kind del constructor: sacar las piezas que
+        // dependen del tipo (fallback.Children = { shell, sticker, tab, arrow }).
+        if (CartridgeVisual.Children.Count > 0 && CartridgeVisual.Children[0] is Grid fallback)
+        {
+            if (fallback.Children.Count > 3) { _fallbackTab = fallback.Children[2]; _fallbackArrow = fallback.Children[3]; }
+            if (fallback.Children.Count > 1 && fallback.Children[1] is Grid sticker && sticker.Children.Count > 2
+                && sticker.Children[2] is Border codeBorder && codeBorder.Child is TextBlock codeText)
+                _fallbackCode = codeText;
+        }
         CartridgeVisual.Projection = _tilt;
         CartridgeVisual.RenderTransform = _lift;
-        _recess = new Border
+        // POZO con la SILUETA del cartucho: sin marco ni filo propio. El relleno es la
+        // superficie viva del tema (misma que las cards), así que responde al ajuste de
+        // transparencia y al blur de paneles; lo que separa el pozo de la bandeja es el
+        // material, no un borde blanco. Se dibuja SIEMPRE detrás de la card (lo enciende
+        // SlotVisible) y cuando el cartucho se levanta al dock queda solo el pozo con el
+        // nombre del juego.
+        var recessShell = new Polygon
         {
-            Visibility = Visibility.Collapsed,
-            Background = Brush(17, 19, 24), CornerRadius = new CornerRadius(12),
-            BorderBrush = Brush(55, 59, 69), BorderThickness = new Thickness(1), Margin = new Thickness(2),
-            Child = new TextBlock
-            {
-                Text = title.ToUpperInvariant(), TextWrapping = TextWrapping.Wrap, MaxLines = 3,
-                Foreground = Brush(100, 106, 120), FontSize = 11, TextAlignment = TextAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(14, 0, 14, 22)
-            }
+            Fill = ThemeBrushes.GetSurface("CardBackgroundBrush"),
+            IsHitTestVisible = false
         };
-        _recess.IsHitTestVisible = false;
+        var recessLabel = new TextBlock
+        {
+            Text = title.ToUpperInvariant(), TextWrapping = TextWrapping.Wrap, MaxLines = 3,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"), FontSize = 11,
+            TextAlignment = TextAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(14, 0, 14, 22),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false
+        };
+        _recessLabel = recessLabel;
+        _recess = new Grid
+        {
+            // -4: el pozo llega al borde de la card (el chasis de la grilla tiene 4 px de
+            // padding), así la silueta asoma alrededor del cartucho como en Carthage.
+            Margin = new Thickness(-4),
+            Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Colors.Transparent),
+            IsHitTestVisible = false,
+            Children = { recessShell, recessLabel }
+        };
+        // La silueta se recalcula con el tamaño real del pozo: acompaña cualquier ancho
+        // de columna, igual que el cartucho y el skeleton.
+        _recess.SizeChanged += (_, e) =>
+            recessShell.Points = BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height, kind: _kind);
         // Keep the transparent hit surface enabled; only the artwork is non-interactive.
         Content = new Grid
         {
@@ -124,20 +251,73 @@ public sealed class CartridgeTile : UserControl
         IsRemoved = removed;
         ResetTilt();
         CartridgeVisual.Opacity = removed ? 0 : 1;
-        _recess.Visibility = removed ? Visibility.Visible : Visibility.Collapsed;
+        // El pozo queda; el nombre solo se muestra cuando el cartucho ya no está.
+        _recessLabel.Visibility = removed ? Visibility.Visible : Visibility.Collapsed;
+        UpdateRecessVisibility();
+    }
+
+    /// <summary>El pozo se ve en las cards de la grilla; el asiento del dock no lo lleva.</summary>
+    private void UpdateRecessVisibility()
+        => _recess.Visibility = _slotVisible ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>Consola/teléfono: sin pestaña ni flecha de cartucho y con su propia
+    /// etiqueta inferior. El cartucho mantiene la pestaña, la flecha y GAME CARD.</summary>
+    private void ApplyKind()
+    {
+        bool isDevice = _kind != DeviceKind.Cartridge;
+        // El PNG del dispositivo conserva SU proporción (el gabinete arcade es alto y
+        // angosto): con Fill se estiraba a lo ancho del arte y se veía deformado.
+        Artwork.Stretch = isDevice ? Stretch.Uniform : Stretch.Fill;
+        if (_fallbackTab != null) _fallbackTab.Visibility = isDevice ? Visibility.Collapsed : Visibility.Visible;
+        if (_fallbackArrow != null) _fallbackArrow.Visibility = isDevice ? Visibility.Collapsed : Visibility.Visible;
+        if (_fallbackCode != null)
+            _fallbackCode.Text = _kind switch
+            {
+                DeviceKind.Console => "WINFORGE · CONSOLE",
+                DeviceKind.Phone => "WINFORGE · PHONE",
+                DeviceKind.Arcade => "WINFORGE · ARCADE",
+                _ => "WINFORGE · GAME CARD"
+            };
     }
 
     /// <summary>
     /// Construye el polígono exacto de la silueta del cartucho (con esquinas redondeadas y
     /// muescas laterales en y=708..762 sobre 600×878) para el tamaño actual del control.
     /// </summary>
-    internal static PointCollection BuildSilhouettePoints(double w, double h, double offsetX = 0, double offsetY = 0)
+    internal static PointCollection BuildSilhouettePoints(double w, double h, double offsetX = 0, double offsetY = 0, DeviceKind kind = DeviceKind.Cartridge)
     {
         var pts = new PointCollection();
         if (w <= 1 || h <= 1) return pts;
 
         double sx = w / CartridgeModel.FaceWidth;
         double sy = h / CartridgeModel.FaceHeight;
+
+        if (kind != DeviceKind.Cartridge)
+        {
+            // Losa redondeada del dispositivo sobre su cuerpo real (teléfono angosto /
+            // consola ancha). Las esquinas son las del rectángulo de DeviceBody: la
+            // misma pieza que la malla 3D y que el pintado de caras. La referencia es la
+            // vista recortada (DeviceViewRect), igual que la imagen de grilla: así la
+            // silueta ocupa toda la tile en vez de quedar chica dentro del canvas.
+            var (bx, by, bw, bh, br) = CartridgeModel.DeviceBody(kind);
+            var (vx, vy, vw, vh) = CartridgeModel.DeviceViewRect(kind);
+            double vsx = w / vw, vsy = h / vh;
+            const int dSteps = 10;
+            void AddDeviceCorner(double cx, double cy, double startDeg, double endDeg)
+            {
+                for (int i = 0; i <= dSteps; i++)
+                {
+                    double a = (startDeg + (endDeg - startDeg) * i / dSteps) * Math.PI / 180.0;
+                    pts.Add(new Point((cx + br * Math.Cos(a) - vx) * vsx + offsetX, (cy + br * Math.Sin(a) - vy) * vsy + offsetY));
+                }
+            }
+            AddDeviceCorner(bx + br, by + br, 180, 270);
+            AddDeviceCorner(bx + bw - br, by + br, 270, 360);
+            AddDeviceCorner(bx + bw - br, by + bh - br, 0, 90);
+            AddDeviceCorner(bx + br, by + bh - br, 90, 180);
+            return pts;
+        }
+
         const double r = 36.0;
         const double ny0 = CartridgeModel.NotchTopY;
         const double ny1 = CartridgeModel.NotchTopY + CartridgeModel.NotchHeightPx;
@@ -178,7 +358,7 @@ public sealed class CartridgeTile : UserControl
     }
 
     // This shell exists immediately and is opaque, even offline or after a failed PNG decode.
-    public static Grid CreateVisual(string title, string launcher, Image artwork)
+    public static Grid CreateVisual(string title, string launcher, Image artwork, DeviceKind kind = DeviceKind.Cartridge)
     {
         var shell = new Polygon
         {
@@ -217,24 +397,34 @@ public sealed class CartridgeTile : UserControl
             Background = Brush(11, 11, 13), CornerRadius = new CornerRadius(0, 0, 6, 6),
             Child = new TextBlock
             {
-                Text = "WINFORGE · GAME CARD", FontSize = 8, Foreground = Brush(220, 220, 226),
+                Text = kind switch
+                {
+                    DeviceKind.Console => "WINFORGE · CONSOLE",
+                    DeviceKind.Phone => "WINFORGE · PHONE",
+                DeviceKind.Arcade => "WINFORGE · ARCADE",
+                    _ => "WINFORGE · GAME CARD"
+                },
+                FontSize = 8, Foreground = Brush(220, 220, 226),
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
             }
         };
         Grid.SetRow(label, 1); Grid.SetRow(code, 2);
         sticker.Children.Add(header); sticker.Children.Add(label); sticker.Children.Add(code);
+        bool isDevice = kind != DeviceKind.Cartridge;
         var tab = new Border
         {
             Width = 42, Height = 7, CornerRadius = new CornerRadius(3), Background = Brush(41, 41, 46),
             BorderBrush = Brush(32, 32, 36), BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 6, 0, 0)
+            Margin = new Thickness(0, 6, 0, 0),
+            Visibility = isDevice ? Visibility.Collapsed : Visibility.Visible
         };
         var arrow = new TextBlock
         {
             Text = "▼", FontSize = 11, Foreground = Brush(40, 40, 45),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 8),
+            Visibility = isDevice ? Visibility.Collapsed : Visibility.Visible
         };
         var fallback = new Grid
         {
@@ -247,19 +437,37 @@ public sealed class CartridgeTile : UserControl
 
         // Sin sombra: se probó una imagen de silueta difusa como hijo y el halo quedaba
         // recortado por el layout de la card; una ThemeShadow alrededor del plástico se
-        // veía como un marco gris. La profundidad la dan el tilt y el lift del hover.
+        // veía como un marco gris. La profundidad la da el tilt del hover.
         var visual = new Grid { IsHitTestVisible = false };
         visual.Children.Add(fallback);
         visual.Children.Add(artwork);
         visual.SizeChanged += (_, e) =>
-            shell.Points = BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height);
+        {
+            shell.Points = BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height, kind: kind);
+            if (isDevice)
+            {
+                // El sticker del fallback debe vivir dentro del cuerpo del
+                // dispositivo (teléfono angosto / consola ancha), no en todo el tile.
+                // Referencia: la vista recortada, igual que la imagen de grilla.
+                var (bx, by, bw, bh, _) = CartridgeModel.DeviceBody(kind);
+                var (vx, vy, vw, vh) = CartridgeModel.DeviceViewRect(kind);
+                sticker.Margin = new Thickness(
+                    (bx - vx) / vw * e.NewSize.Width,
+                    (by - vy) / vh * e.NewSize.Height,
+                    (vx + vw - bx - bw) / vw * e.NewSize.Width,
+                    (vy + vh - by - bh) / vh * e.NewSize.Height);
+            }
+        };
 
         return visual;
     }
 
     private void Press(object sender, PointerRoutedEventArgs e)
     {
+        // El control 3D en vivo tiene sus propios gestos (girar / scrollear).
+        if (LiveView) return;
         if (_pointerId != null || IsRemoved || CanInteract?.Invoke() == false) return;
+        if (!Draggable) LoadSpinFramesAsync();
         var point = e.GetCurrentPoint(this);
         if (!point.Properties.IsLeftButtonPressed) return;
         // Capture BEFORE the threshold: otherwise the ScrollViewer/another card takes the gesture.
@@ -282,9 +490,15 @@ public sealed class CartridgeTile : UserControl
             {
                 _dragging = true;
                 ResetTilt();
-                DragStarted?.Invoke(point, _grab);
+                _spinBase = _spinIndex;
+                _spinStep = 0;
+                if (Draggable) DragStarted?.Invoke(point, _grab);
             }
-            if (_dragging) DragMoved?.Invoke(point);
+            if (_dragging)
+            {
+                if (Draggable) DragMoved?.Invoke(point);
+                else Spin(dx);
+            }
             e.Handled = true;
             return;
         }
@@ -296,6 +510,65 @@ public sealed class CartridgeTile : UserControl
         _hoverTargetX = Math.Clamp(p.Y / Math.Max(1, ActualHeight) - 0.5, -0.5, 0.5) * HoverTiltRange;
         _hoverTargetLift = HoverLift;
         EnsureHoverAnimation();
+    }
+
+    /// <summary>Gira la consola con el arrastre horizontal: cada <see cref="SpinStepPx"/> px
+    /// pasa a la vista siguiente. El ángulo queda donde se soltó.</summary>
+    /// <summary>Decodifica las vistas del giro; solo una card las mantiene a la vez.</summary>
+    private async void LoadSpinFramesAsync()
+    {
+        if (Draggable || IsRemoved || _spinFrames != null || _spinLoading) return;
+        // Sin arte principal todavía no hay vista 0: se reintenta al próximo hover.
+        if (Artwork.Source == null) return;
+        var files = SpinFrameFiles;
+        if (files is not { Count: > 0 }) return;
+        _spinLoading = true;
+        try
+        {
+            var frames = new List<ImageSource>(files.Count + 1) { Artwork.Source };
+            bool ok = true;
+            foreach (var path in files)
+            {
+                if (!File.Exists(path)) { ok = false; break; }
+                using var stream = File.OpenRead(path).AsRandomAccessStream();
+                var bitmap = new BitmapImage { DecodePixelWidth = 720 };
+                await bitmap.SetSourceAsync(stream);
+                frames.Add(bitmap);
+            }
+            if (!ok) return;
+            var previous = _spinOwner;
+            _spinOwner = this;
+            if (previous != null && !ReferenceEquals(previous, this)) previous.ReleaseSpinFrames();
+            _baseSource = Artwork.Source;
+            _spinFrames = frames;
+            _spinIndex = 0;
+            _spinBase = 0;
+        }
+        catch { }
+        finally { _spinLoading = false; }
+    }
+
+    /// <summary>Suelta las vistas (vuelve al arte principal) al salir el puntero.</summary>
+    private void ReleaseSpinFrames()
+    {
+        if (Draggable || _pointerId != null || _spinLoading) return;
+        if (ReferenceEquals(_spinOwner, this)) _spinOwner = null;
+        if (_spinFrames == null) return;
+        _spinFrames = null;
+        _spinIndex = 0;
+        if (_baseSource != null) Artwork.Source = _baseSource;
+    }
+
+    private void Spin(double dx)
+    {
+        var frames = _spinFrames;
+        if (frames is not { Count: > 1 }) return;
+        int step = (int)Math.Round(dx / SpinStepPx);
+        if (step == _spinStep) return;
+        _spinStep = step;
+        int n = frames.Count;
+        _spinIndex = ((_spinBase + step) % n + n) % n;
+        Artwork.Source = frames[_spinIndex];
     }
 
     private void Release(object sender, PointerRoutedEventArgs e)
@@ -340,7 +613,7 @@ public sealed class CartridgeTile : UserControl
     }
 
     /// <summary>El puntero salió sin arrastrar: vuelve al reposo suavemente, en vez de
-    /// cortar la inclinación y el levante de un cuadro al otro.</summary>
+    /// cortar la inclinación de un cuadro al otro.</summary>
     private void EndHover()
     {
         _hoverTargetX = _hoverTargetY = _hoverTargetLift = 0;

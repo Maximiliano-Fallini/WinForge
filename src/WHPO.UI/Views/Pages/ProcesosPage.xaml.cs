@@ -20,6 +20,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Rectangle = Microsoft.UI.Xaml.Shapes.Rectangle;
 using WHPO.Core.Services.Interfaces;
+using WHPO_UI.Controls;
 using WHPO_UI.Services;
 
 namespace WHPO_UI.Views.Pages;
@@ -80,7 +81,7 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
     private readonly Dictionary<int, (TimeSpan Cpu, DateTime At)> _cpuSamples = new();
     private readonly Dictionary<int, string> _userCache = new();
     private readonly Dictionary<int, string?> _pathCache = new();
-    private readonly Dictionary<int, (string Priority, int Rank, long Affinity, int? GpuPrio, int? IoPrio, DateTime At)> _staticCache = new();
+    private readonly Dictionary<int, (string Priority, int Rank, long Affinity, int? GpuPrio, int? IoPrio, bool Eco, DateTime At)> _staticCache = new();
     private readonly Dictionary<string, string> _appNameCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _gpuPids = new();
     private DateTime _gpuCounterEnumAt;
@@ -107,6 +108,16 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
     // (+ D3DKMT): con ~200 procesos son caras. Se cachean y refrescan como mucho
     // cada 10 s; el resto del tick solo lee cachés. Se invalidan al aplicar reglas.
     private static readonly TimeSpan StaticCacheTtl = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// True si este Windows soporta EcoQoS (Windows 10 20H1+, build 19041; ver
+    /// <see cref="WHPO.Core.Services.EfficiencyMode.IsSupported"/>). Se resuelve UNA vez al
+    /// cargar la clase: es una capacidad de la máquina. En un Windows sin EcoQoS la columna
+    /// Estado vuelve al comportamiento anterior a esta feature —el texto "Activo", sin
+    /// hojita y sin ordenar por eco— y no se hace ninguna lectura por proceso, así una build
+    /// vieja no paga llamadas que siempre fallan.
+    /// </summary>
+    private static readonly bool EcoQosSupported = WHPO.Core.Services.EfficiencyMode.IsSupported;
 
     // Valores para el desplegable de reglas (igual que juegos).
     private static readonly int[] CpuPriorityValues = { 0, 1, 2, 3, 4, 5 };
@@ -264,10 +275,12 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
         public string Exe = "";
         public Grid Row = null!;
         public Image Icon = null!;
-        public TextBlock Name = null!, User = null!, State = null!, Priority = null!,
+        public TextBlock Name = null!, User = null!, Priority = null!,
             GpuPriority = null!, IoPrio = null!, Affinity = null!, Cpu = null!, Gpu = null!,
             MemRam = null!,
             AppName = null!, Path = null!;
+        // Hojita de Modo eficiencia (columna Estado), como el Administrador de tareas.
+        public Microsoft.UI.Xaml.Shapes.Path? Leaf;
         public TextBlock Rules = null!;
         public Grid Cols = null!;   // grilla interna con las columnas (para redimensionar)
         public Border Container = null!;   // borde de la card (para el resaltado de selección)
@@ -295,6 +308,10 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
         public long WorkingSet;   // bytes de RAM (working set): columna "Memoria (RAM)"
         public ProcessRule? EffectiveRule;
         public string AppName = "";
+        /// <summary>Modo eficiencia (EcoQoS + prioridad baja): dibuja la hojita en Estado.</summary>
+        public bool Efficiency;
+        /// <summary>El proceso tiene ventana propia: es la fila "principal" de su app.</summary>
+        public bool HasWindow;
     }
 
     // ===== P/Invoke: usuario del proceso =====
@@ -1393,7 +1410,8 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
                             ParentPid = parentMap != null && parentMap.TryGetValue(pid, out var pp) ? pp : 0,
                             Name = exe,
                             Exe = exe,
-                            WorkingSet = p.WorkingSet64
+                            WorkingSet = p.WorkingSet64,
+                            HasWindow = p.MainWindowHandle != IntPtr.Zero
                         };
 
                         // %CPU (delta de TotalProcessorTime entre muestras).
@@ -1430,6 +1448,20 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
                 _loggingService.LogWarning($"ProcesosPage: enumerar procesos: {ex.Message}");
             }
         }
+
+        // Modo eficiencia a nivel de APP, como el Administrador de tareas: Spotify (Electron)
+        // corre en varios procesos y Windows pone en eco a uno de ellos —un renderer—, no al
+        // que tiene la ventana. Medido en esta máquina: el proceso de la ventana queda Normal
+        // sin EcoQoS y el renderer queda en eco con prioridad Idle. Si CUALQUIER proceso del
+        // ejecutable está en modo eficiencia, la app lo está: se marca también su fila
+        // principal (la que tiene ventana), que es la que el usuario compara con el
+        // Administrador de tareas. El proceso en eco conserva su propia hojita.
+        var ecoExes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var info in result)
+            if (info.Efficiency) ecoExes.Add(info.Exe);
+        if (ecoExes.Count > 0)
+            foreach (var info in result)
+                if (info.HasWindow && ecoExes.Contains(info.Exe)) info.Efficiency = true;
 
         result.Sort((a, b) => CompareBy(a, b, sortColumn));
         if (desc) result.Reverse();
@@ -1486,6 +1518,7 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
             info.Affinity = st.Affinity;
             info.GpuPrio = st.GpuPrio;
             info.IoPrio = st.IoPrio;
+            info.Efficiency = st.Eco;
         }
         else
         {
@@ -1517,12 +1550,23 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
             catch { }
             try { gpu = _processService.GetGpuPriority(pid); } catch { }
             try { io = _processService.GetIoPriority(pid); } catch { }
-            _staticCache[pid] = (prio, rank, aff, gpu, io, now);
+            // Modo eficiencia = EcoQoS + prioridad baja: es lo que el Administrador de tareas
+            // dibuja con la hojita (con solo EcoQoS la hoja no aparece: ver SelfEfficiencyMode).
+            // Se lee en la MISMA ventana de caché que la prioridad y la afinidad.
+            // En un Windows sin EcoQoS no se consulta nada: la API fallaría en cada proceso
+            // y la columna Estado ya volvió al comportamiento anterior.
+            bool eco = false;
+            if (EcoQosSupported)
+            {
+                try { eco = WHPO.Core.Services.EfficiencyMode.IsEnabled(pid) == true; } catch { }
+            }
+            _staticCache[pid] = (prio, rank, aff, gpu, io, eco, now);
             info.Priority = prio;
             info.PriorityRank = rank;
             info.Affinity = aff;
             info.GpuPrio = gpu;
             info.IoPrio = io;
+            info.Efficiency = eco && rank <= 1;
         }
     }
 
@@ -1530,7 +1574,8 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
     private static int CompareBy(ProcInfo a, ProcInfo b, int col) => col switch
     {
         1 => string.Compare(a.User, b.User, StringComparison.OrdinalIgnoreCase),
-        2 => 0,
+        // Sin EcoQoS en este Windows la columna no ordena, como antes de la feature.
+        2 => EcoQosSupported ? a.Efficiency.CompareTo(b.Efficiency) : 0,
         3 => string.Compare(RuleSummary(a.EffectiveRule), RuleSummary(b.EffectiveRule), StringComparison.OrdinalIgnoreCase),
         4 => a.PriorityRank.CompareTo(b.PriorityRank),
         5 => (a.GpuPrio ?? -1).CompareTo(b.GpuPrio ?? -1),
@@ -1847,7 +1892,44 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
         // Estilo monitor de sensores: todos los datos alineados a la derecha de su
         // columna (solo el nombre queda a la izquierda, con su ícono).
         var user = NewCell(info.User, right: true);
-        var state = NewCell(I18n.T("Activo"), right: true);
+        // Estado: la hojita de Modo eficiencia, como el Administrador de tareas. Sin eco la
+        // celda queda vacía; antes decía "Activo" en TODAS las filas, que no informaba nada.
+        //
+        // Compatibilidad: EcoQoS existe desde Windows 10 20H1 (build 19041). En un Windows
+        // anterior la columna vuelve a ser la de siempre —el texto "Activo"— y el componente
+        // se comporta como antes de esta feature.
+        FrameworkElement state;
+        Microsoft.UI.Xaml.Shapes.Path? leaf = null;
+        if (EcoQosSupported)
+        {
+            // El dibujo va aislado: si algo del Path fallara en este Windows, la fila tiene
+            // que cargar igual. Una celda de estado vacía no puede costar la grilla entera.
+            try
+            {
+                leaf = new Microsoft.UI.Xaml.Shapes.Path
+                {
+                    Data = LeafGeometry(),
+                    Fill = ThemeBrushes.Get("SuccessBrush"),
+                    Width = 11,
+                    Height = 13,
+                    Stretch = Stretch.Fill,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Margin = new Thickness(0, 0, 10, 0),
+                    Visibility = Visibility.Collapsed
+                };
+                ToolTipService.SetToolTip(leaf, I18n.T("Modo eficiencia"));
+            }
+            catch { leaf = null; }
+
+            var stateHost = new Grid { VerticalAlignment = VerticalAlignment.Center };
+            if (leaf != null) stateHost.Children.Add(leaf);
+            state = stateHost;
+        }
+        else
+        {
+            state = NewCell(I18n.T("Activo"), right: true);
+        }
         var rules = NewCell("", right: true);
         var priority = NewCell("", right: true);
         var gpuPrio = NewCell("", right: true);
@@ -1956,7 +2038,7 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
             NamePanel = namePanel,
             Name = name,
             User = user,
-            State = state,
+            Leaf = leaf,
             Rules = rules,
             Priority = priority,
             GpuPriority = gpuPrio,
@@ -2054,6 +2136,49 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
         return tb;
     }
 
+    /// <summary>
+    /// Silueta de la hojita de Modo eficiencia (16×16, punta arriba y base redondeada).
+    /// Segoe Fluent Icons no trae un glifo de hoja, así que se dibuja: es la misma marca
+    /// que usa el Administrador de tareas para un proceso en modo eficiencia.
+    /// </summary>
+    private static Geometry LeafGeometry()
+    {
+        var figure = new PathFigure
+        {
+            StartPoint = new Windows.Foundation.Point(8, 0),
+            IsClosed = true,
+            IsFilled = true
+        };
+        figure.Segments.Add(new BezierSegment
+        {
+            Point1 = new Windows.Foundation.Point(11, 3.2),
+            Point2 = new Windows.Foundation.Point(14, 6.4),
+            Point3 = new Windows.Foundation.Point(14, 10)
+        });
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = new Windows.Foundation.Point(8, 16),
+            Size = new Windows.Foundation.Size(6, 6),
+            SweepDirection = SweepDirection.Clockwise
+        });
+        figure.Segments.Add(new ArcSegment
+        {
+            Point = new Windows.Foundation.Point(2, 10),
+            Size = new Windows.Foundation.Size(6, 6),
+            SweepDirection = SweepDirection.Clockwise
+        });
+        figure.Segments.Add(new BezierSegment
+        {
+            Point1 = new Windows.Foundation.Point(2, 6.4),
+            Point2 = new Windows.Foundation.Point(5, 3.2),
+            Point3 = new Windows.Foundation.Point(8, 0)
+        });
+
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        return geometry;
+    }
+
     // ===== Ícono del proceso (cacheado en disco, carga desde archivo) =====
 
     private static readonly Dictionary<string, string> _iconCacheFile = new(StringComparer.OrdinalIgnoreCase);
@@ -2134,6 +2259,12 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
         // re-layouts por tick cuando nada cambió (la mayor parte del costo de UI).
         SetText(ui.Name, info.Name);
         SetText(ui.User, info.User);
+        // La hojita se toca solo si cambió: evita re-layout por tick cuando nada cambió.
+        if (ui.Leaf is { } leafUi)
+        {
+            var leafVisibility = info.Efficiency ? Visibility.Visible : Visibility.Collapsed;
+            if (leafUi.Visibility != leafVisibility) leafUi.Visibility = leafVisibility;
+        }
         SetText(ui.Priority, info.Priority);
         SetText(ui.GpuPriority, info.GpuPrio is int g ? GpuLabel(g) : "—");
         SetText(ui.IoPrio, info.IoPrio is int io ? IoLabel(io) : "—");
@@ -2225,7 +2356,588 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
 
     // ===== Desplegable de reglas (el mismo que en juegos: Actual / Siempre) =====
 
+    private RulePalette? _processPalette;
+
+    /// <summary>
+    /// Paleta de reglas del proceso: mismo híbrido que la biblioteca (buscador arriba,
+    /// ajustes a la izquierda, valores a la derecha). El menú clásico queda como respaldo
+    /// si el armado falla.
+    /// </summary>
     private void ShowProcessRuleMenu(FrameworkElement target, int pid, string exe, string name, Windows.Foundation.Point position, string? exePath = null)
+    {
+        if (!_processService.CanOpenForModify(pid))
+        {
+            var info = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = name,
+                Content = I18n.T("Proceso del sistema: Windows no permite modificar sus reglas."),
+                CloseButtonText = I18n.T("Cerrar")
+            };
+            _ = info.ShowAsync();
+            return;
+        }
+
+        try
+        {
+            var rules = _processService.GetRules();
+            var rule = rules.TryGetValue(exe, out var r) ? r : new ProcessRule(null, null, null);
+            var sessionRule = _processService.GetSessionRule(exe) ?? new ProcessRule(null, null, null);
+            int procCount = _processService.ProcessorCount;
+            long fullMask = procCount >= 64 ? -1L : ((1L << procCount) - 1);
+            int scope = 1; // arranca en "Siempre" (guardada): 0 = Actual, 1 = Siempre
+
+            void Notify(string text, SolidColorBrush brush)
+            {
+                StatusText.Text = text;
+                StatusText.Foreground = brush;
+                StatusText.Visibility = Visibility.Visible;
+                _processPalette?.SetStatus(text, ReferenceEquals(brush, Feedback.WarningBrush));
+            }
+
+            bool RuleIsEmpty(ProcessRule? rr)
+                => rr == null
+                || (rr.CpuPriority == null && rr.AffinityMask == null && rr.GpuPriority == null
+                    && string.IsNullOrEmpty(rr.PowerPlanGuid) && rr.IoPriority == null);
+
+            bool ApplyEffectiveToRunning(bool sessionScope)
+            {
+                var apps = _processService.FindRunningProcessesForRule(exe);
+                if (apps.Count == 0)
+                {
+                    Notify(sessionScope
+                        ? I18n.T("Reglas de sesión listas. Se aplicarán cuando el proceso se abra.")
+                        : I18n.T("Reglas guardadas. Se aplicarán cuando el proceso esté en ejecución."),
+                        Feedback.MutedBrush);
+                    return true;
+                }
+
+                var effective = _processService.GetEffectiveRule(exe);
+                var anyFailed = new RuleApplyFeedback(false, false, false);
+                foreach (var app in apps)
+                {
+                    var fb = RuleIsEmpty(effective)
+                        ? _processService.ApplyRuleWithFeedback(app, new ProcessRule(2, fullMask, 3, null, 2))
+                        : _processService.ApplyRuleWithFeedback(app, effective);
+                    anyFailed = anyFailed with
+                    {
+                        CpuFailed = anyFailed.CpuFailed || fb.CpuFailed,
+                        AffinityFailed = anyFailed.AffinityFailed || fb.AffinityFailed,
+                        GpuFailed = anyFailed.GpuFailed || fb.GpuFailed,
+                        IoFailed = anyFailed.IoFailed || fb.IoFailed
+                    };
+                }
+
+                if (RuleIsEmpty(effective))
+                    _processService.RevertPowerPlanIfApplied(exe);
+                else if (!string.IsNullOrEmpty(effective.PowerPlanGuid))
+                    _processService.ApplyPowerPlanIfRunning(exe, effective.PowerPlanGuid);
+                else
+                    _processService.RevertPowerPlanIfApplied(exe);
+
+                if (anyFailed.AnyFailed)
+                {
+                    var parts = new List<string>();
+                    if (anyFailed.CpuFailed) parts.Add(I18n.T("prioridad de CPU"));
+                    if (anyFailed.AffinityFailed) parts.Add(I18n.T("afinidad"));
+                    if (anyFailed.GpuFailed) parts.Add(I18n.T("prioridad de GPU"));
+                    if (anyFailed.IoFailed) parts.Add(I18n.T("prioridad de E/S"));
+                    bool stillAlive = apps.Any(a => IsPidAlive(a.Id));
+                    string reason = stillAlive
+                        ? I18n.T("acceso denegado (proceso protegido)")
+                        : I18n.T("el proceso se cerró");
+                    string note = _processService.IsSystemProcessName(exe)
+                        ? I18n.T("Los procesos del sistema solo pueden cambiarse en vivo; si Windows lo bloquea, no hay alternativa.")
+                        : I18n.T("La prioridad de CPU queda fijada al nacer por registro y aplicará en la próxima apertura.");
+                    Notify(I18n.T("No se pudo aplicar {0} en vivo a {1}: {2}. {3}",
+                        string.Join(", ", parts), name, reason, note), Feedback.WarningBrush);
+                    return false;
+                }
+
+                Notify(RuleIsEmpty(_processService.GetEffectiveRule(exe))
+                    ? I18n.T("Valores por defecto restaurados en {0}", exe)
+                    : sessionScope
+                        ? I18n.T("Reglas de sesión aplicadas a {0}", exe)
+                        : I18n.T("Reglas aplicadas a {0}", exe),
+                    Feedback.SuccessBrush);
+                _staticCache.Clear();
+                _ = RefreshAsync();
+                return true;
+            }
+
+            bool ApplyAndSave(ProcessRule newRule)
+            {
+                var prev = rule;
+                _processService.SaveRule(exe, newRule);
+                rule = newRule;
+                if (!ApplyEffectiveToRunning(sessionScope: false)
+                    && _processService.IsSystemProcessName(exe))
+                {
+                    rule = prev;
+                    _processService.SaveRule(exe, prev);
+                    return false;
+                }
+                return true;
+            }
+
+            bool ApplySessionAndNotify()
+            {
+                var prev = sessionRule;
+                _processService.SetSessionRule(exe, sessionRule);
+                if (!ApplyEffectiveToRunning(sessionScope: true))
+                {
+                    sessionRule = prev;
+                    _processService.SetSessionRule(exe, prev);
+                    return false;
+                }
+                return true;
+            }
+
+            ProcessRule CurrentRule() => scope == 0 ? sessionRule : rule;
+            // La descripción muestra la regla EFECTIVA (sesión sobre guardada): si el
+            // proceso solo tiene regla guardada, la sesión está vacía y el resumen se
+            // veía "Por defecto" en todos los ajustes.
+            ProcessRule EffectiveRule() => new(
+                sessionRule.CpuPriority ?? rule.CpuPriority,
+                sessionRule.AffinityMask ?? rule.AffinityMask,
+                sessionRule.GpuPriority ?? rule.GpuPriority,
+                sessionRule.PowerPlanGuid ?? rule.PowerPlanGuid,
+                sessionRule.IoPriority ?? rule.IoPriority);
+            void ReplaceRule(ProcessRule nr)
+            {
+                if (scope == 0) { sessionRule = nr; ApplySessionAndNotify(); }
+                else { rule = nr; ApplyAndSave(rule); }
+            }
+
+            string[] cpuNames = { "Por defecto", "Mínima", "Baja", "Normal", "Por encima de lo normal", "Alta", "Tiempo real" };
+            string[] gpuNames = { "Por defecto", "Baja", "Normal", "Alta" };
+            string[] ioNames = { "Por defecto", "Muy baja", "Baja", "Normal", "Alta", "Crítica" };
+
+            List<PaletteOption> BuildValueOptions(string[] names, int[] values, int selected, Func<int?, ProcessRule> makeRule)
+            {
+                var list = new List<PaletteOption>();
+                for (int i = 0; i < names.Length; i++)
+                {
+                    int idx = i;
+                    list.Add(new PaletteOption
+                    {
+                        Text = I18n.T(names[i]),
+                        IsChecked = idx == selected,
+                        Invoke = () => ReplaceRule(makeRule(idx <= 0 ? null : values[idx - 1]))
+                    });
+                }
+                return list;
+            }
+
+            string Summary(string[] names, int[] values, int? current)
+            {
+                if (current == null) return I18n.T("Por defecto");
+                int idx = Array.IndexOf(values, current);
+                return idx >= 0 && idx + 1 < names.Length ? I18n.T(names[idx + 1]) : current.Value.ToString();
+            }
+
+            string AffinitySummary()
+            {
+                var mask = EffectiveRule().AffinityMask;
+                if (mask == null || mask == fullMask) return I18n.T("Todos los núcleos");
+                int count = 0;
+                for (int i = 0; i < 64; i++) if ((mask.Value & (1L << i)) != 0) count++;
+                return I18n.T("{0} núcleos", count);
+            }
+
+            var sections = new List<PaletteSection>();
+
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Prioridad de CPU"),
+                Glyph = "\uE950",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Summary = () => Summary(cpuNames, CpuPriorityValues, EffectiveRule().CpuPriority),
+                BuildOptions = () => BuildValueOptions(cpuNames, CpuPriorityValues,
+                    CurrentRule().CpuPriority is int cp ? Array.IndexOf(CpuPriorityValues, cp) + 1 : 0,
+                    v => new ProcessRule(v, CurrentRule().AffinityMask, CurrentRule().GpuPriority, CurrentRule().PowerPlanGuid, CurrentRule().IoPriority))
+            });
+
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Afinidad de CPU"),
+                Glyph = "\uE7F8",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Note = I18n.T("Clic en un núcleo para incluirlo o quitarlo. Todos marcados = sin restricción."),
+                OptionsPerRow = 8,
+                Summary = AffinitySummary,
+                BuildOptions = () =>
+                {
+                    var mask = CurrentRule().AffinityMask;
+                    bool all = mask == null || mask == fullMask;
+                    var list = new List<PaletteOption>();
+                    for (int i = 0; i < procCount; i++)
+                    {
+                        int ci = i;
+                        list.Add(new PaletteOption
+                        {
+                            Text = I18n.T("Núcleo {0}", ci + 1),
+                            IsChecked = all || ((mask ?? fullMask) & (1L << ci)) != 0,
+                            Invoke = () =>
+                            {
+                                long current = (CurrentRule().AffinityMask == null || CurrentRule().AffinityMask == fullMask)
+                                    ? fullMask : CurrentRule().AffinityMask!.Value;
+                                long next = current ^ (1L << ci);
+                                if (next == 0) next = fullMask;
+                                ReplaceRule(new ProcessRule(CurrentRule().CpuPriority, next, CurrentRule().GpuPriority, CurrentRule().PowerPlanGuid, CurrentRule().IoPriority));
+                            }
+                        });
+                    }
+                    return list;
+                }
+            });
+
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Prioridad de GPU"),
+                Glyph = "\uE7F4",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Summary = () => Summary(gpuNames, GpuPriorityValues, EffectiveRule().GpuPriority),
+                BuildOptions = () => BuildValueOptions(gpuNames, GpuPriorityValues,
+                    CurrentRule().GpuPriority is int gp ? Array.IndexOf(GpuPriorityValues, gp) + 1 : 0,
+                    v => new ProcessRule(CurrentRule().CpuPriority, CurrentRule().AffinityMask, v, CurrentRule().PowerPlanGuid, CurrentRule().IoPriority))
+            });
+
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Prioridad de E/S"),
+                Glyph = "\uE8B7",
+                Scopes = new[] { I18n.T("Actual"), I18n.T("Siempre") },
+                GetScope = () => scope,
+                SetScope = i => scope = i,
+                Summary = () => Summary(ioNames, IoPriorityValues, EffectiveRule().IoPriority),
+                BuildOptions = () => BuildValueOptions(ioNames, IoPriorityValues,
+                    CurrentRule().IoPriority is int io ? Array.IndexOf(IoPriorityValues, io) + 1 : 0,
+                    v => new ProcessRule(CurrentRule().CpuPriority, CurrentRule().AffinityMask, CurrentRule().GpuPriority, CurrentRule().PowerPlanGuid, v))
+            });
+
+            // ===== Plan de energía (solo sesión, como el menú clásico) =====
+            List<PowerPlanInfo>? plans = null;
+            bool plansLoading = false;
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Plan de energía"),
+                Glyph = "\uE945",
+                Note = I18n.T("Se activa cuando corre el juego y vuelve al plan anterior al cerrarlo."),
+                Summary = () => string.IsNullOrEmpty(sessionRule.PowerPlanGuid)
+                    ? I18n.T("Por defecto")
+                    : plans?.FirstOrDefault(p => string.Equals(p.Guid, sessionRule.PowerPlanGuid, StringComparison.OrdinalIgnoreCase))?.Name ?? I18n.T("Personalizado"),
+                OnSelected = refresh =>
+                {
+                    if (plans != null || plansLoading) return;
+                    plansLoading = true;
+                    _ = Task.Run(() =>
+                    {
+                        List<PowerPlanInfo>? loaded = null;
+                        try { loaded = _cpuPowerService.GetPowerPlans(); }
+                        catch (Exception ex) { _loggingService.LogWarning($"ProcesosPage: planes de energía {exe}: {ex.Message}"); }
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            plans = loaded ?? new List<PowerPlanInfo>();
+                            plansLoading = false;
+                            refresh();
+                        });
+                    });
+                },
+                BuildOptions = () =>
+                {
+                    var list = new List<PaletteOption>
+                    {
+                        new()
+                        {
+                            Text = I18n.T("Por defecto"),
+                            IsChecked = string.IsNullOrEmpty(sessionRule.PowerPlanGuid),
+                            Invoke = () =>
+                            {
+                                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, sessionRule.GpuPriority, null, sessionRule.IoPriority);
+                                ApplySessionAndNotify();
+                            }
+                        }
+                    };
+                    if (plans == null)
+                    {
+                        list.Add(new PaletteOption { Text = I18n.T("Consultando planes de energía..."), IsEnabled = false });
+                        return list;
+                    }
+                    foreach (var plan in plans)
+                    {
+                        var p = plan;
+                        list.Add(new PaletteOption
+                        {
+                            Text = p.Name,
+                            IsChecked = string.Equals(sessionRule.PowerPlanGuid, p.Guid, StringComparison.OrdinalIgnoreCase),
+                            Invoke = () =>
+                            {
+                                sessionRule = new ProcessRule(sessionRule.CpuPriority, sessionRule.AffinityMask, sessionRule.GpuPriority, p.Guid, sessionRule.IoPriority);
+                                ApplySessionAndNotify();
+                            }
+                        });
+                    }
+                    return list;
+                }
+            });
+
+            // ===== Windows Defender =====
+            string? defenderTarget = !string.IsNullOrEmpty(exePath)
+                ? Path.GetDirectoryName(exePath)?.TrimEnd('\\')
+                : null;
+            bool? defenderExcluded = null;
+            bool defenderLoaded = false;
+            string DefenderSummary() => defenderExcluded switch
+            {
+                true => I18n.T("Excluido"),
+                false => I18n.T("No excluido"),
+                _ => I18n.T("Consultando...")
+            };
+            // Se consulta al armar la paleta, no al seleccionar: si no, el resumen
+            // queda en "Consultando…" hasta que el usuario entra al ajuste.
+            void LoadDefenderState(Action? refresh = null)
+            {
+                if (defenderLoaded) return;
+                defenderLoaded = true;
+                _ = Task.Run(async () =>
+                {
+                    bool? state = null;
+                    try
+                    {
+                        state = !string.IsNullOrEmpty(defenderTarget)
+                            ? await DefenderService.IsPathExcludedAsync(defenderTarget)
+                            : await DefenderService.IsProcessExcludedAsync(exe);
+                    }
+                    catch { /* sin permisos: quedan los dos botones habilitados */ }
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        defenderExcluded = state;
+                        refresh?.Invoke();
+                        _processPalette?.Refresh();
+                    });
+                });
+            }
+            // ===== Modo eficiencia (EcoQoS) =====
+            // Se aplica al proceso EN VIVO, como en el Administrador de tareas: no es una
+            // regla, así que no se guarda ni se reaplica cuando el proceso vuelve a arrancar.
+            // Solo se ofrece en Windows que lo soportan (Win10 20H1+); en builds viejas la
+            // sección no aparece, igual que la hojita de la columna Estado.
+            bool ecoOn = EcoQosSupported
+                && WHPO.Core.Services.EfficiencyMode.IsEnabled(pid) == true;
+
+            void ApplyEfficiency(bool enable)
+            {
+                bool ok = false;
+                // lowerPriority: el modo eficiencia del Administrador de tareas es prioridad
+                // baja + EcoQoS; con solo EcoQoS el Administrador de tareas no dibuja la
+                // hojita (el proceso queda clasificado como eco pero visualmente "normal").
+                try { ok = WHPO.Core.Services.EfficiencyMode.Set(pid, enable, lowerPriority: true); } catch { }
+
+                // Se verifica el estado REAL antes de anunciar nada: la llamada puede
+                // aceptarse y el proceso no cambiar (proceso protegido por anti-cheat).
+                bool? current = null;
+                try { current = WHPO.Core.Services.EfficiencyMode.IsEnabled(pid); } catch { }
+
+                if (ok && current == enable)
+                {
+                    ecoOn = enable;
+                    // El estado de la fila se relee en el próximo tick (caché estática de 10 s).
+                    _staticCache.Remove(pid);
+                    Notify(I18n.T(enable ? "Modo eficiencia activado" : "Modo eficiencia quitado"),
+                        Feedback.SuccessBrush);
+                }
+                else
+                {
+                    Notify(I18n.T("No se pudo cambiar el modo eficiencia."), Feedback.ErrorBrush);
+                }
+                _processPalette?.Refresh();
+            }
+
+            if (EcoQosSupported)
+            {
+                sections.Add(new PaletteSection
+                {
+                    Title = I18n.T("Modo eficiencia"),
+                    Note = I18n.T("Baja la prioridad y marca el proceso como tarea de fondo (EcoQoS), como el Administrador de tareas. Se aplica ahora y se pierde al cerrar el proceso: no se guarda como regla."),
+                    BuildOptions = () => new List<PaletteOption>
+                    {
+                        new()
+                        {
+                            Text = I18n.T("Activar modo eficiencia"),
+                            IsChecked = ecoOn,
+                            IsEnabled = !ecoOn,
+                            Invoke = () => ApplyEfficiency(true)
+                        },
+                        new()
+                        {
+                            Text = I18n.T("Quitar modo eficiencia"),
+                            IsChecked = !ecoOn,
+                            IsEnabled = ecoOn,
+                            Invoke = () => ApplyEfficiency(false)
+                        }
+                    }
+                });
+            }
+
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Windows Defender"),
+                Glyph = "\uEA18",
+                Note = I18n.T("Excluye el proceso (o su carpeta) para que Defender no lo escanee en vivo."),
+                Summary = DefenderSummary,
+                OnSelected = refresh => LoadDefenderState(refresh),
+                BuildOptions = () => new List<PaletteOption>
+                {
+                    new()
+                    {
+                        Text = I18n.T("Excluir de Windows Defender"),
+                        IsChecked = defenderExcluded == true,
+                        IsEnabled = defenderExcluded != true,
+                        Invoke = async () =>
+                        {
+                            if (defenderExcluded == true) return;
+                            try
+                            {
+                                bool ok;
+                                if (!string.IsNullOrEmpty(defenderTarget))
+                                    (ok, _) = await DefenderService.AddPathExclusionAsync(defenderTarget);
+                                else
+                                    (ok, _) = await DefenderService.AddProcessExclusionAsync(exe);
+                                if (ok)
+                                {
+                                    defenderExcluded = true;
+                                    Notify(I18n.T("Proceso excluido de Windows Defender"), Feedback.SuccessBrush);
+                                }
+                                else Notify(I18n.T("No se pudo cambiar la excepción de Windows Defender: {0}", defenderTarget ?? exe), Feedback.ErrorBrush);
+                            }
+                            catch (Exception ex2)
+                            {
+                                _loggingService.LogWarning($"ProcesosPage: excepción de Defender {exe}: {ex2.Message}");
+                            }
+                            _processPalette?.Refresh();
+                        }
+                    },
+                    new()
+                    {
+                        Text = I18n.T("Quitar exclusión de Windows Defender"),
+                        IsChecked = defenderExcluded == false,
+                        IsEnabled = defenderExcluded != false,
+                        Invoke = async () =>
+                        {
+                            if (defenderExcluded == false) return;
+                            try
+                            {
+                                bool ok;
+                                if (!string.IsNullOrEmpty(defenderTarget))
+                                    (ok, _) = await DefenderService.RemovePathExclusionAsync(defenderTarget);
+                                else
+                                    (ok, _) = await DefenderService.RemoveProcessExclusionAsync(exe);
+                                if (ok)
+                                {
+                                    defenderExcluded = false;
+                                    Notify(I18n.T("Exclusión de Windows Defender quitada"), Feedback.SuccessBrush);
+                                }
+                                else Notify(I18n.T("No se pudo cambiar la excepción de Windows Defender: {0}", defenderTarget ?? exe), Feedback.ErrorBrush);
+                            }
+                            catch (Exception ex2)
+                            {
+                                _loggingService.LogWarning($"ProcesosPage: excepción de Defender {exe}: {ex2.Message}");
+                            }
+                            _processPalette?.Refresh();
+                        }
+                    }
+                }
+            });
+            LoadDefenderState();
+
+            // ===== Eliminar reglas =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Eliminar reglas"),
+                Glyph = "\uE74D",
+                IsDestructive = true,
+                Invoke = async () =>
+                {
+                    var confirm = new ContentDialog
+                    {
+                        XamlRoot = XamlRoot,
+                        Title = I18n.T("Eliminar reglas"),
+                        Content = I18n.T("¿Eliminar las reglas de {0}? También se quitará la prioridad de nacimiento del registro.", name),
+                        PrimaryButtonText = I18n.T("Eliminar"),
+                        CloseButtonText = I18n.T("Cancelar"),
+                        DefaultButton = ContentDialogButton.Close
+                    };
+                    if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+                    _processService.RemoveRule(exe);
+                    _processService.ClearSessionRule(exe);
+                    rule = new ProcessRule(null, null, null);
+                    sessionRule = new ProcessRule(null, null, null);
+                    var app = _processService.FindRunningProcess(exe);
+                    if (app != null)
+                    {
+                        _processService.ApplyCpuPriority(app.Id, 2);
+                        _processService.ApplyAffinity(app.Id, fullMask);
+                        _processService.ApplyGpuPriority(app.Id, 3);
+                        _processService.ApplyIoPriority(app.Id, 2);
+                    }
+                    _processService.RevertPowerPlanIfApplied(exe);
+                    Notify(I18n.T("Reglas eliminadas para {0}", exe), Feedback.MutedBrush);
+                    _staticCache.Clear();
+                    await RefreshAsync();
+                    _processPalette?.Refresh();
+                }
+            });
+
+            // ===== Acciones sobre el proceso =====
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Cerrar"),
+                Glyph = "\uE711",
+                Note = I18n.T("Envía la orden de cerrar la ventana principal; si no tiene, termina el proceso."),
+                CloseOnInvoke = true,
+                Invoke = () => CloseProcess(pid, exe)
+            });
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Finalizar tarea"),
+                Glyph = "\uE71A",
+                IsDestructive = true,
+                CloseOnInvoke = true,
+                Invoke = () => TerminateProcess(pid, exe)
+            });
+            sections.Add(new PaletteSection
+            {
+                Title = I18n.T("Localizar"),
+                Glyph = "\uE707",
+                CloseOnInvoke = true,
+                BuildOptions = () => new List<PaletteOption>
+                {
+                    new() { Text = I18n.T("Buscar en internet"), Invoke = () => SearchOnInternet(name) },
+                    new() { Text = I18n.T("Abrir en disco"), Invoke = () => OpenInDisk(exe, exePath) }
+                }
+            });
+
+            var palette = new RulePalette();
+            palette.TitleText.Text = name;
+            palette.SubtitleText.Text = I18n.T("PID {0} · {1}", pid, exe);
+            _processPalette = palette;
+            palette.Show(target, sections, position);
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"ProcesosPage: paleta de reglas {exe}: {ex.Message}");
+            ShowClassicProcessRuleMenu(target, pid, exe, name, position, exePath);
+        }
+    }
+
+    private void ShowClassicProcessRuleMenu(FrameworkElement target, int pid, string exe, string name, Windows.Foundation.Point position, string? exePath = null)
     {
         try
         {
@@ -2680,7 +3392,7 @@ public sealed partial class ProcesosPage : Page, IBackgroundPausable
             closeItem.Click += (_, _) => CloseProcess(pid, exe);
             menu.Items.Add(closeItem);
 
-            var killItem = new MenuFlyoutItem { Text = I18n.T("Terminar") };
+            var killItem = new MenuFlyoutItem { Text = I18n.T("Finalizar tarea") };
             killItem.Click += (_, _) => TerminateProcess(pid, exe);
             menu.Items.Add(killItem);
 

@@ -30,7 +30,20 @@ namespace WHPO_UI.Controls;
 ///   - HLSL del sombreado 3D (dos luces direccionales + especular diferenciado entre
 ///     plástico vivo y calcomanía mate).
 /// </summary>
-public static class CartridgeModel
+/// <summary>Tipo de hardware que representa la pieza: cartucho de videojuego, consola
+/// vertical (emulador de consola) o teléfono (emulador de celular). Afecta la geometría
+/// 3D, la silueta 2D y el pintado de ambas caras; el canvas y el pipeline son los mismos.</summary>
+public enum DeviceKind
+{
+    Cartridge,
+    Console,
+    Phone,
+    /// <summary>Consola retro: gabinete arcade de bar (perfil propio, ver
+    /// CartridgeModel.Arcade.cs).</summary>
+    Arcade
+}
+
+public static partial class CartridgeModel
 {
     // ===== Canvas de referencia (idéntico a Carthage theme.py) =====
     public const int FaceWidth = 600;
@@ -202,6 +215,134 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
             pts.Add(new(-hw + r + r * MathF.Cos(a), hh - r + r * MathF.Sin(a)));
         }
 
+        return WithNormals(pts);
+    }
+
+    /// <summary>Cuerpo del dispositivo dentro del canvas 600×878, en coordenadas de canvas
+    /// (y hacia abajo): el teléfono es alto y angosto con proporción real de celular
+    /// (19.5:9 ≈ 404×878, centrado horizontal) y la consola es una caja ancha y baja
+    /// tipo PS1 (560×420, centrada verticalmente). Lo comparten la malla 3D, el pintado
+    /// de caras y la silueta 2D de la tile, así los tres ven la misma pieza.</summary>
+    internal static (float X, float Y, float W, float H, float R) DeviceBody(DeviceKind kind) => kind switch
+    {
+        DeviceKind.Phone => (70f, 0f, 460f, 878f, 48f),
+        // Gabinete arcade: alto y angosto, centrado en el canvas.
+        DeviceKind.Arcade => (110f, 30f, 380f, 820f, 6f),
+        // Caja ancha con las proporciones reales de una PS1 (27,6×18,5 cm ≈ 1,49):
+        // 580×390, centrada en y=439 como el canvas.
+        _ => (10f, 244f, 580f, 390f, 18f)
+    };
+
+    // ===== Layout de la consola (canvas 600x878) =====
+    // Caja 10..590 x 244..634 (27,6x18,5 cm de la PS1, 1,49:1) y tapa circular de
+    // radio 168 centrada en (300, 413): casi toda la profundidad, como en la real,
+    // con dos alas de 122 px para los botones. La franja 582..634 es la cara
+    // FRONTAL, que la malla mapea al canto inferior.
+    internal const float ConsoleSeamY = 582f;
+    internal const float ConsoleLidCx = 300f;
+    internal const float ConsoleLidCy = 413f;
+    internal static float ConsoleLidR => ConsoleModel.Current.LidRadius;
+    /// <summary>Relieve de la tapa en la malla (unidades de ancho de cara).</summary>
+    /// <summary>Relieve de la tapa en la malla, por modelo de consola.</summary>
+    internal static float ConsoleLidRaise => ConsoleModel.Current.LidRaise;
+
+
+    /// <summary>Color de la carcasa del dispositivo. La consola es gris claro como la
+    /// PS1 real (tinteado con el plástico del tema), el teléfono usa el tema tal cual.</summary>
+    internal static Color DeviceShellColor(DeviceKind kind, Color plastic) => kind switch
+    {
+        DeviceKind.Console => Mix(plastic, Color.FromArgb(208, 206, 198), 0.72f),
+        // El mueble arcade es negro/grafito aunque el tema sea claro: los cantos y las
+        // molduras del gabinete no siguen el color de la carcasa del cartucho.
+        DeviceKind.Arcade => Mix(plastic, Color.FromArgb(22, 23, 27), 0.86f),
+        _ => plastic
+    };
+
+    /// <summary>El código de la etiqueta incluye el launcher ("INDEPENDIENTE - B5"
+    /// para juegos standalone). En hardware ese prefijo no dice nada: se muestra la
+    /// marca del programa. Solo afecta a dispositivos, no a los cartuchos.</summary>
+    private static string DeviceCode(string code)
+    {
+        const string independiente = "Independiente";
+        if (!string.IsNullOrWhiteSpace(code) && code.StartsWith(independiente, StringComparison.OrdinalIgnoreCase))
+            return "WinForge" + code.Substring(independiente.Length);
+        return code;
+    }
+
+    /// <summary>Contorno de un dispositivo (consola o teléfono): losa redondeada SIN muescas
+    /// laterales ni pozo de etiqueta — la pieza es hardware, no un cartucho.</summary>
+    private static List<(Vector2 P, Vector2 N)> BuildDeviceOutline(DeviceKind kind)
+    {
+        var (x, y, w, h, r) = DeviceBody(kind);
+        var pts = BuildRoundedRectOutline(x, y, x + w, y + h, r, porArco: 10);
+        // La consola se densifica: la tapa se proyecta desde el contorno, y con solo los
+        // vértices de las esquinas el disco salía con el borde RECTO arriba y abajo (dos
+        // vértices para todo un lado del cuerpo). Los puntos extra caen sobre las mismas
+        // rectas, así que la silueta y las normales no cambian.
+        if (kind == DeviceKind.Console) pts = Densify(pts, 0.035f);
+        return WithNormals(pts);
+    }
+
+    /// <summary>Agrega puntos intermedios en los tramos más largos que
+    /// <paramref name="maxLength"/> (unidades de ancho de cara).</summary>
+    private static List<Vector2> Densify(List<Vector2> pts, float maxLength)
+    {
+        var dense = new List<Vector2>(pts.Count * 2);
+        for (int i = 0; i < pts.Count; i++)
+        {
+            var a = pts[i];
+            var b = pts[(i + 1) % pts.Count];
+            dense.Add(a);
+            float len = Vector2.Distance(a, b);
+            int steps = Math.Max(0, (int)MathF.Ceiling(len / maxLength) - 1);
+            for (int k = 1; k <= steps; k++)
+                dense.Add(Vector2.Lerp(a, b, k / (float)(steps + 1)));
+        }
+        return dense;
+    }
+
+    /// <summary>Espesor (mitad, en coordenadas de malla) del dispositivo. La consola
+    /// clásica mide 0.055 por lado = 0.11 total: sobre la profundidad del cuerpo (0.65)
+    /// es el 16,9 %, el mismo frente que muestra la card de la biblioteca (franja de
+    /// 52 px + labio de 12 px sobre 390) y que la PS1 real (3,0 cm de 18,5 cm ≈ 16 %).
+    /// El modelo elegido en Apariencia ajusta ese grosor. El cartucho usa la mitad de
+    /// <see cref="Thickness"/>.</summary>
+    internal static float DeviceThickness(DeviceKind kind) => kind switch
+    {
+        DeviceKind.Console => ConsoleModel.Current.Thickness,
+        // El mueble va de -150 a +185 px de profundidad: la media caja lo cubre.
+        DeviceKind.Arcade => 205f / FaceWidth,
+        _ => Thickness * 0.5f
+    };
+
+    /// <summary>Vista del dispositivo dentro del canvas 600×878 para la GRILLA: el cuerpo
+    /// (DeviceBody) más un poco de aire, recortado al canvas. La consola es una caja
+    /// ancha dentro de un canvas vertical: sin recorte la tile la pinta al ~44% del
+    /// alto y se ve chica. La imagen de grilla y la silueta 2D usan este mismo rectángulo
+    /// para que coincidan siempre.</summary>
+    /// <summary>Inclinación de reposo de la cámara por tipo de pieza. La consola se mira
+    /// desde arriba (se ven la tapa y los puertos), el teléfono apenas inclinado (es
+    /// alto y de frente se lee mejor), el gabinete arcade derecho y el cartucho casi de
+    /// frente. La usan la card cacheada, el control 3D y el selector de modelos.</summary>
+    internal static float RestPitch(DeviceKind kind) => kind switch
+    {
+        DeviceKind.Cartridge => -2.5f,
+        DeviceKind.Arcade => 0f,
+        DeviceKind.Phone => -10f,
+        _ => -30f
+    };
+
+    internal static (float X, float Y, float W, float H) DeviceViewRect(DeviceKind kind)
+    {
+        var (bx, by, bw, bh, _) = DeviceBody(kind);
+        const float pad = 14f;
+        float x0 = Math.Clamp(bx - pad, 0f, FaceWidth), x1 = Math.Clamp(bx + bw + pad, 0f, FaceWidth);
+        float y0 = Math.Clamp(by - pad, 0f, FaceHeight), y1 = Math.Clamp(by + bh + pad, 0f, FaceHeight);
+        return (x0, y0, x1 - x0, y1 - y0);
+    }
+
+    private static List<(Vector2 P, Vector2 N)> WithNormals(List<Vector2> pts)
+    {
         var outline = new List<(Vector2 P, Vector2 N)>(pts.Count);
         for (int i = 0; i < pts.Count; i++)
         {
@@ -280,11 +421,20 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
         return punto;
     }
 
-    public static (Vertex[] Vertices, ushort[] Indices) BuildMesh()
+    public static (Vertex[] Vertices, ushort[] Indices) BuildMesh(DeviceKind kind = DeviceKind.Cartridge)
     {
-        var outline = BuildOutline();
+        // El gabinete arcade no es una losa: tiene perfil propio (marquesina, bisel,
+        // panel salido) y su propia malla.
+        if (kind == DeviceKind.Arcade) return BuildArcadeMesh();
+        var outline = kind == DeviceKind.Cartridge ? BuildOutline() : BuildDeviceOutline(kind);
         int n = outline.Count;
-        float t = Thickness * 0.5f, r = BevelRadius;
+        // La consola es más gruesa que el cartucho: en la PS1 real el frente es una
+        // cara alta (foto frontal) y al inclinarla se ve como losa, no como papel.
+        // La consola/teléfono NO llevan el bisel del cartucho: ese anillo de plástico
+        // entre la silueta y la cara se leía como un SEGUNDO borde alrededor de la
+        // tapa (más notorio arriba, con el modelo inclinado). Sin bisel la cara llega
+        // al contorno y el canto queda como una sola línea limpia.
+        float t = DeviceThickness(kind), r = kind == DeviceKind.Cartridge ? BevelRadius : 0f;
         const int AnillosPerfil = 4;
 
         var verts = new List<Vertex>();
@@ -323,10 +473,22 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
 
         var frente = new List<ushort[]>();
         var dorso = new List<ushort[]>();
-        for (int k = 0; k <= AnillosPerfil; k++)
+        if (r > 0f)
         {
-            frente.Add(Perfil(MathF.PI * 0.5f * (AnillosPerfil - k) / AnillosPerfil, false));
-            dorso.Add(Perfil(MathF.PI * 0.5f * k / AnillosPerfil, true));
+            for (int k = 0; k <= AnillosPerfil; k++)
+            {
+                frente.Add(Perfil(MathF.PI * 0.5f * (AnillosPerfil - k) / AnillosPerfil, false));
+                dorso.Add(Perfil(MathF.PI * 0.5f * k / AnillosPerfil, true));
+            }
+        }
+        else
+        {
+            // Consola y teléfono sin bisel: UN solo anillo por cara. Con radio 0 los
+            // cinco anillos del perfil caían en el mismo plano y los cuatro ciegos
+            // (tinte de plástico) peleaban con el texturado: el sombreado ganaba en
+            // parches y se veían manchas oscuras sobre la tapa y las alas.
+            frente.Add(AddRing(0f, t, 1f, 0f, false));
+            dorso.Add(AddRing(0f, -t, -1f, 0f, true));
         }
 
         void Banda(ushort[] a, ushort[] b)
@@ -340,7 +502,164 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
         }
         for (int k = 0; k < frente.Count - 1; k++) Banda(frente[k], frente[k + 1]);
         for (int k = 0; k < dorso.Count - 1; k++) Banda(dorso[k], dorso[k + 1]);
-        Banda(dorso[^1], frente[0]);
+        // La pared perimetral de la losa (dorso[^1] → frente[0]). En consola se
+        // sustituye por anillos propios con la franja frontal mapeada (ver abajo).
+        if (kind != DeviceKind.Console)
+        {
+            if (kind == DeviceKind.Phone)
+            {
+                // El canto del teléfono es PLÁSTICO. Con el bandeo genérico el borde
+                // trasero trae la UV espejada, así que la pared interpolaba de 1-u a u
+                // y barría TODA la textura a lo ancho del espesor: se veía el texto y el
+                // logo de la cara estirados sobre el canto. Con copias en canal plástico
+                // (Tint.W = 0) el canto se sombrea por normal, sin muestrear la textura.
+                var rimF = new ushort[n];
+                var rimB = new ushort[n];
+                for (int i = 0; i < n; i++)
+                {
+                    var a = verts[frente[0][i]];
+                    var b = verts[dorso[^1][i]];
+                    rimF[i] = (ushort)verts.Count;
+                    verts.Add(new Vertex(a.Position, a.Normal, a.Uv,
+                        new Vector4(a.Tint.X, a.Tint.Y, a.Tint.Z, 0f)));
+                    rimB[i] = (ushort)verts.Count;
+                    verts.Add(new Vertex(b.Position, b.Normal, a.Uv,
+                        new Vector4(b.Tint.X, b.Tint.Y, b.Tint.Z, 0f)));
+                }
+                Banda(rimB, rimF);
+            }
+            else
+            {
+                Banda(dorso[^1], frente[0]);
+            }
+        }
+
+        // Consola: la PARED FRONTAL de la losa (borde inferior del contorno) muestrea
+        // la franja frontal de la textura (puertos de mando + MEMORY CARD, filas
+        // 640..692) para que al inclinar el modelo las entradas estén en el LATERAL
+        // FRONTAL y no sobre la tapa. Dos recaudos que ya mordieron:
+        // - Los anillos de la pared son COPIAS (no los frente[0]/dorso[^1] originales):
+        //   esos vértices también son el anillo exterior del bisel, y remapearlos
+        //   pintaba la franja sobre el canto (botones/puertos impresos en el borde)
+        //   y la textura frontal sobre el bisel trasero al girar el modelo. Con
+        //   copias, el bisel queda plástico como antes y solo la pared lleva la
+        //   franja.
+        // - El peso `w` se calcula con la geometría (la junta está en la fila 582 del
+        //   plan): así la franja solo cubre el frente y no las esquinas de la pared.
+        //   La franja se pinta FUERA del cuerpo (640..692) para que la tapa no la
+        //   muestree al mapear su cara.
+        if (kind == DeviceKind.Console)
+        {
+            // La franja se pinta aparte, debajo del cuerpo (640..692): si se pintara
+            // encima de la tapa, el recorte de UV metía la textura del faldón dentro
+            // de la cara superior y los botones salían estirados.
+            float vTop = 640f * 866f / 770884f; // junta frontal → v
+            float vBot = 692f * 866f / 770884f; // filo inferior → v
+            // Segunda franja (700..752) para el canto TRASERO: los conectores de la foto
+            // van en la pared de atrás, no sobre la cara inferior (que es la textura del
+            // dorso). Cada pared elige su franja según la fila del contorno.
+            float vAtrasTop = 700f * 866f / 770884f;
+            float vAtrasBot = 752f * 866f / 770884f;
+            var rTop = frente[0];
+            var rBot = dorso[^1];
+            var paredTop = new ushort[n];
+            var paredBot = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                float cy = 439f - verts[rTop[i]].Position.Y * 600f; // fila canvas
+                float wFrente = Math.Clamp((cy - 582f) / 52f, 0f, 1f);
+                float wAtras = Math.Clamp((272f - cy) / 28f, 0f, 1f);
+                float w = Math.Max(wFrente, wAtras);
+                bool paredAtras = wAtras > 0f;
+                float vT = paredAtras ? vAtrasTop : vTop;
+                float vB = paredAtras ? vAtrasBot : vBot;
+                var vt = verts[rTop[i]];
+                paredTop[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(vt.Position, vt.Normal,
+                    new Vector2(vt.Uv.X, vt.Uv.Y + (vT - vt.Uv.Y) * w),
+                    new Vector4(vt.Tint.X, vt.Tint.Y, vt.Tint.Z, vt.Tint.W + (1f - vt.Tint.W) * w)));
+                var vb = verts[rBot[i]];
+                // vb trae uv.X espejado (es del dorso): se desespeja para alinear con vt.
+                paredBot[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(vb.Position, vb.Normal,
+                    new Vector2(1f - vb.Uv.X, vb.Uv.Y + (vB - vb.Uv.Y) * w),
+                    new Vector4(vb.Tint.X, vb.Tint.Y, vb.Tint.Z, vb.Tint.W + (1f - vb.Tint.W) * w)));
+            }
+            Banda(paredBot, paredTop);
+        }
+
+        // Consola: la tapa del disco SOBRESALE del cuerpo. En la PS1 la tapa tiene su
+        // propio relieve y al mirar la consola en ángulo se ve el escalón; una cara
+        // plana con la sombra pintada se lee como una calcomanía. El anillo exterior
+        // comparte los vértices del contorno (sin costuras) y la tapa se levanta
+        // ConsoleLidRaise con su pared: así el brillo del canto cambia al girar.
+        void AddConsoleTop(ushort[] bordeCara)
+        {
+            float lcx = (ConsoleLidCx - FaceWidth * 0.5f) / FaceWidth;
+            float lcy = (FaceHeight * 0.5f - ConsoleLidCy) / FaceWidth;
+            float lr = ConsoleLidR / FaceWidth;
+            var centroTapa = new Vector2(lcx, lcy);
+            int n = bordeCara.Length;
+
+            var baseTapa = new ushort[n];
+            var topeTapa = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                var p = verts[bordeCara[i]].Position;
+                var dir = new Vector2(p.X, p.Y) - centroTapa;
+                dir = dir.LengthSquared() < 1e-9f ? Vector2.UnitX : Vector2.Normalize(dir);
+                var xy = centroTapa + dir * lr;
+
+                baseTapa[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(xy.X, xy.Y, t), Vector3.UnitZ,
+                    UvFrente(xy), new Vector4(1f, 1f, 1f, 1f)));
+                topeTapa[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(xy.X, xy.Y, t + ConsoleLidRaise), Vector3.UnitZ,
+                    UvFrente(xy), new Vector4(1f, 1f, 1f, 1f)));
+            }
+
+            // Anillo plano entre el contorno del cuerpo y la base de la tapa.
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                idx.Add(bordeCara[i]); idx.Add(bordeCara[j]); idx.Add(baseTapa[j]);
+                idx.Add(bordeCara[i]); idx.Add(baseTapa[j]); idx.Add(baseTapa[i]);
+            }
+
+            // Pared de la tapa: plástico (canal 0), normal radial hacia afuera.
+            var paredAbajo = new ushort[n];
+            var paredArriba = new ushort[n];
+            for (int i = 0; i < n; i++)
+            {
+                var p = verts[topeTapa[i]].Position;
+                var dir = new Vector2(p.X - lcx, p.Y - lcy);
+                dir = dir.LengthSquared() < 1e-9f ? Vector2.UnitX : Vector2.Normalize(dir);
+                var nrm = new Vector3(dir.X, dir.Y, 0f);
+                var xy = new Vector2(p.X, p.Y);
+                paredAbajo[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(p.X, p.Y, t), nrm,
+                    UvFrente(xy), new Vector4(1f, 1f, 1f, 0f)));
+                paredArriba[i] = (ushort)verts.Count;
+                verts.Add(new Vertex(new Vector3(p.X, p.Y, t + ConsoleLidRaise), nrm,
+                    UvFrente(xy), new Vector4(1f, 1f, 1f, 0f)));
+            }
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                idx.Add(paredAbajo[i]); idx.Add(paredArriba[j]); idx.Add(paredArriba[i]);
+                idx.Add(paredAbajo[i]); idx.Add(paredAbajo[j]); idx.Add(paredArriba[j]);
+            }
+
+            // Tapa: abanico con la textura, para que la serigrafía quede donde se pintó.
+            ushort centro = (ushort)verts.Count;
+            verts.Add(new Vertex(new Vector3(lcx, lcy, t + ConsoleLidRaise), Vector3.UnitZ,
+                UvFrente(centroTapa), new Vector4(1f, 1f, 1f, 1f)));
+            for (int i = 0; i < n; i++)
+            {
+                int j = (i + 1) % n;
+                idx.Add(centro); idx.Add(topeTapa[i]); idx.Add(topeTapa[j]);
+            }
+        }
 
         void AddCara(ushort[] ring, float z, bool esDorso)
         {
@@ -454,10 +773,756 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
         // sobresalir de la cara las volvía una placa pegada al frente —y la pintura ya
         // traía su propio sombreado, así que el detalle se veía doble—; además iban hacia
         // afuera cuando el resto del cartucho está moldeado hacia adentro.
-        AddPocket(frente[^1]);
+        // El pozo de la etiqueta es solo del cartucho: consola/teléfono pintan la cara
+        // completa del dispositivo (la ventana es parte del dibujo, no un hueco).
+        if (kind == DeviceKind.Cartridge)
+            AddPocket(frente[^1]);
+        else if (kind == DeviceKind.Console)
+            AddConsoleTop(frente[^1]);
+        else
+            AddCara(frente[^1], t, false);
         AddCara(dorso[0], -t, true);
 
         return (verts.ToArray(), idx.ToArray());
+    }
+
+    // ===== Dispositivos: consola vertical y teléfono =====
+    // Canvas, UV y pipeline idénticos al cartucho; solo cambian la losa redondeada (sin
+    // muescas ni pozo) y el dibujo de ambas caras.
+
+    /// <summary>Carcasa de consola/teléfono: la misma losa redondeada que la malla (canon
+    /// 600×878). Con flat=false (grilla 2D) deja transparente el exterior y pinta la pared
+    /// inferior de ShellThickness2D, igual que DrawShellBody pero sin muescas.</summary>
+    private static void DrawDeviceShell(Graphics g, DeviceKind kind, Color plastic, bool flat)
+    {
+        var (x, y, w, h, radio) = DeviceBody(kind);
+        Color shell = DeviceShellColor(kind, plastic);
+        if (flat)
+        {
+            // Textura 3D: la malla solo mapea el cuerpo; el resto del canvas queda en
+            // plástico (nunca se muestrea) y el pintado del dispositivo va encima.
+            using var flatBrush = new SolidBrush(shell);
+            g.FillRectangle(flatBrush, 0, 0, FaceWidth, FaceHeight);
+            return;
+        }
+
+        g.Clear(Color.Transparent);
+        // Pared inferior (visible en la grilla): el cuerpo desplazado ShellThickness2D px.
+        using (var wallPath = RoundPath(new Rectangle((int)x, (int)(y + ShellThickness2D), (int)w, (int)h), (int)radio))
+        using (var wallBrush = new SolidBrush(Darken(shell, 0.14f)))
+            g.FillPath(wallBrush, wallPath);
+        using var facePath = RoundPath(new Rectangle((int)x, (int)y, (int)w, (int)h), (int)radio);
+        using var faceBrush = new SolidBrush(shell);
+        g.FillPath(faceBrush, facePath);
+    }
+
+    /// <summary>Tamaño de fuente (inicio en <paramref name="inicio"/>) que hace caber el
+    /// texto en <paramref name="anchoMax"/> px con Segoe UI; nunca baja de 10.</summary>
+    private static float FitFontSize(Graphics g, string texto, float inicio, FontStyle estilo, float anchoMax)
+    {
+        if (string.IsNullOrEmpty(texto)) return inicio;
+        using var f0 = new Font("Segoe UI", inicio, estilo);
+        float wdt = g.MeasureString(texto, f0).Width;
+        if (wdt <= anchoMax) return inicio;
+        return Math.Max(10f, inicio * anchoMax / wdt);
+    }
+
+    private static void PaintDeviceFace(Graphics g, DeviceKind kind, string title, string launcher, string code, string? artPath, Color plastic, bool flat, GameHeader? header)
+    {
+        if (kind == DeviceKind.Arcade)
+        {
+            PaintArcadeFace(g, title, launcher, code, artPath, plastic, header);
+            return;
+        }
+        DrawDeviceShell(g, kind, plastic, flat);
+        if (kind == DeviceKind.Phone)
+        {
+            // Teléfono real: cuerpo centrado (460×878). Bisel negro con cámara
+            // perforada arriba; la pantalla ocupa casi todo el cuerpo.
+            using (var bezelPath = RoundPath(new Rectangle(84, 14, 432, 850), 40))
+            using (var bezelBrush = new SolidBrush(Color.FromArgb(11, 11, 14)))
+                g.FillPath(bezelBrush, bezelPath);
+            g.FillEllipse(Brushes.Black, 300 - 10, 40 - 10, 20, 20);
+            g.FillEllipse(new SolidBrush(Color.FromArgb(26, 42, 74)), 300 - 4, 40 - 4, 8, 8);
+
+            PaintArtWindow(g, new Rectangle(94, 64, 412, 678), title, artPath, plastic);
+
+            var strip = new Rectangle(94, 760, 412, 64);
+            using (var stripPath = RoundPath(strip, 10))
+            using (var stripBrush = new SolidBrush(Color.FromArgb(20, 20, 24)))
+                g.FillPath(stripBrush, stripPath);
+            PaintCodeStrip(g, strip, DeviceCode(code));
+            using (var homePath = RoundPath(new Rectangle(250, 844, 100, 7), 3))
+            using (var homeBrush = new SolidBrush(Color.FromArgb(60, 60, 68)))
+                g.FillPath(homeBrush, homePath);
+            return;
+        }
+
+        // ===== Consola: vista superior (tapa) + cara frontal =====
+        // Rehecha sobre las proporciones de la PS1: caja ancha, tapa circular que
+        // ocupa casi toda la profundidad, alas laterales con los botones y un faldón
+        // frontal con las entradas. Todo el relieve es pintado (la malla aporta el
+        // espesor, el canto y el escalón de la tapa): la luz viene de arriba-izquierda,
+        // así que cada pieza lleva su sombra abajo-derecha y su filo claro del otro lado.
+        PaintConsoleFace(g, title, launcher, artPath, plastic);
+    }
+
+    /// <summary>Ícono impreso en los botones de la consola.</summary>
+    private enum ConsoleGlyph { None, Power, Eject }
+
+    /// <summary>
+    /// Cara superior de la consola (canvas 600×878). Es la vista de la foto: cuerpo
+    /// 10..590 × 244..634, tapa circular de radio 168 centrada en (300, 413) —casi toda
+    /// la profundidad, como en la PS1 real—, alas de 122 px con RESET/POWER y OPEN, y la
+    /// franja 582..634 que la malla mapea al canto frontal (ranuras y puertos).
+    /// </summary>
+    private static void PaintConsoleFace(Graphics g, string title, string launcher, string? artPath, Color plastic)
+    {
+        var (bx, by, bw, bh, br) = DeviceBody(DeviceKind.Console);
+        float x1 = bx + bw, y1 = by + bh;
+        Color shell = DeviceShellColor(DeviceKind.Console, plastic);
+        Color ink = Darken(shell, 0.50f);
+        Color hi = Mix(shell, Color.White, 0.74f);
+        const float Seam = ConsoleSeamY;
+        const float Lx = ConsoleLidCx, Ly = ConsoleLidCy;
+        // El radio y el relieve vienen del modelo de consola elegido (Apariencia).
+        float Lr = ConsoleLidR;
+
+        using var bodyPath = RoundPath(new Rectangle((int)bx, (int)by, (int)bw, (int)bh), (int)br);
+
+        // 1. Cuerpo: degradado diagonal suave. El gris de la PS1 no es blanco; si el
+        //    claro se pasa, la consola deja de leerse como plástico.
+        using (var baseBrush = new LinearGradientBrush(
+            new PointF(bx, by), new PointF(x1, y1),
+            Mix(shell, Color.White, 0.15f), Mix(shell, Color.Black, 0.13f)))
+            g.FillPath(baseBrush, bodyPath);
+
+        // 2. Oclusión del canto (la losa no lleva bisel): tres trazos cada vez más
+        //    anchos y tenues, recortados a la silueta, para que el filo se apague.
+        var edgeClip = g.Save();
+        g.SetClip(bodyPath, CombineMode.Intersect);
+        for (int i = 0; i < 3; i++)
+        {
+            using var edge = new Pen(Color.FromArgb(30 - i * 8, 0, 0, 0), 2.4f + i * 6f);
+            g.DrawPath(edge, bodyPath);
+        }
+        g.Restore(edgeClip);
+
+        // 3. Juntas de las alas: la sección de la tapa es una pieza aparte, con una
+        //    ranura a cada lado, tangente al disco como en la consola real.
+        using (var groove = new Pen(Color.FromArgb(56, 0, 0, 0), 2.2f))
+        using (var grooveHi = new Pen(Color.FromArgb(32, 255, 255, 255), 1f))
+        using (var grooveLo = new Pen(Color.FromArgb(24, 0, 0, 0), 1.2f))
+        {
+            foreach (float sx in new[] { Lx - Lr, Lx + Lr })
+            {
+                g.DrawLine(groove, sx, by + 12, sx, Seam - 5);
+                g.DrawLine(grooveHi, sx - 2.2f, by + 14, sx - 2.2f, Seam - 7);
+                g.DrawLine(grooveLo, sx + 2.2f, by + 14, sx + 2.2f, Seam - 7);
+            }
+        }
+
+        // 4. Tapa circular: canal del molde, domo apenas convexo, junta concéntrica del
+        //    disco y la uña de apertura con sus tres marcas a las 4:30.
+        var lid = new RectangleF(Lx - Lr, Ly - Lr, Lr * 2, Lr * 2);
+        foreach (var (grow, ancho, alfa) in new[] { (4.5f, 6f, 16), (2.4f, 3f, 26), (0.5f, 1.6f, 54) })
+        {
+            using var canal = new Pen(Color.FromArgb(alfa, 0, 0, 0), ancho);
+            g.DrawEllipse(canal, lid.X - grow, lid.Y - grow, lid.Width + grow * 2, lid.Height + grow * 2);
+        }
+
+        using (var lidPath = new GraphicsPath())
+        {
+            lidPath.AddEllipse(lid);
+            using (var lidBrush = new LinearGradientBrush(
+                new PointF(Lx - Lr * 0.55f, Ly - Lr * 0.85f),
+                new PointF(Lx + Lr * 0.80f, Ly + Lr * 0.95f),
+                Mix(shell, Color.White, 0.175f), Mix(shell, Color.Black, 0.055f)))
+                g.FillPath(lidBrush, lidPath);
+
+            var lidClip = g.Save();
+            g.SetClip(lidPath, CombineMode.Intersect);
+            using (var rimHi = new Pen(Color.FromArgb(62, 255, 255, 255), 2.4f))
+                g.DrawArc(rimHi, lid.X + 2, lid.Y + 2, lid.Width - 4, lid.Height - 4, 186f, 132f);
+            using (var rimLo = new Pen(Color.FromArgb(26, 0, 0, 0), 2.6f))
+                g.DrawArc(rimLo, lid.X + 2, lid.Y + 2, lid.Width - 4, lid.Height - 4, 8f, 152f);
+            using (var ringLo = new Pen(Color.FromArgb(30, 0, 0, 0), 1.6f))
+                g.DrawEllipse(ringLo, Lx - Lr * 0.94f, Ly - Lr * 0.94f, Lr * 1.88f, Lr * 1.88f);
+            using (var ringHi = new Pen(Color.FromArgb(38, 255, 255, 255), 1.1f))
+                g.DrawEllipse(ringHi, Lx - Lr * 0.94f, Ly - Lr * 0.94f + 1.5f, Lr * 1.88f, Lr * 1.88f);
+            g.Restore(lidClip);
+        }
+
+        float grip = 44f * MathF.PI / 180f;
+        float gx = MathF.Cos(grip), gy = MathF.Sin(grip);
+        var notchA = new PointF(Lx + gx * (Lr - 18), Ly + gy * (Lr - 18));
+        var notchB = new PointF(Lx + gx * (Lr - 2), Ly + gy * (Lr - 2));
+        using (var notch = new Pen(Color.FromArgb(72, 0, 0, 0), 3.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            g.DrawLine(notch, notchA, notchB);
+        using (var notchHi = new Pen(Color.FromArgb(55, 255, 255, 255), 1.2f))
+            g.DrawLine(notchHi, notchA.X - 1.5f, notchA.Y + 1.6f, notchB.X - 1.5f, notchB.Y + 1.6f);
+
+        // 5. Serigrafía de la tapa: marca arriba (donde la PS1 dice SONY), el ÍCONO del
+        //    emulador al centro y el nombre debajo, como el logotipo de la consola.
+        // La serigrafía se escala con la tapa: en los modelos de tapa chica el logo y el
+        // nombre tienen que entrar dentro del disco igual que en la clásica.
+        float ls = Lr / 162f;
+        var serigrafia = g.Save();
+        g.TranslateTransform(Lx, Ly);
+        g.ScaleTransform(ls, ls);
+        g.TranslateTransform(-Lx, -Ly);
+        DrawTrackedText(g, "WINFORGE", 19f, FontStyle.Bold, Lx, Ly - 88f, 4.6f, Color.FromArgb(225, ink), hi, 1.2f);
+        // El logo de la tapa es el ícono del emulador (el mismo arte que usa la card),
+        // no una marca fija: así cada emulador se reconoce por su propio logo. Sin arte
+        // válido se cae al emblema propio.
+        if (!PaintConsoleLogo(g, Lx, Ly + 10f, artPath))
+            PaintConsoleMark(g, Lx, Ly + 20f, shell);
+        string shown = string.IsNullOrWhiteSpace(title) ? launcher : title;
+        if (!string.IsNullOrWhiteSpace(shown))
+        {
+            shown = shown.ToUpperInvariant();
+            float size = FitTrackedSize(g, shown, 20f, FontStyle.Bold, 252f, 0.6f);
+            DrawTrackedText(g, shown, size, FontStyle.Bold, Lx, Ly + 80f, 0.6f, Color.FromArgb(228, ink), hi, 1f);
+        }
+        g.Restore(serigrafia);
+
+        // 6. Botones de las alas: RESET es la tecla chica; POWER y OPEN son los dos
+        //    discos grandes del mismo gris del cuerpo, con el ícono impreso.
+        PaintConsoleButton(g, 69f, 442f, 18f, "RESET", ConsoleGlyph.None, shell, Color.FromArgb(200, ink), hi);
+        PaintConsoleButton(g, 69f, 526f, 38f, "POWER", ConsoleGlyph.Power, shell, Color.FromArgb(84, 190, 118), hi);
+        PaintConsoleButton(g, 531f, 526f, 38f, "OPEN", ConsoleGlyph.Eject, shell, Color.FromArgb(96, 156, 226), hi);
+
+        // 7. Cara frontal: la malla la mapea al canto inferior, así que se pinta en su
+        //    PROPIA franja del canvas (640..692), debajo del cuerpo. Desde arriba solo
+        //    se ve la junta del faldón; las entradas aparecen al inclinar la consola.
+        const float BandTop = 640f, BandH = 52f;
+        using (var bandBrush = new LinearGradientBrush(
+            new PointF(bx, BandTop), new PointF(bx, BandTop + BandH),
+            Mix(shell, Color.White, 0.09f), Mix(shell, Color.Black, 0.24f)))
+            g.FillRectangle(bandBrush, bx, BandTop, bw, BandH);
+
+        using (var seamShadow = new Pen(Color.FromArgb(92, 0, 0, 0), 3f))
+            g.DrawLine(seamShadow, bx, BandTop, x1, BandTop);
+        using (var seamHi = new Pen(Color.FromArgb(92, 255, 255, 255), 1.2f))
+            g.DrawLine(seamHi, bx, BandTop + 2.6f, x1, BandTop + 2.6f);
+
+        // Faldón central: la sección de la tapa baja al frente algo más alta que las
+        // alas. Es el escalón que hace que la consola se lea como PS1 y no como caja.
+        var apron = new Rectangle((int)(Lx - Lr + 7f), (int)(BandTop + 2f),
+            (int)(Lr * 2 - 14f), (int)(BandH - 4f));
+        using (var apronPath = RoundPath(apron, 5))
+        {
+            using (var fill = new SolidBrush(Mix(shell, Color.White, 0.06f)))
+                g.FillPath(fill, apronPath);
+            using (var line = new Pen(Color.FromArgb(58, 0, 0, 0), 1.4f))
+                g.DrawPath(line, apronPath);
+            using (var lip = new Pen(Color.FromArgb(72, 255, 255, 255), 1.1f))
+                g.DrawLine(lip, apron.Left + 4, apron.Top + 1.4f, apron.Right - 4, apron.Top + 1.4f);
+        }
+
+        PaintConsoleMemoryBay(g, 205f, BandTop + 4f, shell, ink, hi, "1");
+        PaintConsoleMemoryBay(g, 395f, BandTop + 4f, shell, ink, hi, "2");
+        // Solo quedan los dos conectores centrales (MEMORY CARD): los puertos de mando
+        // de las alas se sacaron a pedido.
+
+        // Filo inferior: labio claro arriba de la sombra del canto.
+        using (var bottomHi = new Pen(Color.FromArgb(70, 255, 255, 255), 1.2f))
+            g.DrawLine(bottomHi, bx + 14, BandTop + BandH - 5f, x1 - 14, BandTop + BandH - 5f);
+        using (var bottomLo = new Pen(Color.FromArgb(105, 0, 0, 0), 2.4f))
+            g.DrawLine(bottomLo, bx + 10, BandTop + BandH - 1.8f, x1 - 10, BandTop + BandH - 1.8f);
+
+        // 7b. Cara TRASERA: la malla mapea el canto opuesto a esta otra franja
+        //     (700..752), así los conectores van en el lateral de atrás y no sobre la
+        //     cara inferior. Misma escala y paleta que la franja frontal.
+        const float RearTop = 700f;
+        using (var rearBrush = new LinearGradientBrush(
+            new PointF(bx, RearTop), new PointF(bx, RearTop + BandH),
+            Mix(shell, Color.White, 0.07f), Mix(shell, Color.Black, 0.26f)))
+            g.FillRectangle(rearBrush, bx, RearTop, bw, BandH);
+        using (var rearSeam = new Pen(Color.FromArgb(88, 0, 0, 0), 2.6f))
+            g.DrawLine(rearSeam, bx, RearTop, x1, RearTop);
+        using (var rearSeamHi = new Pen(Color.FromArgb(78, 255, 255, 255), 1.1f))
+            g.DrawLine(rearSeamHi, bx, RearTop + 2.4f, x1, RearTop + 2.4f);
+
+        // La pared trasera se ve desde afuera, o sea rotada 180° respecto de la textura.
+        // Se pinta el contenido de la franja ya rotado para que en el modelo los puertos
+        // caigan en el orden de la foto y los rótulos se lean derechos. El fondo queda
+        // afuera de la rotación para no invertir la luz de la franja.
+        Color rearInk = Color.FromArgb(212, Darken(shell, 0.64f));
+        // La pared trasera se ve por su cara externa y la malla invierte el eje vertical
+        // ahí: cada rótulo se pinta espejado en V sobre su propio centro para que en el
+        // modelo se lea derecho, sin mover los puertos.
+        void RearLabel(string text, float cx)
+        {
+            float cy = RearTop + 6f;
+            var st = g.Save();
+            g.TranslateTransform(0f, cy);
+            g.ScaleTransform(1f, -1f);
+            g.TranslateTransform(0f, -cy);
+            DrawTrackedText(g, text, 6.6f, FontStyle.Bold, cx, cy, 0.7f, rearInk, hi, 0.4f);
+            g.Restore(st);
+        }
+
+        // Rótulos cortos: el canto tiene 600 px y los nombres completos se tocaban.
+        RearLabel("PARALLEL I/O", 94f);
+        RearLabel("SERIAL", 203f);
+        RearLabel("AUDIO", 265f);
+        RearLabel("RFU", 318f);
+        RearLabel("VIDEO", 358f);
+        RearLabel("AV OUT", 426f);
+        RearLabel("AC IN", 528f);
+
+        PaintConsoleParallelPort(g, new Rectangle(28, 712, 132, 34), shell);
+        PaintConsoleSerialPort(g, new Rectangle(184, 720, 38, 18), shell);
+        PaintConsoleRca(g, 250f, 730f, Color.FromArgb(206, 56, 50), 12f);
+        PaintConsoleRca(g, 280f, 730f, Color.FromArgb(236, 234, 228), 12f);
+        PaintConsoleDcJack(g, 318f, 730f, 7f);
+        PaintConsoleRca(g, 358f, 730f, Color.FromArgb(230, 194, 52), 12f);
+        PaintConsoleAvMulti(g, new Rectangle(378, 716, 96, 26), shell);
+        PaintConsoleAcIn(g, new Rectangle(506, 714, 44, 32), shell);
+
+        // Junta del faldón con la tapa vista DESDE ARRIBA: es el mismo molde que la
+        // pared repite en su primer renglón, así la línea sigue al inclinar el modelo.
+        using (var seamTopLo = new Pen(Color.FromArgb(58, 0, 0, 0), 2f))
+            g.DrawLine(seamTopLo, bx + 6, Seam, x1 - 6, Seam);
+        using (var seamTopHi = new Pen(Color.FromArgb(58, 255, 255, 255), 1f))
+            g.DrawLine(seamTopHi, bx + 6, Seam + 1.8f, x1 - 6, Seam + 1.8f);
+
+        // 8. Marca de molde arriba a la derecha (la "E" de la foto) y grano fino, que
+        //    es lo que evita que el plástico se vea como un degradado digital.
+        DrawTrackedText(g, "E", 9f, FontStyle.Bold, 553f, 268f, 0f, Color.FromArgb(34, ink), hi, 0.4f);
+        var grainClip = g.Save();
+        g.SetClip(bodyPath, CombineMode.Intersect);
+        PaintGrain(g, new Rectangle((int)bx, (int)by, (int)bw, (int)bh), 0.35f);
+        g.Restore(grainClip);
+    }
+
+    /// <summary>
+    /// Emblema de la tapa: placa de cuatro colores en perspectiva y una "W" maciza
+    /// apoyada encima. Toma la composición del logotipo de la PS1 (símbolo sobre base
+    /// de colores), pero es una marca propia de WinForge.
+    /// </summary>
+    private static void PaintConsoleMark(Graphics g, float cx, float cy, Color shell)
+    {
+        const float W = 98f, H = 17f, Skew = 7f;
+        Color[] colors =
+        {
+            Color.FromArgb(66, 120, 210), Color.FromArgb(238, 194, 64),
+            Color.FromArgb(64, 178, 112), Color.FromArgb(210, 68, 62)
+        };
+        float top = cy + 4f, bottom = top + H;
+        for (int i = 0; i < 4; i++)
+        {
+            float x0 = cx - W * 0.5f + W * i / 4f;
+            float x1 = x0 + W / 4f;
+            using var brush = new SolidBrush(colors[i]);
+            g.FillPolygon(brush, new[]
+            {
+                new PointF(x0 + Skew, top),
+                new PointF(x1 + Skew, top),
+                new PointF(x1, bottom),
+                new PointF(x0, bottom)
+            });
+        }
+        using (var edge = new Pen(Color.FromArgb(70, 0, 0, 0), 1.1f))
+            g.DrawPolygon(edge, new[]
+            {
+                new PointF(cx - W * 0.5f + Skew, top),
+                new PointF(cx + W * 0.5f + Skew, top),
+                new PointF(cx + W * 0.5f, bottom),
+                new PointF(cx - W * 0.5f, bottom)
+            });
+        using (var sheen = new Pen(Color.FromArgb(120, 255, 255, 255), 1.2f))
+            g.DrawLine(sheen, cx - W * 0.5f + Skew + 2, top + 1.4f, cx + W * 0.5f + Skew - 2, top + 1.4f);
+
+        // La "W" lleva un canto oscuro detrás: así se lee elevada sobre la placa.
+        using var font = new Font("Segoe UI", 48f, FontStyle.Bold, GraphicsUnit.Pixel);
+        using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+        using (var deep = new SolidBrush(Color.FromArgb(150, 104, 28, 24)))
+            g.DrawString("W", font, deep, new PointF(cx + 2.2f, cy - 21f + 2.8f), sf);
+        using (var face = new LinearGradientBrush(
+            new PointF(cx, cy - 46f), new PointF(cx, cy + 2f),
+            Color.FromArgb(232, 84, 64), Color.FromArgb(206, 48, 38)))
+            g.DrawString("W", font, face, new PointF(cx, cy - 21f), sf);
+    }
+
+    /// <summary>
+    /// Ícono del emulador sobre la tapa: se recorta al cuadrado central y se escala
+    /// nítido, como la calcomanía del fabricante en la consola real. Devuelve false
+    /// si no hay arte válido (ahí la tapa usa el emblema propio).
+    /// </summary>
+    private static bool PaintConsoleLogo(Graphics g, float cx, float cy, string? artPath)
+    {
+        using var art = LoadArt(artPath);
+        if (art == null || art.Width < 2 || art.Height < 2) return false;
+
+        const float Side = 112f;
+        float src = Math.Min(art.Width, art.Height);
+        var dest = new RectangleF(cx - Side * 0.5f, cy - Side * 0.5f, Side, Side);
+        var crop = new RectangleF((art.Width - src) * 0.5f, (art.Height - src) * 0.5f, src, src);
+        DrawLogoShadow(g, art, dest, 2f, 2.6f, crop);
+        g.DrawImage(art, dest, crop, GraphicsUnit.Pixel);
+        return true;
+    }
+
+    /// <summary>
+    /// Sombra suave debajo de un logo con alfa: las partes blancas de un logo se
+    /// pierden sobre un fondo claro, y un rectángulo de fondo se vería pegado.
+    /// </summary>
+    private static void DrawLogoShadow(Graphics g, Bitmap logo, RectangleF dest, float dx, float dy,
+        RectangleF? source = null)
+    {
+        using var shadow = new ImageAttributes();
+        shadow.SetColorMatrix(new ColorMatrix
+        {
+            Matrix00 = 0f, Matrix11 = 0f, Matrix22 = 0f,
+            Matrix33 = 0.30f,
+            Matrix44 = 1f
+        });
+        var shadowDest = Rectangle.Round(new RectangleF(dest.X + dx, dest.Y + dy, dest.Width, dest.Height));
+        var src = source ?? new RectangleF(0, 0, logo.Width, logo.Height);
+        g.DrawImage(logo, shadowDest, (int)src.X, (int)src.Y,
+            (int)src.Width, (int)src.Height, GraphicsUnit.Pixel, shadow);
+    }
+
+    /// <summary>
+    /// Tecla de consola: pozo hundido, domo del mismo gris del cuerpo con el filo
+    /// iluminado arriba y su ícono/serigrafía impresos.
+    /// </summary>
+    private static void PaintConsoleButton(Graphics g, float cx, float cy, float r, string label,
+        ConsoleGlyph glyph, Color shell, Color labelColor, Color hi)
+    {
+        // Pozo: una ranura fina, no un aro grueso. La tecla de la PS1 va casi a ras del
+        // cuerpo; el aro ancho la convertía en un bowl.
+        using (var well = new Pen(Color.FromArgb(46, 0, 0, 0), 2.2f))
+            g.DrawEllipse(well, cx - r - 2.4f, cy - r - 2.4f, (r + 2.4f) * 2, (r + 2.4f) * 2);
+        using (var wellHi = new Pen(Color.FromArgb(52, 255, 255, 255), 1f))
+            g.DrawArc(wellHi, cx - r - 3.4f, cy - r - 3.4f, (r + 3.4f) * 2, (r + 3.4f) * 2, 196f, 132f);
+
+        using (var dome = new SolidBrush(Mix(shell, Color.White, 0.07f)))
+            g.FillEllipse(dome, cx - r, cy - r, r * 2, r * 2);
+        using (var shade = new Pen(Color.FromArgb(44, 0, 0, 0), Math.Max(1.4f, r * 0.09f)))
+            g.DrawArc(shade, cx - r + 2, cy - r + 2, (r - 2) * 2, (r - 2) * 2, 8f, 150f);
+        using (var light = new Pen(Color.FromArgb(75, 255, 255, 255), Math.Max(1.1f, r * 0.07f)))
+            g.DrawArc(light, cx - r + 2, cy - r + 2, (r - 2) * 2, (r - 2) * 2, 192f, 136f);
+
+        switch (glyph)
+        {
+            case ConsoleGlyph.Power:
+                using (var pen = new Pen(labelColor, 2.7f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                {
+                    g.DrawArc(pen, cx - 10f, cy - 18f, 20f, 20f, -58f, 296f);
+                    g.DrawLine(pen, cx, cy - 21f, cx, cy - 7f);
+                }
+                break;
+            case ConsoleGlyph.Eject:
+                using (var brush = new SolidBrush(labelColor))
+                    g.FillPolygon(brush, new[]
+                    {
+                        new PointF(cx - 9f, cy - 6f), new PointF(cx + 9f, cy - 6f), new PointF(cx, cy - 17f)
+                    });
+                using (var bar = new Pen(labelColor, 2.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                    g.DrawLine(bar, cx - 9f, cy + 1f, cx + 9f, cy + 1f);
+                break;
+        }
+
+        bool icon = glyph != ConsoleGlyph.None;
+        float labelSize = Math.Max(6.5f, icon ? r * 0.24f : r * 0.36f);
+        DrawTrackedText(g, label, labelSize, FontStyle.Bold, cx,
+            cy + (icon ? r * 0.40f : 0f), icon ? 1.1f : 0.3f, labelColor, hi, 0.7f);
+    }
+
+    /// <summary>
+    /// Ranura de tarjeta de memoria de la cara frontal: número impreso, placa
+    /// "MEMORY CARD" y el conector hundido con sus ocho contactos dorados.
+    /// </summary>
+    private static void PaintConsoleMemoryBay(Graphics g, float cx, float top, Color shell, Color ink, Color hi, string number)
+    {
+        DrawTrackedText(g, number, 13f, FontStyle.Bold, cx, top + 6f, 0f, Color.FromArgb(195, ink), hi, 0.9f);
+
+        var plate = new Rectangle((int)(cx - 57), (int)(top + 13), 114, 12);
+        using (var platePath = RoundPath(plate, 3))
+        {
+            using (var fill = new SolidBrush(Mix(shell, Color.White, 0.36f)))
+                g.FillPath(fill, platePath);
+            using (var line = new Pen(Mix(shell, Color.Black, 0.26f), 1.1f))
+                g.DrawPath(line, platePath);
+        }
+        DrawTrackedText(g, "MEMORY CARD", 6.4f, FontStyle.Bold, cx, plate.Top + 6f, 1f, Color.FromArgb(210, ink), hi, 0.5f);
+
+        var slot = new Rectangle((int)(cx - 52), (int)(top + 27), 104, 18);
+        using (var slotPath = RoundPath(slot, 3))
+        {
+            using (var floor = new SolidBrush(Color.FromArgb(15, 15, 18)))
+                g.FillPath(floor, slotPath);
+            DrawRecess(g, slotPath, slot, shell, 2.2f, paintFloor: false, escala: 0.3f);
+        }
+        for (int i = 0; i < 8; i++)
+        {
+            float px = slot.Left + 8 + i * 12.4f;
+            using var pin = new LinearGradientBrush(
+                new PointF(px, slot.Top + 5), new PointF(px + 6, slot.Bottom - 4),
+                Color.FromArgb(188, 172, 120), Color.FromArgb(96, 84, 56));
+            g.FillRectangle(pin, px, slot.Top + 5, 6.4f, 8.5f);
+        }
+    }
+
+    /// <summary>Puerto paralelo (DB-25) del dorso: boca ancha con dos filas de pines.</summary>
+    private static void PaintConsoleParallelPort(Graphics g, Rectangle r, Color shell)
+    {
+        using var path = RoundPath(r, 4);
+        using (var floor = new SolidBrush(Color.FromArgb(20, 20, 24)))
+            g.FillPath(floor, path);
+        DrawRecess(g, path, r, shell, 2.4f, paintFloor: false, escala: 0.3f);
+        float paso = (r.Width - 20f) / 11f;
+        for (int row = 0; row < 2; row++)
+            for (int i = 0; i < 12; i++)
+            {
+                using var pin = new SolidBrush(Color.FromArgb(176, 172, 160));
+                g.FillRectangle(pin, r.Left + 10f + i * paso,
+                    r.Top + r.Height * 0.20f + row * r.Height * 0.33f, 3.6f, r.Height * 0.26f);
+            }
+    }
+
+    /// <summary>Puerto serial del dorso: boca chica con su hilera de contactos.</summary>
+    private static void PaintConsoleSerialPort(Graphics g, Rectangle r, Color shell)
+    {
+        using var path = RoundPath(r, 3);
+        using (var floor = new SolidBrush(Color.FromArgb(14, 14, 17)))
+            g.FillPath(floor, path);
+        DrawRecess(g, path, r, shell, 1.6f, paintFloor: false, escala: 0.25f);
+        for (int i = 0; i < 8; i++)
+            using (var pin = new SolidBrush(Color.FromArgb(168, 164, 152)))
+                g.FillRectangle(pin, r.Left + 4.5f + i * 3.9f, r.Top + 6, 2.2f, 11f);
+    }
+
+    /// <summary>Toma RCA del dorso (rojo/izquierdo, blanco/derecho o amarillo/video).</summary>
+    private static void PaintConsoleRca(Graphics g, float cx, float cy, Color ring, float r = 16f)
+    {
+        float metal = r * 0.81f;
+        using (var outer = new SolidBrush(Color.FromArgb(24, 24, 27)))
+            g.FillEllipse(outer, cx - r, cy - r, r * 2, r * 2);
+        using (var ringMetal = new LinearGradientBrush(
+            new PointF(cx - metal, cy - metal), new PointF(cx + metal, cy + metal),
+            Color.FromArgb(154, 151, 144), Color.FromArgb(52, 51, 48)))
+            g.FillEllipse(ringMetal, cx - metal, cy - metal, metal * 2, metal * 2);
+        using (var color = new SolidBrush(ring))
+            g.FillEllipse(color, cx - r * 0.59f, cy - r * 0.59f, r * 1.18f, r * 1.18f);
+        using (var hole = new SolidBrush(Color.FromArgb(12, 12, 14)))
+            g.FillEllipse(hole, cx - r * 0.19f, cy - r * 0.19f, r * 0.38f, r * 0.38f);
+        using (var shine = new Pen(Color.FromArgb(120, 255, 255, 255), Math.Max(0.8f, r * 0.07f)))
+            g.DrawArc(shine, cx - metal, cy - metal, metal * 2, metal * 2, 200, 70);
+    }
+
+    /// <summary>Toma de corriente continua chica (RFU DC OUT).</summary>
+    private static void PaintConsoleDcJack(Graphics g, float cx, float cy, float r = 9f)
+    {
+        using (var outer = new SolidBrush(Color.FromArgb(26, 26, 29)))
+            g.FillEllipse(outer, cx - r, cy - r, r * 2, r * 2);
+        using (var hole = new SolidBrush(Color.FromArgb(8, 8, 10)))
+            g.FillEllipse(hole, cx - r * 0.56f, cy - r * 0.56f, r * 1.12f, r * 1.12f);
+        using (var rim = new Pen(Color.FromArgb(120, 158, 156, 148), Math.Max(0.9f, r * 0.13f)))
+            g.DrawEllipse(rim, cx - r, cy - r, r * 2, r * 2);
+    }
+
+    /// <summary>Salida AV MULTI: conector ancho con su hilera de contactos dorados.</summary>
+    private static void PaintConsoleAvMulti(Graphics g, Rectangle r, Color shell)
+    {
+        using var path = RoundPath(r, 4);
+        using (var floor = new SolidBrush(Color.FromArgb(22, 20, 18)))
+            g.FillPath(floor, path);
+        DrawRecess(g, path, r, shell, 2f, paintFloor: false, escala: 0.28f);
+        float paso = (r.Width - 14f) / 11f;
+        for (int i = 0; i < 12; i++)
+            using (var pin = new SolidBrush(Color.FromArgb(186, 168, 116)))
+                g.FillRectangle(pin, r.Left + 7 + i * paso,
+                    r.Top + r.Height * 0.32f, 2.6f, r.Height * 0.42f);
+    }
+
+    /// <summary>Entrada de corriente alterna: zócalo de dos agujeros (figura 8).</summary>
+    private static void PaintConsoleAcIn(Graphics g, Rectangle r, Color shell)
+    {
+        using var path = RoundPath(r, 6);
+        using (var floor = new SolidBrush(Color.FromArgb(16, 16, 18)))
+            g.FillPath(floor, path);
+        DrawRecess(g, path, r, shell, 2.2f, paintFloor: false, escala: 0.3f);
+        float cx = r.Left + r.Width * 0.5f, cy = r.Top + r.Height * 0.5f;
+        foreach (float dx in new[] { -7.5f, 7.5f })
+        {
+            using var hole = new SolidBrush(Color.FromArgb(6, 6, 8));
+            g.FillEllipse(hole, cx + dx - 5.5f, cy - 5.5f, 11, 11);
+            using var rim = new Pen(Color.FromArgb(80, 255, 255, 255), 1f);
+            g.DrawEllipse(rim, cx + dx - 5.5f, cy - 5.5f, 11, 11);
+        }
+    }
+
+    /// <summary>Tamaño que hace entrar un texto CON tracking en <paramref name="maxWidth"/>.
+    /// <see cref="FitFontSize"/> mide sin tracking y un título largo se salía de la tapa.</summary>
+    private static float FitTrackedSize(Graphics g, string text, float start, FontStyle style, float maxWidth, float tracking)
+    {
+        using var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Near };
+        for (float size = start; size >= 7f; size -= 0.5f)
+        {
+            using var font = new Font("Segoe UI", size, style, GraphicsUnit.Pixel);
+            float width = tracking * Math.Max(0, text.Length - 1);
+            for (int i = 0; i < text.Length; i++)
+                width += g.MeasureString(text[i].ToString(), font, PointF.Empty, sf).Width;
+            if (width <= maxWidth) return size;
+        }
+        return 7f;
+    }
+
+    /// <summary>
+    /// Texto serigrafiado con tracking (espaciado entre letras). GDI+ no expone
+    /// letter-spacing, así que se dibuja letra por letra; el resaltado corre un píxel
+    /// hacia abajo para que la marca se lea impresa en el plástico y no flotando.
+    /// </summary>
+    private static void DrawTrackedText(Graphics g, string text, float pxSize, FontStyle style,
+        float cx, float cy, float tracking, Color color, Color highlight, float highlightOffset)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        using var font = new Font("Segoe UI", pxSize, style, GraphicsUnit.Pixel);
+        using var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Near };
+        float total = 0f;
+        for (int i = 0; i < text.Length; i++)
+            total += g.MeasureString(text[i].ToString(), font, PointF.Empty, sf).Width + tracking;
+        total -= tracking;
+        float x = cx - total * 0.5f;
+        float y = cy - font.Height * 0.5f;
+        for (int i = 0; i < text.Length; i++)
+        {
+            string ch = text[i].ToString();
+            using (var halo = new SolidBrush(Color.FromArgb(highlight.A / 2, highlight)))
+                g.DrawString(ch, font, halo, new PointF(x + 0.7f, y + highlightOffset), sf);
+            using (var brush = new SolidBrush(color))
+                g.DrawString(ch, font, brush, new PointF(x, y), sf);
+            x += g.MeasureString(ch, font, PointF.Empty, sf).Width + tracking;
+        }
+    }
+
+    private static void PaintDeviceBack(Graphics g, DeviceKind kind, string launcher, string code, Color plastic, bool flat)
+    {
+        if (kind == DeviceKind.Arcade)
+        {
+            PaintArcadeBack(g, launcher, code, plastic);
+            return;
+        }
+        DrawDeviceShell(g, kind, plastic, flat);
+        Color hi = Mix(plastic, Color.White, 0.55f);
+        if (kind == DeviceKind.Phone)
+        {
+            // Módulo de cámaras cuadrado arriba a la izquierda del cuerpo
+            // (cuerpo x 70..530) + textos elevados.
+            var module = new Rectangle(98, 30, 120, 120);
+            using (var modPath = RoundPath(module, 26))
+            using (var modBrush = new SolidBrush(Color.FromArgb(22, 22, 26)))
+                g.FillPath(modBrush, modPath);
+            foreach (var (lx, ly) in new[] { (128, 60), (188, 60), (128, 120) })
+            {
+                g.FillEllipse(new SolidBrush(Color.FromArgb(8, 8, 10)), lx - 20, ly - 20, 40, 40);
+                g.FillEllipse(new SolidBrush(Color.FromArgb(30, 46, 80)), lx - 11, ly - 11, 22, 22);
+            }
+            g.FillEllipse(new SolidBrush(Color.FromArgb(240, 230, 170)), 188 - 7, 120 - 7, 14, 14);
+
+            DrawRaisedText(g, "WINFORGE", 54f, FontStyle.Bold, 300f, 480f, plastic, hi);
+            DrawRaisedText(g, "MOBILE", 30f, FontStyle.Regular, 300f, 540f, plastic, hi);
+            DrawRaisedText(g, string.IsNullOrWhiteSpace(code) ? "WINFORGE - MOBILE" : DeviceCode(code).ToUpperInvariant(), 26f, FontStyle.Bold, 300f, 720f, plastic, hi);
+            return;
+        }        // ===== Consola (dorso) =====
+        // La cara trasera no recibe la luz de arriba: base más apagada, rejilla de
+        // ventilación a la izquierda, etiqueta de modelo al centro y el bloque de
+        // conectores a la derecha. La textura del dorso va espejada en U por la malla,
+        // así que se pinta normal y se lee normal al girar la pieza.
+        var (bx, by, bw, bh, br) = DeviceBody(DeviceKind.Console);
+        float x1 = bx + bw, y1 = by + bh;
+        Color shellBack = DeviceShellColor(DeviceKind.Console, plastic);
+        using var backBody = RoundPath(new Rectangle((int)bx, (int)by, (int)bw, (int)bh), (int)br);
+
+        using (var baseBrush = new LinearGradientBrush(
+            new PointF(bx, by), new PointF(x1, y1),
+            Mix(shellBack, Color.Black, 0.06f), Mix(shellBack, Color.Black, 0.17f)))
+            g.FillPath(baseBrush, backBody);
+
+        var backClip = g.Save();
+        g.SetClip(backBody, CombineMode.Intersect);
+
+        // Rejilla: ranuras finas, no barras. El dorso real es una parrilla de rendijas
+        // apretadas sobre el plástico.
+        for (int i = 0; i < 9; i++)
+        {
+            var vent = new Rectangle(54, 312 + i * 22, 188, 7);
+            using var ventPath = RoundPath(vent, 4);
+            using (var floor = new SolidBrush(Mix(shellBack, Color.Black, 0.60f)))
+                g.FillPath(floor, ventPath);
+            DrawRecess(g, ventPath, vent, shellBack, 1.4f, paintFloor: false, escala: 0.22f);
+        }
+
+        // Etiqueta de modelo: calcomanía clara con tinta oscura. Antes el texto iba a
+        // 10 px sobre el mismo gris del cuerpo y no se leía; así el contraste es real
+        // y el modelo entra entero en una línea.
+        var plate = new Rectangle(252, 314, 314, 180);
+        using (var shadePath = RoundPath(new Rectangle(plate.X + 1, plate.Y + 3, plate.Width, plate.Height), 10))
+        using (var shade = new SolidBrush(Color.FromArgb(26, 0, 0, 0)))
+            g.FillPath(shade, shadePath);
+        using (var platePath = RoundPath(plate, 10))
+        {
+            using (var fill = new LinearGradientBrush(
+                new PointF(plate.Left, plate.Top), new PointF(plate.Right, plate.Bottom),
+                Mix(shellBack, Color.Black, 0.50f), Mix(shellBack, Color.Black, 0.60f)))
+                g.FillPath(fill, platePath);
+            using (var line = new Pen(Color.FromArgb(70, 255, 255, 255), 1.1f))
+                g.DrawPath(line, platePath);
+        }
+        float plateCx = plate.X + plate.Width * 0.5f;
+        // Tinta clara sobre el gris grafito: el texto chico se lee de verdad y el logo
+        // (W blanca + F naranja) se ve como el sello original, sin lavarse.
+        Color plateInk = Color.FromArgb(242, 240, 239, 233);
+        Color plateHi = Color.FromArgb(120, 0, 0, 0);
+
+        // Logo de WinForge sobre la etiqueta, como el sello del fabricante.
+        using (var logo = LoadLauncherLogoBitmap("WinForge"))
+        {
+            if (logo != null)
+            {
+                const float Box = 76f;
+                float scale = Box / Math.Max(logo.Width, logo.Height);
+                float lw = logo.Width * scale, lh = logo.Height * scale;
+                var dest = new RectangleF(plateCx - lw * 0.5f,
+                    plate.Top + 12f + (Box - lh) * 0.5f, lw, lh);
+                g.DrawImage(logo, dest);
+            }
+        }
+
+        DrawTrackedText(g, "WINFORGE", 25f, FontStyle.Bold, plateCx, plate.Top + 104f, 3f, plateInk, plateHi, 0.8f);
+        DrawTrackedText(g, "CONSOLE", 12f, FontStyle.Regular, plateCx, plate.Top + 126f, 3.6f,
+            Color.FromArgb(215, plateInk), plateHi, 0.6f);
+        string model = string.IsNullOrWhiteSpace(code) ? "MODEL WF-01" : DeviceCode(code).ToUpperInvariant();
+        float modelSize = FitTrackedSize(g, model, 16f, FontStyle.Regular, plate.Width - 40f, 0.5f);
+        DrawTrackedText(g, model, modelSize, FontStyle.Regular, plateCx, plate.Top + 158f, 0.5f,
+            Color.FromArgb(245, plateInk), plateHi, 0.6f);
+
+        // ===== Conectores traseros (como la PS1 real) =====
+        // Panel hundido a lo ancho del dorso con la fila de puertos y sus rótulos:
+        // PARALLEL I/O · SERIAL I/O · AUDIO OUT (R/L) · RFU DC OUT · VIDEO OUT ·
+        // AV MULTI OUT · AC IN. Antes había dos conectores genéricos sueltos.
+        // Patas de goma en las esquinas: es la cara que apoya. Los conectores ya no van
+        // acá: la malla mapea el canto trasero a la franja 700..752 del frente.
+        foreach (var (fx, fy) in new[] { (62f, 280f), (538f, 280f), (62f, 598f), (538f, 598f) })
+        {
+            using (var halo = new SolidBrush(Color.FromArgb(26, 0, 0, 0)))
+                g.FillEllipse(halo, fx - 30, fy - 26, 60, 56);
+            using (var foot = new SolidBrush(Color.FromArgb(56, 54, 52)))
+                g.FillEllipse(foot, fx - 25, fy - 24, 50, 48);
+            using (var dome = new SolidBrush(Color.FromArgb(82, 79, 75)))
+                g.FillEllipse(dome, fx - 17, fy - 17, 34, 32);
+            using (var gloss = new SolidBrush(Color.FromArgb(58, 255, 255, 255)))
+                g.FillEllipse(gloss, fx - 12, fy - 14, 18, 10);
+        }
+
+        // Filo inferior: la cara que apoya no se ve, el canto sí.
+        using (var bottom = new Pen(Color.FromArgb(110, 0, 0, 0), 2.4f))
+            g.DrawLine(bottom, bx + 10, y1 - 2f, x1 - 10, y1 - 2f);
+        g.Restore(backClip);
     }
 
     // ===== Paleta y códigos =====
@@ -686,7 +1751,7 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
     /// Cara frontal del cartucho: carcasa, pestaña superior hundida, pozo, etiqueta con
     /// cabecera del launcher, ventana de carátula, franja inferior de código y flecha inferior.
     /// </summary>
-    public static Bitmap PaintFace(string title, string launcher, string code, string? artPath, Color plastic, bool flat = true, GameHeader? header = null)
+    public static Bitmap PaintFace(string title, string launcher, string code, string? artPath, Color plastic, bool flat = true, GameHeader? header = null, DeviceKind kind = DeviceKind.Cartridge)
     {
         var bmp = new Bitmap(FaceWidth, FaceHeight, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -694,6 +1759,12 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+
+        if (kind != DeviceKind.Cartridge)
+        {
+            PaintDeviceFace(g, kind, title, launcher, code, artPath, plastic, flat, header);
+            return bmp;
+        }
 
         DrawShellBody(g, plastic, flat);
 
@@ -1074,12 +2145,18 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
         return png.ToArray();
     }
 
-    public static Bitmap PaintBack(string launcher, string code, Color plastic, bool flat = true)
+    public static Bitmap PaintBack(string launcher, string code, Color plastic, bool flat = true, DeviceKind kind = DeviceKind.Cartridge)
     {
         var bmp = new Bitmap(FaceWidth, FaceHeight, PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+
+        if (kind != DeviceKind.Cartridge)
+        {
+            PaintDeviceBack(g, kind, launcher, code, plastic, flat);
+            return bmp;
+        }
 
         DrawShellBody(g, plastic, flat);
 
@@ -1153,14 +2230,15 @@ SamplerState samp : register(s0);    float4 PSMain(VSOut i) : SV_TARGET
 
     // ===== Auxiliares de dibujo =====
 
-    private static void PaintGrain(Graphics g, Rectangle bounds)
+    private static void PaintGrain(Graphics g, Rectangle bounds, float intensity = 1f)
     {
         var rnd = new Random(20261013);
-        for (int i = 0; i < 1400; i++)
+        int dots = (int)(1400 * Math.Clamp(intensity, 0f, 1f));
+        for (int i = 0; i < dots; i++)
         {
             int x = bounds.X + rnd.Next(bounds.Width);
             int y = bounds.Y + rnd.Next(bounds.Height);
-            int a = rnd.Next(5, 15);
+            int a = Math.Max(2, (int)(rnd.Next(5, 15) * Math.Clamp(intensity, 0f, 1f)));
             using var punto = new SolidBrush(rnd.Next(2) == 0
                 ? Color.FromArgb(a, 255, 255, 255)
                 : Color.FromArgb(a, 0, 0, 0));

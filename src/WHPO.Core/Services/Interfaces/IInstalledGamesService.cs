@@ -77,6 +77,7 @@ public interface IInstalledGamesService
     /// Versión que cambia cada vez que se limpia la caché. La biblioteca la compara
     /// con la última que vio para mostrar el skeleton y re-escanear aunque otra
     /// consulta (bandeja, procesos) haya vuelto a llenar la caché en el medio.
+    /// Se persiste en settings para que la limpieza tampoco se pierda al reiniciar.
     /// </summary>
     int CacheClearVersion { get; }
 

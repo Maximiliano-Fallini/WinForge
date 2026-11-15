@@ -668,6 +668,23 @@
                         </StackPanel>
                     </Border>
 
+<!-- Modelo de la consola virtual: preferencia de las cards 3D, por eso solo aparece
+     con ese estilo activo. Los define ConsoleModel (radio y relieve de la tapa y
+     grosor del cuerpo) y los usan la malla, el pintado y la vista previa. -->
+                    <Border x:Name="ConsoleModelCard" Style="{StaticResource CardStyle}" Padding="20"
+                            CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal"
+                            Visibility="Collapsed">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Modelo de la consola" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock Text="Elegí qué consola representa a los emuladores en la biblioteca. Cambia la tapa y el grosor del equipo, y se aplica al volver a la biblioteca."
+                                       FontSize="13"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
+                            <StackPanel x:Name="ConsoleModelHost" Orientation="Horizontal" Spacing="14"
+                                        Margin="0,14,0,0" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Border>
+
 <!-- Transparencia de los paneles: es el alfa de las superficies del tema (cards,
                          menú lateral, barra de título y chips — NUNCA el fondo de la ventana,
                          que es la identidad del tema) y es ABSOLUTO: en 0 % los paneles quedan

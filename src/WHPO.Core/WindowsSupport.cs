@@ -35,6 +35,14 @@ public static class WindowsCapabilities
     /// <summary>True en Windows 11 (build 22000+).</summary>
     public static bool IsWindows11 => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000);
 
+    /// <summary>
+    /// True si esta versión de Windows trae EcoQoS (Modo eficiencia):
+    /// SetProcessInformation con ProcessPowerThrottling existe desde Windows 10 20H1
+    /// (build 19041), que es también desde cuándo el Administrador de tareas dibuja la
+    /// hojita. En builds anteriores la API no existe y la lectura falla siempre.
+    /// </summary>
+    public static bool SupportsEcoQos => OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041);
+
     /// <summary>True si esta versión de Windows cumple el requisito de un tweak.</summary>
     public static bool Supports(WindowsSupport support) => support switch
     {

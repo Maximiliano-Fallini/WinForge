@@ -62,18 +62,6 @@ public sealed class GameBoostService : IGameBoostService
     // existía, es decir habilitadas por defecto — se borra al restaurar).
     private int? _toastsSnapshot;
 
-    // Snapshot del Modo Juego de Windows (null = habilitado por defecto, se borra
-    // al restaurar): se activa para la partida y se restaura al cerrarla.
-    private int? _gameModeSnapshot;
-
-    // El Modo Juego de WINDOWS no se pudo activar esta partida (huérfano: faltan
-    // archivos de Game Bar). Se reporta en GameBoostApplyResult para que la UI avise.
-    private bool _gameModeWarning;
-
-    // Salud del Modo Juego de Windows (opcional: si el host no lo registró en DI,
-    // el boost sigue funcionando sin tocar el Modo Juego de Windows).
-    private readonly IWindowsGameModeHealthService? _gameMode;
-
     private sealed record ProcessSnapshot(int Pid, string Name, ProcessPriorityClass OriginalClass);
     private sealed record ServiceSnapshot(string Name, string StartType);
 
@@ -88,6 +76,9 @@ public sealed class GameBoostService : IGameBoostService
 
     /// <summary>Se dispara cuando el estado previo quedó restaurado (ver interfaz).</summary>
     public event Action? BoostRestored;
+
+    /// <summary>Se dispara cuando cambia el switch (UI o bandeja).</summary>
+    public event Action<bool>? EnabledChanged;
 
     // Servicios con impacto directo en la actividad del sistema mientras se juega:
     // mantenimiento/indexado + telemetría/diagnóstico + cola de impresión + tienda y
@@ -320,12 +311,11 @@ public sealed class GameBoostService : IGameBoostService
         }
     }
 
-    public GameBoostService(ISettingsService settings, ILoggingService logging, IProcessService processService, IWindowsGameModeHealthService? gameModeHealth = null)
+    public GameBoostService(ISettingsService settings, ILoggingService logging, IProcessService processService)
     {
         _settings = settings;
         _logging = logging;
         _processService = processService;
-        _gameMode = gameModeHealth;
 
         // El cierre de juegos se detecta con los eventos WMI de ProcessService.
         _processService.RunningGamesChanged += OnRunningGamesChanged;
@@ -338,6 +328,7 @@ public sealed class GameBoostService : IGameBoostService
 
     public void SetEnabled(bool enabled)
     {
+        bool changed = IsEnabled != enabled;
         _settings.Set(SettingKey, enabled);
         _settings.Save();
         _logging.LogDebug($"GameBoost: switch {(enabled ? "activado" : "desactivado")}");
@@ -345,6 +336,11 @@ public sealed class GameBoostService : IGameBoostService
         // Si se apaga con un boost activo, restaurar de inmediato.
         if (!enabled)
             _ = RestoreAsync();
+
+        // La UI y la bandeja comparten este switch: avisar solo si cambió para
+        // que la página sincronice su perilla sin reaccionar a un set redundante.
+        if (changed)
+            EnabledChanged?.Invoke(enabled);
     }
 
     // ===== Configuración (tuerca junto al switch) =====
@@ -633,7 +629,6 @@ public sealed class GameBoostService : IGameBoostService
         bool applying = false;
         try
         {
-            _gameModeWarning = false;
             _logging.LogInfo("GameBoost: aplicando optimización de procesos al iniciar el juego...");
 
             // Lista configurable de procesos en segundo plano (tuerca del switch).
@@ -654,26 +649,6 @@ public sealed class GameBoostService : IGameBoostService
                 _logging.LogInfo($"GameBoost: servicios a detener por partida: {string.Join(", ", userKillServices)} ({servicesToRestart.Count} corriendo ahora; se restauran al cerrar el juego).");
             var processesToRestore = SnapshotBackgroundPriorities(backgroundProcesses);
             _toastsSnapshot = ReadToastsEnabled();
-
-            // Modo Juego de WINDOWS (no el de WinForge): verificar la infraestructura
-            // ANTES de activar las reglas. Si faltan archivos (huérfano — debloat
-            // extremo tipo Game Bar removida), las reglas de registro no alcanzan:
-            // se omite la activación y se avisa a la UI. Si solo está deshabilitado
-            // por reglas (AtlasOS), se reactiva para la partida con snapshot.
-            if (_gameMode != null)
-            {
-                var health = await _gameMode.CheckAsync();
-                if (health.Status == WindowsGameModeHealth.Orphaned)
-                {
-                    _gameModeWarning = true;
-                    _gameModeSnapshot = null;
-                    _logging.LogWarning("GameBoost: Modo Juego de WINDOWS huérfano (faltan archivos de Game Bar): no se pudo activar para la partida. Reinstalá Game Bar desde la Microsoft Store. El boost de WinForge sigue aplicando procesos/servicios.");
-                }
-                else
-                {
-                    _gameModeSnapshot = await _gameMode.EnsureEnabledForSessionAsync();
-                }
-            }
 
             // 2) Comprometer el snapshot de forma atómica con la reserva de _active:
             // si una restauración (juego cerrado muy rápido, switch apagado o la app
@@ -720,7 +695,6 @@ public sealed class GameBoostService : IGameBoostService
                     .Select(p => new BoostJournalProcess { Pid = p.Pid, Name = p.Name, OriginalPriority = p.OriginalClass })
                     .ToList(),
                 ToastsSnapshot = _toastsSnapshot,
-                GameModeSnapshot = _gameModeSnapshot,
             };
             _journal = journal;
             GameBoostJournal.Save(journal, _logging);
@@ -735,8 +709,6 @@ public sealed class GameBoostService : IGameBoostService
             journal.AppliedSteps.Add("processes");
             journal.ToastsPaused = true;
             journal.AppliedSteps.Add("toasts");
-            journal.GameModeTouched = _gameModeSnapshot is not null;
-            if (journal.GameModeTouched) journal.AppliedSteps.Add("gamemode");
             GameBoostJournal.Save(journal, _logging);
 
             // Tareas programadas + Mantenimiento automático: mismo trato que los
@@ -799,7 +771,6 @@ public sealed class GameBoostService : IGameBoostService
                 servicesStopped,
                 optimizedConfirmed,
                 killedConfirmed,
-                _gameModeWarning,
                 servicesResisted,
                 processesResisted);
             BoostApplied?.Invoke(result);
@@ -1219,9 +1190,6 @@ public sealed class GameBoostService : IGameBoostService
             RestoreToasts();
         }
 
-        if (_gameMode != null && j.GameModeTouched)
-            _gameMode.RestoreForSessionEnd(j.GameModeSnapshot);
-
         return restored;
     }
 
@@ -1482,15 +1450,6 @@ public sealed class GameBoostService : IGameBoostService
                 if (ResumeTask(task)) tasksResumed++;
             if (maintenanceTouched)
                 RestoreAutomaticMaintenance(maintenanceSnapshot);
-
-            // Restaurar el Modo Juego de Windows al estado previo de la partida
-            // (0 explícito vuelve a 0; claves ausentes se borran de nuevo).
-            if (_gameMode != null)
-            {
-                var snapshot = _gameModeSnapshot;
-                _gameModeSnapshot = null;
-                _gameMode.RestoreForSessionEnd(snapshot);
-            }
 
             _logging.LogInfo($"GameBoost: estado previo restaurado ({tasksResumed} tareas re-habilitadas).");
 

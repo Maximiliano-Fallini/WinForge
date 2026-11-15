@@ -121,7 +121,7 @@ public sealed class BoostJournalSnapshot
 
     /// <summary>
     /// Pasos que se llegaron a aplicar ("services", "processes", "toasts",
-    /// "gamemode", "tasks", "maintenance"). Permite saber hasta dónde llegó el boost si
+    /// "tasks", "maintenance"). Permite saber hasta dónde llegó el boost si
     /// el proceso murió a mitad de camino.
     /// </summary>
     public List<string> AppliedSteps { get; set; } = new();
@@ -129,14 +129,9 @@ public sealed class BoostJournalSnapshot
     /// <summary>Interruptor maestro de notificaciones previo (null = la clave no existía).</summary>
     public int? ToastsSnapshot { get; set; }
 
-    /// <summary>Modo Juego de Windows previo (null = habilitado por defecto).</summary>
-    public int? GameModeSnapshot { get; set; }
-
     /// <summary>¿Se llegó a pausar las notificaciones? (usa ToastsSnapshot).</summary>
     public bool ToastsPaused { get; set; }
 
-    /// <summary>¿Se llegó a tocar el Modo Juego de Windows?</summary>
-    public bool GameModeTouched { get; set; }
 }
 
 /// <summary>

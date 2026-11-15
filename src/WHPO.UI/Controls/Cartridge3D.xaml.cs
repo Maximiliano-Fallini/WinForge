@@ -56,6 +56,9 @@ public sealed partial class Cartridge3D : UserControl
         public readonly ID3D11RasterizerState Raster;
         /// <summary>Cantidad de índices de la malla del cartucho.</summary>
         public readonly int IndexCount;
+        // Geometrías de consola/teléfono CREADAS PEREZOSAMENTE (la mayoría de las
+        // instancias son cartuchos y conservan el buffer único actual). Clave = kind.
+        private readonly Dictionary<DeviceKind, (ID3D11Buffer Vb, ID3D11Buffer Ib, int Count)> _deviceGeometries = new();
         /// <summary>
         /// Muestras de MSAA con las que se dibuja (4 si el dispositivo lo soporta). Sin
         /// antialiasing, el canto biselado y las muescas laterales salen escalonados: es
@@ -83,7 +86,7 @@ public sealed partial class Cartridge3D : UserControl
             using (var adapter = dxgiDevice.GetAdapter())
                 Factory = adapter.GetParent<IDXGIFactory2>();
 
-            VertexBuffer = CreateGeometry(Device, out var indexBuffer, out int indexCount);
+            VertexBuffer = CreateGeometry(Device, DeviceKind.Cartridge, out var indexBuffer, out int indexCount);
             IndexBuffer = indexBuffer;
             IndexCount = indexCount;
             CreateShaders(Device, out var vs, out var ps, out var layout);
@@ -113,12 +116,28 @@ public sealed partial class Cartridge3D : UserControl
             Raster = Device.CreateRasterizerState(new RasterizerDescription(CullMode.None, FillMode.Solid));
         }
 
-        private static ID3D11Buffer CreateGeometry(ID3D11Device dev, out ID3D11Buffer indexBuffer, out int indexCount)
+        /// <summary>Geometría del tipo pedido: el cartucho usa los buffers únicos del
+        /// constructor; consola/teléfono crean la suya una sola vez y la reutilizan
+        /// todas las instancias (mismo principio de compartir que el cartucho).</summary>
+        public (ID3D11Buffer Vb, ID3D11Buffer Ib, int Count) GetGeometry(DeviceKind kind)
+        {
+            if (kind == DeviceKind.Cartridge) return (VertexBuffer, IndexBuffer, IndexCount);
+            if (!_deviceGeometries.TryGetValue(kind, out var geo))
+            {
+                var vb = CreateGeometry(Device, kind, out var ib, out int count);
+                geo = (vb, ib, count);
+                _deviceGeometries[kind] = geo;
+            }
+            return geo;
+        }
+
+        private static ID3D11Buffer CreateGeometry(ID3D11Device dev, DeviceKind kind, out ID3D11Buffer indexBuffer, out int indexCount)
         {
             // Geometría procedural del cartucho (esquinas redondeadas, muescas laterales
-            // y canto biselado con normales suaves): la MISMA pieza que dibuja el
-            // previsualizador offscreen, así que lo que se ve ahí es lo que sale acá.
-            var (modelo, indices) = CartridgeModel.BuildMesh();
+            // y canto biselado con normales suaves) o la losa del dispositivo: la MISMA
+            // pieza que dibuja el previsualizador offscreen, así que lo que se ve ahí es
+            // lo que sale acá.
+            var (modelo, indices) = CartridgeModel.BuildMesh(kind);
             var v = new Vertex[modelo.Length];
             for (int i = 0; i < modelo.Length; i++)
             {
@@ -184,12 +203,14 @@ public sealed partial class Cartridge3D : UserControl
     private ID3D11Texture2D? _backTexture;
     private ID3D11ShaderResourceView? _backSrv;
 
-    /// <summary>Inclinación de reposo (y a la que vuelve al soltar el arrastre).</summary>
-    private const float RestPitch = -2.5f;
+    /// <summary>Inclinación de reposo (y a la que vuelve al soltar el arrastre), por
+    /// tipo de pieza: el teléfono apenas inclinado, el gabinete derecho y la consola
+    /// desde arriba. Es la misma con la que se renderiza la card de la biblioteca.</summary>
+    private float RestPitch => CartridgeModel.RestPitch(_kind);
 
     private float _rasterScale = 1f;
     private float _yaw;
-    private float _pitch = RestPitch;
+    private float _pitch = -2.5f;
     /// <summary>
     /// Zoom de la rueda: qué FRACCIÓN del panel ocupa el cartucho (0.85 = 85% con aire
     /// alrededor, 0.985 = casi tocando los bordes). La distancia de cámara se deriva de
@@ -205,6 +226,8 @@ public sealed partial class Cartridge3D : UserControl
     private string _code = "";
     private string? _artPath;
     private GameHeader _header = GameLook.DefaultHeader;
+    /// <summary>Tipo de hardware de la pieza (cartucho, consola o teléfono).</summary>
+    private DeviceKind _kind = DeviceKind.Cartridge;
     private Color _plastic = Color.FromArgb(48, 48, 54);
     private bool _pendingFaces;   // se pidió pintar antes de que D3D esté listo
     /// <summary>
@@ -247,6 +270,17 @@ public sealed partial class Cartridge3D : UserControl
     /// En false (detalle) el giro es libre e inmediato, como siempre.
     /// </summary>
     public bool ScrollFriendly { get; set; }
+
+    /// <summary>Hay un arrastre en curso: la tile no debe sacar el control en vivo
+    /// (el puntero puede salir de sus límites con la captura activa).</summary>
+    public bool IsDragging => _dragging;
+
+    /// <summary>Ya se publicó al menos un cuadro en el WriteableBitmap. La tile recién
+    /// ahí tapa el PNG: si lo tapa antes, la pieza desaparece hasta el primer render.</summary>
+    public bool HasFirstFrame { get; private set; }
+
+    /// <summary>Primer cuadro visible (una sola vez por control).</summary>
+    public event Action? FirstFrameRendered;
 
     /// <summary>Si es false, la rueda NO hace zoom y se deja pasar al scroll de la página.</summary>
     public bool ZoomOnWheel { get; set; } = true;
@@ -513,15 +547,23 @@ public sealed partial class Cartridge3D : UserControl
     /// d ≥ z + |y|/(m·tanV): la esquina más cercana (z máxima) es la que más agranda la
     /// perspectiva, y por eso el encuadre en reposo no alcanzaba al inclinar el cartucho.
     /// </summary>
-    private static float FitDistance(in Matrix4x4 world, float aspect, float margen)
+    private float FitDistance(in Matrix4x4 world, float aspect, float margen)
     {
         // margen = fracción del panel que ocupa el cartucho. El tope del zoom (0.985)
         // deja siempre aire para el bisel y el antialias: jamás se llega a 1.0.
         float tanV = MathF.Tan(22.5f * MathF.PI / 180f); // mitad del FOV vertical (45°)
         float tanH = tanV * aspect;
-        float hx = CartridgeModel.Width * 0.5f;
-        float hy = CartridgeModel.Height * 0.5f;
-        float hz = CartridgeModel.Thickness * 0.5f;
+        // Los dispositivos ocupan solo parte del canvas equivalente: sus extensiones
+        // salen del cuerpo real (DeviceBody), no del cartucho completo, para que la
+        // consola/teléfono se vean a su tamaño y no encogidos en el centro.
+        float hx = CartridgeModel.Width * 0.5f, hy = CartridgeModel.Height * 0.5f;
+        if (_kind != DeviceKind.Cartridge)
+        {
+            var (_, _, bw, bh, _) = CartridgeModel.DeviceBody(_kind);
+            hx = bw / (2f * CartridgeModel.FaceWidth);
+            hy = bh / (2f * CartridgeModel.FaceWidth);
+        }
+        float hz = CartridgeModel.DeviceThickness(_kind);
         float d = 0f;
         for (int i = 0; i < 8; i++)
         {
@@ -582,8 +624,9 @@ public sealed partial class Cartridge3D : UserControl
                 ctx.UpdateSubresource(c, _constants!);
                 ctx.IASetInputLayout(Shared.Layout);
                 ctx.IASetPrimitiveTopology(Vortice.Direct3D.PrimitiveTopology.TriangleList);
-                ctx.IASetVertexBuffer(0, Shared.VertexBuffer, Vertex.Size);
-                ctx.IASetIndexBuffer(Shared.IndexBuffer, Format.R16_UInt, 0);
+                var geo = Shared.GetGeometry(_kind);
+                ctx.IASetVertexBuffer(0, geo.Vb, Vertex.Size);
+                ctx.IASetIndexBuffer(geo.Ib, Format.R16_UInt, 0);
                 ctx.VSSetShader(Shared.Vs);
                 ctx.VSSetConstantBuffer(0, _constants);
                 ctx.PSSetShader(Shared.Ps);
@@ -591,7 +634,7 @@ public sealed partial class Cartridge3D : UserControl
                 ctx.PSSetShaderResource(0, _faceSrv);
                 ctx.PSSetShaderResource(1, _backSrv);
                 ctx.PSSetSampler(0, Shared.Sampler);
-                ctx.DrawIndexed((uint)Shared.IndexCount, 0, 0);
+                ctx.DrawIndexed((uint)geo.Count, 0, 0);
                 if (_msaaRtv != null && _msaaTexture != null)
                 {
                     ctx.OMSetRenderTargets(0, Array.Empty<ID3D11RenderTargetView>(), null);
@@ -678,6 +721,11 @@ public sealed partial class Cartridge3D : UserControl
                         idxLimpiar = (idxLimpiar - 1 + _lectura.Length) % _lectura.Length;
                     }
                     _wbmp.Invalidate();
+                    if (!HasFirstFrame)
+                    {
+                        HasFirstFrame = true;
+                        try { FirstFrameRendered?.Invoke(); } catch { }
+                    }
                     double ms = reloj.Elapsed.TotalMilliseconds;
                     _msLectura += ms; _peorLectura = Math.Max(_peorLectura, ms); _cuadrosPublicados++;
                 }
@@ -728,14 +776,27 @@ public sealed partial class Cartridge3D : UserControl
     /// antes de que el control esté cargado: en ese caso queda pendiente y se pinta al
     /// terminar la inicialización de D3D.
     /// </summary>
-    public void SetCard(string title, string launcher, string code, string? artPath, bool deferred = false, GameHeader? header = null)
+    public void SetCard(string title, string launcher, string code, string? artPath, bool deferred = false, GameHeader? header = null, DeviceKind kind = DeviceKind.Cartridge)
     {
         _title = string.IsNullOrWhiteSpace(title) ? "Juego" : title;
         _launcher = launcher ?? "";
         _code = code ?? "";
         _header = header ?? GameLook.DefaultHeader;
+        // Al cambiar de hardware se re-encuadra: el dispositivo se mira desde arriba y
+        // adelante. Volver a llamar SetCard con el mismo tipo (arte nuevo) conserva la
+        // orientación que el usuario haya dejado.
+        bool kindChanged = _kind != kind;
+        _kind = kind;
+        if (kindChanged && !_dragging && !_intro)
+        {
+            _pitch = RestPitch;
+            // Los dispositivos se encuadran como la card de la biblioteca: la vista del
+            // cuerpo llena el panel (la tile deja solo el aire del recorte).
+            if (_kind != DeviceKind.Cartridge) _zoom = 0.95f;
+            _dirty = true;
+        }
         _artPath = !string.IsNullOrEmpty(artPath) && System.IO.File.Exists(artPath) ? artPath : null;
-        _plastic = CartridgeModel.PlasticColor(_title, _artPath);
+        _plastic = CartridgeModel.DeviceShellColor(_kind, CartridgeModel.PlasticColor(_title, _artPath));
         _deferredPaint = deferred;
         _awaitingFaces = _faceSrv == null || deferred;
         if (!_ready) { _pendingFaces = true; return; }
@@ -778,6 +839,7 @@ public sealed partial class Cartridge3D : UserControl
         string title = _title, launcher = _launcher, code = _code;
         string? arte = _artPath;
         GameHeader header = _header;
+        DeviceKind kind = _kind;
         Color plastic0 = _plastic;
         _ = Task.Run(() =>
         {
@@ -794,9 +856,9 @@ public sealed partial class Cartridge3D : UserControl
                 PaintGate.Wait();
                 gateTaken = true;
                 plastic = CartridgeModel.PlasticColor(title, arte);
-                string clave = CacheKey(title, code, arte, header);
-                cara = LoadCached(CaraCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, false, header);
-                dorso = LoadCached(DorsoCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, true, header);
+                string clave = CacheKey(title, code, arte, header, kind);
+                cara = LoadCached(CaraCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, false, header, kind);
+                dorso = LoadCached(DorsoCache, clave) ?? PaintAndCache(title, launcher, code, arte, plastic, true, header, kind);
             }
             catch (Exception ex) { Fail("pintar", ex); }
             finally { if (gateTaken) { try { PaintGate.Release(); } catch { } } }
@@ -820,13 +882,16 @@ public sealed partial class Cartridge3D : UserControl
     private static string CaraCache => System.IO.Path.Combine(FaceCacheDir, "cara");
     private static string DorsoCache => System.IO.Path.Combine(FaceCacheDir, "dorso");
 
-    /// <summary>Versión del pintado de caras: al subirla, las caras cacheadas se repintan.</summary>
-    private const int FaceCacheVersion = 20;
+    /// <summary>Versión del pintado de caras: al subirla, las caras cacheadas se repintan.
+    /// v30: el diseño de la consola cambió en la card de la biblioteca (grilla v22) y el
+    /// popup seguía levantando caras viejas de la caché, así que se veía otra consola.
+    /// </summary>
+    private const int FaceCacheVersion = 43;
 
     /// <summary>Clave de caché: versión + título + código + arte (nombre, tamaño y fecha) + paleta
     /// + encabezado. La paleta y el encabezado forman parte de la clave para que cambiar de
     /// carcasa o editar la etiqueta no reutilice caras viejas.</summary>
-    private static string CacheKey(string title, string code, string? artPath, GameHeader header)
+    private static string CacheKey(string title, string code, string? artPath, GameHeader header, DeviceKind kind)
     {
         string arte = "";
         try
@@ -838,7 +903,7 @@ public sealed partial class Cartridge3D : UserControl
             }
         }
         catch { }
-        return Math.Abs($"v{FaceCacheVersion}|{title}|{code}|{arte}|{CardSkin.Current.Key}|{header.Signature}".GetHashCode(StringComparison.Ordinal)).ToString("x8");
+        return Math.Abs($"v{FaceCacheVersion}|{kind}|{title}|{code}|{arte}|{CardSkin.Current.Key}|{ConsoleModel.CurrentId}|{header.Signature}".GetHashCode(StringComparison.Ordinal)).ToString("x8");
     }
 
     private static Bitmap? LoadCached(string baseRuta, string clave)
@@ -852,15 +917,15 @@ public sealed partial class Cartridge3D : UserControl
     }
 
     private static Bitmap? PaintAndCache(
-        string title, string launcher, string code, string? arte, Color plastic, bool dorso, GameHeader header)
+        string title, string launcher, string code, string? arte, Color plastic, bool dorso, GameHeader header, DeviceKind kind)
     {
         var bmp = dorso
-            ? CartridgeModel.PaintBack(launcher, code, plastic, flat: true)
-            : CartridgeModel.PaintFace(title, launcher, code, arte, plastic, flat: true, header: header);
+            ? CartridgeModel.PaintBack(launcher, code, plastic, flat: true, kind: kind)
+            : CartridgeModel.PaintFace(title, launcher, code, arte, plastic, flat: true, header: header, kind: kind);
         try
         {
             System.IO.Directory.CreateDirectory(FaceCacheDir);
-            bmp.Save($"{(dorso ? DorsoCache : CaraCache)}-{CacheKey(title, code, arte, header)}.png",
+            bmp.Save($"{(dorso ? DorsoCache : CaraCache)}-{CacheKey(title, code, arte, header, kind)}.png",
                 System.Drawing.Imaging.ImageFormat.Png);
         }
         catch { } // sin caché se repinta la próxima vez: no es fatal
@@ -1039,7 +1104,11 @@ public sealed partial class Cartridge3D : UserControl
         double coast = _yaw + Math.Clamp(velocityX * 0.22, -180.0, 180.0);
         _settleFromY = _yaw;
         _settleFromX = _pitch;
-        _settleToY = Math.Round(coast / 180.0) * 180.0;
+        // El cartucho aterriza en frente o dorso (los dos lados tienen arte). La consola
+        // y el gabinete vuelven SIEMPRE de frente: el dorso es una tapa lisa y quedarse
+        // mirándola después de un giro corto se sentía como un error.
+        double step = _kind == DeviceKind.Cartridge ? 180.0 : 360.0;
+        _settleToY = Math.Round(coast / step) * step;
         _settleToX = RestPitch;
         _settleStart = DateTime.UtcNow;
         _settling = true;
@@ -1058,9 +1127,16 @@ public sealed partial class Cartridge3D : UserControl
         _start = _last = pt.Position;
         if (ScrollFriendly)
         {
-            // Sin capturar todavía: el primer movimiento decide si es giro o scroll.
             _armed = true;
             _dragging = false;
+            // Con MOUSE se captura ya: si no, el ScrollViewer de la grilla o el
+            // contenedor de la card se quedan el gesto y el giro arranca cortado. El
+            // diferido (giro vs scroll) queda para el dedo/lápiz, donde sí hay scroll por
+            // arrastre.
+            if (e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse)
+            {
+                try { InputRoot.CapturePointer(e.Pointer); } catch { }
+            }
         }
         else
         {
@@ -1092,7 +1168,14 @@ public sealed partial class Cartridge3D : UserControl
             double adx = Math.Abs(p.X - _start.X);
             double ady = Math.Abs(p.Y - _start.Y);
             if (adx < DragStartThreshold && ady < DragStartThreshold) { _last = p; return; }
-            if (ScrollFriendly && ady >= adx) { _armed = false; return; }
+            // Sólo con el dedo/lápiz un movimiento vertical se deja para el scroll: con
+            // mouse, cualquier dirección gira (como en la inspección) y un arrastre
+            // diagonal no queda muerto.
+            if (ScrollFriendly && ady >= adx && e.Pointer.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse)
+            {
+                _armed = false;
+                return;
+            }
             _dragging = true;
             _last = p;
             _lastMoveTicks = Stopwatch.GetTimestamp();

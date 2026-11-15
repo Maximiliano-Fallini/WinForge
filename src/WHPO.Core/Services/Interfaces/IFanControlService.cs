@@ -25,6 +25,9 @@ namespace WHPO.Core.Services.Interfaces;
 /// momento: el elegido o el automático (CPU para headers de placa, GPU para la video).</param>
 /// <param name="TemperatureSourceSynthetic">True si el sensor es virtual (el máximo de
 /// CPU y GPU), para que la UI lo traduzca en vez de mostrarlo como dato del hardware.</param>
+/// <param name="AutomaticTemperatureSourceId">Sensor real que usaría el modo automático
+/// para este canal (CPU en la placa, GPU en la video). La UI lo muestra preseleccionado
+/// mientras el usuario no haya elegido uno personalizado.</param>
 public record FanControlInfo(
     string Id,
     string ChipName,
@@ -40,7 +43,8 @@ public record FanControlInfo(
     bool HasCustomName = false,
     string? TemperatureSourceId = null,
     string? TemperatureSourceName = null,
-    bool TemperatureSourceSynthetic = false);
+    bool TemperatureSourceSynthetic = false,
+    string? AutomaticTemperatureSourceId = null);
 
 /// <summary>
 /// Punto de una curva ventilador: a <c>TemperatureC</c> °C el canal debe ir a
