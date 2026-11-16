@@ -1159,11 +1159,9 @@ public sealed partial class ConfiguracionPage : Page
     /// </summary>
     private void RefreshDriversTab()
     {
-        // Los enlaces de origen salen del MISMO lugar del que descargan los servicios
+        // Los botones de repositorio salen del MISMO lugar del que descargan los servicios
         // (DriverSources), así el usuario ve el repositorio oficial real y no una copia
         // escrita a mano acá que se puede desincronizar.
-        SetDriverSourceLink(PawnIoSourceLink, WHPO.Core.Services.DriverSources.PawnIoRepository);
-        SetDriverSourceLink(HidUsbfSourceLink, WHPO.Core.Services.DriverSources.HidUsbfRepository);
         SetDriverRepoButton(PawnIoRepoButton, WHPO.Core.Services.DriverSources.PawnIoRepository);
         SetDriverRepoButton(HidUsbfRepoButton, WHPO.Core.Services.DriverSources.HidUsbfRepository);
 
@@ -1191,22 +1189,6 @@ public sealed partial class ConfiguracionPage : Page
         if (sender is not FrameworkElement { Tag: string url } || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return;
         try { await Windows.System.Launcher.LaunchUriAsync(uri); } catch { /* sin navegador asociado */ }
-    }
-
-    /// <summary>
-    /// Deja el enlace al repositorio del driver: "Origen: github.com/…" ENTERO clicable
-    /// (NavigateUri abre el navegador) y con la URL completa en el tooltip.
-    /// </summary>
-    private static void SetDriverSourceLink(HyperlinkButton link, string url)
-    {
-        try
-        {
-            string host = url.Replace("https://", string.Empty, StringComparison.Ordinal).TrimEnd('/');
-            link.Content = $"{I18n.T("Origen")}: {host}";
-            link.NavigateUri = new Uri(url);
-            ToolTipService.SetToolTip(link, url);
-        }
-        catch { }
     }
 
     /// <summary>

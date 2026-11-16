@@ -797,6 +797,28 @@
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="16" HorizontalAlignment="Stretch">
 
+                    <!-- Nota general de la pestaña: va arriba de los dos drivers. Usa
+                         CardStyle (CardBackgroundBrush) y no FilledCardStyle porque el vidrio
+                         se recorta por PINCEL (ver PanelBlurLayer.RefreshMatchSet) y el relleno
+                         secundario no está en el censo de superficies. -->
+                    <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="16">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE946;" FontSize="14"
+                                      Foreground="{ThemeResource AccentBrush}"
+                                      VerticalAlignment="Top" Margin="1,1,0,0"/>
+                            <TextBlock Grid.Column="1"
+                                       Text="Los drivers se descargan solo desde sus repositorios oficiales por HTTPS y su hash SHA-256 se verifica antes de instalar. Desinstalar un componente de WinForge no desinstala sus drivers: esta pestaña es el lugar para hacerlo."
+                                       FontSize="12"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"
+                                       LineHeight="18"/>
+                        </Grid>
+                    </Border>
+
                     <!-- ===== PawnIO ===== -->
                     <Border Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12"
                             HorizontalAlignment="Stretch" Tag="reveal">
@@ -854,11 +876,6 @@
                                 TextWrapping="Wrap"
                                 Margin="0,12,0,0"/>
 
-                            <!-- Origen del binario: el MISMO repositorio del que descarga el
-                                 servicio (ver DriverSources), para que se pueda verificar. -->
-                            <HyperlinkButton x:Name="PawnIoSourceLink" FontSize="12" Padding="0"
-                                             Margin="0,6,0,0" HorizontalAlignment="Left"
-                                             VerticalAlignment="Center"/>
 
                             <Grid ColumnSpacing="12" Margin="0,16,0,0">
                                 <Grid.ColumnDefinitions>
@@ -932,17 +949,11 @@
                             </Grid>
 
                             <TextBlock
-                                Text="Filtro de kernel que ajusta la tasa de sondeo (polling rate) de mouses, teclados y mandos USB. Es el driver de código abierto de hidusbf; WinForge descarga el paquete oficial y verifica el SHA-256 de cada variante antes de instalar."
+                                Text="Filtro de kernel que ajusta la tasa de sondeo (polling rate) de mouses, teclados y mandos USB. Es el driver de código abierto de hidusbf."
                                 FontSize="13"
                                 Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                 TextWrapping="Wrap"
                                 Margin="0,12,0,0"/>
-
-                            <!-- Origen del binario: el MISMO repositorio del que descarga el
-                                 servicio (ver DriverSources), para que se pueda verificar. -->
-                            <HyperlinkButton x:Name="HidUsbfSourceLink" FontSize="12" Padding="0"
-                                             Margin="0,6,0,0" HorizontalAlignment="Left"
-                                             VerticalAlignment="Center"/>
 
                             <Grid ColumnSpacing="12" Margin="0,16,0,0">
                                 <Grid.ColumnDefinitions>
@@ -978,28 +989,6 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Nota de transparencia común a los dos drivers. Va con CardStyle (el
-                         pincel CardBackgroundBrush) y no con FilledCardStyle: el vidrio se
-                         recorta por PINCEL (ver PanelBlurLayer.RefreshMatchSet) y el relleno
-                         secundario no está en el censo de superficies, así que la nota era la
-                         única card de la pestaña que se quedaba sin desenfoque. -->
-                    <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="16">
-                        <Grid ColumnSpacing="10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE946;" FontSize="14"
-                                      Foreground="{ThemeResource AccentBrush}"
-                                      VerticalAlignment="Top" Margin="1,1,0,0"/>
-                            <TextBlock Grid.Column="1"
-                                       Text="Los drivers se descargan solo desde sus repositorios oficiales por HTTPS y su hash SHA-256 se verifica antes de instalar. Desinstalar un componente de WinForge no desinstala sus drivers: esta pestaña es el lugar para hacerlo."
-                                       FontSize="12"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       TextWrapping="Wrap"
-                                       LineHeight="18"/>
-                        </Grid>
-                    </Border>
                 </StackPanel>
             </ScrollViewer>
 
