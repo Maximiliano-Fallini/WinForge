@@ -183,6 +183,19 @@ public interface IProcessService
     IReadOnlyCollection<string> RunningRuleExes { get; }
 
     /// <summary>
+    /// ¿Algún proceso vivo del juego tiene ventana visible (o está en primer plano)?
+    /// Distingue un juego en pantalla de un cliente que quedó colgado sin ventana al
+    /// salir (Roblox, por ejemplo, deja RobloxPlayerBeta.exe vivo en segundo plano).
+    /// </summary>
+    bool HasVisibleGameWindow(string exeFileName);
+
+    /// <summary>
+    /// Finaliza todos los procesos del juego, incluidos los que quedaron vivos sin
+    /// ventana. Devuelve true si terminó al menos uno.
+    /// </summary>
+    bool EndGameProcesses(string exeFileName);
+
+    /// <summary>
     /// True si hay actividad de juego: un juego conocido en ejecución o un proceso
     /// que matchea una regla (incluida la cadena launcher→juego). Reemplaza el
     /// chequeo por RunningGameExes.Count para reconocer la partida aunque el juego

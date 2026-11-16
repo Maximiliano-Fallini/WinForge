@@ -6095,6 +6095,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     private string? _dockMessage;
     private Border? _dockSlotBorder;
     private Canvas? _dockCartridgeBay;
+    // Candado del dock por ventana: exe → desde cuándo está vivo sin ventana (ver
+    // IsDockGamePlaying). Un cliente que quedó en segundo plano libera el cartucho
+    // cuando se cumple la gracia.
+    private readonly Dictionary<string, DateTime> _dockNoWindowSince = new(StringComparer.OrdinalIgnoreCase);
+    // Último chequeo de ventana por exe: leer MainWindowHandle enumera ventanas del
+    // sistema, y esto se consulta desde el hover. 500 ms alcanza para que se sienta vivo.
+    private readonly Dictionary<string, (bool Window, DateTime At)> _dockWindowCheck = new(StringComparer.OrdinalIgnoreCase);
     // Gesto de la zona transparente que cubre el cartucho montado (ver BuildDockHitZone).
     private uint? _dockGrabPointerId;
     private bool _dockGrabDragging;
@@ -6103,6 +6110,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // All insertion positions share the same mouth coordinate. The cartridge can
     // protrude above the footer without reserving an empty row in the library.
     private const double DockFooterHeight = 66;
+    /// <summary>
+    /// Gracia del dock: un juego que perdió su ventana sigue "clavado" este tiempo antes
+    /// de poder retirarse. Cubre un alt-tab o una pantalla de carga que oculta la ventana
+    /// un instante; un cliente que quedó vivo al salir nunca la recupera.
+    /// </summary>
+    private static readonly TimeSpan DockWindowGrace = TimeSpan.FromSeconds(20);
+    /// <summary>Frecuencia con la que se relee si el juego tiene ventana (ver _dockWindowCheck).</summary>
+    private static readonly TimeSpan DockWindowCheckInterval = TimeSpan.FromMilliseconds(500);
     private const double DockMouthY = 8; // shell border (1) + top padding (7): la boca coincide
     // con el pozo pintado del chasis (y=7..33); con 11 quedaba 3 px por debajo del receso.
     private const double DockSlotDepth = 20; // cuánto entra el cartucho dentro del pozo antes del labio frontal
@@ -6590,16 +6605,36 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// el juego ya se detectó como cerrado). Reutiliza el mismo proxy de arrastre de
     /// la biblioteca: soltarlo sobre la ranura lo vuelve a conectar e iniciar, y
     /// soltarlo en cualquier otro lado lo devuelve a su hueco de la biblioteca.
+    /// Retirar ES finalizar: los procesos del juego que hayan quedado vivos se terminan
+    /// acá, porque es el único gesto que tiene el cartucho montado.
     /// </summary>
     private void BeginDockCartridgePull(CartridgeTile seat, Windows.Foundation.Point pointInRoot, Windows.Foundation.Point grab)
     {
         var c = _connectedCartridge;
         if (c == null || _activeDrag != null || _cartridgeFlight || _dockLaunching) return;
-        if (_runningExes.Contains(c.Exe)) return; // juego abierto: el cartucho queda clavado
+        if (IsDockGamePlaying(c.Exe)) return; // juego en pantalla: el cartucho queda clavado
 
         var source = _cartridgeVisuals.FirstOrDefault(x => string.Equals(x.Exe, c.Exe, StringComparison.OrdinalIgnoreCase));
         var entry = _cards.FirstOrDefault(x => x.Body is CartridgeTile t && ReferenceEquals(t.CartridgeVisual, source.Visual));
         if (source.Visual == null || entry.Card == null) return;
+
+        // Retirar ES finalizar: si el juego dejó un cliente vivo sin ventana (Roblox),
+        // se termina ahora. Es el único gesto que hay sobre el cartucho montado, así que
+        // no puede depender de un menú aparte. Va después de las guardas: un arrastre
+        // que no llega a arrancar no tiene por qué matar nada.
+        string pulledExe = c.Exe;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (_processService.EndGameProcesses(pulledExe))
+                    _loggingService.LogInfo($"Dock: cartucho de {pulledExe} retirado; procesos restantes finalizados.");
+            }
+            catch (Exception ex)
+            {
+                _loggingService.LogWarning($"Dock: no se pudieron finalizar los procesos de {pulledExe}: {ex.Message}");
+            }
+        });
 
         // Desconectar en el estado SIN reconstruir el dock: el asiento sigue vivo
         // (oculto) para conducir el gesto hasta que se suelte el puntero.
@@ -6622,17 +6657,86 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// </summary>
     private bool CanGrabDockCartridge() =>
         _activeDrag == null && !_cartridgeFlight && !_dockLaunching
-        && _connectedCartridge is { } c && !_runningExes.Contains(c.Exe);
+        && _connectedCartridge is { } c && !IsDockGamePlaying(c.Exe);
+
+    /// <summary>
+    /// ¿El juego del cartucho montado sigue "en pantalla"? Es el candado del dock y NO es
+    /// el mismo criterio que el badge de la biblioteca: un cliente que quedó vivo al
+    /// salir (Roblox deja RobloxPlayerBeta.exe sin ventana, con audio y CPU) no puede
+    /// mantener el cartucho clavado para siempre.
+    ///
+    /// Se lee el estado EN VIVO del servicio (el snapshot de eventos puede no haber
+    /// llegado y dejaba el cartucho trabado hasta cambiar de pestaña): un juego con
+    /// ventana visible o en primer plano cuenta siempre; uno sin ventana recién se
+    /// libera cuando se cumple <see cref="DockWindowGrace"/>.
+    /// </summary>
+    private bool IsDockGamePlaying(string exe)
+    {
+        if (string.IsNullOrEmpty(exe)) return false;
+        bool tracked = _processService.RunningGameExes.Contains(exe, StringComparer.OrdinalIgnoreCase)
+            || _processService.RunningRuleExes.Contains(exe, StringComparer.OrdinalIgnoreCase);
+        if (!tracked)
+        {
+            _dockNoWindowSince.Remove(exe);
+            return false;
+        }
+        // Juegos empaquetados de la Store / Game Pass: su ventana puede pertenecer a
+        // ApplicationFrameHost (UWP), así que "no tiene ventana" no prueba nada y esta
+        // regla soltaría el cartucho con el juego en pantalla. Para ellos se usa el
+        // criterio de siempre: mientras haya un proceso vivo, el cartucho está clavado.
+        if (IsStoreGame(exe))
+        {
+            _dockNoWindowSince.Remove(exe);
+            _dockWindowCheck.Remove(exe);
+            return true;
+        }
+        var now = DateTime.UtcNow;
+        bool hasWindow;
+        if (_dockWindowCheck.TryGetValue(exe, out var seen) && now - seen.At < DockWindowCheckInterval)
+            hasWindow = seen.Window;
+        else
+        {
+            hasWindow = _processService.HasVisibleGameWindow(exe);
+            _dockWindowCheck[exe] = (hasWindow, now);
+        }
+        if (hasWindow)
+        {
+            // Volvió a tener ventana (alt-tab, carga): la gracia arranca de cero.
+            _dockNoWindowSince.Remove(exe);
+            return true;
+        }
+        if (!_dockNoWindowSince.TryGetValue(exe, out var since))
+        {
+            _dockNoWindowSince[exe] = now;
+            return true;
+        }
+        return now - since < DockWindowGrace;
+    }
+
+    /// <summary>
+    /// ¿Es un juego empaquetado de la Store / Game Pass? Se detecta por el launcher con
+    /// el que lo descubre <c>InstalledGamesService</c> ("Xbox", vía shell:AppsFolder) o
+    /// por la carpeta del paquete. En esos juegos la ventana puede ser de
+    /// ApplicationFrameHost, así que la ausencia de ventana propia no significa "cerrado".
+    /// </summary>
+    private bool IsStoreGame(string exe)
+    {
+        var game = _installed.FirstOrDefault(g => string.Equals(g.ExeFileName, exe, StringComparison.OrdinalIgnoreCase));
+        if (game == null) return false;
+        return string.Equals(game.Launcher, "Xbox", StringComparison.OrdinalIgnoreCase)
+            || (game.InstallPath?.IndexOf("\\WindowsApps\\", StringComparison.OrdinalIgnoreCase) >= 0);
+    }
 
     /// <summary>
     /// Zona de agarre del cartucho montado: una capa transparente que cubre toda la
     /// silueta visible (la torre que asoma sobre el chasis + la boca del pozo) para que
     /// el cartucho se pueda tomar desde cualquier punto, no solo desde la franja baja.
     /// Conduce el MISMO gesto que el asiento: pasar el umbral la arranca con
-    /// <see cref="BeginDockCartridgePull"/>, soltar afuera lo retira y un clic (sin
-    /// arrastre) abre la inspección.
+    /// <see cref="BeginDockCartridgePull"/> y soltar afuera lo retira. Un clic sin
+    /// arrastre NO abre la inspección: con el cartucho montado las reglas se cambian
+    /// desde su card de la biblioteca, no desde la ranura.
     /// </summary>
-    private CartridgeHitZone BuildDockHitZone(CartridgeTile seat, Action inspect)
+    private CartridgeHitZone BuildDockHitZone(CartridgeTile seat)
     {
         var zone = new CartridgeHitZone
         {
@@ -6645,7 +6749,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             VerticalAlignment = VerticalAlignment.Top,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
         };
-        ToolTipService.SetToolTip(zone, I18n.T("Clic para inspeccionar y configurar · arrastrá hacia afuera para retirar"));
+        ToolTipService.SetToolTip(zone, I18n.T("Retirar cartucho"));
 
         // Estado del gesto limpio ANTES de soltar la captura: ReleasePointerCapture
         // dispara PointerCaptureLost en el acto.
@@ -6702,8 +6806,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             var point = e.GetCurrentPoint(RootGrid).Position;
             ResetGrab(out bool dragged);
             zone.ReleasePointerCapture(e.Pointer);
+            // Sin arrastre no hay acción: el cartucho montado no abre reglas a un clic.
             if (dragged) EndCartridgeDrag(point);
-            else inspect();
             e.Handled = true;
         };
 
@@ -7241,7 +7345,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     ///   asoma la cabeza del cartucho activo).
     /// - Ala derecha: la card "Modo rendimiento de WinForge" (mudada desde el
     ///   header). El cartucho conectado se retira arrastrándolo hacia afuera (con el
-    ///   juego cerrado) y un clic sobre él abre la inspección: no hay botones rápidos.
+    ///   juego cerrado); un clic sobre él no abre nada: no hay botones rápidos ni
+    ///   inspección desde la ranura.
     /// </summary>
     private void UpdateCartridgeDock()
     {
@@ -7285,8 +7390,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         InstalledGame? activeGame = null;
         string? activeName = null;
-        string? activeInstallPath = null;
-        bool activeIsManual = false;
 
         if (!string.IsNullOrEmpty(activeExe))
         {
@@ -7294,14 +7397,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (activeGame != null)
             {
                 activeName = activeGame.Name;
-                activeInstallPath = activeGame.InstallPath;
             }
             else
             {
                 var m = _manual.FirstOrDefault(x => string.Equals(x.Exe, activeExe, StringComparison.OrdinalIgnoreCase));
                 activeName = m.Name ?? activeExe;
-                activeInstallPath = m.InstallPath;
-                activeIsManual = true;
             }
         }
 
@@ -7309,10 +7409,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             activeGame = _connectedCartridge.Game;
             activeName = _connectedCartridge.Name;
-            activeInstallPath = _connectedCartridge.InstallPath;
-            activeIsManual = _connectedCartridge.IsManual;
         }
-        bool hasRunning = activeExe != null && _runningExes.Contains(activeExe);
+        bool hasRunning = activeExe != null && IsDockGamePlaying(activeExe);
         bool hasConnected = _connectedCartridge != null;
 
         // Indicador LED (verde con un cartucho puesto o jugando, negro apagado en espera).
@@ -7395,8 +7493,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // un contenedor más alto, la boca del pozo se iba con el contenedor.
             Margin = new Thickness(0, 0, 0, DockFooterHeight - (DockMouthY + DockSlotDepth)),
             Clip = new RectangleGeometry { Rect = new Windows.Foundation.Rect(0, 0, DockBayWidth, DockBayHeight) },
-            // El asiento del cartucho recibe el puntero: un clic abre la inspección y,
-            // con el juego cerrado, se puede arrastrar el cartucho hacia afuera.
+            // El asiento del cartucho recibe el puntero: un clic no abre nada (las reglas
+            // se editan desde la card de la biblioteca) y con el juego en pantalla cerrado
+            // se puede arrastrar el cartucho hacia afuera.
             IsHitTestVisible = true
         };
         CartridgeHitZone? cartridgeHitZone = null;
@@ -7409,12 +7508,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 Width = DockCardWidth,
                 Height = DockCardHeight,
                 CoordinateRoot = RootGrid,                    // Clavado: pasar el mouse por la ranura no lo mueve (ni tilt ni lift).
-                    // Salir (arrastrar hacia afuera) e inspeccionar (clic) siguen vivos.
+                    // Salir (arrastrar hacia afuera) sigue vivo; el clic no abre la inspección.
                     HoverTiltEnabled = false,
                 // Manito solo cuando realmente se puede retirar: juego cerrado y consola
                 // libre. Se evalúa en vivo al hover (el estado cambia sin rebuild).
                 GrabHintAllowed = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
-                    && _connectedCartridge != null && !_runningExes.Contains(_connectedCartridge.Exe),
+                    && _connectedCartridge != null && !IsDockGamePlaying(_connectedCartridge.Exe),
                 CanInteract = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
             };
             seat.Artwork.Source = connected.Artwork;
@@ -7423,8 +7522,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             seat.DragStarted += (p, g) => BeginDockCartridgePull(seat, p, g);
             seat.DragMoved += MoveCartridgeDrag;
             seat.DragCompleted += EndCartridgeDrag;
-            seat.InspectRequested += () => ShowGame3DDetail(activeGame, activeExe!, activeName!, activeInstallPath, activeIsManual);
-            ToolTipService.SetToolTip(seat, I18n.T("Clic para inspeccionar y configurar · arrastrá hacia afuera para retirar"));
+            // Sin InspectRequested: el asiento montado no abre el popup de reglas. Un
+            // clic sobre el cartucho conectado no hace nada y el gesto que queda es el
+            // arrastre hacia afuera.
+            ToolTipService.SetToolTip(seat, I18n.T("Retirar cartucho"));
             Canvas.SetLeft(seat, DockCardLeft);
             Canvas.SetTop(seat, DockSeatedTop);
             _dockCartridgeBay.Children.Add(seat);
@@ -7434,11 +7535,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // entra en el hit-test y la torre quedaba "muerta" al puntero, así que
             // había que agarrarla desde la franja de abajo. Esta capa transparente
             // cubre TODA la silueta visible (torre + boca del pozo) y conduce el
-            // mismo gesto que el asiento: arrastrar hacia afuera lo retira, un clic
-            // lo inspecciona. La geometría sale de las mismas constantes del dock:
-            // la parte visible empieza en DockMouthY y mide boca + torre.
-            cartridgeHitZone = BuildDockHitZone(seat,
-                () => ShowGame3DDetail(activeGame, activeExe!, activeName!, activeInstallPath, activeIsManual));
+            // mismo gesto que el asiento: arrastrar hacia afuera lo retira y un clic
+            // no abre el popup de reglas. La geometría sale de las mismas constantes
+            // del dock: la parte visible empieza en DockMouthY y mide boca + torre.
+            cartridgeHitZone = BuildDockHitZone(seat);
         }
 
 

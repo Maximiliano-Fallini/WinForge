@@ -137,6 +137,112 @@ public sealed class ProcessService : IProcessService
         }
     }
 
+    /// <summary>
+    /// ¿Algún proceso vivo del juego tiene ventana visible o está en primer plano?
+    /// Un juego en pantalla siempre responde que sí; un cliente que quedó vivo al salir
+    /// (Roblox deja RobloxPlayerBeta.exe sin ventana, con audio y CPU) no, y por eso el
+    /// dock puede soltar su cartucho.
+    /// El primer plano cubre los casos en que Windows no nos da el handle del juego:
+    /// ventanas de otro proceso (juegos UWP) y procesos protegidos por anti-cheat.
+    /// </summary>
+    public bool HasVisibleGameWindow(string exeFileName)
+    {
+        // Solo los pids YA rastreados (barato): esto se consulta desde el hover del
+        // dock, así que no puede enumerar procesos del sistema en cada llamada.
+        foreach (var pid in FindTrackedGamePids(exeFileName))
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                if (p.HasExited) continue;
+                var handle = p.MainWindowHandle;
+                if (handle != IntPtr.Zero && IsWindowVisible(handle)) return true;
+                if (IsForegroundProcess(pid)) return true;
+            }
+            catch { }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Finaliza todos los procesos del juego (incluidos los que quedaron sin ventana).
+    /// Es la "salida manual" del cartucho montado: sin esto, un cliente fantasma deja el
+    /// footer clavado para siempre. Devuelve true si terminó al menos uno.
+    /// </summary>
+    public bool EndGameProcesses(string exeFileName)
+    {
+        bool killed = false;
+        foreach (var pid in FindGamePids(exeFileName))
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                if (p.HasExited) continue;
+                p.Kill();
+                killed = true;
+            }
+            catch { }
+        }
+        if (killed) _logging.LogInfo($"ProcessService: procesos de {exeFileName} finalizados a pedido (dock).");
+        return killed;
+    }
+
+    /// <summary>
+    /// Pids rastreados que pertenecen al juego: por nombre de proceso o por la clave de
+    /// su regla. No toca el sistema (solo el diccionario de eventos), así que es apto
+    /// para consultarse con frecuencia.
+    /// </summary>
+    private List<int> FindTrackedGamePids(string exeFileName)
+    {
+        var target = Path.GetFileName((exeFileName ?? "").Trim());
+        var pids = new List<int>();
+        if (target.Length == 0) return pids;
+        lock (_eventLock)
+        {
+            foreach (var (pid, proc) in _procGames)
+            {
+                if (string.Equals(proc.ExeName, target, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(proc.RuleKey, target, StringComparison.OrdinalIgnoreCase))
+                    pids.Add(pid);
+            }
+        }
+        return pids.Distinct().ToList();
+    }
+
+    /// <summary>
+    /// Pids del juego para terminarlo: los rastreados más cualquier instancia viva con
+    /// ese nombre (las que ya existían cuando la app arrancó y las que no matchean
+    /// ninguna regla). Enumerar el sistema acá está bien: es una acción manual y única.
+    /// </summary>
+    private List<int> FindGamePids(string exeFileName)
+    {
+        var pids = FindTrackedGamePids(exeFileName);
+        var target = Path.GetFileName((exeFileName ?? "").Trim());
+        if (target.Length == 0) return pids;
+        try
+        {
+            foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(target)))
+            {
+                try { pids.Add(p.Id); } finally { p.Dispose(); }
+            }
+        }
+        catch { }
+        return pids.Distinct().ToList();
+    }
+
+    /// <summary>¿La ventana activa pertenece a este pid?</summary>
+    private static bool IsForegroundProcess(int pid)
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero) return false;
+            if (GetWindowThreadProcessId(hwnd, out uint owner) == 0) return false;
+            return owner == (uint)pid;
+        }
+        catch { return false; }
+    }
+
     // Monitoreo por eventos WMI (cero polling): Win32_ProcessStartTrace/StopTrace
     // avisan cuando nace o muere cualquier proceso. La suscripción requiere admin
     // (la app corre elevada); si no está disponible, los juegos simplemente se
