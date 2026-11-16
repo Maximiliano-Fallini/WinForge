@@ -251,6 +251,37 @@ public static class CartridgeDock
     }
 
     /// <summary>
+    /// Estado que muestra la luz de la ficha de un emulador en la biblioteca.
+    /// </summary>
+    public enum DeviceStatus
+    {
+        /// <summary>No hay proceso: la máquina está apagada.</summary>
+        Idle,
+        /// <summary>Se lanzó y el proceso todavía no apareció.</summary>
+        Starting,
+        /// <summary>El juego/emulador está corriendo.</summary>
+        Running,
+        /// <summary>No se encontró el ejecutable: no se puede iniciar.</summary>
+        Missing
+    }
+
+    /// <summary>
+    /// Luz de estado de la ficha de un emulador, con el mismo bisel que los LED del pie
+    /// (apagada gris, ámbar mientras arranca, verde encendida, roja sin ejecutable).
+    /// </summary>
+    public static Grid CreateDeviceStatusLed(DeviceStatus state, double size = 14)
+    {
+        (string core, string shade) = state switch
+        {
+            DeviceStatus.Running => ("#FF83E8AE", "#FF1E4A38"),
+            DeviceStatus.Starting => ("#FFF2C230", "#FF4A3A1B"),
+            DeviceStatus.Missing => ("#FFE07059", "#FF4B211C"),
+            _ => ("#FF62746B", "#FF213C32")
+        };
+        return BuildLed(core, shade, size);
+    }
+
+    /// <summary>
     /// LED biselado del dock. <paramref name="size"/> permite ajustar la luz de la
     /// regla manteniendo las proporciones; las luces encendidas usan el tamaño grande
     /// para no encogerse cuando el dock pasa del estado de consola al de la regla.
@@ -661,7 +692,9 @@ public static class CartridgeDock
             g.DrawLine(slot, x, 30.4f, x, 33.6f);
         }
         g.Restore(state);
-        using (var edge = new Pen(Color.FromArgb(205, 10, 12, 17), 1)) g.DrawPath(edge, silhouette);
+        // Sin contorno sobre la silueta: el chasis lo define el degradé del plástico y el
+        // filo iluminado del canto superior. El trazo casi negro que había acá dibujaba un
+        // reborde alrededor de todo el pie, que se leía como un marco pegado encima.
         using (var topLight = new Pen(Color.FromArgb(RimAlpha(skin), 170, 181, 199), 1)) g.DrawLine(topLight, 15, 2, width - 15, 2);
         // A second shoulder bevel avoids the appearance of a flat rounded rectangle.
         using (var bevelLight = new Pen(Color.FromArgb(SideGlowAlpha(skin), 216, 226, 244), 1))

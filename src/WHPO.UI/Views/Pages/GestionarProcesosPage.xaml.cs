@@ -133,8 +133,29 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // lanzar (exe o launcher encontrado); si el juego está corriendo, el botón
     // muestra "En ejecución" y queda deshabilitado (no se puede relanzar).
     private readonly List<(string Exe, Button Btn, bool CanLaunch)> _gameLaunchButtons = new();
-    // LED de encendido de las consolas/teléfonos de la grilla (por exe del emulador).
-    private readonly List<(string Exe, Microsoft.UI.Xaml.Shapes.Ellipse Led)> _deviceLeds = new();
+    // Ficha de las consolas/teléfonos de la grilla: luz + texto de estado debajo del
+    // botón Iniciar, por exe del emulador. Se actualiza con el snapshot de procesos y
+    // con el lanzamiento en curso (sin reconstruir la grilla).
+    private readonly List<DeviceStatusUi> _deviceStatus = new();
+    // Emuladores lanzados desde la ficha que todavía no mostraron su proceso.
+    private readonly HashSet<string> _deviceLaunching = new(StringComparer.OrdinalIgnoreCase);
+    // Tope de la espera del proceso: si nunca aparece, la ficha no queda en "iniciando".
+    private const int DeviceLaunchWaitSeconds = 90;
+
+    // Reborde luminoso del cartucho montado EN EL FOOTER: `_dockGlowInner` dibuja el
+    // filo sobre la pieza 3D y `_dockGlowOuter` su halo. Verde = el juego ya no está
+    // abierto (retirarlo no cierra nada); ámbar = está abierto y retirarlo lo finaliza.
+    private Border? _dockGlowInner;
+    private Border? _dockGlowOuter;
+    private DispatcherQueueTimer? _dockGlowTimer;
+
+    private sealed class DeviceStatusUi
+    {
+        public required string Exe;
+        public required Border Led;
+        public required TextBlock Text;
+        public required bool CanLaunch;
+    }
     // Detalle 3D (Opción 1): cartucho real (Cartridge3D, D3D) montado sobre RootGrid.
     private Grid? _detail3DPanel;
     private bool _detail3DCloseHooked;
@@ -3049,6 +3070,81 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
+    /// Pinta la luz y el texto de estado de la ficha de un emulador. Corre en el hilo de
+    /// UI: la llaman el armado de la card, el snapshot de procesos (WMI), el estado de la
+    /// regla y el propio lanzamiento desde la ficha.
+    /// </summary>
+    private void UpdateDeviceStatus(DeviceStatusUi status)
+    {
+        var (led, text, brush) = DescribeDeviceStatus(status);
+        status.Led.Child = CartridgeDock.CreateDeviceStatusLed(led);
+        status.Text.Text = text;
+        status.Text.Foreground = brush;
+    }
+
+    private (CartridgeDock.DeviceStatus Led, string Text, Microsoft.UI.Xaml.Media.Brush Brush)
+        DescribeDeviceStatus(DeviceStatusUi status)
+    {
+        // Estado de la regla de ESTE emulador: si se aplicó, la ficha lo dice junto a
+        // "En ejecución". La regla de sesión solo existe si hay reglas configuradas, así
+        // que applied equivale a "se aplicaron reglas personalizadas".
+        var rule = _processService.GetGameRuleStatus(status.Exe);
+        bool ruleApplied = rule is { State: GameRuleState.Applied };
+        if (_runningExes.Contains(status.Exe) || ruleApplied)
+        {
+            // El nombre es el del proceso que REALMENTE recibió las reglas: con un
+            // emulador o launcher de por medio no es el exe de la biblioteca.
+            string process = string.IsNullOrWhiteSpace(rule?.ProcessName) ? status.Exe : rule!.ProcessName!;
+            string running = ruleApplied
+                ? I18n.T("En ejecución") + " · " + I18n.T("Reglas aplicadas a {0}", process)
+                : I18n.T("En ejecución");
+            return (CartridgeDock.DeviceStatus.Running, running, Feedback.SuccessBrush);
+        }
+        if (IsDeviceStarting(status.Exe))
+            return (CartridgeDock.DeviceStatus.Starting, I18n.T("Iniciando el juego..."), Feedback.WarningBrush);
+        if (!status.CanLaunch)
+            return (CartridgeDock.DeviceStatus.Missing, I18n.T("Ejecutable no encontrado"), Feedback.WarningBrush);
+        return (CartridgeDock.DeviceStatus.Idle, I18n.T("Listo para iniciar"),
+            ThemeBrushes.Get("SecondaryTextBrush"));
+    }
+
+    /// <summary>
+    /// ¿El emulador está arrancando? Se lanzó desde la ficha y el proceso todavía no
+    /// aparece, o la regla sigue esperando el proceso real (lanzado con launcher de por
+    /// medio). En ese tramo la ficha dice "Iniciando el juego..." en vez de mentir con
+    /// "Listo para iniciar" o saltar directo a "En ejecución".
+    /// </summary>
+    private bool IsDeviceStarting(string exe) =>
+        _deviceLaunching.Contains(exe)
+        || (_lastGameRuleStatus is { State: GameRuleState.Waiting } waiting
+            && string.Equals(waiting.Exe, exe, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Marca un emulador como arrancando al pulsar Iniciar, con un tope de espera: si el
+    /// proceso nunca aparece (o el lanzamiento falla), la ficha vuelve a su estado real.
+    /// </summary>
+    private void BeginDeviceLaunch(string exe)
+    {
+        _deviceLaunching.Add(exe);
+        RefreshDeviceStatuses();
+        _ = ClearDeviceLaunchAsync(exe);
+    }
+
+    private async Task ClearDeviceLaunchAsync(string exe)
+    {
+        try { await Task.Delay(TimeSpan.FromSeconds(DeviceLaunchWaitSeconds)); }
+        catch { return; }
+        if (!_deviceLaunching.Remove(exe)) return;
+        DispatcherQueue.TryEnqueue(RefreshDeviceStatuses);
+    }
+
+    private void RefreshDeviceStatuses()
+    {
+        if (_deviceStatus.Count == 0) return;
+        foreach (var status in _deviceStatus) UpdateDeviceStatus(status);
+    }
+
+    /// <summary>
     /// Refleja el snapshot de juegos en ejecución (eventos WMI) en el botón Iniciar
     /// de cada card (muestra "En ejecución" y se deshabilita) y en el contador del
     /// encabezado. El evento llega de un hilo de fondo: se marshaliza al dispatcher
@@ -3095,13 +3191,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                         }
                     }
                 }
-                foreach (var (ledExe, led) in _deviceLeds)
+                foreach (var status in _deviceStatus)
                 {
-                    bool on = _runningExes.Contains(ledExe);
-                    led.Fill = new SolidColorBrush(on
-                        ? Windows.UI.Color.FromArgb(255, 96, 208, 128)
-                        : Windows.UI.Color.FromArgb(72, 255, 255, 255));
+                    // Proceso vivo: la espera del lanzamiento ya cumplió su función.
+                    if (_runningExes.Contains(status.Exe)) _deviceLaunching.Remove(status.Exe);
+                    UpdateDeviceStatus(status);
                 }
+                UpdateDockGlow();
                 if (_cards3D) RequestCartridgeDockUpdate();
                 if (_counterStatusVisible)
                 {
@@ -3171,6 +3267,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
 
         UpdateDockStatusText();
+        // La ficha de un emulador también sigue a la regla: mientras la regla espera el
+        // proceso real, su estado dice "iniciando" aunque se haya lanzado fuera de WinForge.
+        RefreshDeviceStatuses();
         string launcherLabel = string.IsNullOrWhiteSpace(status.Launcher) ? "-" : status.Launcher;
         string processLabel = string.IsNullOrWhiteSpace(status.ProcessName) ? "-" : status.ProcessName;
         _loggingService.LogDebug($" Biblioteca: regla de {status.Exe} = {status.State} (launcher={launcherLabel}, proceso={processLabel}, limited={status.Limited}, strong={status.Strong})");
@@ -3627,7 +3726,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             _wrapSectionGroups.Clear();
             _launcherButtons.Clear();
             _gameLaunchButtons.Clear();
-            _deviceLeds.Clear();
+            _deviceStatus.Clear();
             _orderedLibraryGames.Clear();
             _skeletonSection = null;
             _skeletonPanel = null;
@@ -4353,7 +4452,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _wrapSectionGroups.Clear();
         _launcherButtons.Clear();
         _gameLaunchButtons.Clear();
-        _deviceLeds.Clear();
+        _deviceStatus.Clear();
         _orderedLibraryGames.Clear();
         // El skeleton (si estaba) se fue con el clear del panel.
         _skeletonSection = null;
@@ -5475,6 +5574,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         };
         // Sin sombra proyectada en el cartucho: se veía como un halo gris alrededor
         // del plástico. El volumen lo dan el tilt, el lift y la silueta del propio arte.
+        // Carpeta a excluir de Windows Defender (la del juego, o la del exe) y exe para
+        // el CFG: los mismos criterios que el resto de las cards. Se resuelven acá
+        // porque la ficha del dispositivo arma su propia botonera con el engranaje.
+        string? defenderFolder = !string.IsNullOrEmpty(installPath) ? installPath
+            : (!string.IsNullOrEmpty(exePath2) ? Path.GetDirectoryName(exePath2) : null);
+        string? cfgExe = !string.IsNullOrEmpty(iconPath2) ? Path.GetFileName(iconPath2) : exe;
+
         // Presentación de los dispositivos: consola a la izquierda y, a la derecha,
         // nombre, tipo y botón Iniciar. La consola no es un cartucho: se presenta
         // como un equipo con su ficha, no como una carátula muda.
@@ -5482,32 +5588,22 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         if (!draggable)
         {
             bool encendido = _runningExes.Contains(exe);
-            var led = new Microsoft.UI.Xaml.Shapes.Ellipse
-            {
-                Width = 10,
-                Height = 10,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 4, 4, 0),
-                StrokeThickness = 1,
-                Stroke = new SolidColorBrush(Windows.UI.Color.FromArgb(110, 0, 0, 0)),
-                Fill = new SolidColorBrush(encendido
-                    ? Windows.UI.Color.FromArgb(255, 96, 208, 128)
-                    : Windows.UI.Color.FromArgb(72, 255, 255, 255)),
-                IsHitTestVisible = false
-            };
-            _deviceLeds.Add((exe, led));
 
             // Giro real: al pasar el mouse se monta el MISMO control 3D de la
             // inspección sobre el PNG tranquilo de la card. Así el arrastre gira en vivo,
             // con inercia y asentado, en vez de saltar entre vistas pre-renderizadas.
             // Se monta uno solo a la vez (el de la card apuntada).
-            string? caratulaViva = ResolveBannerFile(game, iconPath2, exe);
             var headerVivo = GameLook.Header(exe);
             Cartridge3D? live = null;
             tile.PointerEntered += (s, e) =>
             {
                 if (live != null || tile.IsRemoved) return;
+                // El arte se resuelve ACÁ y no al construir la card: en ese momento el
+                // ícono del ejecutable todavía puede no estar extraído (lo extrae
+                // LoadCartridgeGridImageAsync en segundo plano), así que el control en
+                // vivo del emulador pintaba el emblema de WinForge en la tapa en vez de
+                // su logo. Mismo orden que la card: arte en disco → extraerlo ahora.
+                string? caratulaViva = ResolveBannerFile(game, iconPath2, exe);
                 var control = new Cartridge3D { ScrollFriendly = true, ZoomOnWheel = false };
                 control.SetCard(name, launcher, code, caratulaViva, header: headerVivo, kind: kind);
                 tile.AttachLiveView(control);
@@ -5519,6 +5615,21 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 {
                     if (ReferenceEquals(live, control)) tile.HideArtworkForLiveView();
                 };
+                if (caratulaViva == null)
+                {
+                    // Sin arte en disco todavía: se extrae (o descarga) y se repinta el
+                    // mismo control, que conserva la orientación que haya tomado.
+                    _ = Task.Run(async () =>
+                    {
+                        string? ensured = await EnsureGameArtFileAsync(game, iconPath2, exe);
+                        if (string.IsNullOrEmpty(ensured)) return;
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (!ReferenceEquals(live, control)) return;
+                            control.SetCard(name, launcher, code, ensured, header: headerVivo, kind: kind);
+                        });
+                    });
+                }
             };
             tile.PointerExited += (s, e) =>
             {
@@ -5545,7 +5656,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             deviceName.Tapped += (s, e) => ShowGame3DDetail(game, exe, name, installPath, isManual);
             var deviceKind = new TextBlock
             {
-                Text = I18n.T(kind == DeviceKind.Phone ? "Emuladores de celular" : "Emuladores de consolas"),
+                // Ficha descriptiva: la categoría y el ejecutable real de la máquina,
+                // así se distingue un emulador de otro sin abrir nada.
+                Text = I18n.T(kind == DeviceKind.Phone ? "Emuladores de celular" : "Emuladores de consolas")
+                    + " · " + exe,
                 FontSize = 12.5,
                 Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -5569,21 +5683,85 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             ApplyCardButtonHover(deviceLaunchBtn, accent: true);
             if (!puedeLanzar)
                 ToolTipService.SetToolTip(deviceLaunchBtn, I18n.T("Ejecutable no encontrado"));
-            deviceLaunchBtn.Click += async (s, e) => await LaunchGameAsync(
-                exePath2, null, null, installPath, exe, game?.Launcher);
+            deviceLaunchBtn.Click += async (s, e) =>
+            {
+                // La ficha pasa a "iniciando" en el acto: el snapshot de procesos
+                // puede tardar y el botón ya se quedó en "En ejecución".
+                BeginDeviceLaunch(exe);
+                await LaunchGameAsync(exePath2, null, null, installPath, exe, game?.Launcher);
+            };
             _gameLaunchButtons.Add((exe, deviceLaunchBtn, puedeLanzar));
+
+            // Engranaje: abre el popup de reglas del emulador (prioridad, afinidad,
+            // plan de energía, Defender, reglas por ROM…). Antes solo se llegaba con
+            // clic derecho, que nadie descubre; la ficha ahora lo muestra al lado de
+            // Iniciar.
+            var deviceRulesBtn = new Button
+            {
+                Content = new FontIcon { Glyph = "\uE713", FontSize = 14 },
+                Background = ThemeBrushes.Get("CardHoverBrush"),
+                BorderThickness = new Thickness(1),
+                BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(10, 8, 10, 8),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            ToolTipService.SetToolTip(deviceRulesBtn, I18n.T("Reglas"));
+            ApplyCardButtonHover(deviceRulesBtn, accent: false);
+            deviceRulesBtn.Click += (s, e) => ShowRuleMenu(
+                deviceRulesBtn, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe);
             if (encendido)
             {
                 deviceLaunchBtn.Content = I18n.T("En ejecución");
                 deviceLaunchBtn.IsEnabled = false;
             }
 
+            // Estado en vivo: el LED y su texto van debajo del botón Iniciar. El LED es
+            // el biselado del pie, no un punto plano, para que la ficha hable el mismo
+            // idioma visual que el resto del hardware.
+            var statusLed = new Border { VerticalAlignment = VerticalAlignment.Center };
+            var statusText = new TextBlock
+            {
+                FontSize = 12,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextWrapping = TextWrapping.NoWrap,
+                MaxLines = 1,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var statusRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Margin = new Thickness(0, 9, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Children = { statusLed, statusText }
+            };
+            var status = new DeviceStatusUi
+            {
+                Exe = exe,
+                Led = statusLed,
+                Text = statusText,
+                CanLaunch = puedeLanzar
+            };
+            _deviceStatus.Add(status);
+            UpdateDeviceStatus(status);
+
+            var deviceActions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Margin = new Thickness(0, 6, 0, 0)
+            };
+            deviceLaunchBtn.Margin = new Thickness(0);
+            deviceActions.Children.Add(deviceLaunchBtn);
+            deviceActions.Children.Add(deviceRulesBtn);
+
             var ficha = new StackPanel
             {
                 Spacing = 2,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 2, 6, 2),
-                Children = { deviceName, deviceKind, deviceLaunchBtn }
+                Children = { deviceName, deviceKind, deviceActions, statusRow }
             };
             var split = new Grid { ColumnSpacing = ConsoleCardGap };
             split.ColumnDefinitions.Add(new ColumnDefinition
@@ -5598,7 +5776,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Grid.SetColumn(ficha, 1);
             split.Children.Add(tile);
             split.Children.Add(ficha);
-            cardContent = new Grid { Children = { split, led } };
+            cardContent = split;
         }
 
         var card = new Border
@@ -5624,9 +5802,6 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         _cartridgeVisuals.Add((exe, tile.CartridgeVisual));
         tile.SetRemoved(string.Equals(_connectedCartridge?.Exe, exe, StringComparison.OrdinalIgnoreCase));
-        string? defenderFolder = !string.IsNullOrEmpty(installPath) ? installPath
-            : (!string.IsNullOrEmpty(exePath2) ? Path.GetDirectoryName(exePath2) : null);
-        string? cfgExe = !string.IsNullOrEmpty(iconPath2) ? Path.GetFileName(iconPath2) : exe;
         card.RightTapped += (s, e) => ShowRuleMenu(card, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe, e.GetPosition(card));
         // Sin tooltip en las cards 3D: el cartel al hover se pidió quitar.
 
@@ -6536,6 +6711,8 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                                     _dockMessage = null;
                                     _dockLaunching = !_runningExes.Contains(d.Exe);
                                     UpdateCartridgeDock();
+                                    UpdateDockGlow();
+                                    EnsureDockGlowTimer();
                                     _loggingService.LogInfo($"Cartridge connected: {d.Exe}; starting after insertion.");
                                     if (_dockLaunching) _ = LaunchConnectedCartridgeAsync(d);
                                 });
@@ -6601,8 +6778,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// Retira el cartucho conectado ARRASTRÁNDOLO hacia afuera del dock (sólo cuando
-    /// el juego ya se detectó como cerrado). Reutiliza el mismo proxy de arrastre de
+    /// Retira el cartucho conectado ARRASTRÁNDOLO hacia afuera del dock, con el juego
+    /// abierto o cerrado: retirar ES finalizar, así que si el juego sigue en pantalla el
+    /// arrastre lo termina. Reutiliza el mismo proxy de arrastre de
     /// la biblioteca: soltarlo sobre la ranura lo vuelve a conectar e iniciar, y
     /// soltarlo en cualquier otro lado lo devuelve a su hueco de la biblioteca.
     /// Retirar ES finalizar: los procesos del juego que hayan quedado vivos se terminan
@@ -6612,7 +6790,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     {
         var c = _connectedCartridge;
         if (c == null || _activeDrag != null || _cartridgeFlight || _dockLaunching) return;
-        if (IsDockGamePlaying(c.Exe)) return; // juego en pantalla: el cartucho queda clavado
+        // Con el juego abierto también se retira: el arrastre lo finaliza (ver abajo).
 
         var source = _cartridgeVisuals.FirstOrDefault(x => string.Equals(x.Exe, c.Exe, StringComparison.OrdinalIgnoreCase));
         var entry = _cards.FirstOrDefault(x => x.Body is CartridgeTile t && ReferenceEquals(t.CartridgeVisual, source.Visual));
@@ -6639,6 +6817,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // Desconectar en el estado SIN reconstruir el dock: el asiento sigue vivo
         // (oculto) para conducir el gesto hasta que se suelte el puntero.
         _connectedCartridge = null;
+        // El cartucho salió: el reborde del footer se apaga y el refresco deja de correr.
+        UpdateDockGlow();
+        StopDockGlowTimer();
         _dockMessage = null;
         _dockLaunchFailed = false;
         seat.Opacity = 0;
@@ -6652,12 +6833,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// Se puede agarrar (y retirar) el cartucho montado: juego cerrado y consola libre.
-    /// Es la misma condición que el manito del asiento.
+    /// Se puede agarrar (y retirar) el cartucho montado siempre que la consola esté
+    /// libre. NO se bloquea con el juego abierto: retirar ES finalizar, así que el
+    /// arrastre tiene que poder empezar igual (el reborde ámbar avisa justo eso).
+    /// Es la misma condición que la manito del asiento.
     /// </summary>
     private bool CanGrabDockCartridge() =>
         _activeDrag == null && !_cartridgeFlight && !_dockLaunching
-        && _connectedCartridge is { } c && !IsDockGamePlaying(c.Exe);
+        && _connectedCartridge != null;
 
     /// <summary>
     /// ¿El juego del cartucho montado sigue "en pantalla"? Es el candado del dock y NO es
@@ -7334,7 +7517,69 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // este esperaba su turno (el Clear()+Add redundante parpadea).
             if (GameBoostCardSettledInDock()) return;
             UpdateCartridgeDock();
+            UpdateDockGlow();
+            EnsureDockGlowTimer();
         });
+    }
+
+    /// <summary>
+    /// Reborde luminoso del cartucho montado en el footer: verde cuando el juego ya no
+    /// está abierto (retirarlo no cierra nada) y ámbar mientras siga en pantalla
+    /// (retirarlo lo finaliza). Se dibuja alrededor de la PIEZA 3D del dock, no en la
+    /// card de la biblioteca.
+    /// </summary>
+    private void UpdateDockGlow()
+    {
+        if (_dockGlowInner == null && _dockGlowOuter == null) return;
+        bool docked = _cards3D && !IsEmulatorFilter && _connectedCartridge != null;
+        if (!docked)
+        {
+            if (_dockGlowInner != null) _dockGlowInner.Visibility = Visibility.Collapsed;
+            if (_dockGlowOuter != null) _dockGlowOuter.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var color = (IsDockGamePlaying(_connectedCartridge!.Exe)
+            ? Feedback.WarningBrush
+            : Feedback.SuccessBrush).Color;
+        if (_dockGlowInner != null)
+        {
+            _dockGlowInner.BorderBrush = new SolidColorBrush(color);
+            _dockGlowInner.Visibility = Visibility.Visible;
+        }
+        if (_dockGlowOuter != null)
+        {
+            // Halo: el mismo color muy transparente, para que se lea como luz.
+            _dockGlowOuter.BorderBrush = new SolidColorBrush(
+                Windows.UI.Color.FromArgb(60, color.R, color.G, color.B));
+            _dockGlowOuter.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>
+    /// Refresco de 1 s mientras hay un cartucho montado: cerrar el juego (o su ventana)
+    /// cambia el color del reborde sin que el usuario toque nada.
+    /// </summary>
+    private void EnsureDockGlowTimer()
+    {
+        if (!_cards3D || _connectedCartridge == null) { StopDockGlowTimer(); return; }
+        if (_dockGlowTimer != null) return;
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromSeconds(1);
+        timer.Tick += (_, _) =>
+        {
+            if (!_cards3D || _connectedCartridge == null) { StopDockGlowTimer(); return; }
+            UpdateDockGlow();
+        };
+        timer.Start();
+        _dockGlowTimer = timer;
+    }
+
+    private void StopDockGlowTimer()
+    {
+        var timer = _dockGlowTimer;
+        _dockGlowTimer = null;
+        if (timer == null) return;
+        try { timer.Stop(); } catch { }
     }
 
     /// <summary>
@@ -7412,6 +7657,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         bool hasRunning = activeExe != null && IsDockGamePlaying(activeExe);
         bool hasConnected = _connectedCartridge != null;
+        // El reborde del footer se recrea con la bahía: los hosts viejos ya no están en
+        // el árbol, así que se sueltan antes de armar los nuevos.
+        _dockGlowInner = null;
+        _dockGlowOuter = null;
 
         // Indicador LED (verde con un cartucho puesto o jugando, negro apagado en espera).
         // Con regla activa la luz sigue a LA REGLA (amarilla esperando, verde solo
@@ -7513,7 +7762,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 // Manito solo cuando realmente se puede retirar: juego cerrado y consola
                 // libre. Se evalúa en vivo al hover (el estado cambia sin rebuild).
                 GrabHintAllowed = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
-                    && _connectedCartridge != null && !IsDockGamePlaying(_connectedCartridge.Exe),
+                    && _connectedCartridge != null,
                 CanInteract = () => _activeDrag == null && !_cartridgeFlight && !_dockLaunching
             };
             seat.Artwork.Source = connected.Artwork;
@@ -7526,9 +7775,35 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // clic sobre el cartucho conectado no hace nada y el gesto que queda es el
             // arrastre hacia afuera.
             ToolTipService.SetToolTip(seat, I18n.T("Retirar cartucho"));
-            Canvas.SetLeft(seat, DockCardLeft);
-            Canvas.SetTop(seat, DockSeatedTop);
+            // Reborde luminoso de la pieza montada: el halo va DETRÁS del cartucho y el
+            // filo encima, así el contorno se lee también donde el labio tapa la base.
+            _dockGlowOuter = new Border
+            {
+                Width = DockCardWidth + 16,
+                Height = DockCardHeight + 16,
+                CornerRadius = new CornerRadius(15),
+                BorderThickness = new Thickness(6),
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed
+            };
+            _dockGlowInner = new Border
+            {
+                Width = DockCardWidth,
+                Height = DockCardHeight,
+                CornerRadius = new CornerRadius(9),
+                BorderThickness = new Thickness(2.5),
+                IsHitTestVisible = false,
+                Visibility = Visibility.Collapsed
+            };
+            Canvas.SetLeft(_dockGlowOuter, DockCardLeft - 8);
+            Canvas.SetTop(_dockGlowOuter, DockSeatedTop - 8);
+            Canvas.SetLeft(_dockGlowInner, DockCardLeft);
+            Canvas.SetTop(_dockGlowInner, DockSeatedTop);
+            _dockCartridgeBay.Children.Add(_dockGlowOuter);
             _dockCartridgeBay.Children.Add(seat);
+            _dockCartridgeBay.Children.Add(_dockGlowInner);
+            UpdateDockGlow();
+            EnsureDockGlowTimer();
 
             // ── Zona de agarre del cartucho montado ──────────────────────────
             // El asiento vive dentro de la bahía recortada: solo su parte visible
