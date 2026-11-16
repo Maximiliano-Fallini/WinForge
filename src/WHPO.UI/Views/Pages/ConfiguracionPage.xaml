@@ -179,7 +179,17 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock Text="Iniciar con Windows" FontSize="16" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Iniciar con Windows" FontSize="16" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"/>
+                                    <!-- Mismo distintivo que «Modo eficiencia en bandeja»: verde fijo, fuera
+                                         del acento del tema (ver esa card más abajo). -->
+                                    <Border Background="{StaticResource SuccessTintBrush}"
+                                            CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
+                                        <TextBlock Text="Recomendado" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource SuccessBrush}"/>
+                                    </Border>
+                                </StackPanel>
                                 <TextBlock Text="Abre WHPO automáticamente cuando iniciás sesión en este equipo."
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="StartupFeedbackText" Text="" FontSize="12"
@@ -197,7 +207,17 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Spacing="4" VerticalAlignment="Center">
-                                <TextBlock Text="Iniciar minimizado" FontSize="16" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Iniciar minimizado" FontSize="16" FontWeight="SemiBold"
+                                               VerticalAlignment="Center"/>
+                                    <!-- Mismo distintivo que «Modo eficiencia en bandeja»: verde fijo,
+                                         fuera del acento del tema. -->
+                                    <Border Background="{StaticResource SuccessTintBrush}"
+                                            CornerRadius="8" Padding="7,2" VerticalAlignment="Center">
+                                        <TextBlock Text="Recomendado" FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{StaticResource SuccessBrush}"/>
+                                    </Border>
+                                </StackPanel>
                                 <TextBlock Text="Si WHPO se inicia automáticamente, se abrirá directamente en la bandeja del sistema."
                                            FontSize="13" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="StartMinimizedHint"
@@ -627,7 +647,8 @@
                                         BorderThickness="2"
                                         BorderBrush="{ThemeResource SensorGridLineBrush}"
                                         VerticalAlignment="Center"/>
-                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center"
+                                            HorizontalAlignment="Center">
                                     <TextBlock Text="Color exacto" FontSize="14" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="CardSkinCustomHint"
                                                FontSize="12"
@@ -660,11 +681,6 @@
                                               HorizontalAlignment="Right"
                                               VerticalAlignment="Center"/>
                             </Grid>
-
-                            <TextBlock Text="El cambio se aplica al volver a la biblioteca de juegos."
-                                       FontSize="12"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       TextWrapping="Wrap" Margin="0,8,0,0"/>
                         </StackPanel>
                     </Border>
 
@@ -681,7 +697,36 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        TextWrapping="Wrap"/>
                             <StackPanel x:Name="ConsoleModelHost" Orientation="Horizontal" Spacing="14"
-                                        Margin="0,14,0,0" HorizontalAlignment="Left"/>
+                                        Margin="0,14,0,0" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+<!-- Interruptor maestro de los efectos de vidrio: encendido aparecen los controles de
+                         transparencia y blur (con el vidrio detrás de cada panel); apagado los paneles
+                         quedan opacos y sin vidrio y esos controles se ocultan. Es el atajo de
+                         rendimiento —el vidrio es lo que más cuesta GPU— y no pierde lo elegido:
+                         los valores por tema vuelven al reactivarlo (ver PanelAppearance). -->
+                    <Border x:Name="PanelEffectsCard" Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal">
+                        <StackPanel Spacing="4">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Transparencia de los paneles" FontSize="16" FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                                <!-- Encendido = transparencias y vidrio activos (IsOn lo dice al
+                                     derecho; el ajuste guardado es el inverso, ver
+                                     PanelAppearance.EffectsOffSettingKey). -->
+                                <ToggleSwitch x:Name="PanelEffectsToggle" Grid.Column="1"
+                                              OnContent="Activado" OffContent="Deshabilitado"
+                                              VerticalAlignment="Center"
+                                              Toggled="PanelEffectsToggle_Toggled"/>
+                            </Grid>
+                            <TextBlock Text="Deshabilitado: menor consumo con la ventana abierta"
+                                       FontSize="13"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
 
@@ -698,7 +743,6 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="Transparencia de los paneles" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock x:Name="PanelTransparencyValueText" Grid.Column="1" Text="0 %" FontSize="13"
                                            MinWidth="46" TextAlignment="Right"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
@@ -810,6 +854,12 @@
                                 TextWrapping="Wrap"
                                 Margin="0,12,0,0"/>
 
+                            <!-- Origen del binario: el MISMO repositorio del que descarga el
+                                 servicio (ver DriverSources), para que se pueda verificar. -->
+                            <HyperlinkButton x:Name="PawnIoSourceLink" FontSize="12" Padding="0"
+                                             Margin="0,6,0,0" HorizontalAlignment="Left"
+                                             VerticalAlignment="Center"/>
+
                             <Grid ColumnSpacing="12" Margin="0,16,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -820,6 +870,15 @@
                                            VerticalAlignment="Center" TextWrapping="Wrap"/>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                             VerticalAlignment="Center">
+                                    <!-- Acceso directo al repositorio oficial: misma altura y separación
+                                         que los botones de instalar/desinstalar, para que la fila
+                                         quede pareja. La URL y el tooltip los pone el code-behind
+                                         desde DriverSources (ver RefreshDriversTab). -->
+                                    <Button x:Name="PawnIoRepoButton" FontSize="12" Padding="10,5"
+                                            VerticalAlignment="Center"
+                                            Click="DriverRepoButton_Click">
+                                        <FontIcon Glyph="&#xE71B;" FontSize="13"/>
+                                    </Button>
                                     <ProgressRing x:Name="PawnIoProgressRing" Width="18" Height="18"
                                                   IsActive="False" Visibility="Collapsed"/>
                                     <Button x:Name="PawnIoRestartButton" Content="Reiniciar WinForge"
@@ -879,6 +938,12 @@
                                 TextWrapping="Wrap"
                                 Margin="0,12,0,0"/>
 
+                            <!-- Origen del binario: el MISMO repositorio del que descarga el
+                                 servicio (ver DriverSources), para que se pueda verificar. -->
+                            <HyperlinkButton x:Name="HidUsbfSourceLink" FontSize="12" Padding="0"
+                                             Margin="0,6,0,0" HorizontalAlignment="Left"
+                                             VerticalAlignment="Center"/>
+
                             <Grid ColumnSpacing="12" Margin="0,16,0,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
@@ -889,6 +954,12 @@
                                            VerticalAlignment="Center" TextWrapping="Wrap"/>
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                             VerticalAlignment="Center">
+                                    <!-- Acceso directo al repositorio oficial (ver PawnIoRepoButton). -->
+                                    <Button x:Name="HidUsbfRepoButton" FontSize="12" Padding="10,5"
+                                            VerticalAlignment="Center"
+                                            Click="DriverRepoButton_Click">
+                                        <FontIcon Glyph="&#xE71B;" FontSize="13"/>
+                                    </Button>
                                     <ProgressRing x:Name="HidUsbfProgressRing" Width="18" Height="18"
                                                   IsActive="False" Visibility="Collapsed"/>
                                     <Button x:Name="HidUsbfUninstallButton" Content="Desinstalar hidusbf"
@@ -907,8 +978,12 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Nota de transparencia común a los dos drivers. -->
-                    <Border Style="{StaticResource FilledCardStyle}" CornerRadius="12" Padding="16">
+                    <!-- Nota de transparencia común a los dos drivers. Va con CardStyle (el
+                         pincel CardBackgroundBrush) y no con FilledCardStyle: el vidrio se
+                         recorta por PINCEL (ver PanelBlurLayer.RefreshMatchSet) y el relleno
+                         secundario no está en el censo de superficies, así que la nota era la
+                         única card de la pestaña que se quedaba sin desenfoque. -->
+                    <Border Style="{StaticResource CardStyle}" CornerRadius="12" Padding="16">
                         <Grid ColumnSpacing="10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>

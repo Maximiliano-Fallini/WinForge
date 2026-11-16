@@ -88,7 +88,39 @@ public static class PanelAppearance
     /// valiendo como respaldo del tema vigente: lo necesita el splash, que se pinta ANTES de esa
     /// migración (ver <see cref="SavedAppearance"/>).
     /// </summary>
+    /// <summary>
+    /// Modo rendimiento: apaga transparencias y desenfoque de una, sin perder lo elegido.
+    /// Es un interruptor de RENDIMIENTO, no otro valor de apariencia: los números por tema
+    /// quedan guardados tal cual y vuelven apenas se apaga (ver <see cref="StoredAppearance"/>).
+    /// </summary>
+    public const string EffectsOffSettingKey = "appearance.effectsOff";
+
+    /// <summary>Si el modo rendimiento está puesto (los paneles se pintan opacos y sin vidrio).</summary>
+    public static bool EffectsOff
+    {
+        get
+        {
+            try { return App.Services.GetRequiredService<ISettingsService>().Get(EffectsOffSettingKey, false); }
+            catch { return false; }
+        }
+    }
+
+    /// <summary>
+    /// Lo guardado para el tema vigente IGNORANDO el modo rendimiento: es lo que se vuelve a
+    /// aplicar al apagarlo.
+    /// </summary>
+    public static (double Transparency, double Blur) StoredAppearance()
+    {
+        try { return ResolveStored(App.Services.GetRequiredService<ISettingsService>(), EffectiveTheme()); }
+        catch { return (0.0, 0.0); }
+    }
+
     private static (double Transparency, double Blur) Resolve(ISettingsService settings, AppTheme theme)
+        // El modo rendimiento manda sobre el valor del tema: paneles opacos y sin desenfoque,
+        // que es exactamente lo que no cuesta GPU.
+        => settings.Get(EffectsOffSettingKey, false) ? (0.0, 0.0) : ResolveStored(settings, theme);
+
+    private static (double Transparency, double Blur) ResolveStored(ISettingsService settings, AppTheme theme)
     {
         // Los temas PLANOS no tienen nada detrás de los paneles (ni foto ni gradiente):
         // la transparencia y el blur no tienen efecto visible. Siempre 0 % y 0 %,
@@ -764,6 +796,10 @@ public static class PanelAppearance
     /// </summary>
     public static void SaveCurrent()
     {
+        // Con el modo rendimiento puesto los valores vigentes son los ceros del modo, no los
+        // del usuario: escribirlos borraría su transparencia y su desenfoque para siempre.
+        if (EffectsOff) return;
+
         var theme = EffectiveTheme();
         Save(TransparencyKeyFor(theme), TransparencyPercent);
         Save(BlurKeyFor(theme), BlurPercent);

@@ -224,6 +224,14 @@ public sealed partial class ConfiguracionPage : Page
                 WHPO_UI.PanelAppearance.TransparencyPercent,
                 0.0, WHPO_UI.PanelAppearance.MaxTransparencyPercent);
             PanelBlurSlider.Value = Math.Clamp(WHPO_UI.PanelAppearance.BlurPercent, 0.0, 100.0);
+
+            // Modo rendimiento: el interruptor refleja el ajuste guardado. Con el modo puesto
+            // los valores vigentes ya son 0 % (ver PanelAppearance.Resolve).
+            _effectsOffLoading = true;
+            try { PanelEffectsToggle.IsOn = !WHPO_UI.PanelAppearance.EffectsOff; }
+            finally { _effectsOffLoading = false; }
+            ApplyEffectsOffState();
+
             UpdatePanelTransparencyText();
             UpdatePanelBlurText();
             UpdateBlurAvailability();
@@ -312,10 +320,22 @@ public sealed partial class ConfiguracionPage : Page
                 _isLoading = true;
                 try
                 {
-                    PanelTransparencySlider.Value = WHPO_UI.ThemeCatalog.DefaultPanelTransparency(theme);
-                    PanelBlurSlider.Value = WHPO_UI.ThemeCatalog.DefaultPanelBlur(theme);
+                    // Con el modo rendimiento puesto, el reset de diseño no puede reactivar
+                    // los efectos: los deslizadores quedan en 0 % como el resto.
+                    bool effectsOff = !PanelEffectsToggle.IsOn;
+                    PanelTransparencySlider.Value = effectsOff
+                        ? 0
+                        : WHPO_UI.ThemeCatalog.DefaultPanelTransparency(theme);
+                    PanelBlurSlider.Value = effectsOff
+                        ? 0
+                        : WHPO_UI.ThemeCatalog.DefaultPanelBlur(theme);
                     UpdatePanelTransparencyText();
                     UpdatePanelBlurText();
+                    if (effectsOff)
+                    {
+                        WHPO_UI.PanelAppearance.SetTransparencyPercent(0, persist: false);
+                        WHPO_UI.PanelAppearance.SetBlurPercent(0, persist: false);
+                    }
                 }
                 finally
                 {
@@ -370,6 +390,65 @@ public sealed partial class ConfiguracionPage : Page
         if (_isLoading) return;
         WHPO_UI.PanelAppearance.SetBlurPercent(Math.Clamp(e.NewValue, 0.0, 100.0), persist: false);
         ScheduleAppearanceSave();
+    }
+
+    /// <summary>Mientras se refleja el ajuste guardado en el interruptor, sus eventos no aplican nada.</summary>
+    private bool _effectsOffLoading;
+
+    /// <summary>
+    /// Modo rendimiento: apaga las transparencias y el desenfoque de los paneles. Los dos
+    /// efectos son los que más GPU cuestan (el vidrio recompone la ventana en cada cambio), así
+    /// que apagarlos deja la UI con el color sólido del tema. No borra lo elegido: los valores
+    /// por tema quedan guardados y vuelven al apagarlo.
+    /// </summary>
+    private void PanelEffectsToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading || _effectsOffLoading) return;
+
+        // El interruptor dice si los efectos están ACTIVOS; el ajuste guardado es el inverso
+        // ("effectsOff"), que es como lo lee PanelAppearance al arrancar y al cambiar de tema.
+        bool on = PanelEffectsToggle.IsOn;
+        bool off = !on;
+        _settingsService.Set(WHPO_UI.PanelAppearance.EffectsOffSettingKey, off);
+
+        // Apagado: vuelve exactamente lo que había guardado para el tema vigente.
+        var (transparency, blur) = off ? (0.0, 0.0) : WHPO_UI.PanelAppearance.StoredAppearance();
+
+        _isLoading = true;
+        try
+        {
+            PanelTransparencySlider.Value = Math.Clamp(
+                transparency, 0.0, WHPO_UI.PanelAppearance.MaxTransparencyPercent);
+            PanelBlurSlider.Value = Math.Clamp(blur, 0.0, 100.0);
+            UpdatePanelTransparencyText();
+            UpdatePanelBlurText();
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+
+        WHPO_UI.PanelAppearance.SetTransparencyPercent(transparency, persist: false);
+        WHPO_UI.PanelAppearance.SetBlurPercent(blur, persist: false);
+        ApplyEffectsOffState();
+        RepaintConfigNavBar();
+    }
+
+    /// <summary>
+    /// Con el interruptor apagado no hay nada que configurar: los deslizadores quedan bloqueados
+    /// en 0 % y las dos cards de detalle se ocultan enteras (ver UpdateBlurAvailability).
+    /// </summary>
+    private void ApplyEffectsOffState()
+    {
+        try
+        {
+            bool off = !PanelEffectsToggle.IsOn;
+            PanelTransparencySlider.IsEnabled = !off;
+            PanelBlurSlider.IsEnabled = !off
+                && WHPO_UI.Wallpaper.SavedImagePath(WHPO_UI.PanelAppearance.EffectiveTheme()) != null;
+            UpdateBlurAvailability();
+        }
+        catch { /* arranque temprano */ }
     }
 
     private DispatcherQueueTimer? _appearanceSaveTimer;
@@ -711,11 +790,13 @@ public sealed partial class ConfiguracionPage : Page
         CardSkinCustomSwatch.BorderBrush = custom
             ? WHPO_UI.ThemeBrushes.Get("AccentBrush")
             : WHPO_UI.ThemeBrushes.Get("SensorGridLineBrush");
+        // La única línea bajo «Color exacto» es el HEX del color propio: sin color propio
+        // queda vacía (la muestra de la izquierda ya adelanta el color vigente).
         if (CardSkinCustomHint != null)
             CardSkinCustomHint.Text = custom
                 ? WHPO_UI.Controls.CardSkin.FormatCustom(parsed).Replace(
                     WHPO_UI.Controls.CardSkin.CustomPrefix, "#", StringComparison.OrdinalIgnoreCase)
-                : I18n.T("Elegí cualquier color, además de las muestras de arriba.");
+                : string.Empty;
     }
 
     /// <summary>
@@ -1078,8 +1159,54 @@ public sealed partial class ConfiguracionPage : Page
     /// </summary>
     private void RefreshDriversTab()
     {
+        // Los enlaces de origen salen del MISMO lugar del que descargan los servicios
+        // (DriverSources), así el usuario ve el repositorio oficial real y no una copia
+        // escrita a mano acá que se puede desincronizar.
+        SetDriverSourceLink(PawnIoSourceLink, WHPO.Core.Services.DriverSources.PawnIoRepository);
+        SetDriverSourceLink(HidUsbfSourceLink, WHPO.Core.Services.DriverSources.HidUsbfRepository);
+        SetDriverRepoButton(PawnIoRepoButton, WHPO.Core.Services.DriverSources.PawnIoRepository);
+        SetDriverRepoButton(HidUsbfRepoButton, WHPO.Core.Services.DriverSources.HidUsbfRepository);
+
         RefreshPawnIoCard();
         RefreshHidUsbfCard();
+    }
+
+    /// <summary>
+    /// Deja el botón de repositorio de la fila de acciones: guarda la URL en el Tag (es la que
+    /// abre <see cref="DriverRepoButton_Click"/>) y la muestra en el tooltip.
+    /// </summary>
+    private static void SetDriverRepoButton(Button button, string url)
+    {
+        try
+        {
+            button.Tag = url;
+            ToolTipService.SetToolTip(button, url);
+        }
+        catch { }
+    }
+
+    /// <summary>Los dos botones de repositorio de la pestaña Drivers (ver SetDriverRepoButton).</summary>
+    private async void DriverRepoButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string url } || !Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return;
+        try { await Windows.System.Launcher.LaunchUriAsync(uri); } catch { /* sin navegador asociado */ }
+    }
+
+    /// <summary>
+    /// Deja el enlace al repositorio del driver: "Origen: github.com/…" ENTERO clicable
+    /// (NavigateUri abre el navegador) y con la URL completa en el tooltip.
+    /// </summary>
+    private static void SetDriverSourceLink(HyperlinkButton link, string url)
+    {
+        try
+        {
+            string host = url.Replace("https://", string.Empty, StringComparison.Ordinal).TrimEnd('/');
+            link.Content = $"{I18n.T("Origen")}: {host}";
+            link.NavigateUri = new Uri(url);
+            ToolTipService.SetToolTip(link, url);
+        }
+        catch { }
     }
 
     /// <summary>
@@ -1766,12 +1893,18 @@ public sealed partial class ConfiguracionPage : Page
         {
             var theme = WHPO_UI.PanelAppearance.EffectiveTheme();
             bool hasPhoto = WHPO_UI.Wallpaper.SavedImagePath(theme) != null;
-            PanelBlurSlider.IsEnabled = hasPhoto;
+            bool effectsOff = !PanelEffectsToggle.IsOn;
+            PanelBlurSlider.IsEnabled = hasPhoto && !effectsOff;
             bool isFlat = WHPO_UI.ThemeCatalog.KindOf(theme) == WHPO_UI.ThemeCatalog.ThemeKind.Flat;
-            PanelTransparencyCard.Visibility = isFlat
+            // El interruptor manda sobre las dos cards de detalle: con los efectos apagados no
+            // queda ni el control de transparencia ni el de blur, solo el interruptor.
+            PanelEffectsCard.Visibility = isFlat
                 ? Microsoft.UI.Xaml.Visibility.Collapsed
                 : Microsoft.UI.Xaml.Visibility.Visible;
-            PanelBlurCard.Visibility = isFlat
+            PanelTransparencyCard.Visibility = isFlat || effectsOff
+                ? Microsoft.UI.Xaml.Visibility.Collapsed
+                : Microsoft.UI.Xaml.Visibility.Visible;
+            PanelBlurCard.Visibility = isFlat || effectsOff
                 ? Microsoft.UI.Xaml.Visibility.Collapsed
                 : Microsoft.UI.Xaml.Visibility.Visible;
         }
