@@ -32,12 +32,6 @@
   <sub>⭐ Beta — found a problem? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Open an issue</a></sub>
 </p>
 
-<p align="center">
-  <img src="assets/screenshots/library-themes.png" width="100%" alt="WinForge game library with 3D cartridges, shown in four of the built-in themes"/>
-  <br/>
-  <sub><b>One library, any look.</b> The 3D cartridge library and console dock in four of the built-in themes.</sub>
-</p>
-
 ## Why was WinForge created?
 
 I've been involved in Windows optimization and gaming performance for more than 10 years. During that time, I've tried different tools and settings to make games run more smoothly and consistently.
@@ -51,6 +45,12 @@ That's why I decided to build **WinForge**: an application that brings these too
 **WinForge will always be 100% free.** I have no plans to add subscriptions or premium editions.
 
 The project is currently in active development, and I need feedback from people who can try it on different PCs, report bugs, and share their experiences. This will help me check compatibility and keep improving WinForge. **Windows 11 is recommended.**
+
+<p align="center">
+  <img src="assets/screenshots/library-themes.png" width="100%" alt="WinForge game library with 3D cartridges, shown in four of the built-in themes"/>
+  <br/>
+  <sub><b>One library, any look.</b> The 3D cartridge library and console dock in four of the built-in themes.</sub>
+</p>
 
 ## 📸 A closer look
 
