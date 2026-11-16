@@ -76,6 +76,8 @@ public sealed class ProcessService : IProcessService
     private readonly object _launchSessionLock = new();
     private readonly Dictionary<string, LaunchSession> _launchSessions = new(StringComparer.OrdinalIgnoreCase);
     private const int LaunchSessionTimeoutSeconds = 180;
+    /// <summary>Etiqueta con la que la biblioteca marca las entradas de emulador.</summary>
+    private const string EmulatorLauncherLabel = InstalledGamesService.EmulatorLauncherName;
     // Ventana de estabilización de la cadena: un proceso que solo coincide por
     // carpeta no recibe la regla hasta que pasa este tiempo sin que aparezca un
     // hijo real. Así el launcher intermedio (Steam → launcher del juego → juego)
@@ -406,6 +408,10 @@ public sealed class ProcessService : IProcessService
         /// se puede aplicar casi al instante; la resuelta por escaneo espera la
         /// ventana de estabilización por si el exe más grande es un launcher.</summary>
         public bool ExpectedFromMemory { get; set; }
+        /// <summary>Emulador: la sesión no vence mientras el emulador siga abierto. El
+        /// proceso que dibuja (núcleo del juego emulado o VM) puede nacer recién cuando
+        /// el usuario carga un juego dentro, minutos después de abrir el emulador.</summary>
+        public bool KeepWaitingWhileRunning { get; set; }
         /// <summary>Primera vez que el barrido vio cada candidato, para darle tiempo
         /// a que la cadena launcher→juego se estabilice antes de aplicar.</summary>
         public Dictionary<int, DateTime> FirstSeenUtc { get; } = new();
@@ -1495,6 +1501,14 @@ public sealed class ProcessService : IProcessService
         // ignora y el barrido vuelve a resolverlo desde la carpeta.
         string? learnedPath = GetRememberedPath(exe);
 
+        // Emulador: su regla tiene que alcanzar al proceso que dibuja (núcleo del juego
+        // emulado o VM), que puede nacer cuando el usuario carga un juego dentro del
+        // emulador, minutos después de abrirlo. La sesión de estos no vence mientras el
+        // emulador siga abierto (ver LaunchSessionTick).
+        bool emulatorLaunch =
+            string.Equals(launcher?.Trim(), EmulatorLauncherLabel, StringComparison.OrdinalIgnoreCase)
+            || EmulatorCatalog.MatchExeFileName(exe) != null;
+
         var now = DateTime.UtcNow;
         LaunchSession session;
         bool created = false;
@@ -1516,6 +1530,9 @@ public sealed class ProcessService : IProcessService
                 // proceso y al confirmarlo); extender el plazo no cambia nada ahí y
                 // cubre el relanzamiento del juego dentro de la ventana de espera.
                 existing.DeadlineUtc = now.AddSeconds(LaunchSessionTimeoutSeconds);
+                // Un relanzamiento puede venir sin la etiqueta de launcher (bandeja,
+                // atajo): la condición de emulador no se pierde si ya se sabía.
+                existing.KeepWaitingWhileRunning |= emulatorLaunch;
                 session = existing;
             }
             else
@@ -1529,6 +1546,7 @@ public sealed class ProcessService : IProcessService
                     ExpectedExePath = learnedPath,
                     ExpectedResolved = !string.IsNullOrWhiteSpace(learnedPath),
                     ExpectedFromMemory = !string.IsNullOrWhiteSpace(learnedPath),
+                    KeepWaitingWhileRunning = emulatorLaunch,
                     DeadlineUtc = now.AddSeconds(LaunchSessionTimeoutSeconds)
                 };
                 _launchSessions[exe] = session;
@@ -1539,7 +1557,10 @@ public sealed class ProcessService : IProcessService
         if (created)
         {
             SetGameRuleStatus(new GameRuleStatus(exe, GameRuleState.Waiting, session.Launcher));
-            _logging.LogInfo($"ProcessService: sesión de lanzamiento de {exe} (launcher={session.Launcher ?? "directo"}, carpeta={session.InstallDir ?? "desconocida"}, exe esperado={session.ExpectedExePath ?? "se resuelve al escanear"}); se busca el proceso real por hasta {LaunchSessionTimeoutSeconds} s.");
+            string waitNote = session.KeepWaitingWhileRunning
+                ? "la espera se renueva mientras el emulador siga abierto"
+                : $"por hasta {LaunchSessionTimeoutSeconds} s";
+            _logging.LogInfo($"ProcessService: sesión de lanzamiento de {exe} (launcher={session.Launcher ?? "directo"}, carpeta={session.InstallDir ?? "desconocida"}, exe esperado={session.ExpectedExePath ?? "se resuelve al escanear"}); se busca el proceso real {waitNote}.");
         }
 
         // Barrido inmediato en segundo plano: cubre el caso sin WMI y el de un
@@ -1631,6 +1652,9 @@ public sealed class ProcessService : IProcessService
         {
             if (_launchSessions.TryGetValue(exe, out var session))
             {
+                // Emulador con espera abierta: no vence mientras esté abierto, así que no
+                // hay cuenta regresiva que mostrar (la UI dejaría un "quedan 0:00").
+                if (session.KeepWaitingWhileRunning) return null;
                 var left = session.DeadlineUtc - DateTime.UtcNow;
                 return left > TimeSpan.Zero ? left : TimeSpan.Zero;
             }
@@ -1643,6 +1667,36 @@ public sealed class ProcessService : IProcessService
         lock (_ruleStatusLock) _ruleStatuses[status.Exe] = status;
         try { GameRuleStatusChanged?.Invoke(status); }
         catch (Exception ex) { _logging.LogDebug($"ProcessService: notificar estado de regla de {status.Exe}: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// ¿Sigue abierto el emulador de la sesión? Se busca el exe de la regla (el emulador
+    /// lanzado) descartando el ruido de cadena. Mientras viva, su sesión no vence: las
+    /// reglas tienen que poder alcanzar al proceso que dibuja (núcleo del juego emulado
+    /// o VM), que aparece cuando se carga el juego, no al abrir el emulador.
+    /// </summary>
+    private static bool EmulatorStillRunning(LaunchSession session)
+    {
+        try
+        {
+            string name = Path.GetFileNameWithoutExtension(session.RuleKey);
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            foreach (var p in Process.GetProcessesByName(name))
+            {
+                try
+                {
+                    if (p.HasExited) continue;
+                    TryGetProcessPath(p, out var path);
+                    if (!string.IsNullOrWhiteSpace(path)
+                        && IsLaunchChainNoise(Path.GetFileName(path))) continue;
+                    return true;
+                }
+                catch { }
+                finally { p.Dispose(); }
+            }
+        }
+        catch { }
+        return false;
     }
 
     /// <summary>Tick de las sesiones: expira las vencidas y reintenta enganchar el proceso real.</summary>
@@ -1663,6 +1717,22 @@ public sealed class ProcessService : IProcessService
             {
                 if (now >= session.DeadlineUtc)
                 {
+                    // Emulador abierto: la espera se renueva en vez de vencer. Su regla
+                    // tiene que alcanzar al proceso que dibuja aunque el usuario tarde
+                    // en cargar el juego (el plazo fijo de 3 min es para juegos).
+                    if (session.KeepWaitingWhileRunning && EmulatorStillRunning(session))
+                    {
+                        session.DeadlineUtc = now.AddSeconds(LaunchSessionTimeoutSeconds);
+                        lock (_launchSessionLock)
+                        {
+                            if (_launchSessions.TryGetValue(session.RuleKey, out var live))
+                                live.DeadlineUtc = session.DeadlineUtc;
+                        }
+                        _logging.LogDebug($"ProcessService: {session.RuleKey} sigue abierto; se renueva la espera del proceso del juego.");
+                        ScanProcessesForLaunchSession(session);
+                        continue;
+                    }
+
                     bool removed;
                     lock (_launchSessionLock) removed = _launchSessions.Remove(session.RuleKey);
                     if (!removed) continue;

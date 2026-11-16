@@ -460,7 +460,10 @@ public sealed class InstalledGamesService : IInstalledGamesService
 
     /// <summary>Launcher de las entradas de emulador: es lo que las distingue dentro de la
     /// biblioteca (y lo que usa el arrastre de "ya descubiertos").</summary>
-    private const string EmulatorLauncherName = "Emulador";
+    /// <summary>Etiqueta de launcher con la que se marcan las entradas de emulador.
+    /// Internal porque ProcessService la usa para dejar abierta la espera del proceso
+    /// real de un emulador (el que dibuja), no la del juego común.</summary>
+    internal const string EmulatorLauncherName = "Emulador";
 
     /// <summary>
     /// Conserva los emuladores YA descubiertos que este escaneo no volvió a encontrar.
