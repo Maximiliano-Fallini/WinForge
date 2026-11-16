@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.7.3/WinForge-0.7.3.msi">
-    <img src="https://img.shields.io/badge/%E2%AC%87_Download_WinForge-v0.7.3_|_93.9_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download WinForge v0.7.3 (93.9 MB)"/>
+  <a href="https://github.com/Maximiliano-Fallini/WinForge/releases/download/v0.7.4/WinForge-0.7.4.msi">
+    <img src="https://img.shields.io/badge/%E2%AC%87_Download_WinForge-v0.7.4_|_93.9_MB-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download WinForge v0.7.4 (93.9 MB)"/>
   </a>
   <br/>
   <sub>16/11/2026 - UTC-3</sub>
