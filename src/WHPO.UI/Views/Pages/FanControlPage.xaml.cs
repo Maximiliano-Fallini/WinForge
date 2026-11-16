@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -141,9 +144,9 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         public required bool HasControl;
         public required TextBlock Title;
         public required Viewbox FanIcon;
-        public required RotateTransform FanIconTransform;
-        public required Storyboard FanSpinStoryboard;
-        public required DoubleAnimation FanSpinAnimation;
+        /// <summary>Visual de composición del icono: la rotación corre acá, no en el hilo de UI.</summary>
+        public required Visual IconVisual;
+        public required ScalarKeyFrameAnimation SpinAnimation;
         public required Button RenameButton;
         public required Button IdentifyButton;
         public required Grid TitleEditPanel;
@@ -223,7 +226,10 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         public bool IsRenaming;
         public bool SuppressRenameCommit;
         public bool IsFanSpinning;
-        public int FanSpinSpeedBucket = -1;
+        /// <summary>El ventilador gira (duty &gt; 0 o RPM &gt; 0): el icono se ve lleno.</summary>
+        public bool IsFanActive;
+        /// <summary>El puntero está sobre la card: es lo único que hace girar el icono.</summary>
+        public bool IsFanHovered;
         // Prueba de identificación en curso: el badge lo avisa y el sondeo no lo
         // pisa mientras dura.
         public bool IsIdentifying;
@@ -365,7 +371,23 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     /// NOTA: el MOTOR de curvas (FanControlService, proceso) NO se pausa: se
     /// gobierna con su propio switch por canal.
     /// </summary>
-    public void PauseBackgroundTimers() => StopPolling();
+    public void PauseBackgroundTimers()
+    {
+        StopPolling();
+        // Los giros tampoco pueden quedar corriendo fuera de la página: el compositor
+        // seguiría pidiendo frames para iconos que nadie ve.
+        StopFanSpins();
+    }
+
+    /// <summary>Detiene todas las rotaciones de composición y deja los iconos quietos.</summary>
+    private void StopFanSpins()
+    {
+        foreach (var card in _cards)
+        {
+            card.IsFanHovered = false;
+            StopFanSpin(card);
+        }
+    }
 
     /// <summary>Reanudación desde bandeja: solo con ventana visible.</summary>
     public void ResumeBackgroundTimers()
@@ -486,6 +508,7 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         // Reconciliar por id: crea las cards nuevas y actualiza las existentes
         // sin destruir la que el usuario está tocando (evita saltos del slider
         // y del editor de curva).
+        int cardCountBefore = _cards.Count;
         var byId = fans.Where(f => f.HasControl || f.Rpm.HasValue).ToList();
         var existing = _cards.ToDictionary(c => c.Id, c => c);
         var seen = new HashSet<string>();
@@ -527,8 +550,9 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             _cards.Remove(card);
         }
 
-
-        ApplyColumnLayout();
+        // El reparto en columnas solo puede cambiar si cambió la cantidad de cards:
+        // recalcularlo en cada sondeo forzaba un paso de layout cada 2 s sin motivo.
+        if (cardCountBefore != _cards.Count) ApplyColumnLayout();
     }
 
     private FanCard BuildFanCard(FanControlInfo fan)
@@ -648,24 +672,23 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
         titleEditPanel.Children.Add(editConfirm);
         titleEditPanel.Children.Add(editCancel);
 
-        // El icono monocromático se anima únicamente mientras el ventilador tiene actividad.
-        var fanIconTransform = new RotateTransform();
+        // El icono monocromático gira SOLO con el puntero sobre la card (ver
+        // UpdateFanAnimation): quieto marca actividad con el opacidad y no cuesta GPU.
+        // La rotación va por COMPOSICIÓN y no se reinicia nunca: una sola animación de
+        // un giro fijo, sin escalones de velocidad que la corten (el reinicio se veía
+        // como que el ventilador frenaba y volvía a arrancar).
         var fanIcon = FanIcon.CreateCanvas(18);
-        fanIcon.RenderTransform = fanIconTransform;
-        fanIcon.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
         fanIcon.Opacity = 0.5;
-        var fanSpinAnimation = new DoubleAnimation
-        {
-            From = 0,
-            To = 360,
-            Duration = new Duration(TimeSpan.FromMilliseconds(900)),
-            RepeatBehavior = RepeatBehavior.Forever,
-            EnableDependentAnimation = true
-        };
-        var fanSpinStoryboard = new Storyboard();
-        Storyboard.SetTarget(fanSpinAnimation, fanIconTransform);
-        Storyboard.SetTargetProperty(fanSpinAnimation, "Angle");
-        fanSpinStoryboard.Children.Add(fanSpinAnimation);
+        var iconVisual = ElementCompositionPreview.GetElementVisual(fanIcon);
+        // El tamaño del visual se resuelve al hacer layout: el punto de giro se centra
+        // cuando ya se conoce, si no el icono orbitaría en lugar de girar sobre sí mismo.
+        fanIcon.SizeChanged += (_, _) => iconVisual.CenterPoint = new Vector3(
+            (float)(fanIcon.ActualWidth / 2), (float)(fanIcon.ActualHeight / 2), 0f);
+        var fanSpinAnimation = iconVisual.Compositor.CreateScalarKeyFrameAnimation();
+        fanSpinAnimation.InsertKeyFrame(0f, 0f);
+        fanSpinAnimation.InsertKeyFrame(1f, 360f);
+        fanSpinAnimation.Duration = TimeSpan.FromMilliseconds(1300);
+        fanSpinAnimation.IterationBehavior = AnimationIterationBehavior.Forever;
 
         // Estado de lectura: título + lápiz. El icono del ventilador vive en su
         // propia columna del encabezado para que el editor no lo tape ni empuje
@@ -1058,9 +1081,8 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             HasControl = fan.HasControl,
             Title = title,
             FanIcon = fanIcon,
-            FanIconTransform = fanIconTransform,
-            FanSpinStoryboard = fanSpinStoryboard,
-            FanSpinAnimation = fanSpinAnimation,
+            IconVisual = iconVisual,
+            SpinAnimation = fanSpinAnimation,
             RenameButton = renameButton,
             IdentifyButton = identifyButton,
             TitleEditPanel = titleEditPanel,
@@ -1091,6 +1113,21 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
             // El id como último recurso: si LHM no le puso nombre al sensor, la
             // card igual se puede identificar y renombrar.
             RawName = string.IsNullOrWhiteSpace(fan.RawName) ? fan.Id : fan.RawName
+        };
+
+        // El giro del icono vive mientras el puntero está sobre la card: permanente
+        // obligaba a recomponer la ventana en cada frame por encima del vidrio de las
+        // cards y era el 5 % de GPU con la página quieta. Bajo el puntero es UNA
+        // animación que corre sin reinicios hasta que el puntero se va.
+        root.PointerEntered += (_, _) =>
+        {
+            card.IsFanHovered = true;
+            StartFanSpin(card);
+        };
+        root.PointerExited += (_, _) =>
+        {
+            card.IsFanHovered = false;
+            StopFanSpin(card);
         };
 
         // ------------------------------------------------------------------
@@ -1712,41 +1749,56 @@ public sealed partial class FanControlPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// El duty manda la velocidad del giro (lectura confiable del registro PWM).
+    /// El duty manda la señal de actividad (lectura confiable del registro PWM).
     /// El RPM es best-effort, pero cuando hay lectura confirma que el ventilador
-    /// gira: nunca dejamos el icono quieto con el tacómetro marcando vueltas.
+    /// gira: nunca dejamos el icono apagado con el tacómetro marcando vueltas.
     /// En canales de solo lectura (sin PWM) el RPM es la única referencia.
+    ///
+    /// El icono NO gira por estar activo: gira solo con el puntero encima. El giro
+    /// permanente obligaba a recomponer la ventana en cada frame por encima del vidrio
+    /// de las cards y era el 5 % de GPU con la página quieta; el número de RPM y el
+    /// icono lleno ya dicen que el ventilador está andando.
     /// </summary>
     private static void UpdateFanAnimation(FanCard card, FanControlInfo fan)
     {
         double activity = fan.DutyPercent ?? 0;
         if (fan.Rpm.GetValueOrDefault() > 0)
-            activity = Math.Max(activity, 20); // giro mínimo visible hasta el siguiente escalón
+            activity = Math.Max(activity, 20);
         activity = Math.Clamp(activity, 0, 100);
 
-        if (activity <= 0.1)
+        card.IsFanActive = activity > 0.1;
+        if (!card.IsFanActive)
         {
-            if (card.IsFanSpinning)
-                card.FanSpinStoryboard.Stop();
-            card.FanIconTransform.Angle = 0;
+            StopFanSpin(card);
             card.FanIcon.Opacity = 0.5;
-            card.IsFanSpinning = false;
-            card.FanSpinSpeedBucket = -1;
             return;
         }
 
-        // No reiniciar la animación cada tick: solo cambia su velocidad al pasar
-        // a otro escalón de uso, para que el giro se perciba continuo.
-        int speedBucket = Math.Clamp((int)Math.Ceiling(activity / 10), 1, 10);
-        if (card.IsFanSpinning && card.FanSpinSpeedBucket == speedBucket) return;
-
-        card.FanSpinStoryboard.Stop();
-        int durationMs = 1900 - speedBucket * 135; // 0.55s a 1.77s por vuelta
-        card.FanSpinAnimation.Duration = new Duration(TimeSpan.FromMilliseconds(durationMs));
         card.FanIcon.Opacity = 1;
-        card.FanSpinStoryboard.Begin();
+        if (card.IsFanHovered) StartFanSpin(card);
+    }
+
+    /// <summary>
+    /// Arranca el giro desde cero: es la única vez que se toca la animación mientras
+    /// dura, así que no hay reinicios que se vean como frenadas.
+    /// </summary>
+    private static void StartFanSpin(FanCard card)
+    {
+        if (!card.IsFanActive || card.IsFanSpinning) return;
+        card.IconVisual.RotationAngleInDegrees = 0;
+        card.IconVisual.StartAnimation("RotationAngleInDegrees", card.SpinAnimation);
         card.IsFanSpinning = true;
-        card.FanSpinSpeedBucket = speedBucket;
+    }
+
+    /// <summary>Detiene el giro y deja el icono en su ángulo de reposo.</summary>
+    private static void StopFanSpin(FanCard card)
+    {
+        if (card.IsFanSpinning)
+        {
+            try { card.IconVisual.StopAnimation("RotationAngleInDegrees"); } catch { }
+        }
+        card.IconVisual.RotationAngleInDegrees = 0;
+        card.IsFanSpinning = false;
     }
 
     private async Task ApplyDutyAsync(FanCard card, float value)
