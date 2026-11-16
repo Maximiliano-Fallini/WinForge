@@ -3510,10 +3510,19 @@ public sealed partial class MainWindow : Window
         // Tope VERTICAL: con 20 idiomas la lista mide ~800 px y el menú se comía la
         // pantalla (y se cortaba sin poder llegar al final). La lista vive en un
         // ScrollViewer de alto acotado: se ven diez filas y el resto se recorre con la
-        // rueda. El ancho no cambia (260).
+        // rueda.
+        //
+        // CANALETA para la barra: en WinUI la barra de scroll se DIBUJA ENCIMA del
+        // contenido, así que con el ancho justo (260) tapaba el borde derecho de las
+        // cards mientras había scroll. El ScrollViewer mide 260 + 2 canaletas y el padding
+        // deja las filas en sus mismos 260, centradas: la barra pasa por el hueco de la
+        // derecha y no pisa ninguna card, sin dejar el contenido pegado a un lado.
+        const double ScrollbarGutter = 14;
         var scroll = new ScrollViewer
         {
             Content = rows,
+            Width = 260 + ScrollbarGutter * 2,
+            Padding = new Thickness(ScrollbarGutter, 0, ScrollbarGutter, 0),
             MaxHeight = 440,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollMode = ScrollMode.Auto,
