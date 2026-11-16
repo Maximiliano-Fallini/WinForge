@@ -32,28 +32,6 @@
   <sub>⭐ Beta — found a problem? <a href="https://github.com/Maximiliano-Fallini/WinForge/issues">Open an issue</a></sub>
 </p>
 
-<h2 align="center">Why was WinForge created?</h2>
-
-<p align="center">
-  <strong>I've been involved in Windows optimization and gaming performance for more than 10 years.</strong><br/>
-  During that time, I've tried different tools and settings to make games run more smoothly and consistently.
-</p>
-
-Over the years, I ran into a problem: properly monitoring and optimizing a PC meant relying on a lot of separate programs. I used tools like CPU-Z to monitor processor clock speeds (*Core Clock*), Fan Control to manage fans and temperatures, HIDUSBF to change the USB polling rate of peripherals, and ISLC to manage and clear the memory standby list, among many others.
-
-I ended up depending on multiple applications to get what I really wanted: a more efficient PC, lower latency, less stuttering, and stable performance. It seemed contradictory that so many tools running in the background could end up getting in the way of the very improvements I was trying to achieve.
-
-> **That's why I decided to build WinForge:** an application that brings these tools and features together in one place, with the goal of making them work efficiently as an integrated system.
-
-<p align="center">
-  <strong>WinForge will always be 100% free.</strong><br/>
-  I have no plans to add subscriptions or premium editions.
-</p>
-
-> The project is currently in active development, and I need feedback from people who can try it on different PCs, report bugs, and share their experiences. This will help me check compatibility and keep improving WinForge. **Windows 11 is recommended.**
-
-<hr/>
-
 <p align="center">
   <img src="assets/screenshots/library-themes.png" width="100%" alt="WinForge game library with 3D cartridges, shown in four of the built-in themes"/>
   <br/>
@@ -202,6 +180,28 @@ from the best known to the least known:
 
 WinForge is not affiliated with any of them: they are references that marked the way, and every
 trademark belongs to its authors.
+
+<h2 align="center">Why was WinForge created?</h2>
+
+<p align="center">
+  <strong>I've been involved in Windows optimization and gaming performance for more than 10 years.</strong><br/>
+  During that time, I've tried different tools and settings to make games run more smoothly and consistently.
+</p>
+
+Over the years, I ran into a problem: properly monitoring and optimizing a PC meant relying on a lot of separate programs. I used tools like CPU-Z to monitor processor clock speeds (*Core Clock*), Fan Control to manage fans and temperatures, HIDUSBF to change the USB polling rate of peripherals, and ISLC to manage and clear the memory standby list, among many others.
+
+I ended up depending on multiple applications to get what I really wanted: a more efficient PC, lower latency, less stuttering, and stable performance. It seemed contradictory that so many tools running in the background could end up getting in the way of the very improvements I was trying to achieve.
+
+> **That's why I decided to build WinForge:** an application that brings these tools and features together in one place, with the goal of making them work efficiently as an integrated system.
+
+<p align="center">
+  <strong>WinForge will always be 100% free.</strong><br/>
+  I have no plans to add subscriptions or premium editions.
+</p>
+
+> The project is currently in active development, and I need feedback from people who can try it on different PCs, report bugs, and share their experiences. This will help me check compatibility and keep improving WinForge. **Windows 11 is recommended.**
+
+<hr/>
 
 ---
 
