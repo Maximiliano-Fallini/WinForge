@@ -142,11 +142,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // Tope de la espera del proceso: si nunca aparece, la ficha no queda en "iniciando".
     private const int DeviceLaunchWaitSeconds = 90;
 
-    // Reborde luminoso del cartucho montado EN EL FOOTER: `_dockGlowInner` dibuja el
-    // filo sobre la pieza 3D y `_dockGlowOuter` su halo. Verde = el juego ya no está
-    // abierto (retirarlo no cierra nada); ámbar = está abierto y retirarlo lo finaliza.
+    // Reborde del cartucho montado EN EL FOOTER: UN solo filo, el que queda pegado a la
+    // pieza 3D (el halo exterior de 6 px se quitó: se veían dos bordes). Lleva el color
+    // de acento de la apariencia elegida y solo se marca con el puntero sobre la zona
+    // que permite retirarlo (ver DockHover, CartridgeHitZone): es una afordancia de
+    // agarre, no un adorno permanente.
     private Border? _dockGlowInner;
-    private Border? _dockGlowOuter;
+    /// <summary>El puntero está sobre la silueta del cartucho montado (zona de agarre).</summary>
+    private bool _dockHover;
     private DispatcherQueueTimer? _dockGlowTimer;
 
     private sealed class DeviceStatusUi
@@ -6587,6 +6590,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         double ny = pointerInRoot.Y - grabY * cardH;
         Canvas.SetLeft(proxyRoot, nx);
         Canvas.SetTop(proxyRoot, ny);
+        // Antes de dibujar el proxy nuevo, sacar restos de un vuelo anterior: el lienzo va
+        // encima de la biblioteca y un proxy huérfano se ve como una card gigante flotando.
+        ClearOrphanDragProxies();
         CartridgeDragLayer.Children.Add(proxyRoot);
 
         _activeDrag = new ActiveCartridgeDrag
@@ -6689,7 +6695,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, x, y, scale, 260,
                 new CubicEase { EasingMode = EasingMode.EaseOut }, () =>
                 {
-                    if (!ReferenceEquals(_flightDrag, d) || _dockCartridgeBay == null) return;
+                    // Un vuelo viejo (otro drag lo reemplazó) o sin bahía no puede quedar
+                    // dibujado a tamaño de biblioteca sobre la grilla: se descarta el proxy
+                    // y se libera el estado, o la card "se bugea" encima del footer.
+                    if (!ReferenceEquals(_flightDrag, d) || _dockCartridgeBay == null)
+                    {
+                        DiscardFlightProxy(d);
+                        return;
+                    }
                     CartridgeDragLayer.Children.Remove(d.ProxyRoot);
                     _dockCartridgeBay.Children.Clear();
                     _dockCartridgeBay.Children.Add(d.ProxyRoot);
@@ -6698,11 +6711,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, DockCardLeft, DockSeatedTop + 3, scale, 300,
                         new CubicEase { EasingMode = EasingMode.EaseInOut }, () =>
                         {
-                            if (!ReferenceEquals(_flightDrag, d)) return;
+                            if (!ReferenceEquals(_flightDrag, d)) { DiscardFlightProxy(d); return; }
                             AnimateProxyTo(d.ProxyRoot, d.ScaleTransform, DockCardLeft, DockSeatedTop, scale, 110,
                                 new CubicEase { EasingMode = EasingMode.EaseOut }, () =>
                                 {
-                                    if (!ReferenceEquals(_flightDrag, d)) return;
+                                    if (!ReferenceEquals(_flightDrag, d)) { DiscardFlightProxy(d); return; }
                                     _flightDrag = null;
                                     _cartridgeFlight = false;
                                     _cartridgeStoryboard = null;
@@ -6721,6 +6734,39 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             return;
         }
         ReturnCartridgeHome(d);
+    }
+
+    /// <summary>
+    /// Descarta el proxy de un vuelo que ya no es el vigente (o que se quedó sin bahía donde
+    /// aterrizar). Sin esto, el proxy quedaba en CartridgeDragLayer —que va por ENCIMA de la
+    /// biblioteca— a tamaño de card: la card gigante que se veía flotando sobre el footer.
+    /// </summary>
+    private void DiscardFlightProxy(ActiveCartridgeDrag d)
+    {
+        try { CartridgeDragLayer.Children.Remove(d.ProxyRoot); } catch { }
+        if (ReferenceEquals(_flightDrag, d))
+        {
+            SetCartridgeRemoved(d.SourceVisual, false);
+            _flightDrag = null;
+            _cartridgeFlight = false;
+            _cartridgeStoryboard = null;
+        }
+        ClearOrphanDragProxies();
+    }
+
+    /// <summary>
+    /// Saca del lienzo de arrastre cualquier proxy que haya quedado cuando NO hay un arrastre
+    /// ni un vuelo en curso: ese lienzo solo contiene proxies.
+    /// </summary>
+    private void ClearOrphanDragProxies()
+    {
+        if (_activeDrag != null || _flightDrag != null || _cartridgeFlight) return;
+        try
+        {
+            for (int i = CartridgeDragLayer.Children.Count - 1; i >= 0; i--)
+                CartridgeDragLayer.Children.RemoveAt(i);
+        }
+        catch { }
     }
 
     private void ReturnCartridgeHome(ActiveCartridgeDrag d)
@@ -6943,8 +6989,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             _dockGrabDragging = false;
         }
 
-        zone.PointerEntered += (_, _) => zone.SetHandCursor(CanGrabDockCartridge());
-        zone.PointerExited += (_, _) => zone.SetHandCursor(false);
+        // El filo del reborde acompaña al puntero: aparece al entrar a la silueta y se va al
+        // salir. Es el mismo momento en que la zona pone la manito.
+        zone.PointerEntered += (_, _) =>
+        {
+            zone.SetHandCursor(CanGrabDockCartridge());
+            _dockHover = true;
+            UpdateDockGlow();
+        };
+        zone.PointerExited += (_, _) =>
+        {
+            zone.SetHandCursor(false);
+            _dockHover = false;
+            UpdateDockGlow();
+        };
 
         zone.PointerPressed += (_, e) =>
         {
@@ -6976,6 +7034,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 // Con el juego abierto el cartucho queda clavado: sin arrastre.
                 if (!CanGrabDockCartridge()) return;
                 _dockGrabDragging = true;
+                // Salió el cartucho: el filo ya cumplió (acompañar el arrastre sería marca
+                // fija sobre una ranura vacía).
+                _dockHover = false;
+                UpdateDockGlow();
                 BeginDockCartridgePull(seat, _dockGrabPress, _dockGrabFraction);
                 if (_activeDrag == null) { _dockGrabDragging = false; return; }
             }
@@ -7523,36 +7585,26 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     }
 
     /// <summary>
-    /// Reborde luminoso del cartucho montado en el footer: verde cuando el juego ya no
-    /// está abierto (retirarlo no cierra nada) y ámbar mientras siga en pantalla
-    /// (retirarlo lo finaliza). Se dibuja alrededor de la PIEZA 3D del dock, no en la
-    /// card de la biblioteca.
+    /// Reborde del cartucho montado en el footer: un solo filo pegado a la PIEZA 3D del dock
+    /// (no en la card de la biblioteca), con el acento de la apariencia vigente y SOLO mientras
+    /// el puntero está sobre la zona que permite retirarlo. Fuera de ahí el cartucho se ve
+    /// limpio: el filo es la pista de que ese lugar se puede arrastrar.
     /// </summary>
     private void UpdateDockGlow()
     {
-        if (_dockGlowInner == null && _dockGlowOuter == null) return;
+        if (_dockGlowInner == null) return;
         bool docked = _cards3D && !IsEmulatorFilter && _connectedCartridge != null;
-        if (!docked)
+        // "Se puede arrastrar" es el mismo criterio que la manito: con el juego abierto el
+        // cartucho está clavado y no tiene sentido remarcar nada.
+        if (!docked || !_dockHover || !CanGrabDockCartridge())
         {
-            if (_dockGlowInner != null) _dockGlowInner.Visibility = Visibility.Collapsed;
-            if (_dockGlowOuter != null) _dockGlowOuter.Visibility = Visibility.Collapsed;
+            _dockGlowInner.Visibility = Visibility.Collapsed;
             return;
         }
-        var color = (IsDockGamePlaying(_connectedCartridge!.Exe)
-            ? Feedback.WarningBrush
-            : Feedback.SuccessBrush).Color;
-        if (_dockGlowInner != null)
-        {
-            _dockGlowInner.BorderBrush = new SolidColorBrush(color);
-            _dockGlowInner.Visibility = Visibility.Visible;
-        }
-        if (_dockGlowOuter != null)
-        {
-            // Halo: el mismo color muy transparente, para que se lea como luz.
-            _dockGlowOuter.BorderBrush = new SolidColorBrush(
-                Windows.UI.Color.FromArgb(60, color.R, color.G, color.B));
-            _dockGlowOuter.Visibility = Visibility.Visible;
-        }
+        // Pincel live del tema: ThemeBrushes lo muta en sitio al cambiar de apariencia,
+        // así que el filo sigue el acento sin crear pinceles nuevos acá.
+        _dockGlowInner.BorderBrush = ThemeBrushes.Get("AccentBrush");
+        _dockGlowInner.Visibility = Visibility.Visible;
     }
 
     /// <summary>
@@ -7618,6 +7670,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // El guard va ANTES del try: ese return temprano no toca la card y no
         // necesita red de seguridad.
         if (_cartridgeFlight || _activeDrag is { FromDock: true }) return;
+        // Nada se está arrastrando: cualquier cosa que quede en el lienzo es basura de un
+        // vuelo interrumpido y se vería encima de la grilla.
+        ClearOrphanDragProxies();
         // Rebuild ATÓMICO: el dock nuevo se construye en variables locales y el
         // host viejo (con la card adentro) sigue visible hasta el swap final de
         // abajo. Si la construcción falla a mitad, el host viejo queda intacto y
@@ -7658,9 +7713,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         bool hasRunning = activeExe != null && IsDockGamePlaying(activeExe);
         bool hasConnected = _connectedCartridge != null;
         // El reborde del footer se recrea con la bahía: los hosts viejos ya no están en
-        // el árbol, así que se sueltan antes de armar los nuevos.
+        // el árbol, así que se sueltan antes de armar los nuevos. El hover arranca apagado
+        // porque la zona de agarre nueva todavía no recibió al puntero.
         _dockGlowInner = null;
-        _dockGlowOuter = null;
+        _dockHover = false;
 
         // Indicador LED (verde con un cartucho puesto o jugando, negro apagado en espera).
         // Con regla activa la luz sigue a LA REGLA (amarilla esperando, verde solo
@@ -7775,17 +7831,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             // clic sobre el cartucho conectado no hace nada y el gesto que queda es el
             // arrastre hacia afuera.
             ToolTipService.SetToolTip(seat, I18n.T("Retirar cartucho"));
-            // Reborde luminoso de la pieza montada: el halo va DETRÁS del cartucho y el
-            // filo encima, así el contorno se lee también donde el labio tapa la base.
-            _dockGlowOuter = new Border
-            {
-                Width = DockCardWidth + 16,
-                Height = DockCardHeight + 16,
-                CornerRadius = new CornerRadius(15),
-                BorderThickness = new Thickness(6),
-                IsHitTestVisible = false,
-                Visibility = Visibility.Collapsed
-            };
+            // Reborde de la pieza montada: UN solo filo, encima del cartucho, así el contorno
+            // se lee también donde el labio tapa la base. (Antes había además un halo de 6 px
+            // alrededor: se veían dos bordes.)
             _dockGlowInner = new Border
             {
                 Width = DockCardWidth,
@@ -7795,11 +7843,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 IsHitTestVisible = false,
                 Visibility = Visibility.Collapsed
             };
-            Canvas.SetLeft(_dockGlowOuter, DockCardLeft - 8);
-            Canvas.SetTop(_dockGlowOuter, DockSeatedTop - 8);
             Canvas.SetLeft(_dockGlowInner, DockCardLeft);
             Canvas.SetTop(_dockGlowInner, DockSeatedTop);
-            _dockCartridgeBay.Children.Add(_dockGlowOuter);
+            // El asiento va EXACTAMENTE donde están los rebordes: sin estas dos líneas
+            // quedaba en (0,0) de la bahía, unos 220 DIP más arriba que la ranura, y se
+            // veía como una card gigante tapando la biblioteca cuando se conectaba un juego.
+            Canvas.SetLeft(seat, DockCardLeft);
+            Canvas.SetTop(seat, DockSeatedTop);
             _dockCartridgeBay.Children.Add(seat);
             _dockCartridgeBay.Children.Add(_dockGlowInner);
             UpdateDockGlow();
