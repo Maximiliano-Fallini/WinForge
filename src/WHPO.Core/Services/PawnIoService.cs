@@ -20,8 +20,7 @@ public sealed class PawnIoService : IPawnIoService
     // Versión pinneada: no usar el permalink "latest", que cambiaría de hash sin
     // que la app lo sepa.
     private const string InstallerVersion = "2.2.0";
-    private const string SetupUrl =
-        "https://github.com/namazso/PawnIO.Setup/releases/download/2.2.0/PawnIO_setup.exe";
+    private const string SetupUrl = DriverSources.PawnIoDownload;
     private const string SetupSha256 =
         "1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032";
 

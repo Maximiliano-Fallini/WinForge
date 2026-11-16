@@ -1057,8 +1057,7 @@ public class UsbOverclockService : IUsbOverclockService
                 }
 
  // 3) Fallback (app sin el binario embebido): descarga el paquete oficial.
-                const string packageUrl =
-                    "https://raw.githubusercontent.com/LordOfMice/hidusbf/master/hidusbf.zip";
+                const string packageUrl = DriverSources.HidUsbfDownload;
                 var zipPath = Path.Combine(cacheDir, "hidusbf-pkg.zip");
                 var extractDir = Path.Combine(cacheDir, "pkg");
                 try { if (Directory.Exists(extractDir)) Directory.Delete(extractDir, recursive: true); } catch (Exception ex) { _logging.LogDebug($"OverclockUSB: no se pudo limpiar la carpeta de extracción previa: {ex.Message}"); }
