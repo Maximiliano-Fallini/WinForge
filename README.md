@@ -184,24 +184,30 @@ trademark belongs to its authors.
 <h2 align="center">Why was WinForge created?</h2>
 
 <p align="center">
-  <strong>I've been involved in Windows optimization and gaming performance for more than 10 years.</strong><br/>
+  I've been involved in Windows optimization and gaming performance for more than 10 years.<br/>
   During that time, I've tried different tools and settings to make games run more smoothly and consistently.
 </p>
 
-Over the years, I ran into a problem: properly monitoring and optimizing a PC meant relying on a lot of separate programs. I used tools like CPU-Z to monitor processor clock speeds (*Core Clock*), Fan Control to manage fans and temperatures, HIDUSBF to change the USB polling rate of peripherals, and ISLC to manage and clear the memory standby list, among many others.
+<p align="center">
+  Over the years, I ran into a problem: properly monitoring and optimizing a PC meant relying on a lot of separate programs. I used tools like CPU-Z to monitor processor clock speeds (<em>Core Clock</em>), Fan Control to manage fans and temperatures, HIDUSBF to change the USB polling rate of peripherals, and ISLC to manage and clear the memory standby list, among many others.
+</p>
 
-I ended up depending on multiple applications to get what I really wanted: a more efficient PC, lower latency, less stuttering, and stable performance. It seemed contradictory that so many tools running in the background could end up getting in the way of the very improvements I was trying to achieve.
+<p align="center">
+  I ended up depending on multiple applications to get what I really wanted: a more efficient PC, lower latency, less stuttering, and stable performance. It seemed contradictory that so many tools running in the background could end up getting in the way of the very improvements I was trying to achieve.
+</p>
 
-> **That's why I decided to build WinForge:** an application that brings these tools and features together in one place, with the goal of making them work efficiently as an integrated system.
+<p align="center">
+  That's why I decided to build <strong>WinForge</strong>: an application that brings these tools and features together in one place, with the goal of making them work efficiently as an integrated system.
+</p>
 
 <p align="center">
   <strong>WinForge will always be 100% free.</strong><br/>
   I have no plans to add subscriptions or premium editions.
 </p>
 
-> The project is currently in active development, and I need feedback from people who can try it on different PCs, report bugs, and share their experiences. This will help me check compatibility and keep improving WinForge. **Windows 11 is recommended.**
-
-<hr/>
+<p align="center">
+  The project is currently in active development, and I need feedback from people who can try it on different PCs, report bugs, and share their experiences. This will help me check compatibility and keep improving WinForge. <strong>Windows 11 is recommended.</strong>
+</p>
 
 ---
 
