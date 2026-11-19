@@ -1716,11 +1716,14 @@ public sealed partial class ConfiguracionPage : Page
         {
             if (DevVersionInfoText == null) return;
             var info = App.MainWindowInstance?.LatestUpdate;
+            // La versión visible conserva el sufijo de pre-release (0.7.5-beta); la
+            // comparación de abajo usa la versión numérica.
+            var currentDisplay = AppUpdateService.CurrentVersionDisplay();
             // Sin chequeo de actualizaciones todavía (build de depuración recién abierta o
             // sin red) la card igual dice qué versión está corriendo.
             if (info == null)
             {
-                DevVersionInfoText.Text = I18n.T("Versión instalada: {0}", AppUpdateService.CurrentVersion());
+                DevVersionInfoText.Text = I18n.T("Versión instalada: {0}", currentDisplay);
                 return;
             }
 
@@ -1740,7 +1743,7 @@ public sealed partial class ConfiguracionPage : Page
 
             var lines = new List<string>
             {
-                I18n.T("Versión instalada: {0}", current),
+                I18n.T("Versión instalada: {0}", currentDisplay),
                 I18n.T("Estado del chequeo: {0}", status)
             };
             if (!string.IsNullOrEmpty(info.LatestVersion))
@@ -2073,7 +2076,7 @@ public sealed partial class ConfiguracionPage : Page
     {
         if (UpdatesInstalledVersionText == null) return;
 
-        string current = "v" + AppUpdateService.CurrentVersion();
+        string current = "v" + AppUpdateService.CurrentVersionDisplay();
         UpdatesInstalledVersionText.Text = I18n.T("Versión instalada: {0}", current);
 
         var accent = ThemeBrushes.Get("AccentBrush");
@@ -2151,7 +2154,7 @@ public sealed partial class ConfiguracionPage : Page
             return;
         }
 
-        string current = AppUpdateService.CurrentVersion();
+        string current = AppUpdateService.CurrentVersionDisplay();
         // La primera vez se abre la versión más reciente. Después manda el estado que dejó
         // el usuario: pulsar «Buscar actualizaciones» ya no vuelve a abrir la última.
         bool firstRender = !_releasesRendered;

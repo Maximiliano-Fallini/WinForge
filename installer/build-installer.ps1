@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $root     = Split-Path $PSScriptRoot -Parent
 $wix      = Join-Path $root '.tools\wix\wix.exe'
-$version  = '0.7.4'
+$version  = '0.7.5'
 $out      = Join-Path $PSScriptRoot "WinForge-$version.msi"
 
 if (-not (Test-Path $wix)) {
@@ -46,11 +46,15 @@ if ($running) {
 $publish = Join-Path $PSScriptRoot 'publish'
 if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
 
-# 1) Publicar la app (Release, win-x64, WinAppSDK self-contained -> sin dependencias externas)
-Write-Host "=== 1/4 Publicando WinForge (Release win-x64, WinAppSDK self-contained) ==="
+# 1) Publicar la app (Release, win-x64, .NET y WinAppSDK self-contained -> sin dependencias externas)
+Write-Host "=== 1/4 Publicando WinForge (Release win-x64, self-contained) ==="
 Push-Location (Join-Path $root 'src\WHPO.UI')
 try {
-    dotnet publish -c Release -r win-x64 `
+    # --self-contained true EXPLÍCITO: no se delega en el default del proyecto.
+    # El MSI se anuncia como "no necesita .NET installed"; si esa propiedad se
+    # pierde, el publish sale framework-dependent y el usuario ve el cartel
+    # "You must install .NET" al abrir WinForge.exe.
+    dotnet publish -c Release -r win-x64 --self-contained true `
         -p:PublishReadyToRun=false `
         -p:WindowsAppSDKSelfContained=true `
         -o $publish 2>&1 | Select-Object -Last 3
@@ -59,6 +63,26 @@ try {
     # publish vacío (o, peor, el de la corrida anterior). Importa especialmente en
     # CI, donde nadie mira la salida a ojo antes de publicar el MSI.
     if ($LASTEXITCODE -ne 0) { throw "Falló el publish de la app (código $LASTEXITCODE)" }
+
+    # Guard de autosuficiencia: el MSI promete correr en una PC sin .NET ni
+    # Windows App SDK. Estos archivos son la prueba de que el runtime viajó:
+    # sin ellos el apphost pide instalar .NET antes de ejecutar una sola línea
+    # de WinForge. Falla el build acá, no en la máquina del usuario.
+    $requiredRuntimeFiles = @(
+        'WinForge.exe',
+        'WinForge.runtimeconfig.json',
+        'hostfxr.dll',
+        'hostpolicy.dll',
+        'coreclr.dll',
+        'System.Private.CoreLib.dll',
+        'Microsoft.WindowsAppRuntime.dll'
+    )
+    $missingRuntimeFiles = @($requiredRuntimeFiles | Where-Object {
+        -not (Test-Path (Join-Path $publish $_))
+    })
+    if ($missingRuntimeFiles.Count -gt 0) {
+        throw "El publish no es self-contained: faltan $($missingRuntimeFiles -join ', '). El MSI instalaría una app que pide .NET."
+    }
 } finally { Pop-Location }
 
 # 2) El publish de WinAppSDK NO copia los .xbf / Assets / logos / WinForge.pri

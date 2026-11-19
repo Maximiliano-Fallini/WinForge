@@ -131,6 +131,28 @@ public sealed class AppUpdateService : IAppUpdateService
         return "0.0.0";
     }
 
+    /// <summary>
+    /// Versión visible de la app, CON el sufijo de pre-release ("0.7.5-beta"), para la
+    /// barra de título y las pantallas de versión. El chequeo de actualizaciones y las
+    /// comparaciones siguen usando <see cref="CurrentVersion"/>, que lo quita.
+    /// </summary>
+    public static string CurrentVersionDisplay()
+    {
+        try
+        {
+            var info = Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+            if (!string.IsNullOrWhiteSpace(info?.InformationalVersion))
+            {
+                var s = info.InformationalVersion.Trim();
+                int plus = s.IndexOf('+');
+                if (plus > 0) s = s.Substring(0, plus);
+                return s;
+            }
+        }
+        catch { }
+        return "0.0.0";
+    }
+
     /// <summary>Quita sufijos de pre-release ("0.1.5-beta" -> "0.1.5") y hashes de build.</summary>
     private static string StripPrerelease(string version)
     {

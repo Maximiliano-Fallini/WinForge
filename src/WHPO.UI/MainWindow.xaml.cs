@@ -83,11 +83,11 @@ public sealed partial class MainWindow : Window
         // Versión de la app al lado del nombre en la barra de título, en el mismo Run-line
         // que "WinForge" (ver el comentario del XAML): el espacio que separa ambos textos
         // lo pone este string, no el marcado. Sale del ensamblado (el mismo
-        // AppUpdateService.CurrentVersion() que usa el chequeo de actualizaciones), así que
-        // no hay un número escrito a mano que se olvide de actualizar al publicar, y en las
-        // builds en desarrollo muestra la versión adelantada respecto de la última
-        // release publicada.
-        AppVersionRun.Text = " " + AppUpdateService.CurrentVersion();
+        // AppUpdateService.CurrentVersionDisplay()), así que no hay un número escrito a
+        // mano que se olvide de actualizar al publicar, y en las builds en desarrollo
+        // muestra la versión adelantada respecto de la última release publicada.
+        // Incluye el sufijo de pre-release: la 0.7.5 beta se ve "0.7.5-beta".
+        AppVersionRun.Text = " " + AppUpdateService.CurrentVersionDisplay();
 
         // Obtener servicios desde DI
         _navigationService = App.Services.GetRequiredService<INavigationService>();
@@ -3079,7 +3079,7 @@ public sealed partial class MainWindow : Window
                     UpdateButton.BorderThickness = new Thickness(1);
                     UpdateButton.Resources.Remove("ButtonBackgroundPointerOver");
                     UpdateButton.Resources.Remove("ButtonBackgroundPressed");
-                    ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"));
+                    ToolTipService.SetToolTip(UpdateButton, I18n.T("Versión {0} en desarrollo", $"v{AppUpdateService.CurrentVersionDisplay()}"));
                     UpdateButton.Visibility = Visibility.Visible;
                     break;
 
@@ -3129,8 +3129,8 @@ public sealed partial class MainWindow : Window
             var devDialog = new ContentDialog
             {
                 XamlRoot = UpdateButton.XamlRoot,
-                Title = I18n.T("Versión {0} en desarrollo", $"v{info.CurrentVersion}"),
-                Content = I18n.T("Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio.", $"v{info.CurrentVersion}"),
+                Title = I18n.T("Versión {0} en desarrollo", $"v{AppUpdateService.CurrentVersionDisplay()}"),
+                Content = I18n.T("Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio.", $"v{AppUpdateService.CurrentVersionDisplay()}"),
                 CloseButtonText = I18n.T("Cerrar"),
                 DefaultButton = ContentDialogButton.Close
             };
