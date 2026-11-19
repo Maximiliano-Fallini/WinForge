@@ -6,14 +6,18 @@
   <Package Name="WinForge"
            Manufacturer="WinForge"
            Version="0.7.5"
-           ProductCode="{D4814234-C970-4454-9429-51433B130979}"
+           ProductCode="{C5B27D03-370A-478C-9EEA-0E27DCA6D4AD}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"
            InstallerVersion="500">
 
     <!-- Actualizaciones: reemplaza la versión anterior sin dejar restos -->
-    <MajorUpgrade DowngradeErrorMessage="Ya existe una versión más reciente de WinForge instalada." />
+    <!-- AllowSameVersionUpgrades: las betas comparten la Version numérica (0.7.5);
+         sin esto, instalar beta3 sobre beta1 con el mismo ProductVersion no se
+         consideraría un major upgrade. El ProductCode sí cambia en cada build. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="Ya existe una versión más reciente de WinForge instalada." />
 
     <!-- Log automático de cada instalación: con esta propiedad en la tabla, Windows
          Installer escribe %TEMP%\MSI*.LOG por su cuenta, sin que nadie tenga que
@@ -33,7 +37,7 @@
     <Property Id="ARPPRODUCTICON" Value="WinForgeIco" />
     <Property Id="ARPPUBLISHER" Value="WinForge" />
     <Property Id="ARPCONTACT" Value="WinForge" />
-    <Property Id="ARPCOMMENTS" Value="WinForge 0.7.5 Beta - optimizador y monitor del sistema" />
+    <Property Id="ARPCOMMENTS" Value="WinForge $(var.ReleaseLabel) - optimizador y monitor del sistema" />
 
     <!-- Accesos directos opcionales: los elige el usuario en la última página del
          asistente (WFVerifyDlg) con dos checks. Nacen en 1 para que una instalación

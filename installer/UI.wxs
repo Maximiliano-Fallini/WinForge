@@ -50,7 +50,7 @@
         <Control Id="Note" Type="Text" X="18" Y="190" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
                  Text="{\WFMuted}Se puede desinstalar desde Agregar o quitar programas." />
         <Control Id="Version" Type="Text" X="18" Y="222" Width="334" Height="14" NoPrefix="yes" Transparent="yes"
-                 Text="{\WFMuted}Versión [ProductVersion] · Beta" />
+                 Text="{\WFMuted}Versión [ProductVersion] · $(var.BetaLabel)" />
 
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="Atrás" />
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Siguiente">

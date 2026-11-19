@@ -1,5 +1,5 @@
 ﻿# ============================================================
-# Construye el instalador de WinForge (WinForge-<version>.msi)
+# Construye el instalador de WinForge (WinForge-<release>.msi)
 # Requisitos: .NET SDK + WiX v7 local (.tools/wix)
 # ============================================================
 $ErrorActionPreference = 'Stop'
@@ -7,7 +7,25 @@ $ErrorActionPreference = 'Stop'
 $root     = Split-Path $PSScriptRoot -Parent
 $wix      = Join-Path $root '.tools\wix\wix.exe'
 $version  = '0.7.5'
-$out      = Join-Path $PSScriptRoot "WinForge-$version.msi"
+# Etiqueta de release (0.7.5-beta3): la fuente de verdad es InformationalVersion
+# de WHPO.UI.csproj. El MSI conserva Version numérica (0.7.5) porque Windows
+# Installer no acepta sufijos, pero el archivo y la UI muestran la beta.
+$uiProject = Join-Path $root 'src\WHPO.UI\WHPO.UI.csproj'
+$releaseLabel = [regex]::Match((Get-Content $uiProject -Raw), '<InformationalVersion>([^<]+)</InformationalVersion>').Groups[1].Value.Trim()
+$releaseLabel = $releaseLabel.Split('+')[0].Trim()
+if ([string]::IsNullOrWhiteSpace($releaseLabel)) {
+    throw "No se pudo leer InformationalVersion de $uiProject"
+}
+if (-not $releaseLabel.StartsWith($version, [System.StringComparison]::Ordinal)) {
+    throw "Release inconsistente: build-installer.ps1 usa $version pero InformationalVersion es $releaseLabel."
+}
+$betaLabel = 'Beta'
+$betaMatch = [regex]::Match($releaseLabel, '-beta(\d*)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+if ($betaMatch.Success) {
+    $betaNumber = $betaMatch.Groups[1].Value
+    $betaLabel = if ($betaNumber) { "Beta $betaNumber" } else { 'Beta' }
+}
+$out = Join-Path $PSScriptRoot "WinForge-$releaseLabel.msi"
 
 if (-not (Test-Path $wix)) {
     throw "WiX no encontrado en $wix. Instalalo con: dotnet tool install wix --tool-path .tools/wix"
@@ -132,7 +150,7 @@ try {
     # -culture es-ES: el instalador es en español y define sus propios textos, pero los
     # diálogos que aporta la extensión de WiX (el de error del motor) resuelven su texto
     # con !(loc.*) según esta cultura. Sin esto saldrían en inglés.
-    & $wix build -arch x64 -ext $uiExt -culture es-ES -bindpath $caDll.DirectoryName Product.wxs Files.wxs UI.wxs -o $out
+    & $wix build -arch x64 -ext $uiExt -culture es-ES -bindpath $caDll.DirectoryName -d "ReleaseLabel=$releaseLabel" -d "BetaLabel=$betaLabel" Product.wxs Files.wxs UI.wxs -o $out
     if ($LASTEXITCODE -ne 0) { throw "wix build fallo con codigo $LASTEXITCODE" }
     & $wix msi validate $out -sice ICE03
     if ($LASTEXITCODE -ne 0) { Write "Validacion con errores (ver arriba); el MSI se genero igualmente" }

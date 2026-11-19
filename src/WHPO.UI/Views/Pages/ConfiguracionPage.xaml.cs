@@ -50,7 +50,7 @@ public sealed partial class ConfiguracionPage : Page
     // corre una instalación o desinstalación, para no pisar el progreso.
     private bool _hidUsbfBusy;
 
-    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Drivers, Actualizaciones, Desarrollo).
+    // Pestaña seleccionada del navbar interno (Inicio, Apariencia, Drivers, Actualizaciones, Versiones, Desarrollo).
     // Solo se usa como respaldo: ApplyTabVisibility compara contra el ítem seleccionado,
     // no contra el índice.
     private int _selectedTabIndex;
@@ -1836,7 +1836,7 @@ public sealed partial class ConfiguracionPage : Page
         UpdateDeveloperLogsSize();
         RefreshDriversTab();
 
-        // La pestaña Actualizaciones arma sus cards en código (textos y fechas): se rehace
+        // La pestaña Versiones arma sus cards en código (textos y fechas): se rehace
         // entera para que quede en el idioma nuevo sin volver a pedir nada al repositorio.
         if (_updatesLoaded)
         {
@@ -1932,7 +1932,7 @@ public sealed partial class ConfiguracionPage : Page
     // ===================== Navbar interno (pestañas) =====================
 
     /// <summary>
-    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Drivers / Actualizaciones / Desarrollo).
+    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Drivers / Actualizaciones / Versiones / Desarrollo).
     /// Los SelectorBarItem pueden no estar realizados en el árbol visual,
     /// así que se traducen por colección lógica (mismo patrón que NucleosPage).
     /// </summary>
@@ -1968,7 +1968,8 @@ public sealed partial class ConfiguracionPage : Page
 
     private void ApplyTabVisibility()
     {
-        if (HomeTab == null || AppearanceTab == null || DriversTab == null || DevTab == null) return;
+        if (HomeTab == null || AppearanceTab == null || DriversTab == null
+            || UpdatesTab == null || VersionsTab == null || DevTab == null) return;
 
         // Cada panel se muestra según el ÍTEM seleccionado (no por índice fijo): así
         // sumar una pestaña en el medio no corre la visibilidad de las demás.
@@ -1982,6 +1983,8 @@ public sealed partial class ConfiguracionPage : Page
         if (driversSelected) RefreshDriversTab();
         bool updatesSelected = ReferenceEquals(selected, UpdatesTabItem);
         UpdatesTab.Visibility = updatesSelected ? Visibility.Visible : Visibility.Collapsed;
+        bool versionsSelected = ReferenceEquals(selected, VersionsTabItem);
+        VersionsTab.Visibility = versionsSelected ? Visibility.Visible : Visibility.Collapsed;
         DevTab.Visibility = ReferenceEquals(selected, DevelopmentTabItem)
             && DevelopmentTabItem.Visibility == Visibility.Visible
             ? Visibility.Visible
@@ -1989,7 +1992,7 @@ public sealed partial class ConfiguracionPage : Page
 
         // La primera vez que se abre la pestaña se consulta el repositorio. Después queda
         // cacheado en memoria: volver a entrar no repite la descarga (ver LoadUpdatesAsync).
-        if (updatesSelected) _ = LoadUpdatesAsync(forceRefresh: false);
+        if (updatesSelected || versionsSelected) _ = LoadUpdatesAsync(forceRefresh: false);
     }
 
     // ===================== Pestaña Actualizaciones =====================
@@ -2095,7 +2098,7 @@ public sealed partial class ConfiguracionPage : Page
 
             case AppUpdateStatus.DevelopmentBuild:
                 UpdatesStatusText.Text = I18n.T(
-                    "Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio.",
+                    "Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión estable más nueva en el repositorio.",
                     current);
                 SetUpdatesBadge(I18n.T("Desarrollo"), warning);
                 break;
@@ -2155,30 +2158,62 @@ public sealed partial class ConfiguracionPage : Page
         }
 
         string current = AppUpdateService.CurrentVersionDisplay();
-        // La primera vez se abre la versión más reciente. Después manda el estado que dejó
-        // el usuario: pulsar «Buscar actualizaciones» ya no vuelve a abrir la última.
+        // En la primera pasada se abre la versión instalada (si está en la lista); si no,
+        // la primera de la sección. Después manda el estado que dejó el usuario.
         bool firstRender = !_releasesRendered;
         _releasesRendered = true;
-        for (int i = 0; i < list.Count; i++)
+        bool currentInList = list.Any(r => string.Equals(r.Version, current, StringComparison.OrdinalIgnoreCase));
+        bool firstCard = true;
+
+        var stable = list.Where(r => !IsDevelopmentRelease(r)).ToList();
+        var development = list.Where(IsDevelopmentRelease).ToList();
+
+        void AddSection(string title, List<AppReleaseInfo> releases, bool markLatest)
         {
-            var release = list[i];
-            bool expanded = firstRender ? i == 0 : _expandedReleases.Contains(release.Version);
-            if (expanded) _expandedReleases.Add(release.Version);
-            ReleasesHost.Children.Add(BuildReleaseCard(
-                release,
-                string.Equals(release.Version, current, StringComparison.OrdinalIgnoreCase),
-                // GitHub entrega las releases de la más nueva a la más vieja: la primera es
-                // la última publicada, y lleva su badge siempre (aunque la app esté en una
-                // build de desarrollo, donde la instalada no coincide con ninguna release).
-                i == 0,
-                expanded,
-                isOpen =>
-                {
-                    if (isOpen) _expandedReleases.Add(release.Version);
-                    else _expandedReleases.Remove(release.Version);
-                }));
+            if (releases.Count == 0) return;
+
+            ReleasesHost.Children.Add(new TextBlock
+            {
+                Text = I18n.T(title),
+                FontSize = 18,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 14, 0, 2)
+            });
+
+            for (int i = 0; i < releases.Count; i++)
+            {
+                var release = releases[i];
+                bool isCurrent = string.Equals(release.Version, current, StringComparison.OrdinalIgnoreCase);
+                bool expanded = firstRender
+                    ? (currentInList ? isCurrent : firstCard)
+                    : _expandedReleases.Contains(release.Version);
+                if (expanded) _expandedReleases.Add(release.Version);
+                firstCard = false;
+                ReleasesHost.Children.Add(BuildReleaseCard(
+                    release,
+                    isCurrent,
+                    // La primera release ESTABLE es la última versión principal. Las beta
+                    // no llevan ese badge: son de desarrollo, no la actualización ofrecida.
+                    markLatest && i == 0,
+                    expanded,
+                    isOpen =>
+                    {
+                        if (isOpen) _expandedReleases.Add(release.Version);
+                        else _expandedReleases.Remove(release.Version);
+                    }));
+            }
         }
+
+        AddSection("Versiones estables", stable, markLatest: true);
+        AddSection("Beta y desarrollo", development, markLatest: false);
     }
+
+    private static bool IsDevelopmentRelease(AppReleaseInfo release)
+        => release.Prerelease
+           || release.Version.Contains("-beta", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsBetaRelease(AppReleaseInfo release)
+        => release.Version.Contains("-beta", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Un desplegable por versión: el encabezado es SOLO el nombre de la versión (con sus
@@ -2210,7 +2245,10 @@ public sealed partial class ConfiguracionPage : Page
 
         if (isLatest) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Última versión"), ThemeBrushes.Get("AccentBrush")));
         if (isCurrent) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Actual"), Feedback.SuccessBrush));
-        if (release.Prerelease) headerRow.Children.Add(MakeReleaseBadge(I18n.T("Beta"), Feedback.WarningBrush));
+        if (IsBetaRelease(release))
+            headerRow.Children.Add(MakeReleaseBadge(I18n.T("Beta"), Feedback.WarningBrush));
+        else if (release.Prerelease)
+            headerRow.Children.Add(MakeReleaseBadge(I18n.T("Desarrollo"), Feedback.WarningBrush));
 
         if (release.PublishedAt is { } published)
         {

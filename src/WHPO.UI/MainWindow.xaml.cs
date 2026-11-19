@@ -3130,7 +3130,7 @@ public sealed partial class MainWindow : Window
             {
                 XamlRoot = UpdateButton.XamlRoot,
                 Title = I18n.T("Versión {0} en desarrollo", $"v{AppUpdateService.CurrentVersionDisplay()}"),
-                Content = I18n.T("Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio.", $"v{AppUpdateService.CurrentVersionDisplay()}"),
+                Content = I18n.T("Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión estable más nueva en el repositorio.", $"v{AppUpdateService.CurrentVersionDisplay()}"),
                 CloseButtonText = I18n.T("Cerrar"),
                 DefaultButton = ContentDialogButton.Close
             };

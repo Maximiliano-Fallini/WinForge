@@ -1504,9 +1504,9 @@ public static class Translations
         ["Error de red o servicio no disponible: {0}"] = ("Network error or service unavailable: {0}", "Erro de rede ou serviço indisponível: {0}", "Netzwerkfehler oder Dienst nicht verfügbar: {0}", "Erreur réseau ou service indisponible : {0}"),
         ["Actualizar a {0}"] = ("Update to {0}", "Atualizar para {0}", "Auf {0} aktualisieren", "Mettre à jour vers {0}"),
         ["Versión {0} en desarrollo"] = ("Version {0} in development", "Versão {0} em desenvolvimento", "Version {0} in Entwicklung", "Version {0} en développement"),
-        ["Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión más nueva en el repositorio."] = ("You are running a development build ({0}): no newer version has been published in the repository yet.", "Você está usando uma versão em desenvolvimento ({0}): ainda não foi publicada uma versão mais recente no repositório.", "Sie verwenden eine Entwicklungsversion ({0}): im Repository wurde noch keine neuere Version veröffentlicht.", "Vous utilisez une version en développement ({0}) : aucune version plus récente n'a encore été publiée dans le dépôt."),
+        ["Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión estable más nueva en el repositorio."] = ("You are running a development build ({0}): no newer stable version has been published in the repository yet.", "Você está usando uma versão em desenvolvimento ({0}): ainda não foi publicada uma versão estável mais recente no repositório.", "Sie verwenden eine Entwicklungsversion ({0}): im Repository wurde noch keine neuere stabile Version veröffentlicht.", "Vous utilisez une version en développement ({0}) : aucune version stable plus récente n'a encore été publiée dans le dépôt."),
 
-        // ===== Configuración: historial de versiones (pestaña Actualizaciones) =====
+        // ===== Configuración: historial de versiones (pestaña Versiones) =====
         ["Nueva versión"] = ("New version", "Nova versão", "Neue Version", "Nouvelle version"),
         ["Al día"] = ("Up to date", "Em dia", "Auf dem neuesten Stand", "À jour"),
         ["Sin conexión"] = ("Offline", "Sem conexão", "Offline", "Hors ligne"),
@@ -1519,6 +1519,9 @@ public static class Translations
         ["Publicado el {0}"] = ("Published {0}", "Publicado em {0}", "Veröffentlicht am {0}", "Publié le {0}"),
         ["Revisá tu conexión a internet y volvé a intentarlo."] = ("Check your internet connection and try again.", "Verifique sua conexão com a internet e tente novamente.", "Prüfe deine Internetverbindung und versuche es erneut.", "Vérifiez votre connexion Internet et réessayez."),
         ["Beta"] = ("Beta", "Beta", "Beta", "Bêta"),
+        ["Versiones estables"] = ("Stable versions", "Versões estáveis", "Stabile Versionen", "Versions stables"),
+        ["Beta y desarrollo"] = ("Beta and development", "Beta e desenvolvimento", "Beta und Entwicklung", "Bêta et développement"),
+        ["Las versiones beta son de desarrollo: no se ofrecen como actualización principal."] = ("Beta versions are development builds: they are not offered as the main update.", "As versões beta são de desenvolvimento: não são oferecidas como atualização principal.", "Beta-Versionen sind Entwicklungs-Builds: Sie werden nicht als Hauptupdate angeboten.", "Les versions bêta sont des versions de développement : elles ne sont pas proposées comme mise à jour principale."),
 
         // ===== Debloat: nombres de tweaks =====
         ["Cortana - Desinstalar"] = ("Cortana - Uninstall", "Cortana - Desinstalar", "Cortana - Deinstallieren", "Cortana - Désinstaller"),

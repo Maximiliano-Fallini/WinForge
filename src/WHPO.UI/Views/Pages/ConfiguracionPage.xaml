@@ -113,7 +113,7 @@
         </Style>
     </Page.Resources>
 
-    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*"><!-- ====== NAVBAR INTERNO: Inicio / Apariencia / Actualizaciones / Desarrollo ======
+    <Grid Background="{ThemeResource AppBackgroundBrush}" RowDefinitions="Auto,*"><!-- ====== NAVBAR INTERNO: Inicio / Apariencia / Drivers / Actualizaciones / Versiones / Desarrollo ======
              En los temas CLÁSICOS la barra se lee como el navbar principal: trae el color
              de la clave NavigationViewDefaultPaneBackground (blanco en Rosa/Blanco, etc.).
              En Marea esa clave viene transparente a propósito: ahí el menú es el
@@ -132,6 +132,7 @@
                 <SelectorBarItem x:Name="AppearanceTabItem" Text="Apariencia"/>
                 <SelectorBarItem x:Name="DriversTabItem" Text="Drivers"/>
                 <SelectorBarItem x:Name="UpdatesTabItem" Text="Actualizaciones"/>
+                <SelectorBarItem x:Name="VersionsTabItem" Text="Versiones"/>
                 <SelectorBarItem x:Name="DevelopmentTabItem" Text="Desarrollo" Visibility="Collapsed"/>
             </SelectorBar>
         </Border>
@@ -992,9 +993,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-<!-- ============ PESTAÑA: ACTUALIZACIONES (versión instalada + historial de versiones) ============ -->
-            <!-- La lista de releases se arma en código (BuildReleaseCard): el cuerpo de cada
-                 versión es Markdown y se renderiza con los pinceles del tema vigente. -->
+<!-- ============ PESTAÑA: ACTUALIZACIONES (versión instalada y estado) ============ -->
             <ScrollViewer x:Name="UpdatesTab" Visibility="Collapsed"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
@@ -1041,11 +1040,22 @@
                         </StackPanel>
                     </Border>
 
-<!-- Historial de versiones -->
-                    <StackPanel Spacing="3" Margin="0,10,0,0">
-                        <TextBlock Text="Historial de versiones" FontSize="18" FontWeight="SemiBold"/>
-                        <TextBlock Text="Todo lo que cambió en cada versión publicada." FontSize="12"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+
+                </StackPanel>
+            </ScrollViewer>
+
+<!-- ============ PESTAÑA: VERSIONES (estables y beta/desarrollo) ============ -->
+            <!-- La lista de releases se arma en código (BuildReleaseCard): el cuerpo de cada
+                 versión es Markdown y se renderiza con los pinceles del tema vigente. -->
+            <ScrollViewer x:Name="VersionsTab" Visibility="Collapsed"
+                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="Versiones" FontSize="20" FontWeight="SemiBold"/>
+                        <TextBlock Text="Las versiones beta son de desarrollo: no se ofrecen como actualización principal."
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
                     </StackPanel>
 
                     <StackPanel x:Name="ReleasesHost" Spacing="10"/>
