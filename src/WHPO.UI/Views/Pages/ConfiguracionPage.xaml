@@ -1014,6 +1014,8 @@
                                     <TextBlock Text="WinForge" FontSize="18" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="UpdatesInstalledVersionText" FontSize="13"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="MainVersionText" FontSize="12.5"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                                 </StackPanel>
                                 <Border x:Name="UpdatesStatusBadge" Grid.Column="2" CornerRadius="12" Padding="12,5" VerticalAlignment="Center" Visibility="Collapsed">
                                     <TextBlock x:Name="UpdatesStatusBadgeText" FontSize="11.5" FontWeight="SemiBold"/>
@@ -1028,9 +1030,13 @@
                                 <Button x:Name="CheckUpdatesButton" Content="Buscar actualizaciones"
                                         Style="{StaticResource AccentButtonStyle}" Padding="14,8"
                                         Click="CheckUpdatesButton_Click"/>
-                                <Button x:Name="InstallUpdateButton" Content="Instalar actualización"
+                                <Button x:Name="InstallUpdateButton" Content="Instalar versión principal"
                                         Padding="14,8" Visibility="Collapsed"
                                         Click="InstallUpdateButton_Click"/>
+                                <Button x:Name="OpenMainVersionButton" Content="Ver versión principal"
+                                        Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
+                                        Visibility="Collapsed"
+                                        Click="OpenMainVersionButton_Click"/>
                                 <Button x:Name="OpenReleasesButton" Content="Ver en GitHub"
                                         Style="{StaticResource SecondaryButtonStyle}" Padding="14,8"
                                         Click="OpenReleasesButton_Click"/>
@@ -1040,11 +1046,44 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- Canal de desarrollo: la beta no es la actualización principal;
+                         desde acá se puede descargar o instalar de forma explícita. -->
+                    <Border x:Name="DevelopmentChannelCard" Style="{StaticResource CardStyle}" Padding="20" CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal" Visibility="Collapsed">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="Canal de desarrollo" FontSize="16" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="DevelopmentChannelVersionText" FontSize="13"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Border Grid.Column="1" Background="{ThemeResource AccentTintBrush}" CornerRadius="12" Padding="12,5" VerticalAlignment="Center">
+                                    <TextBlock Text="Beta" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource AccentBrush}"/>
+                                </Border>
+                            </Grid>
+                            <TextBlock x:Name="DevelopmentChannelStatusText" FontSize="13" TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="InstallBetaButton" Content="Instalar beta"
+                                        Padding="14,8" Visibility="Collapsed"
+                                        Click="InstallBetaButton_Click"/>
+                                <Button x:Name="DownloadBetaButton" Content="Descargar beta"
+                                        Style="{StaticResource SecondaryButtonStyle}" Padding="14,8" Visibility="Collapsed"
+                                        Click="DownloadBetaButton_Click"/>
+                                <Button x:Name="OpenBetaReleaseButton" Content="Ver en GitHub"
+                                        Style="{StaticResource SecondaryButtonStyle}" Padding="14,8" Visibility="Collapsed"
+                                        Click="OpenBetaReleaseButton_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
 
                 </StackPanel>
             </ScrollViewer>
 
-<!-- ============ PESTAÑA: VERSIONES (estables y beta/desarrollo) ============ -->
+<!-- ============ PESTAÑA: VERSIONES (versiones finales y betas) ============ -->
             <!-- La lista de releases se arma en código (BuildReleaseCard): el cuerpo de cada
                  versión es Markdown y se renderiza con los pinceles del tema vigente. -->
             <ScrollViewer x:Name="VersionsTab" Visibility="Collapsed"
@@ -1058,7 +1097,22 @@
                                    TextWrapping="Wrap"/>
                     </StackPanel>
 
-                    <StackPanel x:Name="ReleasesHost" Spacing="10"/>
+                    <!-- Dos listas separadas: versiones finales y betas. Cada una tiene su
+                         propio encabezado y contenedor, no una sola lista con separadores. -->
+                    <StackPanel x:Name="StableReleasesSection" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Versiones finales" FontSize="18" FontWeight="SemiBold"/>
+                        <StackPanel x:Name="StableReleasesHost" Spacing="10"/>
+                    </StackPanel>
+
+                    <StackPanel x:Name="BetaReleasesSection" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Betas" FontSize="18" FontWeight="SemiBold"/>
+                        <StackPanel x:Name="BetaReleasesHost" Spacing="10"/>
+                    </StackPanel>
+
+                    <TextBlock x:Name="NoReleasesText" Text="No se pudieron cargar las versiones."
+                               FontSize="13" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               Visibility="Collapsed"/>
 
                     <TextBlock x:Name="ReleasesFeedbackText" FontSize="12" TextWrapping="Wrap"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" Visibility="Collapsed"/>

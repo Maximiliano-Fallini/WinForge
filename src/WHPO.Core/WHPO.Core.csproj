@@ -8,7 +8,7 @@
          lee el ensamblado de entrada, y el instalador local toma esta versión al
          publicar; installer\ vive en el disco del desarrollador: no se versiona) -->
     <Version>0.7.5</Version>
-    <InformationalVersion>0.7.5-beta3</InformationalVersion>
+    <InformationalVersion>0.7.5-beta4</InformationalVersion>
     <!-- Habilitar COM para System.Management (WMI) -->
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>

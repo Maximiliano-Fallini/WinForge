@@ -1841,6 +1841,7 @@ public sealed partial class ConfiguracionPage : Page
         if (_updatesLoaded)
         {
             UpdateUpdatesHeader();
+            UpdateDevelopmentChannel();
             RenderReleases();
         }
     }
@@ -1999,6 +2000,7 @@ public sealed partial class ConfiguracionPage : Page
 
     private AppUpdateInfo? _updatesInfo;
     private IReadOnlyList<AppReleaseInfo>? _releases;
+    private AppReleaseInfo? _latestBeta;
     private bool _updatesLoading;
     private bool _updatesLoaded;
 
@@ -2051,8 +2053,10 @@ public sealed partial class ConfiguracionPage : Page
 
             _updatesInfo = info;
             _releases = releases;
+            _latestBeta = releases.FirstOrDefault(IsDevelopmentRelease);
             _updatesLoaded = true;
             UpdateUpdatesHeader();
+            UpdateDevelopmentChannel();
             RenderReleases();
         }
         catch (Exception ex)
@@ -2081,6 +2085,12 @@ public sealed partial class ConfiguracionPage : Page
 
         string current = "v" + AppUpdateService.CurrentVersionDisplay();
         UpdatesInstalledVersionText.Text = I18n.T("Versión instalada: {0}", current);
+        MainVersionText.Text = string.IsNullOrWhiteSpace(_updatesInfo?.LatestVersion)
+            ? I18n.T("Versión principal: no disponible.")
+            : I18n.T("Versión principal: {0}", $"v{_updatesInfo!.LatestVersion}");
+        OpenMainVersionButton.Visibility = _updatesInfo?.Status == AppUpdateStatus.DevelopmentBuild
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         var accent = ThemeBrushes.Get("AccentBrush");
         var success = Feedback.SuccessBrush;
@@ -2100,7 +2110,7 @@ public sealed partial class ConfiguracionPage : Page
                 UpdatesStatusText.Text = I18n.T(
                     "Estás usando una versión en desarrollo ({0}): todavía no se publicó una versión estable más nueva en el repositorio.",
                     current);
-                SetUpdatesBadge(I18n.T("Desarrollo"), warning);
+                SetUpdatesBadge(I18n.T("Desarrollando"), warning);
                 break;
 
             case AppUpdateStatus.NoConnection:
@@ -2126,6 +2136,45 @@ public sealed partial class ConfiguracionPage : Page
         }
     }
 
+    /// <summary>
+    /// Pinta el canal de desarrollo con la beta más reciente. No es la actualización
+    /// principal: por eso vive en su propia tarjeta y tiene acciones explícitas.
+    /// </summary>
+    private void UpdateDevelopmentChannel()
+    {
+        if (DevelopmentChannelCard == null) return;
+
+        var beta = _latestBeta;
+        if (beta == null)
+        {
+            DevelopmentChannelCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        DevelopmentChannelCard.Visibility = Visibility.Visible;
+        string current = AppUpdateService.CurrentVersionDisplay();
+        bool installed = string.Equals(beta.Version, current, StringComparison.OrdinalIgnoreCase);
+        bool newer = false;
+        try { newer = AppUpdateService.CompareVersionLabels(beta.Version, current) > 0; } catch { }
+
+        DevelopmentChannelVersionText.Text = I18n.T("Última beta: {0}", $"v{beta.Version}");
+        DevelopmentChannelStatusText.Text = installed
+            ? I18n.T("Estás usando esta beta.")
+            : newer
+                ? I18n.T("Hay una beta más nueva disponible. Es una versión de desarrollo.")
+                : I18n.T("La versión instalada es más nueva que la última beta publicada.");
+
+        InstallBetaButton.Visibility = newer && !string.IsNullOrWhiteSpace(beta.DownloadUrl)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DownloadBetaButton.Visibility = string.IsNullOrWhiteSpace(beta.DownloadUrl)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        OpenBetaReleaseButton.Visibility = string.IsNullOrWhiteSpace(beta.WebUrl)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
     /// <summary>Pastilla de estado del tema vigente: tinte de fondo + texto en el color recibido.</summary>
     private void SetUpdatesBadge(string text, SolidColorBrush color)
     {
@@ -2141,21 +2190,23 @@ public sealed partial class ConfiguracionPage : Page
     /// </summary>
     private void RenderReleases()
     {
-        if (ReleasesHost == null) return;
-        ReleasesHost.Children.Clear();
+        if (StableReleasesHost == null || BetaReleasesHost == null
+            || StableReleasesSection == null || BetaReleasesSection == null
+            || NoReleasesText == null) return;
+
+        StableReleasesHost.Children.Clear();
+        BetaReleasesHost.Children.Clear();
 
         var list = _releases;
         if (list == null || list.Count == 0)
         {
-            ReleasesHost.Children.Add(new TextBlock
-            {
-                Text = I18n.T("No se pudieron cargar las versiones."),
-                FontSize = 13,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = ThemeBrushes.Get("SecondaryTextBrush")
-            });
+            StableReleasesSection.Visibility = Visibility.Collapsed;
+            BetaReleasesSection.Visibility = Visibility.Collapsed;
+            NoReleasesText.Visibility = Visibility.Visible;
             return;
         }
+
+        NoReleasesText.Visibility = Visibility.Collapsed;
 
         string current = AppUpdateService.CurrentVersionDisplay();
         // En la primera pasada se abre la versión instalada (si está en la lista); si no,
@@ -2165,21 +2216,14 @@ public sealed partial class ConfiguracionPage : Page
         bool currentInList = list.Any(r => string.Equals(r.Version, current, StringComparison.OrdinalIgnoreCase));
         bool firstCard = true;
 
-        var stable = list.Where(r => !IsDevelopmentRelease(r)).ToList();
-        var development = list.Where(IsDevelopmentRelease).ToList();
+        var finals = list.Where(r => !IsDevelopmentRelease(r)).ToList();
+        var betas = list.Where(IsDevelopmentRelease).ToList();
 
-        void AddSection(string title, List<AppReleaseInfo> releases, bool markLatest)
+        StableReleasesSection.Visibility = finals.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        BetaReleasesSection.Visibility = betas.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        void RenderSection(StackPanel host, List<AppReleaseInfo> releases, bool markLatest)
         {
-            if (releases.Count == 0) return;
-
-            ReleasesHost.Children.Add(new TextBlock
-            {
-                Text = I18n.T(title),
-                FontSize = 18,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Margin = new Thickness(0, 14, 0, 2)
-            });
-
             for (int i = 0; i < releases.Count; i++)
             {
                 var release = releases[i];
@@ -2189,10 +2233,10 @@ public sealed partial class ConfiguracionPage : Page
                     : _expandedReleases.Contains(release.Version);
                 if (expanded) _expandedReleases.Add(release.Version);
                 firstCard = false;
-                ReleasesHost.Children.Add(BuildReleaseCard(
+                host.Children.Add(BuildReleaseCard(
                     release,
                     isCurrent,
-                    // La primera release ESTABLE es la última versión principal. Las beta
+                    // La primera release FINAL es la última versión principal. Las beta
                     // no llevan ese badge: son de desarrollo, no la actualización ofrecida.
                     markLatest && i == 0,
                     expanded,
@@ -2204,8 +2248,8 @@ public sealed partial class ConfiguracionPage : Page
             }
         }
 
-        AddSection("Versiones estables", stable, markLatest: true);
-        AddSection("Beta y desarrollo", development, markLatest: false);
+        RenderSection(StableReleasesHost, finals, markLatest: true);
+        RenderSection(BetaReleasesHost, betas, markLatest: false);
     }
 
     private static bool IsDevelopmentRelease(AppReleaseInfo release)
@@ -2309,6 +2353,19 @@ public sealed partial class ConfiguracionPage : Page
 
         var panel = new StackPanel();
         panel.Children.Add(toggle);
+        if (!string.IsNullOrWhiteSpace(release.DownloadUrl))
+        {
+            var download = new Button
+            {
+                Content = I18n.T("Descargar"),
+                FontSize = 12,
+                Padding = new Thickness(12, 4, 12, 4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(12, 0, 12, 8)
+            };
+            download.Click += (_, _) => OpenUrl(release.DownloadUrl);
+            panel.Children.Add(download);
+        }
         panel.Children.Add(body);
 
         return new Border
@@ -2595,6 +2652,58 @@ public sealed partial class ConfiguracionPage : Page
         // cierra la app (el instalador la reabre al terminar).
         var main = App.MainWindowInstance;
         if (main != null) await main.InstallUpdateAsync(info);
+    }
+
+    private async void InstallBetaButton_Click(object sender, RoutedEventArgs e)
+    {
+        var beta = _latestBeta;
+        if (beta == null || string.IsNullOrWhiteSpace(beta.DownloadUrl) || XamlRoot == null) return;
+
+        var confirm = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = I18n.T("Instalar beta"),
+            Content = I18n.T(
+                "Se descargará la beta {0} y la app se cerrará para instalarla. Es una versión de desarrollo. ¿Continuar?",
+                $"v{beta.Version}"),
+            PrimaryButtonText = I18n.T("Instalar beta"),
+            CloseButtonText = I18n.T("Cancelar"),
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+
+        var info = new AppUpdateInfo
+        {
+            Status = AppUpdateStatus.UpdateAvailable,
+            LatestVersion = beta.Version,
+            CurrentVersion = AppUpdateService.CurrentVersionDisplay(),
+            ReleaseNotesUrl = beta.WebUrl,
+            DownloadUrl = beta.DownloadUrl
+        };
+        var main = App.MainWindowInstance;
+        if (main != null) await main.InstallUpdateAsync(info);
+    }
+
+    private void DownloadBetaButton_Click(object sender, RoutedEventArgs e)
+        => OpenUrl(_latestBeta?.DownloadUrl);
+
+    private void OpenBetaReleaseButton_Click(object sender, RoutedEventArgs e)
+        => OpenUrl(_latestBeta?.WebUrl);
+
+    private void OpenMainVersionButton_Click(object sender, RoutedEventArgs e)
+        => OpenUrl(_updatesInfo?.ReleaseNotesUrl ?? ProjectEndpoints.Releases);
+
+    private void OpenUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"Configuración: abrir enlace: {ex.Message}");
+        }
     }
 
     private void OpenReleasesButton_Click(object sender, RoutedEventArgs e)

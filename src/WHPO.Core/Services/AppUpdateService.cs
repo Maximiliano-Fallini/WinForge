@@ -183,6 +183,37 @@ public sealed class AppUpdateService : IAppUpdateService
         return 0;
     }
 
+    /// <summary>
+    /// Compara etiquetas visibles con pre-release: una estable gana a una beta del mismo
+    /// número, y entre betas manda el número (beta4 &gt; beta3). La usan las pantallas de
+    /// desarrollo para no ofrecer una beta anterior a la instalada.
+    /// </summary>
+    public static int CompareVersionLabels(string a, string b)
+    {
+        int cmp = CompareVersions(StripPrerelease(a), StripPrerelease(b));
+        if (cmp != 0) return cmp;
+
+        bool aPre = a.Contains("-", StringComparison.Ordinal);
+        bool bPre = b.Contains("-", StringComparison.Ordinal);
+        if (aPre != bPre) return aPre ? -1 : 1;
+        if (!aPre) return 0;
+
+        int aBeta = BetaNumber(a);
+        int bBeta = BetaNumber(b);
+        if (aBeta != bBeta) return aBeta.CompareTo(bBeta);
+        return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int BetaNumber(string version)
+    {
+        int i = version.IndexOf("-beta", StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return 0;
+        int start = i + 5;
+        int end = start;
+        while (end < version.Length && char.IsDigit(version[end])) end++;
+        return end > start && int.TryParse(version.Substring(start, end - start), out var n) ? n : 0;
+    }
+
     private static int[] ParseParts(string v)
     {
         var parts = new[] { 0, 0, 0 };
