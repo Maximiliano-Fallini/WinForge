@@ -458,7 +458,7 @@ public sealed partial class MainWindow : Window
         menu.Items.Add(new ToolStripSeparator());
 
         // Biblioteca de juegos: abre la app en la pestaña de la biblioteca (como Sistema).
-        menu.Items.Add(MakeTrayItem(EmojiGlyph(0x1F3AE), I18n.T("Biblioteca de juegos"), (s, e) =>
+        menu.Items.Add(MakeTrayItem(EmojiGlyph(0x1F3AE), I18n.T("Biblioteca"), (s, e) =>
         {
             _navigationService.NavigateTo("procesos");
             ShowWindow();

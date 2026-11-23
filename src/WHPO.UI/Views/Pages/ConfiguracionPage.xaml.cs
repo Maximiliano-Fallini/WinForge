@@ -1933,7 +1933,7 @@ public sealed partial class ConfiguracionPage : Page
     // ===================== Navbar interno (pestañas) =====================
 
     /// <summary>
-    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Drivers / Actualizaciones / Versiones / Desarrollo).
+    /// Traduce las pestañas del SelectorBar interno (Inicio / Apariencia / Drivers / Actualizaciones / Desarrollo).
     /// Los SelectorBarItem pueden no estar realizados en el árbol visual,
     /// así que se traducen por colección lógica (mismo patrón que NucleosPage).
     /// </summary>
@@ -1970,7 +1970,7 @@ public sealed partial class ConfiguracionPage : Page
     private void ApplyTabVisibility()
     {
         if (HomeTab == null || AppearanceTab == null || DriversTab == null
-            || UpdatesTab == null || VersionsTab == null || DevTab == null) return;
+            || UpdatesTab == null || DevTab == null) return;
 
         // Cada panel se muestra según el ÍTEM seleccionado (no por índice fijo): así
         // sumar una pestaña en el medio no corre la visibilidad de las demás.
@@ -1984,8 +1984,6 @@ public sealed partial class ConfiguracionPage : Page
         if (driversSelected) RefreshDriversTab();
         bool updatesSelected = ReferenceEquals(selected, UpdatesTabItem);
         UpdatesTab.Visibility = updatesSelected ? Visibility.Visible : Visibility.Collapsed;
-        bool versionsSelected = ReferenceEquals(selected, VersionsTabItem);
-        VersionsTab.Visibility = versionsSelected ? Visibility.Visible : Visibility.Collapsed;
         DevTab.Visibility = ReferenceEquals(selected, DevelopmentTabItem)
             && DevelopmentTabItem.Visibility == Visibility.Visible
             ? Visibility.Visible
@@ -1993,7 +1991,7 @@ public sealed partial class ConfiguracionPage : Page
 
         // La primera vez que se abre la pestaña se consulta el repositorio. Después queda
         // cacheado en memoria: volver a entrar no repite la descarga (ver LoadUpdatesAsync).
-        if (updatesSelected || versionsSelected) _ = LoadUpdatesAsync(forceRefresh: false);
+        if (updatesSelected) _ = LoadUpdatesAsync(forceRefresh: false);
     }
 
     // ===================== Pestaña Actualizaciones =====================
@@ -2353,19 +2351,58 @@ public sealed partial class ConfiguracionPage : Page
 
         var panel = new StackPanel();
         panel.Children.Add(toggle);
+
+        // Instalar una beta desde su propia card. Solo se ofrece si es más nueva que la
+        // instalada: hacia atrás no hay botón, porque Windows Installer no baja de versión
+        // y una beta vieja no debe reemplazar a la actual. La comparación es beta-aware
+        // (beta4 > beta3), así que una beta anterior queda solo como descarga.
+        bool newer = false;
+        try
+        {
+            newer = AppUpdateService.CompareVersionLabels(
+                release.Version, AppUpdateService.CurrentVersionDisplay()) > 0;
+        }
+        catch
+        {
+            // Una etiqueta que no se puede comparar deja la card en modo descarga:
+            // nunca habilita un downgrade.
+        }
+        bool betaRelease = IsDevelopmentRelease(release);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(12, 0, 12, 8)
+        };
+
+        if (newer && betaRelease && !string.IsNullOrWhiteSpace(release.DownloadUrl))
+        {
+            var install = new Button
+            {
+                Content = I18n.T("Instalar beta"),
+                FontSize = 12,
+                Padding = new Thickness(12, 4, 12, 4)
+            };
+            if (Application.Current.Resources["AccentButtonStyle"] is Style accent)
+                install.Style = accent;
+            install.Click += async (_, _) => await InstallReleaseAsync(release);
+            actions.Children.Add(install);
+        }
+
         if (!string.IsNullOrWhiteSpace(release.DownloadUrl))
         {
             var download = new Button
             {
                 Content = I18n.T("Descargar"),
                 FontSize = 12,
-                Padding = new Thickness(12, 4, 12, 4),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(12, 0, 12, 8)
+                Padding = new Thickness(12, 4, 12, 4)
             };
             download.Click += (_, _) => OpenUrl(release.DownloadUrl);
-            panel.Children.Add(download);
+            actions.Children.Add(download);
         }
+
+        if (actions.Children.Count > 0) panel.Children.Add(actions);
         panel.Children.Add(body);
 
         return new Border
@@ -2655,18 +2692,30 @@ public sealed partial class ConfiguracionPage : Page
     }
 
     private async void InstallBetaButton_Click(object sender, RoutedEventArgs e)
-    {
-        var beta = _latestBeta;
-        if (beta == null || string.IsNullOrWhiteSpace(beta.DownloadUrl) || XamlRoot == null) return;
+        => await InstallReleaseAsync(_latestBeta);
 
+    /// <summary>
+    /// Instala una release concreta (beta o final) desde su card o desde el canal de
+    /// desarrollo. Quien llama ya comprobó que la versión es más nueva que la instalada:
+    /// este método no vuelve a comparar ni permite bajar de versión.
+    /// </summary>
+    private async Task InstallReleaseAsync(AppReleaseInfo? release)
+    {
+        if (release == null || string.IsNullOrWhiteSpace(release.DownloadUrl) || XamlRoot == null) return;
+
+        bool beta = IsDevelopmentRelease(release);
         var confirm = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = I18n.T("Instalar beta"),
-            Content = I18n.T(
-                "Se descargará la beta {0} y la app se cerrará para instalarla. Es una versión de desarrollo. ¿Continuar?",
-                $"v{beta.Version}"),
-            PrimaryButtonText = I18n.T("Instalar beta"),
+            Title = beta ? I18n.T("Instalar beta") : I18n.T("Actualizar WinForge"),
+            Content = beta
+                ? I18n.T(
+                    "Se descargará la beta {0} y la app se cerrará para instalarla. Es una versión de desarrollo. ¿Continuar?",
+                    $"v{release.Version}")
+                : I18n.T(
+                    "Se descargará la versión {0} y la app se cerrará para instalarla. ¿Continuar?",
+                    release.Version),
+            PrimaryButtonText = beta ? I18n.T("Instalar beta") : I18n.T("Actualizar"),
             CloseButtonText = I18n.T("Cancelar"),
             DefaultButton = ContentDialogButton.Close
         };
@@ -2675,10 +2724,10 @@ public sealed partial class ConfiguracionPage : Page
         var info = new AppUpdateInfo
         {
             Status = AppUpdateStatus.UpdateAvailable,
-            LatestVersion = beta.Version,
+            LatestVersion = release.Version,
             CurrentVersion = AppUpdateService.CurrentVersionDisplay(),
-            ReleaseNotesUrl = beta.WebUrl,
-            DownloadUrl = beta.DownloadUrl
+            ReleaseNotesUrl = release.WebUrl,
+            DownloadUrl = release.DownloadUrl
         };
         var main = App.MainWindowInstance;
         if (main != null) await main.InstallUpdateAsync(info);

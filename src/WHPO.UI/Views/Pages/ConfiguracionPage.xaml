@@ -132,7 +132,6 @@
                 <SelectorBarItem x:Name="AppearanceTabItem" Text="Apariencia"/>
                 <SelectorBarItem x:Name="DriversTabItem" Text="Drivers"/>
                 <SelectorBarItem x:Name="UpdatesTabItem" Text="Actualizaciones"/>
-                <SelectorBarItem x:Name="VersionsTabItem" Text="Versiones"/>
                 <SelectorBarItem x:Name="DevelopmentTabItem" Text="Desarrollo" Visibility="Collapsed"/>
             </SelectorBar>
         </Border>
@@ -993,7 +992,7 @@
                 </StackPanel>
             </ScrollViewer>
 
-<!-- ============ PESTAÑA: ACTUALIZACIONES (versión instalada y estado) ============ -->
+<!-- ============ PESTAÑA: ACTUALIZACIONES (versión instalada, estado e historial) ============ -->
             <ScrollViewer x:Name="UpdatesTab" Visibility="Collapsed"
                           HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
@@ -1080,32 +1079,28 @@
                         </StackPanel>
                     </Border>
 
-                </StackPanel>
-            </ScrollViewer>
-
-<!-- ============ PESTAÑA: VERSIONES (versiones finales y betas) ============ -->
-            <!-- La lista de releases se arma en código (BuildReleaseCard): el cuerpo de cada
-                 versión es Markdown y se renderiza con los pinceles del tema vigente. -->
-            <ScrollViewer x:Name="VersionsTab" Visibility="Collapsed"
-                          HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="32,24,32,40" Spacing="12" HorizontalAlignment="Stretch">
-                    <StackPanel Spacing="3">
-                        <TextBlock Text="Versiones" FontSize="20" FontWeight="SemiBold"/>
+                    <!-- Historial de versiones: versiones finales y betas en listas
+                         separadas, cada una con su encabezado. La lista se arma en
+                         código (BuildReleaseCard) porque el cuerpo es Markdown. -->
+                    <StackPanel Spacing="3" Margin="0,10,0,0">
+                        <TextBlock Text="Historial de versiones" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Text="Todo lo que cambió en cada versión publicada."
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
                         <TextBlock Text="Las versiones beta son de desarrollo: no se ofrecen como actualización principal."
                                    FontSize="12"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                    TextWrapping="Wrap"/>
                     </StackPanel>
 
-                    <!-- Dos listas separadas: versiones finales y betas. Cada una tiene su
-                         propio encabezado y contenedor, no una sola lista con separadores. -->
                     <StackPanel x:Name="StableReleasesSection" Spacing="8" Visibility="Collapsed">
-                        <TextBlock Text="Versiones finales" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Text="Versiones finales" FontSize="16" FontWeight="SemiBold"/>
                         <StackPanel x:Name="StableReleasesHost" Spacing="10"/>
                     </StackPanel>
 
                     <StackPanel x:Name="BetaReleasesSection" Spacing="8" Visibility="Collapsed">
-                        <TextBlock Text="Betas" FontSize="18" FontWeight="SemiBold"/>
+                        <TextBlock Text="Betas" FontSize="16" FontWeight="SemiBold"/>
                         <StackPanel x:Name="BetaReleasesHost" Spacing="10"/>
                     </StackPanel>
 

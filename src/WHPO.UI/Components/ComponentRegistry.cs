@@ -201,7 +201,7 @@ public sealed class ComponentRegistry
         };
         yield return new BuiltinComponent
         {
-            Id = "procesos", Name = "Biblioteca de juegos", IconGlyph = "\uE7FC", Category = ComponentCategory.Juego,
+            Id = "procesos", Name = "Biblioteca", IconGlyph = "\uE7FC", Category = ComponentCategory.Juego,
             Description = "Tu biblioteca de juegos con el boost del modo juego y su configuración.",
             PageType = typeof(GestionarProcesosPage), IsCore = true
         };

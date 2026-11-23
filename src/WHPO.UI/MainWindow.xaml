@@ -165,7 +165,7 @@
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE90F;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>
             </muxc:NavigationViewItem>
-            <muxc:NavigationViewItem Content="Biblioteca de juegos" Tag="procesos">
+            <muxc:NavigationViewItem Content="Biblioteca" Tag="procesos">
                 <muxc:NavigationViewItem.Icon>
                     <FontIcon FontFamily="{StaticResource SymbolThemeFontFamily}" Glyph="&#xE7FC;" FontSize="16"/>
                 </muxc:NavigationViewItem.Icon>

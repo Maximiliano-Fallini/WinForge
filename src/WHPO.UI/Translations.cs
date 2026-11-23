@@ -1845,8 +1845,8 @@ public static class Translations
         ["Desactivadas"] = ("Disabled", "Desativadas", "Deaktiviert", "Désactivées"),
         ["Las macros están desactivadas. Activá el interruptor para usarlas."] = ("Macros are disabled. Turn on the switch to use them.", "As macros estão desativadas. Ative o interruptor para usá-las.", "Makros sind deaktiviert. Schalten Sie den Schalter ein, um sie zu verwenden.", "Les macros sont désactivées. Activez l'interrupteur pour les utiliser."),
 
-        // ===== Biblioteca de juegos (antes "Gestionar procesos") =====
-        ["Biblioteca de juegos"] = ("Game library", "Biblioteca de jogos", "Spielebibliothek", "Bibliothèque de jeux"),
+        // ===== Biblioteca (antes "Biblioteca de juegos") =====
+        ["Biblioteca"] = ("Library", "Biblioteca", "Bibliothek", "Bibliothèque"),
         ["Modo rendimiento"] = ("Performance mode", "Modo de desempenho", "Leistungsmodus", "Mode performance"),
         ["Modo juego"] = ("Game Mode", "Modo de jogo", "Spielmodus", "Mode jeu"),
         ["Modo juego de WinForge"] = ("WinForge Game Mode", "Modo de jogo da WinForge", "WinForge-Spielmodus", "Mode jeu de WinForge"),
