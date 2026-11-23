@@ -1084,14 +1084,6 @@
                          código (BuildReleaseCard) porque el cuerpo es Markdown. -->
                     <StackPanel Spacing="3" Margin="0,10,0,0">
                         <TextBlock Text="Historial de versiones" FontSize="18" FontWeight="SemiBold"/>
-                        <TextBlock Text="Todo lo que cambió en cada versión publicada."
-                                   FontSize="12"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap"/>
-                        <TextBlock Text="Las versiones beta son de desarrollo: no se ofrecen como actualización principal."
-                                   FontSize="12"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   TextWrapping="Wrap"/>
                     </StackPanel>
 
                     <StackPanel x:Name="StableReleasesSection" Spacing="8" Visibility="Collapsed">

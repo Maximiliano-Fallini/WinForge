@@ -9,7 +9,7 @@
          instalador local (installer\, que vive
          en el disco del desarrollador: no se versiona). -->
     <Version>0.7.5</Version>
-    <InformationalVersion>0.7.5-beta5</InformationalVersion>
+    <InformationalVersion>0.7.5</InformationalVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>WHPO_UI</RootNamespace>
     <!-- El ejecutable se llama WinForge.exe (no WHPO.UI.exe) -->

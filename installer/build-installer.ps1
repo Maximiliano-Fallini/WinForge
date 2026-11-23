@@ -19,7 +19,8 @@ if ([string]::IsNullOrWhiteSpace($releaseLabel)) {
 if (-not $releaseLabel.StartsWith($version, [System.StringComparison]::Ordinal)) {
     throw "Release inconsistente: build-installer.ps1 usa $version pero InformationalVersion es $releaseLabel."
 }
-$betaLabel = 'Beta'
+# Etiqueta del canal: vacía en una release final (UI.wxs omite el sufijo con <?ifdef?>).
+$betaLabel = ''
 $betaMatch = [regex]::Match($releaseLabel, '-beta(\d*)$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 if ($betaMatch.Success) {
     $betaNumber = $betaMatch.Groups[1].Value
@@ -150,7 +151,13 @@ try {
     # -culture es-ES: el instalador es en español y define sus propios textos, pero los
     # diálogos que aporta la extensión de WiX (el de error del motor) resuelven su texto
     # con !(loc.*) según esta cultura. Sin esto saldrían en inglés.
-    & $wix build -arch x64 -ext $uiExt -culture es-ES -bindpath $caDll.DirectoryName -d "ReleaseLabel=$releaseLabel" -d "BetaLabel=$betaLabel" Product.wxs Files.wxs UI.wxs -o $out
+    $wixArgs = @('build', '-arch', 'x64', '-ext', $uiExt, '-culture', 'es-ES',
+        '-bindpath', $caDll.DirectoryName, '-d', "ReleaseLabel=$releaseLabel")
+    # Solo las betas definen BetaLabel: sin la variable, UI.wxs muestra únicamente
+    # «Versión [ProductVersion]» (ver <?ifdef?> en el control Version).
+    if ($betaLabel) { $wixArgs += @('-d', "BetaLabel=$betaLabel") }
+    $wixArgs += @('Product.wxs', 'Files.wxs', 'UI.wxs', '-o', $out)
+    & $wix @wixArgs
     if ($LASTEXITCODE -ne 0) { throw "wix build fallo con codigo $LASTEXITCODE" }
     & $wix msi validate $out -sice ICE03
     if ($LASTEXITCODE -ne 0) { Write "Validacion con errores (ver arriba); el MSI se genero igualmente" }

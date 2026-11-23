@@ -61,6 +61,16 @@
                                 FontWeight="SemiBold"
                                 Background="{ThemeResource AccentBrush}"
                                 Foreground="{ThemeResource AccentForegroundBrush}"/>
+                        <!-- Emuladores portables: con confirmación, recorre todas las unidades
+                             buscando emuladores (Capa 4 = "Escaneo profundo"). -->
+                        <Button x:Name="DeepScanButton"
+                                Content="Escaneo profundo"
+                                Click="DeepScanButton_Click"
+                                CornerRadius="6"
+                                Padding="14,8"
+                                FontWeight="SemiBold"
+                                Background="{ThemeResource AccentBrush}"
+                                Foreground="{ThemeResource AccentForegroundBrush}"/>
                         <Button x:Name="AddManualButton"
                                 Content="Añadir manual"
                                 Click="AddManualButton_Click"
@@ -69,11 +79,11 @@
                                 FontWeight="SemiBold"
                                 Background="{ThemeResource AccentBrush}"
                                 Foreground="{ThemeResource AccentForegroundBrush}"/>
-                        <!-- Emuladores portables: con confirmación, recorre todas las unidades
-                             buscando emuladores (Capa 4 = "Escaneo profundo"). -->
-                        <Button x:Name="DeepScanButton"
-                                Content="Escaneo profundo"
-                                Click="DeepScanButton_Click"
+                        <!-- Procesos activos: elige un proceso en ejecución y lo agrega
+                             como juego manual, sin buscar el exe en el disco. -->
+                        <Button x:Name="AddProcessButton"
+                                Content="Agregar proceso"
+                                Click="AddProcessButton_Click"
                                 CornerRadius="6"
                                 Padding="14,8"
                                 FontWeight="SemiBold"
@@ -132,6 +142,7 @@
                         <ComboBoxItem x:Name="FilterGamesItem" Content="Videojuegos"/>
                         <ComboBoxItem x:Name="FilterConsoleEmulatorsItem" Content="Emuladores de consolas"/>
                         <ComboBoxItem x:Name="FilterMobileEmulatorsItem" Content="Emuladores de celular"/>
+                        <ComboBoxItem x:Name="FilterAddedProcessesItem" Content="Procesos agregados"/>
                     </ComboBox>
                 </StackPanel>
 <!-- Modo juego de WinForge (BETA) -->

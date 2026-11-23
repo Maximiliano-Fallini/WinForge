@@ -235,6 +235,12 @@ public interface IProcessService
     /// <summary>Entradas manuales: exe, nombre visible (null si solo se conoce el exe) y carpeta de instalación (opcional).</summary>
     List<(string Exe, string? Name, string? InstallPath)> GetManualEntries();
     void AddManualExe(string exe, string? displayName = null, string? installPath = null);
+
+    /// <summary>Exes agregados desde «Agregar proceso» (procesos activos).</summary>
+    List<string> GetAddedProcessExes();
+
+    /// <summary>Agrega un proceso activo como juego manual y lo marca como agregado.</summary>
+    void AddProcessExe(string exe, string? displayName = null, string? installPath = null);
     void RemoveManualExe(string exe);
     /// <summary>Borra TODOS los juegos manuales (Re-detectar los elimina).</summary>
     void ClearManualExes();

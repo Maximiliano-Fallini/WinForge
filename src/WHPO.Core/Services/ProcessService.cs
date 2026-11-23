@@ -3677,6 +3677,32 @@ public sealed class ProcessService : IProcessService
         _settings.Save();
     }
 
+    /// <summary>
+    /// Procesos agregados con «Agregar proceso». Se cruzan con la lista manual
+    /// vigente: una marca vieja de un juego ya quitado no debe reaparecer.
+    /// </summary>
+    public List<string> GetAddedProcessExes()
+    {
+        var manual = GetManualEntries()
+            .Select(e => e.Exe)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return (_settings.Get("process.added", new List<string>()) ?? new())
+            .Where(e => !string.IsNullOrWhiteSpace(e) && manual.Contains(e))
+            .ToList();
+    }
+
+    public void AddProcessExe(string exe, string? displayName = null, string? installPath = null)
+    {
+        AddManualExe(exe, displayName, installPath);
+        var added = _settings.Get("process.added", new List<string>()) ?? new();
+        if (!added.Any(e => string.Equals(e, exe, StringComparison.OrdinalIgnoreCase)))
+        {
+            added.Add(exe);
+            _settings.Set("process.added", added);
+            _settings.Save();
+        }
+    }
+
     public void RemoveManualExe(string exe)
     {
         var list = _settings.Get("process.manual", new List<string>()) ?? new();
@@ -3700,6 +3726,7 @@ public sealed class ProcessService : IProcessService
     {
         _settings.Remove("process.manual");
         _settings.Remove("process.manual.launchers");
+        _settings.Remove("process.added");
         _settings.Save();
     }
 

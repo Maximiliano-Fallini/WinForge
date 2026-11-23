@@ -103,7 +103,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     /// <summary>¿La categoría activa es de emuladores? Ahí la grilla muestra hardware
     /// (consolas/teléfonos) y se ocultan el dock y el pie desacoplados.</summary>
-    private bool IsEmulatorFilter => _currentFilter != "games";
+    private bool IsEmulatorFilter => _currentFilter is "console_emu" or "mobile_emu";
     private bool IsConsoleFilter => _currentFilter == "console_emu";
 
 
@@ -297,6 +297,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         _cardShadow.Receivers.Add(CardShadowReceiver);        // Selección inicial del desplegable de categorías («Videojuegos», índice 0).
         // El SelectionChanged no reconstruye la grilla porque _currentFilter ya es "games".
         FilterComboBox.SelectedIndex = 0;
+        UpdateLibraryButtons();
         ApplyLibraryFilterLanguage();
         UpdateInstalledCount();
         // Casa de la card del Modo juego: su índice dentro del header. Se registra
@@ -526,6 +527,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         FilterGamesItem.Content = I18n.T("Videojuegos");
         FilterConsoleEmulatorsItem.Content = I18n.T("Emuladores de consolas");
         FilterMobileEmulatorsItem.Content = I18n.T("Emuladores de celular");
+        FilterAddedProcessesItem.Content = I18n.T("Procesos agregados");
     }
 
     /// <summary>
@@ -4364,6 +4366,226 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
     }
 
+    // ===== Agregar proceso (elegir entre los procesos activos) =====
+
+    private sealed record ActiveProcessOption(string Exe, string Name, string? InstallPath, string Title)
+    {
+        public string Label => string.IsNullOrWhiteSpace(Title) ? Name : $"{Name} — {Title}";
+        public bool HasWindow => !string.IsNullOrWhiteSpace(Title);
+    }
+
+    private async void AddProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (XamlRoot == null) return;
+        try
+        {
+            var options = await Task.Run(CollectActiveProcessOptions);
+            if (options.Count == 0)
+            {
+                StatusText.Text = I18n.T("No hay procesos activos para agregar.");
+                StatusText.Foreground = Feedback.WarningBrush;
+                StatusText.Visibility = Visibility.Visible;
+                return;
+            }
+
+            var filter = new TextBox
+            {
+                PlaceholderText = I18n.T("Buscar proceso..."),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            var list = new ListView
+            {
+                Height = 340,
+                SelectionMode = ListViewSelectionMode.Single,
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0)
+            };
+
+            // Las filas se arman a mano (no DisplayMemberPath): cada una lleva el ícono
+            // del exe y el título de la ventana, con la tipografía del tema vigente.
+            void FillList(string? query)
+            {
+                list.Items.Clear();
+                foreach (var option in options)
+                {
+                    if (!string.IsNullOrWhiteSpace(query)
+                        && !option.Label.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                        continue;
+                    list.Items.Add(BuildProcessRow(option));
+                }
+            }
+            FillList(null);
+            filter.TextChanged += (_, _) => FillList(filter.Text.Trim());
+
+            var content = new StackPanel { Spacing = 8, MinWidth = 460 };
+            content.Children.Add(filter);
+            content.Children.Add(list);
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = I18n.T("Agregar proceso"),
+                Content = content,
+                PrimaryButtonText = I18n.T("Agregar"),
+                CloseButtonText = I18n.T("Cancelar"),
+                DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = false,
+                // Misma superficie/vidrio que las cards: el diálogo sigue el tema y el
+                // ajuste de transparencia de la apariencia elegida en Configuración.
+                Background = ThemeBrushes.GetSurface("CardBackgroundBrush"),
+                BorderBrush = ThemeBrushes.Get("CardBorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(12)
+            };
+            list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem != null;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            if (list.SelectedItem is not ListViewItem { Tag: ActiveProcessOption selected }) return;
+
+            _processService.AddProcessExe(selected.Exe, selected.Name, selected.InstallPath);
+            if (GameLauncher.IsDarkAndDarker(selected.InstallPath, selected.Exe))
+                _processService.SetManualGameLauncher(selected.Exe, "Blacksmith");
+
+            await RefreshAsync();
+
+            StatusText.Text = I18n.T("Se agregó «{0}» a la biblioteca.", selected.Exe);
+            StatusText.Foreground = Feedback.SuccessBrush;
+            StatusText.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            _loggingService.LogWarning($"GestionarProcesosPage: agregar proceso: {ex}");
+            StatusText.Text = I18n.T("No se pudo agregar el juego: {0}",
+                string.IsNullOrWhiteSpace(ex.Message) ? $"0x{ex.HResult:X8}" : ex.Message);
+            StatusText.Foreground = Feedback.ErrorBrush;
+            StatusText.Visibility = Visibility.Visible;
+        }
+    }
+
+    /// <summary>
+    /// Fila del diálogo de procesos: ícono real del exe (placeholder mientras se
+    /// extrae) + nombre del ejecutable + título de la ventana o carpeta.
+    /// </summary>
+    private static ListViewItem BuildProcessRow(ActiveProcessOption option)
+    {
+        var icon = new Image
+        {
+            Width = 28,
+            Height = 28,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        EnsureProcessIcon(option.Name, icon);
+
+        var name = new TextBlock
+        {
+            Text = option.Exe,
+            FontSize = 13.5,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        var detail = new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(option.Title)
+                ? option.InstallPath ?? string.Empty
+                : option.Title,
+            FontSize = 11.5,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+
+        var texts = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        texts.Children.Add(name);
+        texts.Children.Add(detail);
+
+        var row = new Grid { ColumnSpacing = 10 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.Children.Add(icon);
+        Grid.SetColumn(texts, 1);
+        row.Children.Add(texts);
+
+        // Extremo derecho: abre el Explorador con el exe seleccionado. Deshabilitado
+        // si el archivo ya no existe (proceso cerrado entre la captura y el dibujado).
+        string fullPath = string.IsNullOrWhiteSpace(option.InstallPath)
+            ? string.Empty
+            : Path.Combine(option.InstallPath, option.Exe);
+        var openLocation = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE8B7", FontSize = 14 }, // carpeta abierta
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(8, 6, 8, 6),
+            VerticalAlignment = VerticalAlignment.Center,
+            IsEnabled = File.Exists(fullPath)
+        };
+        ToolTipService.SetToolTip(openLocation, I18n.T("Abrir ubicación"));
+        openLocation.Click += (_, _) => OpenFileLocation(fullPath);
+        Grid.SetColumn(openLocation, 2);
+        row.Children.Add(openLocation);
+
+        return new ListViewItem
+        {
+            Tag = option,
+            Content = row,
+            Padding = new Thickness(8, 6, 8, 6),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+    }
+
+    /// <summary>
+    /// Procesos activos con un ejecutable accesible, sin duplicados por ruta y sin
+    /// launchers/instaladores. Primero los que tienen ventana visible (lo que el
+    /// usuario reconoce como "abierto"), después el resto.
+    /// </summary>
+    /// <summary>Abre el Explorador de Windows con el archivo seleccionado.</summary>
+    private static void OpenFileLocation(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath)) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
+            {
+                UseShellExecute = true
+            });
+        }
+        catch { /* sin Explorador o ruta inaccesible: el botón no hace nada */ }
+    }
+
+    private static List<ActiveProcessOption> CollectActiveProcessOptions()
+    {
+        var result = new List<ActiveProcessOption>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? self = null;
+        try { self = Environment.ProcessPath; } catch { }
+
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                string? path = null;
+                try { path = process.MainModule?.FileName; } catch { }
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
+                if (!path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue;
+                if (self != null && string.Equals(path, self, StringComparison.OrdinalIgnoreCase)) continue;
+                if (GameExeResolver.IsStubExeName(path)) continue;
+                if (!seen.Add(path)) continue;
+
+                string title = string.Empty;
+                try { title = process.MainWindowTitle ?? string.Empty; } catch { }
+                string name = Path.GetFileNameWithoutExtension(path);
+                result.Add(new ActiveProcessOption(
+                    Path.GetFileName(path), name, Path.GetDirectoryName(path), title));
+            }
+        }
+
+        return result
+            .OrderByDescending(o => o.HasWindow)
+            .ThenBy(o => o.Name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+    }
+
     /// <summary>
     /// Resuelve el destino de un acceso directo de Windows (.lnk): si el usuario elige
     /// un atajo, se agrega el exe real al que apunta (el .lnk no tiene proceso propio
@@ -4482,7 +4704,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
  // Filtro de categoría ("games", "console_emu", "mobile_emu"): GetItemCategory
  // clasifica cada item y la grilla muestra solo la categoría elegida.
         items = items
-            .Where(i => GetItemCategory(i.game) == _currentFilter)
+            .Where(i => MatchesCategory(i.exe, i.game))
             .ToList();
 
         // Tres secciones con el MISMO desplegable simple: Favoritos / Detectados /
@@ -4534,13 +4756,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             if (g != null)
             {
  // Filtrar por categoría: solo mostrar ocultos del tipo correcto.
-                if (GetItemCategory(g) != _currentFilter) continue;
+                if (!MatchesCategory(g.ExeFileName, g)) continue;
                 hiddenItems.Add((g, g.ExeFileName, g.Name, false, g.InstallPath));
                 continue;
             }
  // Juegos manuales ocultos: siempre son "games" (no emuladores),
  // solo se muestran en "Videojuegos".
-            if (_currentFilter != "games") continue;
+            if (!MatchesCategory(hExe, null)) continue;
             var m = _manual.FirstOrDefault(mm => string.Equals(mm.Exe, hExe, StringComparison.OrdinalIgnoreCase));
             hiddenItems.Add((null, hExe, m.Name ?? hExe, m.Exe != null, m.InstallPath));
         }
@@ -4572,6 +4794,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                     "console_emu" => I18n.T("Instalá un emulador de consolas para verlo en este apartado y configurarlo a tu gusto!"),
                     "mobile_emu" => I18n.T("Instalá un emulador de celular para verlo en este apartado y configurarlo a tu gusto!"),
                     "games" => I18n.T("Instalá un juego para verlo en este apartado y configurarlo a tu gusto!"),
+                    "added_processes" => I18n.T("Todavía no agregaste procesos con «Agregar proceso»."),
                     _ => I18n.T("Instalá un juego o emulador para verlo en este apartado y configurarlo a tu gusto!")
                 };
                 EmptyStateIcon.Glyph = "\uE7FC;"; // controler
@@ -4624,10 +4847,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             1 => "console_emu",
             2 => "mobile_emu",
+            3 => "added_processes",
             _ => "games"
         };
         if (_currentFilter == filter) return;
         _currentFilter = filter;
+        UpdateLibraryButtons();
         UpdateCategoryChrome();
         UpdateInstalledCount();
         RebuildCards();
@@ -4642,6 +4867,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// el dock (mismo estado que al arrastrarlo hacia afuera); si el juego sigue
     /// corriendo, queda conectado y el dock vuelve con él al regresar a Videojuegos.
     /// </summary>
+    /// <summary>
+    /// Botones del header según la categoría: «Agregar proceso» es el único que se
+    /// muestra en Procesos agregados; en el resto se ven Re-detectar, Escaneo
+    /// profundo y Añadir manual.
+    /// </summary>
+    private void UpdateLibraryButtons()
+    {
+        bool added = _currentFilter == "added_processes";
+        RedetectButton.Visibility = added ? Visibility.Collapsed : Visibility.Visible;
+        DeepScanButton.Visibility = added ? Visibility.Collapsed : Visibility.Visible;
+        AddManualButton.Visibility = added ? Visibility.Collapsed : Visibility.Visible;
+        AddProcessButton.Visibility = added ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateCategoryChrome()
     {
         if (IsEmulatorFilter)
@@ -4713,6 +4952,20 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     /// «Instalados: N» (todos), «Juegos instalados: N» (videojuegos),
     /// «Emuladores de consolas: N», «Emuladores de celular: N».
     /// </summary>
+    /// <summary>
+    /// ¿El exe se agregó desde «Agregar proceso»? Queda marcado aparte para poder
+    /// listarlo en su propia opción del desplegable, sin dejar de ser un juego manual.
+    /// </summary>
+    private bool IsAddedProcess(string exe)
+        => _processService.GetAddedProcessExes()
+            .Any(e => string.Equals(e, exe, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Categoría del ítem según el filtro activo del desplegable.</summary>
+    private bool MatchesCategory(string exe, InstalledGame? game)
+        => _currentFilter == "added_processes"
+            ? IsAddedProcess(exe)
+            : GetItemCategory(game) == _currentFilter;
+
     private void UpdateInstalledCount()
     {
         int count = 0;
@@ -4721,14 +4974,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         foreach (var g in _installed)
         {
             if (hidden.Contains(g.ExeFileName) || deleted.Contains(g.ExeFileName)) continue;
-            if (GetItemCategory(g) == _currentFilter) count++;
+            if (MatchesCategory(g.ExeFileName, g)) count++;
         }
     // Los manuales (sin game) son siempre videojuegos.
-        if (_currentFilter == "games")
+                    if (_currentFilter is "games" or "added_processes")
         {
             foreach (var (exe, _, _) in _manual)
             {
                 if (hidden.Contains(exe) || deleted.Contains(exe)) continue;
+                if (!MatchesCategory(exe, null)) continue;
                 if (!_installed.Any(g => string.Equals(g.ExeFileName, exe, StringComparison.OrdinalIgnoreCase)))
                     count++;
             }
@@ -4738,6 +4992,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             "games" => I18n.T("Juegos instalados: {0}", count),
             "console_emu" => I18n.T("Emuladores de consolas: {0}", count),
             "mobile_emu" => I18n.T("Emuladores de celular: {0}", count),
+            "added_processes" => I18n.T("Procesos agregados: {0}", count),
             _ => I18n.T("Instalados: {0}", count)
         };
     }
