@@ -1151,6 +1151,10 @@ public sealed partial class MainWindow : Window
 
         ApplyTrayEfficiencyMode(hiding: true);
 
+        // El vigilante de UI no tiene nada que vigilar con la ventana oculta: se apagan
+        // el latido de 500 ms y el chequeo de fondo (ver PauseUiWatchdog).
+        PauseUiWatchdog();
+
         UpdateTrayStatus();
     }
 
@@ -1190,6 +1194,8 @@ public sealed partial class MainWindow : Window
         }
 
         ApplyTrayEfficiencyMode(hiding: false);
+
+        ResumeUiWatchdog();
 
         UpdateTrayStatus();
     }
@@ -1434,7 +1440,10 @@ public sealed partial class MainWindow : Window
         _uiHeartbeatTimer.Interval = TimeSpan.FromMilliseconds(500);
         _uiHeartbeatTimer.Tick += (s, e) =>
             System.Threading.Interlocked.Exchange(ref _uiHeartbeatMs, Environment.TickCount64);
-        _uiHeartbeatTimer.Start();
+
+        // Si el arranque fue directo a la bandeja, el vigilante nace apagado: no hay
+        // interfaz visible que pueda colgarse (ver PauseUiWatchdog).
+        if (IsWindowVisible) _uiHeartbeatTimer.Start();
 
         _uiWatchdogTimer = new System.Threading.Timer(_ =>
         {
@@ -1449,7 +1458,33 @@ public sealed partial class MainWindow : Window
                 _loggingService.LogWarning($"Interfaz sin responder desde hace {idle / 1000} s (posible cuelgue)");
             }
             catch { }
-        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        }, null,
+           IsWindowVisible ? TimeSpan.FromSeconds(2) : Timeout.InfiniteTimeSpan,
+           IsWindowVisible ? TimeSpan.FromSeconds(2) : Timeout.InfiniteTimeSpan);
+    }
+
+    /// <summary>
+    /// Apaga el vigilante de UI con la ventana oculta. El latido mantiene despierto el
+    /// hilo de UI dos veces por segundo y el chequeo no tiene nada que vigilar si la
+    /// interfaz no se está viendo: con la app en la bandeja era gasto fijo sin retorno.
+    /// </summary>
+    private void PauseUiWatchdog()
+    {
+        try { _uiHeartbeatTimer?.Stop(); } catch { }
+        try { _uiWatchdogTimer?.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
+    }
+
+    /// <summary>
+    /// Reanuda el vigilante al mostrar la ventana. El timestamp se resetea ANTES de
+    /// arrancar: si no, el primer chequeo vería el latido viejo (de cuando se ocultó)
+    /// y anotaría un cuelgue que nunca existió.
+    /// </summary>
+    private void ResumeUiWatchdog()
+    {
+        if (_uiHeartbeatTimer == null) return;
+        System.Threading.Interlocked.Exchange(ref _uiHeartbeatMs, Environment.TickCount64);
+        try { _uiHeartbeatTimer.Start(); } catch { }
+        try { _uiWatchdogTimer?.Change(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)); } catch { }
     }
 
     private IntPtr MinimizeSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData)

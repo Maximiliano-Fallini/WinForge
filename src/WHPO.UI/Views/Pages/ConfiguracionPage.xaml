@@ -701,7 +701,25 @@
                         </StackPanel>
                     </Border>
 
-<!-- Interruptor maestro de los efectos de vidrio: encendido aparecen los controles de
+<!-- Estilo del pie de la biblioteca 3D: la consola anclada al borde inferior o una
+     barra de vidrio flotante, despegada del fondo (estilo Carthage). Es la misma
+     ranura y el mismo arrastre en los dos casos; solo cambia cómo se apoya el pie.
+     Solo se muestra con las cards 3D activas. -->
+                    <Border x:Name="FooterStyleCard" Style="{StaticResource CardStyle}" Padding="20"
+                            CornerRadius="12" HorizontalAlignment="Stretch" Tag="reveal"
+                            Visibility="Collapsed">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Pie de la biblioteca" FontSize="16" FontWeight="SemiBold"/>
+                            <TextBlock Text="Elegí cómo se apoya el pie de la biblioteca 3D: la consola anclada al borde inferior de la ventana o una barra flotante despegada del fondo, estilo Carthage. La ranura y el arrastre del cartucho funcionan igual en los dos. El cambio se aplica al volver a la biblioteca."
+                                       FontSize="13"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
+                            <StackPanel x:Name="FooterStyleHost" Orientation="Horizontal" Spacing="14"
+                                        Margin="0,14,0,0" HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Interruptor maestro de los efectos de vidrio: encendido aparecen los controles de
                          transparencia y blur (con el vidrio detrás de cada panel); apagado los paneles
                          quedan opacos y sin vidrio y esos controles se ocultan. Es el atajo de
                          rendimiento —el vidrio es lo que más cuesta GPU— y no pierde lo elegido:
@@ -743,6 +761,8 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
+                                <TextBlock Text="Transparencia" FontSize="16" FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
                                 <TextBlock x:Name="PanelTransparencyValueText" Grid.Column="1" Text="0 %" FontSize="13"
                                            MinWidth="46" TextAlignment="Right"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>

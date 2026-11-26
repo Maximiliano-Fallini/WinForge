@@ -552,7 +552,7 @@ public sealed class StartupManagerService : IStartupManagerService
     /// y con o sin espacios en la ruta) — para mostrar el nombre del archivo igual
     /// que Task Manager.
     /// </summary>
-    private static string? ExtractExePathFromCommand(string commandLine)
+    internal static string? ExtractExePathFromCommand(string commandLine)
     {
         if (string.IsNullOrWhiteSpace(commandLine)) return null;
         var trimmed = commandLine.Trim();

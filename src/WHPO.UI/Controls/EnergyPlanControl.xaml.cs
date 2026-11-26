@@ -62,6 +62,13 @@ public sealed partial class EnergyPlanControl : UserControl
         _winUtilService = App.Services.GetRequiredService<IWinUtilService>();
         _loggingService = App.Services.GetRequiredService<ILoggingService>();
 
+        // La barra de pestañas tiene que quedar visible aunque el bloque se scrollee
+        // dentro de DetailScroll (Optimizaciones): se corre lo justo para quedar
+        // pegada al tope del viewport y se detiene al final del bloque. Es un
+        // desplazamiento de render, no de layout: el scroll sigue siendo el de la página.
+        EffectiveViewportChanged += OnEffectiveViewportChanged;
+        SizeChanged += (_, _) => UpdateStickyNavBar();
+
         // El navbar INTERNO se pinta a mano (ver PaintNavBar): su {ThemeResource} no sigue al ajuste
         // de apariencia, así que la franja se quedaba plana mientras las cards ya tenían vidrio.
         Loaded += (s, e) =>
@@ -76,6 +83,9 @@ public sealed partial class EnergyPlanControl : UserControl
         {
             I18n.LanguageChanged -= OnLanguageChanged;
             PanelAppearance.Applied -= PaintNavBar;
+
+            // Se va del árbol: la barra vuelve a su lugar de layout.
+            try { PlanNavBar.Translation = new System.Numerics.Vector3(0f, 0f, 0f); } catch { }
         };
 
         // El evento de idioma es estático y vive toda la app: se suscribe una
@@ -119,6 +129,32 @@ public sealed partial class EnergyPlanControl : UserControl
     public void Refresh() => _ = LoadPowerPlansAsync();
 
     // ===================== Navbar interno =====================
+
+    /// <summary>Píxeles del tope del bloque que el scroll ya dejó por encima del viewport.</summary>
+    private double _viewportTop;
+
+    private void OnEffectiveViewportChanged(FrameworkElement sender, EffectiveViewportChangedEventArgs args)
+    {
+        // EffectiveViewport viene en coordenadas de ESTE control: Top > 0 es la
+        // parte que el scroll ya tapó por arriba (ver docs de WinUI).
+        _viewportTop = args.EffectiveViewport.Top;
+        UpdateStickyNavBar();
+    }
+
+    /// <summary>
+    /// Fija la barra de pestañas arriba mientras este bloque siga en pantalla y
+    /// la suelta al llegar a su final, cuando el resto del contenido ya es otro.
+    /// </summary>
+    private void UpdateStickyNavBar()
+    {
+        if (PlanNavBar == null) return;
+
+        double max = Math.Max(0, ActualHeight - PlanNavBar.ActualHeight);
+        double shift = Math.Clamp(_viewportTop, 0, max);
+        if (Math.Abs(PlanNavBar.Translation.Y - shift) < 0.5) return;
+
+        PlanNavBar.Translation = new System.Numerics.Vector3(0f, (float)shift, 0f);
+    }
 
     /// <summary>
     /// Pinta la barra interna con el color del panel del menú, el alfa de la
@@ -257,6 +293,9 @@ public sealed partial class EnergyPlanControl : UserControl
 
         ApplyTabVisibility();
         LazyLoadTab(_selectedTabIndex);
+
+        // Cambió el alto del bloque: re-evaluar el anclaje después del layout.
+        DispatcherQueue.TryEnqueue(UpdateStickyNavBar);
 
         // El host decide con esto si muestra u oculta los ajustes de la categoría.
         TabChanged?.Invoke(_selectedTabIndex);

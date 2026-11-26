@@ -56,6 +56,24 @@ public sealed class DriveWatcherService : IDriveWatcherService, IDisposable
         }
     }
 
+    /// <summary>
+    /// Corta la suscripción y libera el watcher (idempotente). No marca el servicio como
+    /// disposed: un <see cref="EnsureStarted"/> posterior lo vuelve a levantar. Se usa al
+    /// salir de la página de Limpieza o al ocultar la ventana en la bandeja.
+    /// </summary>
+    public void Stop()
+    {
+        lock (_lock)
+        {
+            if (_watcher == null) return;
+            try { _watcher.EventArrived -= OnEvent; } catch { }
+            try { _watcher.Stop(); } catch { }
+            try { _watcher.Dispose(); } catch { }
+            _watcher = null;
+            _logging.LogInfo("DriveWatcher: suscripción de unidades detenida");
+        }
+    }
+
     private void OnEvent(object sender, EventArrivedEventArgs e)
     {
         try

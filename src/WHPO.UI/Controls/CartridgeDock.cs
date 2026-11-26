@@ -88,6 +88,240 @@ public static class CartridgeDock
         return shell;
     }
 
+    // Geometría del pie flotante, tomada del Dock.qml de Carthage: radio 22, la
+    // hendidura (saddle) de 11 px donde entra el cartucho y curvas de 22 px.
+    private const double FloatingRadius = 22;
+    public const double FloatingDip = 11;
+    private const double FloatingCurve = 22;
+
+    /// <summary>
+    /// Variante flotante del pie, con la MISMA silueta del dock de Carthage: una barra
+    /// de vidrio con la parte superior hundida donde entra el cartucho, en vez del
+    /// chasis plástico con el conector de la consola. El contenido (estado y Modo
+    /// rendimiento) se centra en el cuerpo visible debajo de la hendidura; con cartucho,
+    /// este baja hasta la línea del asiento y una sombra lo funde con el vidrio.
+    /// </summary>
+    public static FrameworkElement CreateFloatingShell(Grid controls, double height, double width, double portWidth, bool connected = false)
+    {
+        double barWidth = Math.Max(320, width);
+        // El hueco de arriba es un poco más ancho que la boca, como en Carthage: la
+        // ranura queda dentro de la parte plana y las curvas no la tocan.
+        double dipWidth = Math.Max(portWidth + 8, 88);
+        var geometry = BuildFloatingGeometry(barWidth, height, dipWidth);
+        var back = new Microsoft.UI.Xaml.Shapes.Path
+        {
+            Width = barWidth,
+            Height = height,
+            Data = geometry,
+            Stretch = Stretch.None,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            Fill = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0, Color = Windows.UI.Color.FromArgb(0xF4, 0x10, 0x15, 0x1D) },
+                    new GradientStop { Offset = 0.7, Color = Windows.UI.Color.FromArgb(0xF4, 0x0A, 0x0D, 0x13) },
+                    new GradientStop { Offset = 1, Color = Windows.UI.Color.FromArgb(0xF4, 0x07, 0x09, 0x0D) }
+                }
+            },
+            Stroke = new SolidColorBrush(Windows.UI.Color.FromArgb(0x42, 0xFF, 0xFF, 0xFF)),
+            StrokeThickness = 1
+        };
+        // El contenido se centra en la PARTE VISIBLE del vidrio, no en los 66 DIP
+        // completos: la hendidura se come los primeros 11 y si no el bloque quedaba
+        // 5,5 DIP alto respecto del cuerpo de la barra (Carthage centra debajo del
+        // asiento). El margen lateral deja aire contra las curvas.
+        controls.Margin = new Thickness(22, FloatingDip, 22, 0);
+        var content = new Grid { Width = barWidth, Height = height, Children = { controls } };
+
+        // Brillo superior y sombra de apoyo dentro del vidrio: dos rellenos con la
+        // MISMA silueta, así el degradado no invade la hendidura ni la torre del
+        // cartucho. Es lo que separa un rectángulo oscuro de una pieza de vidrio.
+        var sheen = new Microsoft.UI.Xaml.Shapes.Path
+        {
+            Width = barWidth,
+            Height = height,
+            Data = geometry,
+            Stretch = Stretch.None,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            Fill = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0, Color = Windows.UI.Color.FromArgb(0x1E, 0xFF, 0xFF, 0xFF) },
+                    new GradientStop { Offset = 0.45, Color = Windows.UI.Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF) }
+                }
+            }
+        };
+        var bottomShade = new Microsoft.UI.Xaml.Shapes.Path
+        {
+            Width = barWidth,
+            Height = height,
+            Data = geometry,
+            Stretch = Stretch.None,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false,
+            Fill = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0.62, Color = Windows.UI.Color.FromArgb(0x00, 0x00, 0x00, 0x00) },
+                    new GradientStop { Offset = 1, Color = Windows.UI.Color.FromArgb(0x66, 0x00, 0x00, 0x00) }
+                }
+            }
+        };
+        var mouth = CreateFloatingMouth(height, portWidth, connected);
+        var host = new Grid { Width = barWidth, Height = height, Children = { back, sheen, bottomShade, content, mouth } };
+        // Sombra de contacto: una placa redondeada corrida hacia abajo, detrás del
+        // vidrio. No es un blur (WinUI no lo trae acá), pero separa la barra del fondo.
+        var shadow = new Border
+        {
+            Width = Math.Max(1, barWidth - 8),
+            Height = Math.Max(1, height - 2),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 6, 0, 0),
+            CornerRadius = new CornerRadius(FloatingRadius + 2),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x24, 0x00, 0x00, 0x00)),
+            IsHitTestVisible = false
+        };
+        return new Grid { Height = height, Children = { shadow, host } };
+    }
+
+    /// <summary>Silueta de la barra flotante: rectángulo redondeado con la hendidura
+    /// superior de Carthage. La boca y el labio se dibujan aparte, encima.</summary>
+    private static Geometry BuildFloatingGeometry(double w, double h, double dipWidth)
+    {
+        double r = FloatingRadius, dip = FloatingDip, curve = FloatingCurve;
+        double flat = Math.Max(80, Math.Min(dipWidth, w - 2 * (r + curve)));
+        double x0 = (w - flat) / 2, x1 = x0 + flat;
+        var figure = new PathFigure { StartPoint = new Point(r, 0), IsClosed = true, IsFilled = true };
+        figure.Segments.Add(new LineSegment { Point = new Point(x0 - curve, 0) });
+        figure.Segments.Add(new BezierSegment
+        {
+            Point1 = new Point(x0 - curve / 2, 0),
+            Point2 = new Point(x0 - curve / 2, dip),
+            Point3 = new Point(x0, dip)
+        });
+        figure.Segments.Add(new LineSegment { Point = new Point(x1, dip) });
+        figure.Segments.Add(new BezierSegment
+        {
+            Point1 = new Point(x1 + curve / 2, dip),
+            Point2 = new Point(x1 + curve / 2, 0),
+            Point3 = new Point(x1 + curve, 0)
+        });
+        figure.Segments.Add(new LineSegment { Point = new Point(w - r, 0) });
+        figure.Segments.Add(new ArcSegment { Point = new Point(w, r), Size = new Windows.Foundation.Size(r, r), SweepDirection = SweepDirection.Clockwise });
+        figure.Segments.Add(new LineSegment { Point = new Point(w, h - r) });
+        figure.Segments.Add(new ArcSegment { Point = new Point(w - r, h), Size = new Windows.Foundation.Size(r, r), SweepDirection = SweepDirection.Clockwise });
+        figure.Segments.Add(new LineSegment { Point = new Point(r, h) });
+        figure.Segments.Add(new ArcSegment { Point = new Point(0, h - r), Size = new Windows.Foundation.Size(r, r), SweepDirection = SweepDirection.Clockwise });
+        figure.Segments.Add(new LineSegment { Point = new Point(0, r) });
+        figure.Segments.Add(new ArcSegment { Point = new Point(r, 0), Size = new Windows.Foundation.Size(r, r), SweepDirection = SweepDirection.Clockwise });
+        return new PathGeometry { Figures = { figure } };
+    }
+
+    /// <summary>
+    /// Boca del pie flotante. Con cartucho puesto no se dibuja una ranura POR DELANTE
+    /// del cartucho: este baja hasta la línea del asiento y una sombra suave lo funde
+    /// con el vidrio, como el Dock.qml de Carthage. Sin cartucho sí se ve la cavidad
+    /// oscura y el filo iluminado sobre la hendidura.
+    /// </summary>
+    private static FrameworkElement CreateFloatingMouth(double height, double portWidth, bool connected)
+    {
+        double width = Math.Max(88, portWidth + 24);
+        double slitWidth = Math.Max(80, portWidth - 6);
+        var mouth = new Grid
+        {
+            Width = width,
+            Height = height,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            IsHitTestVisible = false
+        };
+
+        if (connected)
+        {
+            var seatShadow = new Border
+            {
+                Width = Math.Max(80, portWidth - 2),
+                Height = 16,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, FloatingDip, 0, 0),
+                Background = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+                {
+                    StartPoint = new Point(0, 0),
+                    EndPoint = new Point(0, 1),
+                    GradientStops =
+                    {
+                        new GradientStop { Offset = 0, Color = Windows.UI.Color.FromArgb(0xC0, 0x00, 0x00, 0x00) },
+                        new GradientStop { Offset = 0.45, Color = Windows.UI.Color.FromArgb(0x58, 0x00, 0x00, 0x00) },
+                        new GradientStop { Offset = 1, Color = Windows.UI.Color.FromArgb(0x00, 0x00, 0x00, 0x00) }
+                    }
+                }
+            };
+            mouth.Children.Add(seatShadow);
+            return mouth;
+        }
+
+        // Sin cartucho: la cavidad vive DENTRO de la hendidura (arranca en el borde
+        // superior y termina en el asiento), no como una línea suelta por encima.
+        var cavity = new Border
+        {
+            Width = slitWidth,
+            Height = 6,
+            CornerRadius = new CornerRadius(3, 3, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, FloatingDip - 6, 0, 0),
+            Background = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(0, 1),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0, Color = Windows.UI.Color.FromArgb(0xE8, 0x00, 0x00, 0x00) },
+                    new GradientStop { Offset = 1, Color = Windows.UI.Color.FromArgb(0x80, 0x00, 0x00, 0x00) }
+                }
+            }
+        };
+        var lip = new Border
+        {
+            Width = Math.Max(72, portWidth - 10),
+            Height = 1,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, FloatingDip, 0, 0),
+            Background = new Microsoft.UI.Xaml.Media.LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 0),
+                GradientStops =
+                {
+                    new GradientStop { Offset = 0, Color = Windows.UI.Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF) },
+                    new GradientStop { Offset = 0.2, Color = Windows.UI.Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF) },
+                    new GradientStop { Offset = 0.8, Color = Windows.UI.Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF) },
+                    new GradientStop { Offset = 1, Color = Windows.UI.Color.FromArgb(0x00, 0xFF, 0xFF, 0xFF) }
+                }
+            }
+        };
+        mouth.Children.Add(cavity);
+        mouth.Children.Add(lip);
+        return mouth;
+    }
+
     /// <summary>
     /// Pozo del conector a <paramref name="width"/> de ancho (el de la card 3D):
     /// los contactos se reparten para cubrir la boca y no quedar amontonados en el
@@ -354,6 +588,24 @@ public static class CartridgeDock
         button.Resources["ButtonForegroundPressed"] = TextBrush();
     }
 
+    /// <summary>Botón del pie FLOTANTE: no es plástico, es una tecla de vidrio sobre la
+    /// barra oscura. Sin esto, en una apariencia clara los botones del Modo rendimiento
+    /// quedaban como chips del chasis encima del vidrio.</summary>
+    public static void StyleGlassButton(Button button)
+    {
+        button.CornerRadius = new CornerRadius(5);
+        button.Background = Brush("#18FFFFFF");
+        button.BorderBrush = Brush("#34FFFFFF");
+        button.BorderThickness = new Thickness(1);
+        button.Foreground = Brush("#FFE1E6EE");
+        button.Resources["ButtonBackgroundPointerOver"] = Brush("#26FFFFFF");
+        button.Resources["ButtonBackgroundPressed"] = Brush("#12FFFFFF");
+        button.Resources["ButtonBorderBrushPointerOver"] = Brush("#58FFFFFF");
+        button.Resources["ButtonBorderBrushPressed"] = Brush("#40FFFFFF");
+        button.Resources["ButtonForegroundPointerOver"] = Brush("#FFFFFFFF");
+        button.Resources["ButtonForegroundPressed"] = Brush("#FFFFFFFF");
+    }
+
     /// <summary>
     /// Dial "Modo rendimiento" cuando vive en el pie: la perilla se pinta con el
     /// plástico del chasis (antes era un disco grafito fijo en cualquier apariencia),
@@ -362,7 +614,7 @@ public static class CartridgeDock
     /// clara del tema quedaba invisible sobre el plástico—.
     /// Los nombres son los del template (PerformanceSwitchStyle en Toggles.xaml).
     /// </summary>
-    public static void StyleSwitch(ToggleButton dial)
+    public static void StyleSwitch(ToggleButton dial, bool glass = false)
     {
         // El template puede no estar instanciado si la card se mueve al pie antes del
         // primer layout (arranque directo en modo 3D): ApplyTemplate lo resuelve sin
@@ -373,15 +625,21 @@ public static class CartridgeDock
         float sheen = Sheen(skin);
 
         if (FindPart(dial, "DialRing") is Border ring)
-            ring.Background = new SolidColorBrush(CardSkin.ToUi(skin.Dark(light ? 0.55f : 0.80f)));
+            ring.Background = glass
+                ? Brush("#CC05070B")
+                : new SolidColorBrush(CardSkin.ToUi(skin.Dark(light ? 0.55f : 0.80f)));
         if (FindPart(dial, "Face") is Border face)
-            face.Background = Gradient(
-                (0, light ? skin.Dark(0.12f) : skin.Light(sheen * 1.55f)),
-                (1, light ? skin.Dark(0.40f) : skin.Dark(0.55f)));
+            face.Background = glass
+                ? Gradient((0, "#FF3B4654"), (1, "#FF161C24"))
+                : Gradient(
+                    (0, light ? skin.Dark(0.12f) : skin.Light(sheen * 1.55f)),
+                    (1, light ? skin.Dark(0.40f) : skin.Dark(0.55f)));
         if (FindPart(dial, "Indicator") is Border tick)
             tick.Background = ThemeBrushes.Get("AccentBrush");
-        if (FindPart(dial, "OffLabel") is TextBlock off) off.Foreground = TextBrush();
-        if (FindPart(dial, "OnLabel") is TextBlock on) on.Foreground = TextBrush();
+        if (FindPart(dial, "OffLabel") is TextBlock off)
+            off.Foreground = glass ? Brush("#FF9DA5B1") : TextBrush();
+        if (FindPart(dial, "OnLabel") is TextBlock on)
+            on.Foreground = glass ? Brush("#FFE1E6EE") : TextBrush();
         LocalizeSwitch(dial);
     }
 
@@ -450,7 +708,7 @@ public static class CartridgeDock
     /// de alto, boca a 8, el cartucho entra 20 DIP y asoma ~15 %) para que la previa no
     /// sea un dibujo aparte: es el mismo material, pintado por el mismo código.
     /// </summary>
-    public static FrameworkElement CreateAppearancePreview(ImageSource? card, double previewHeight = 320)
+    public static FrameworkElement CreateAppearancePreview(ImageSource? card, double previewHeight = 320, bool floatingFooter = false)
     {
         // Tamaño REAL del dock de la biblioteca, no uno inventado para la previa: el ancho
         // es el de la card 3D en la ventana estándar y el alto del chasis es 66. Todo el
@@ -507,17 +765,25 @@ public static class CartridgeDock
         }
 
         // Ala izquierda: los mismos textos y el mismo LED que la consola de la biblioteca.
+        // En la barra flotante el vidrio es oscuro en todos los temas: el texto del
+        // chasis (que sigue al plástico y puede ser oscuro) quedaría ilegible.
+        var previewText = floatingFooter
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xE1, 0xE6, 0xEE))
+            : TextBrush();
+        var previewTextSecondary = floatingFooter
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x9D, 0xA5, 0xB1))
+            : TextBrush(secondary: true);
         var line1 = new TextBlock
         {
             Text = "WINFORGE", FontSize = 12,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = TextBrush(), TextTrimming = TextTrimming.CharacterEllipsis
+            Foreground = previewText, TextTrimming = TextTrimming.CharacterEllipsis
         };
         var line2 = new TextBlock
         {
             Text = "GAME CARD", FontSize = 9, CharacterSpacing = 60,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = TextBrush(secondary: true), TextTrimming = TextTrimming.CharacterEllipsis
+            Foreground = previewTextSecondary, TextTrimming = TextTrimming.CharacterEllipsis
         };
         var status = new StackPanel
         {
@@ -530,10 +796,13 @@ public static class CartridgeDock
         Grid.SetColumn(status, 1);
         leftWing.Children.Add(status);
 
-        var port = new Grid { Width = portWidth, Height = 44 };
-        var portBorder = CreatePort(connected: true, portWidth);
-        portBorder.VerticalAlignment = VerticalAlignment.Top;
-        port.Children.Add(portBorder);
+        var port = new Grid { Width = floatingFooter ? portWidth + 24 : portWidth, Height = 44 };
+        if (!floatingFooter)
+        {
+            var portBorder = CreatePort(connected: true, portWidth);
+            portBorder.VerticalAlignment = VerticalAlignment.Top;
+            port.Children.Add(portBorder);
+        }
 
         // Tres columnas como el dock real (ala / ranura / ala): la ranura queda centrada.
         var row = new Grid { ColumnSpacing = 12 };
@@ -545,26 +814,73 @@ public static class CartridgeDock
         row.Children.Add(leftWing);
         row.Children.Add(port);
 
-        var shell = CreateShell(row, FooterHeight, portWidth);
+        if (floatingFooter)
+        {
+            const double barWidth = 520;
+            const double stageHeight = 250;
+            double barTop = stageHeight - 14 - FooterHeight;
+            var shell = CreateFloatingShell(row, FooterHeight, barWidth, portWidth, card != null);
+
+            // La torre del cartucho asoma por la boca: la card se recorta en la línea
+            // del asiento (barTop + FloatingDip), así no queda un hueco entre la card y
+            // la sombra del vidrio.
+            var seatedClip = new Grid
+            {
+                Width = cardWidth,
+                Height = 50 + FloatingDip,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, barTop - 50, 0, 0),
+                Clip = new RectangleGeometry { Rect = new Rect(0, 0, cardWidth, 50 + FloatingDip) }
+            };
+            if (card != null)
+                seatedClip.Children.Add(new Microsoft.UI.Xaml.Controls.Image
+                {
+                    Source = card, Width = cardWidth, Height = cardHeight,
+                    Stretch = Stretch.Fill, VerticalAlignment = VerticalAlignment.Top
+                });
+
+            var stage = new Grid { Width = stageWidth, Height = stageHeight };
+            stage.Children.Add(seatedClip);
+            var dock = new Grid
+            {
+                Width = barWidth,
+                Height = FooterHeight,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 14),
+                Children = { shell }
+            };
+            stage.Children.Add(dock);
+            return new Viewbox
+            {
+                Child = stage,
+                Stretch = Stretch.Uniform,
+                Height = previewHeight,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+
+        var consoleShell = CreateShell(row, FooterHeight, portWidth);
         var lip = CreatePortFrontLip(connected: true, portWidth);
         lip.Margin = new Thickness(0, MouthY, 0, 0);
+        var consoleDock = new Grid { Height = FooterHeight, VerticalAlignment = VerticalAlignment.Bottom };
+        consoleDock.Children.Add(consoleShell);
+        consoleDock.Children.Add(bay);
+        consoleDock.Children.Add(lip);
 
-        var dock = new Grid { Height = FooterHeight, VerticalAlignment = VerticalAlignment.Bottom };
-        dock.Children.Add(shell);
-        dock.Children.Add(bay);
-        dock.Children.Add(lip);
-
-        var stage = new Grid
+        var consoleStage = new Grid
         {
             Width = stageWidth,
             Height = cardHeight + FooterHeight + 80 // aire entre la card y la torre que asoma
         };
-        stage.Children.Add(fullCard);
-        stage.Children.Add(dock);
+        consoleStage.Children.Add(fullCard);
+        consoleStage.Children.Add(consoleDock);
 
         return new Viewbox
         {
-            Child = stage,
+            Child = consoleStage,
             Stretch = Stretch.Uniform,
             Height = previewHeight,
             HorizontalAlignment = HorizontalAlignment.Center,

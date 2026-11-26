@@ -273,7 +273,7 @@
 
             <Rectangle Height="1" Fill="{ThemeResource CardBorderBrush}" Margin="0,4"/>
 
-<!-- ====== SECCIÓN 7: SEGURIDAD Y VIRTUALIZACIÓN (TPM / Secure Boot / IOMMU) ====== -->
+<!-- ====== SECCIÓN 7: SEGURIDAD Y VIRTUALIZACIÓN (TPM / Secure Boot / IOMMU / VBS) ====== -->
             <TextBlock Text="Seguridad y virtualización" FontWeight="SemiBold" FontSize="18" Margin="0,4,0,0"/>
             <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="12">
 <!-- TPM -->
@@ -348,11 +348,15 @@
                 <Border Grid.Column="3" Background="{ThemeResource CardBackgroundBrush}" CornerRadius="12" Padding="16" MinHeight="110">
                     <Grid VerticalAlignment="Center">
                         <StackPanel x:Name="VbsContent" Spacing="6" Visibility="Collapsed">
-                            <TextBlock Text="VBS" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
+                            <TextBlock Text="Core Isolation / VBS" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontWeight="Medium"/>
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Ellipse x:Name="VbsIndicator" Width="10" Height="10" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="VbsStatusText" Text="--" FontWeight="SemiBold" FontSize="14"/>
                             </StackPanel>
+<!-- Memory Integrity / HVCI en UNA línea con su estado: el nombre técnico va
+                                 delante para que se entienda qué función es, y así la card no
+                                 gana un renglón que estire toda la fila (las dos del medio
+                                 quedaban con mucho aire arriba y abajo). -->
                             <Grid ColumnDefinitions="10,*" ColumnSpacing="8">
                                 <Ellipse x:Name="HvciIndicator" Width="10" Height="10" VerticalAlignment="Center"/>
                                 <TextBlock x:Name="VbsDetailText" Grid.Column="1" Text="" FontSize="12"

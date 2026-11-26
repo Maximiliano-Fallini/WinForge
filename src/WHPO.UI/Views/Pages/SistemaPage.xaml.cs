@@ -338,10 +338,12 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
                 SecureBootFirmwareText.Text = "BIOS";
             }
 
-            // IOMMU: presencia de la tabla ACPI DMAR (Intel VT-d) / IVRS (AMD-Vi)
+            // IOMMU: la tabla ACPI DMAR (Intel VT-d) / IVRS (AMD-Vi) prueba que el firmware
+            // describe la unidad, NO que esté habilitada y traduciendo direcciones. Por eso
+            // dice "Presente" y no "Activo": antes afirmaba más de lo que el dato permite.
             if (_securityFeatures.IommuPresent)
             {
-                IommuStatusText.Text = I18n.T("Activo");
+                IommuStatusText.Text = I18n.T("Presente");
                 IommuIndicator.Fill = StatusBrush("SuccessBrush");
                 IommuVendorText.Text = _cpuVendor;
             }
@@ -373,28 +375,32 @@ public sealed partial class SistemaPage : Page, IBackgroundPausable
                     VbsIndicator.Fill = StatusBrush("WarningBrush");
                     break;
             }
-            // Detalle: HVCI (integridad de memoria) corre dentro de VBS. Se informa
+            // Detalle: HVCI (Memory Integrity) corre dentro de VBS/Core Isolation. Se informa
             // también el caso "configurado pero sin ejecutar" (VBS habilitado sin
-            // hipervisor corriendo, o HVCI desactivado por un driver incompatible),
-            // que antes quedaba sin detalle porque solo se miraba VbsStatus == 2.
+            // hipervisor corriendo, o HVCI desactivado por un driver incompatible).
+            // Una sola línea con el nombre técnico delante ("Memory Integrity / HVCI · Activa"),
+            // para no agregar un renglón que estire la fila de cards. El texto largo
+            // ("Integridad de memoria activa") se reserva para el aviso de Overclock USB.
+            static string HvciText(string state) => $"{I18n.T("Memory Integrity / HVCI")} · {I18n.T(state)}";
+
             if (_securityFeatures.HvciRunning)
             {
-                VbsDetailText.Text = I18n.T("Integridad de memoria activa");
+                VbsDetailText.Text = HvciText("Activa");
                 HvciIndicator.Fill = StatusBrush("SuccessBrush");
             }
             else if (_securityFeatures.HvciConfigured)
             {
-                VbsDetailText.Text = I18n.T("Integridad de memoria configurada, sin ejecutar");
+                VbsDetailText.Text = HvciText("Configurada, sin ejecutar");
                 HvciIndicator.Fill = StatusBrush("WarningBrush");
             }
             else if (_securityFeatures.VbsStatus >= 0)
             {
-                VbsDetailText.Text = I18n.T("Sin integridad de memoria");
+                VbsDetailText.Text = HvciText("Desactivada");
                 HvciIndicator.Fill = StatusBrush("ErrorBrush");
             }
             else
             {
-                VbsDetailText.Text = I18n.T("No detectado");
+                VbsDetailText.Text = HvciText("No detectado");
                 HvciIndicator.Fill = StatusBrush("WarningBrush");
             }
         }

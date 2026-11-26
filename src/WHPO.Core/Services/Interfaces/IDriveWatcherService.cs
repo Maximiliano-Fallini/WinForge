@@ -20,4 +20,12 @@ public interface IDriveWatcherService
     /// errores se registran en el log.
     /// </summary>
     void EnsureStarted();
+
+    /// <summary>
+    /// Corta la suscripción a los eventos de WMI y libera el watcher. Idempotente.
+    /// Se usa al salir de la página que lo necesita: la query WITHIN 2 no debe quedar
+    /// sondeando para siempre por una lista que nadie está mirando. Un
+    /// <see cref="EnsureStarted"/> posterior lo vuelve a levantar.
+    /// </summary>
+    void Stop();
 }

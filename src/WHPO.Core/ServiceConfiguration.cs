@@ -61,6 +61,7 @@ public static class ServiceConfiguration
         services.AddSingleton<IDuplicateFinderService, DuplicateFinderService>();
         services.AddSingleton<IDriveWatcherService, DriveWatcherService>();
         services.AddSingleton<IStartupManagerService, StartupManagerService>();
+        services.AddSingleton<IStartupImpactService, StartupImpactService>();
         services.AddSingleton<IUsbOverclockService, UsbOverclockService>();
         // Medidor de latencia de entrada (Raw Input): intervalo real entre informes HID
         // de mouse y mandos — el "polling tester" nativo de la pestaña Overclock USB.

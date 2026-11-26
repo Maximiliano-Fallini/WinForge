@@ -82,6 +82,12 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint GetSystemFirmwareTable(uint firmwareTableProviderSignature, uint firmwareTableID, IntPtr pFirmwareTableBuffer, uint bufferSize);
 
+    // Tipo de firmware actual (0 = desconocido, 1 = BIOS, 2 = UEFI, 3 = Max). Windows 8+.
+    // Es la fuente autoritativa para distinguir BIOS de UEFI: la clave de Secure Boot
+    // puede faltar en un equipo UEFI y antes eso se mostraba como "BIOS".
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFirmwareType(out uint firmwareType);
+
     // Memoria en vivo SIN WMI: GlobalMemoryStatusEx es nativa de kernel32, instantánea
     // y no toca el servicio winmgmt, a diferencia de Win32_OperatingSystem (que antes
     // se consultaba en cada tick del monitor — una consulta WMI por segundo).
@@ -2719,14 +2725,14 @@ public class SystemInfoService : ISystemInfoService, IDisposable
             _loggingService.LogWarning($"TPM no detectado vía WMI: {ex.Message}");
         }
 
-        // --- Secure Boot: valor UEFISecureBootEnabled del registro (la misma
-        // fuente que usa msinfo32). La clave solo existe en sistemas UEFI, así
-        // que su presencia indica firmware UEFI (Secure Boot no aplica en BIOS).
-        bool uefiFirmware = false, secureBootEnabled = false;
+        // --- Firmware: GetFirmwareType es la fuente autoritativa (BIOS vs UEFI).
+        // Secure Boot sale de UEFISecureBootEnabled (la misma fuente que usa msinfo32);
+        // en BIOS legacy no aplica y la card muestra "No disponible".
+        bool uefiFirmware = IsUefiFirmware();
+        bool secureBootEnabled = false;
         try
         {
             using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
-            uefiFirmware = key != null;
             secureBootEnabled = key?.GetValue("UEFISecureBootEnabled") is int v && v == 1;
         }
         catch { }
@@ -2795,8 +2801,29 @@ public class SystemInfoService : ISystemInfoService, IDisposable
     };
 
     /// <summary>
+    /// Firmware actual: GetFirmwareType (autoritativo). Si la llamada falla, cae a la
+    /// presencia de la clave SecureBoot\State, que Windows crea en sistemas UEFI.
+    /// </summary>
+    private static bool IsUefiFirmware()
+    {
+        try
+        {
+            if (GetFirmwareType(out uint type))
+                return type == 2; // FirmwareTypeUefi
+        }
+        catch { }
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\SecureBoot\State");
+            return key != null;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
     /// Detecta si el firmware expone una tabla ACPI con la firma dada (provider
-    /// 'ACPI'): 'DMAR' (Intel VT-d) o 'IVRS' (AMD-Vi) para IOMMU.
+    /// 'ACPI'): 'DMAR' (Intel VT-d) o 'IVRS' (AMD-Vi) para IOMMU. La presencia de la
+    /// tabla no implica que la IOMMU esté habilitada: por eso la UI dice "Presente".
     /// </summary>
     private static bool HasAcpiTable(uint tableId)
     {

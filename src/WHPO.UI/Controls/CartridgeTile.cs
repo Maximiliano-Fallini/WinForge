@@ -212,7 +212,9 @@ public sealed class CartridgeTile : UserControl
         // La silueta se recalcula con el tamaño real del pozo: acompaña cualquier ancho
         // de columna, igual que el cartucho y el skeleton.
         _recess.SizeChanged += (_, e) =>
-            recessShell.Points = BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height, kind: _kind);
+            recessShell.Points = _kind == DeviceKind.Cartridge
+                ? BuildRecessPoints(e.NewSize.Width, e.NewSize.Height)
+                : BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height, kind: _kind);
         // Keep the transparent hit surface enabled; only the artwork is non-interactive.
         Content = new Grid
         {
@@ -357,6 +359,81 @@ public sealed class CartridgeTile : UserControl
         return pts;
     }
 
+    /// <summary>
+    /// Filas de la etiqueta con las proporciones del canvas real (cabecera 172, arte 454
+    /// y franja de código 88 sobre 714): la franja queda donde la muesca lateral la corta.
+    /// </summary>
+    internal static void ApplyStickerRows(Grid sticker)
+    {
+        sticker.RowDefinitions.Clear();
+        sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CartridgeModel.HeaderH, GridUnitType.Star) });
+        sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CartridgeModel.ArtH, GridUnitType.Star) });
+        sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(
+            CartridgeModel.StickerH - CartridgeModel.HeaderH - CartridgeModel.ArtH, GridUnitType.Star) });
+    }
+
+    /// <summary>
+    /// Silueta del pozo con el MISMO estilo de muesca que tenía: el contorno del cartucho
+    /// agrandado 8 px (4 por lado) y su muesca escalada con el mismo bisel. La única
+    /// diferencia es que la muesca se desplaza a la altura de la del cartucho: antes se
+    /// escalaba desde el borde superior del pozo y quedaba unos píxeles más abajo.
+    /// </summary>
+    internal static PointCollection BuildRecessPoints(double w, double h)
+    {
+        var pts = BuildSilhouettePoints(w, h);
+        if (pts.Count < 44) return pts;
+
+        double sy = h / CartridgeModel.FaceHeight;
+        double cardTop = 4 + CartridgeModel.NotchTopY * (h - 8) / CartridgeModel.FaceHeight;
+        double cardBottom = 4 + (CartridgeModel.NotchTopY + CartridgeModel.NotchHeightPx)
+            * (h - 8) / CartridgeModel.FaceHeight;
+        double scaledTop = CartridgeModel.NotchTopY * sy;
+        double scaledBottom = (CartridgeModel.NotchTopY + CartridgeModel.NotchHeightPx) * sy;
+        double deltaTop = cardTop - scaledTop;
+        double deltaBottom = cardBottom - scaledBottom;
+
+        // Índices de los cuatro puntos de cada muesca en BuildSilhouettePoints:
+        // derecha 18..21 (arriba afuera/adentro, abajo adentro/afuera) e izquierda 40..43.
+        var shifted = new PointCollection();
+        for (int i = 0; i < pts.Count; i++)
+        {
+            double dy = i switch
+            {
+                18 or 19 or 42 or 43 => deltaTop,
+                20 or 21 or 40 or 41 => deltaBottom,
+                _ => 0
+            };
+            shifted.Add(new Point(pts[i].X, pts[i].Y + dy));
+        }
+        return shifted;
+    }
+
+    /// <summary>
+    /// Lleva la etiqueta y la pestaña de un placeholder a la geometría del canvas 600×878
+    /// (etiqueta 44,60 512×714; pestaña 206,34 188×28). El contorno ya usa esa referencia;
+    /// con márgenes fijos la etiqueta quedaba más abajo y la muesca parecía alta.
+    /// </summary>
+    internal static void ApplyPlaceholderChrome(Grid sticker, Border? well, Border? tab, double w, double h)
+    {
+        if (w <= 1 || h <= 1) return;
+        double sx = w / CartridgeModel.FaceWidth;
+        double sy = h / CartridgeModel.FaceHeight;
+        sticker.Margin = new Thickness(
+            CartridgeModel.StickerX * sx,
+            CartridgeModel.StickerY * sy,
+            (CartridgeModel.FaceWidth - CartridgeModel.StickerX - CartridgeModel.StickerW) * sx,
+            (CartridgeModel.FaceHeight - CartridgeModel.StickerY - CartridgeModel.StickerH) * sy);
+        if (well != null)
+            well.CornerRadius = new CornerRadius(CartridgeModel.StickerR * sx);
+        if (tab != null)
+        {
+            tab.Width = CartridgeModel.TabW * sx;
+            tab.Height = CartridgeModel.TabH * sy;
+            tab.Margin = new Thickness(0, CartridgeModel.TabY * sy, 0, 0);
+            tab.CornerRadius = new CornerRadius(CartridgeModel.TabR * sx);
+        }
+    }
+
     // This shell exists immediately and is opaque, even offline or after a failed PNG decode.
     public static Grid CreateVisual(string title, string launcher, Image artwork, DeviceKind kind = DeviceKind.Cartridge)
     {
@@ -368,9 +445,7 @@ public sealed class CartridgeTile : UserControl
             IsHitTestVisible = false
         };
         var sticker = new Grid { Margin = new Thickness(14, 16, 14, 24) };
-        sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.22, GridUnitType.Star) });
-        sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.16, GridUnitType.Star) });
+        ApplyStickerRows(sticker);
         var header = new Border
         {
             Background = Brush(28, 28, 32), CornerRadius = new CornerRadius(6, 6, 0, 0),
@@ -456,6 +531,10 @@ public sealed class CartridgeTile : UserControl
                     (by - vy) / vh * e.NewSize.Height,
                     (vx + vw - bx - bw) / vw * e.NewSize.Width,
                     (vy + vh - by - bh) / vh * e.NewSize.Height);
+            }
+            else
+            {
+                ApplyPlaceholderChrome(sticker, null, tab, e.NewSize.Width, e.NewSize.Height);
             }
         };
 

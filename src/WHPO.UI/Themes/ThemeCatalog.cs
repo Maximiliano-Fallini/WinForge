@@ -54,10 +54,10 @@ public static class ThemeCatalog
     }
 
     /// <summary>
-    /// Cómo pinta el tema su fondo. Es lo que agrupa el selector de temas (Entorno / Degradado /
-    /// Planos) y lo que decide con qué ajustes de apariencia arranca cada uno: los de entorno traen
-    /// foto (50 % de transparencia y 5 % de blur de fábrica) y los planos o de degradado, no
-    /// (0 % y 0 %).
+    /// Cómo pinta el tema su fondo. Es lo que agrupa el selector de temas (Planos / Entorno /
+    /// Degradado, en ese orden) y lo que decide con qué ajustes de apariencia arranca cada uno: los
+    /// de entorno traen foto (50 % de transparencia y 5 % de blur de fábrica) y los planos o de
+    /// degradado, no (0 % y 0 %).
     /// </summary>
     public enum ThemeKind
     {

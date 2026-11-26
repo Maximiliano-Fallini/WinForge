@@ -57,6 +57,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // Inclinación de las cards 3D al hover (Configuración → Apariencia). Activada de
     // fábrica; se relee en cada visita porque la página queda en caché.
     private bool _cards3DTilt = true;
+    // Pie de la biblioteca 3D: consola anclada al borde inferior o barra flotante
+    // (Configuración → Apariencia). Se relee al abrir la página.
+    private string _footerStyle = LibraryFooter.DefaultId;
     // ===== Modo 3D (modelo de cartucho) =====
     // Alto del cartucho por unidad de ancho (relación 1,4 del propio modelo): la card
     // 3D es vertical y el objeto entra completo, sin deformarse.
@@ -247,6 +250,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // carcasa, el early-out de GameBoostCardSettledInDock tiene que dejar de saltear
     // el rebuild (si no, la consola se quedaría con el plástico viejo).
     private string? _dockSkinKey;
+    // Estilo de pie con el que se armó el dock vivo: si Apariencia cambia entre la
+    // consola anclada y la barra flotante, el early-out también tiene que reconstruirlo.
+    private string? _dockFooterStyleKey;
     // Generación de navegación: invalida el dispatcher diferido de una visita
     // anterior (OnNavigatedFrom la incrementa). Sin esto, el callback diferido
     // de la visita N podía reconstruir el dock durante la visita N+1 y pisar el
@@ -375,6 +381,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // cada visita: por defecto, cartuchos 3D.
         _cards3D = _settings.Get("biblioteca.cards3D", true);
         _cards3DTilt = _settings.Get("biblioteca.cards3D.tilt", true);
+        _footerStyle = _settings.Get(LibraryFooter.SettingKey, LibraryFooter.DefaultId);
         // Paleta de la apariencia 3D (cartucho + consola): se refresca acá, en la UI,
         // porque el acento del tema vive en recursos de XAML y los pintores corren en
         // segundo plano. Al volver de Configuración → Apariencia ya toma el color nuevo.
@@ -3999,9 +4006,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             };
             Grid.SetRowSpan(well, 3);
             sticker.Children.Add(well);
-            sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.22, GridUnitType.Star) });
-            sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            sticker.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0.16, GridUnitType.Star) });
+            CartridgeTile.ApplyStickerRows(sticker);
 
             var header = new Border
             {
@@ -4053,7 +4058,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             body.Children.Add(sticker);
             body.Children.Add(tab);
             body.SizeChanged += (_, e) =>
+            {
                 shell.Points = CartridgeTile.BuildSilhouettePoints(e.NewSize.Width, e.NewSize.Height);
+                // La etiqueta y la pestaña van con la geometría del canvas real: así la
+                // muesca del contorno queda a la altura del borde inferior del pozo,
+                // igual que en la card pintada (antes flotaba por encima).
+                CartridgeTile.ApplyPlaceholderChrome(sticker, well, tab, e.NewSize.Width, e.NewSize.Height);
+            };
 
             var card3D = new Border
             {
@@ -6060,7 +6071,10 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
         _cartridgeVisuals.Add((exe, tile.CartridgeVisual));
         tile.SetRemoved(string.Equals(_connectedCartridge?.Exe, exe, StringComparison.OrdinalIgnoreCase));
-        card.RightTapped += (s, e) => ShowRuleMenu(card, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe, e.GetPosition(card));
+        // En los emuladores el popup de reglas se abre con el engranaje de la ficha;
+        // el clic derecho queda reservado para los cartuchos de juegos.
+        if (draggable)
+            card.RightTapped += (s, e) => ShowRuleMenu(card, exe, name, isManual, defenderFolder?.TrimEnd('\\'), cfgExe, e.GetPosition(card));
         // Sin tooltip en las cards 3D: el cartel al hover se pidió quitar.
 
         // Renderiza y cachea la imagen completa del cartucho (con banner/ícono cuando esté listo)
@@ -6543,6 +6557,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
     // All insertion positions share the same mouth coordinate. The cartridge can
     // protrude above the footer without reserving an empty row in the library.
     private const double DockFooterHeight = 66;
+    // Pie flotante (Configuración → Apariencia): aire a los costados y abajo para que
+    // la barra se lea despegada del borde, sin mover la ranura ni el arrastre.
+    private const double FloatingFooterInset = 16;
+    private const double FloatingFooterGap = 14;
+    private const double FloatingFooterMaxWidth = 980;
     /// <summary>
     /// Gracia del dock: un juego que perdió su ventana sigue "clavado" este tiempo antes
     /// de poder retirarse. Cubre un alt-tab o una pantalla de carga que oculta la ventana
@@ -7225,10 +7244,12 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         var zone = new CartridgeHitZone
         {
             Width = DockCardWidth,
-            // La parte visible del cartucho empieza en la boca (DockMouthY) y termina en
-            // el fondo de la bahía: boca (lo que entra en el pozo) + torre que asoma.
+            // La parte visible del cartucho empieza en la boca (DockMouthY en la consola,
+            // la línea de la hendidura en flotante) y termina en el fondo de la bahía:
+            // boca (lo que entra en el pozo) + torre que asoma.
             Height = DockSlotDepth + DockProtrusion,
-            Margin = new Thickness(0, DockMouthY, 0, 0),
+            Margin = new Thickness(0, LibraryFooter.IsFloating(_footerStyle)
+                ? CartridgeDock.FloatingDip : DockMouthY, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Top,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0))
@@ -7463,11 +7484,24 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
     private void UpdateCartridgeDockWidth()
     {
-        // El dock ocupa todo el ancho inferior de la vista y queda pegado al fondo de
-        // la ventana (HorizontalAlignment="Stretch", Margin="0" en XAML). Si la vista
-        // es angosta, oculta el texto largo del Modo rendimiento para no apretar la ranura.
+        // Consola: ocupa todo el ancho inferior y queda pegada al fondo. Flotante: una
+        // barra centrada, con aire a los costados y abajo, sin cambiar la ranura. En
+        // ambos casos, si la vista es angosta se oculta el texto largo del Modo
+        // rendimiento para no apretar la ranura.
         if (RootGrid.ActualWidth <= 0) return;
-        CartridgeDockHost.ClearValue(FrameworkElement.WidthProperty);
+        if (LibraryFooter.IsFloating(_footerStyle))
+        {
+            double available = Math.Max(320, RootGrid.ActualWidth - FloatingFooterInset * 2);
+            CartridgeDockHost.Width = Math.Min(FloatingFooterMaxWidth, available);
+            CartridgeDockHost.HorizontalAlignment = HorizontalAlignment.Center;
+            CartridgeDockHost.Margin = new Thickness(0, 0, 0, FloatingFooterGap);
+        }
+        else
+        {
+            CartridgeDockHost.ClearValue(FrameworkElement.WidthProperty);
+            CartridgeDockHost.HorizontalAlignment = HorizontalAlignment.Stretch;
+            CartridgeDockHost.Margin = new Thickness(0);
+        }
         if (_cards3D && GameBoostCard.Parent != null && GameBoostCard.Parent != HeaderPanel)
         {
             bool compact = RootGrid.ActualWidth < 760;
@@ -7555,6 +7589,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             if (inDock)
             {
+                bool floatingFooter = LibraryFooter.IsFloating(_footerStyle);
                 CartridgeDock.StyleWell(GameBoostCard);
                 GameBoostPanel.Spacing = 6;
 
@@ -7567,10 +7602,13 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
                 GameBoostLabel.FontSize = 10.5;
                 GameBoostLabel.CharacterSpacing = 90;
                 GameBoostLabel.TextWrapping = TextWrapping.NoWrap;
-                GameBoostLabel.Foreground = CartridgeDock.TextBrush();
+                GameBoostLabel.Foreground = floatingFooter
+                    ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xE1, 0xE6, 0xEE))
+                    : CartridgeDock.TextBrush();
                 GameBoostLabel.Visibility = compactDock ? Visibility.Collapsed : Visibility.Visible;
 
                 CartridgeDock.StyleButton(GameBoostInfoButton);
+                if (floatingFooter) CartridgeDock.StyleGlassButton(GameBoostInfoButton);
                 GameBoostInfoButton.Width = 24;
                 GameBoostInfoButton.Height = 24;
                 GameBoostInfoButton.Padding = new Thickness(0);
@@ -7579,10 +7617,11 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
 
                 // El dial también es una pieza del chasis: perilla del plástico del pie
                 // (no el disco grafito del header), tick en el acento y etiquetas Off/On
-                // con la tinta del dock.
-                CartridgeDock.StyleSwitch(GameBoostSwitch);
+                // con la tinta del dock. En flotante va en vidrio y con tinta clara.
+                CartridgeDock.StyleSwitch(GameBoostSwitch, floatingFooter);
 
                 CartridgeDock.StyleButton(GameBoostSettingsButton);
+                if (floatingFooter) CartridgeDock.StyleGlassButton(GameBoostSettingsButton);
                 GameBoostSettingsButton.Width = 24;
                 GameBoostSettingsButton.Height = 24;
                 GameBoostSettingsButton.Padding = new Thickness(0);
@@ -7806,6 +7845,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         if (CartridgeDockHost.Visibility != Visibility.Visible) return false;
         if (GameBoostCard.Parent == HeaderPanel) return false;
         if (!string.Equals(_dockSkinKey, CardSkin.Current.Key, StringComparison.Ordinal)) return false;
+        if (!string.Equals(_dockFooterStyleKey, _footerStyle, StringComparison.OrdinalIgnoreCase)) return false;
         return GameBoostCardInLiveTree();
     }
 
@@ -7967,6 +8007,15 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
         bool hasRunning = activeExe != null && IsDockGamePlaying(activeExe);
         bool hasConnected = _connectedCartridge != null;
+        bool floatingFooter = LibraryFooter.IsFloating(_footerStyle);
+        // La barra flotante es vidrio oscuro en todos los temas: el texto del chasis
+        // (que sigue al plástico y puede ser oscuro) acá quedaría ilegible.
+        Brush statusPrimaryBrush = floatingFooter
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xE1, 0xE6, 0xEE))
+            : CartridgeDock.TextBrush();
+        Brush statusSecondaryBrush = floatingFooter
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0x9D, 0xA5, 0xB1))
+            : CartridgeDock.TextBrush(secondary: true);
         // El reborde del footer se recrea con la bahía: los hosts viejos ya no están en
         // el árbol, así que se sueltan antes de armar los nuevos. El hover arranca apagado
         // porque la zona de agarre nueva todavía no recibió al puntero.
@@ -7998,7 +8047,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Text = string.IsNullOrEmpty(dockState) ? "WINFORGE" : "WINFORGE  /  " + dockState.ToUpperInvariant(),
             FontSize = 12,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = CartridgeDock.TextBrush(),
+            Foreground = statusPrimaryBrush,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
         // Texto base del footer. La segunda línea es la que reacciona al estado de
@@ -8013,7 +8062,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             FontSize = 9,
             CharacterSpacing = 60,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = CartridgeDock.TextBrush(secondary: true),
+            Foreground = statusSecondaryBrush,
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextWrapping = TextWrapping.Wrap,
             MaxLines = 2
@@ -8036,7 +8085,9 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         {
             ColumnSpacing = 12,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 14),
+            // En la consola el centro útil está sobre la costura (24,5); la barra
+            // flotante no tiene costura y el contenido va centrado en los 66 DIP.
+            Margin = new Thickness(0, 0, 0, floatingFooter ? 0d : 14d),
             Children = { _dockLedHost, statusText }
         };
         leftWing.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -8122,7 +8173,24 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         }
 
 
-        _dockSlotBorder = CartridgeDock.CreatePort(hasConnected, DockPortWidth);
+        // La consola usa el pozo plástico con contactos; la barra flotante usa una
+        // boca fina (la dibuja el vidrio) y este rectángulo solo conserva el hit-test
+        // y el centro de inserción que ya usa el arrastre.
+        _dockSlotBorder = floatingFooter
+            ? new Border
+            {
+                Width = DockPortWidth,
+                Height = 26,
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                // Sin reborde: el rectángulo solo conserva el hit-test y el centro de
+                // inserción. Si el resaltado de drop le pintaba el borde de acento,
+                // aparecía una caja rectangular sobre la boca flotante.
+                BorderThickness = new Thickness(0),
+                BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Top
+            }
+            : CartridgeDock.CreatePort(hasConnected, DockPortWidth);
 
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_dockSlotBorder, "CartridgeSlot");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_dockSlotBorder, I18n.T("Ranura de cartucho"));
@@ -8139,7 +8207,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
             Orientation = Orientation.Horizontal,
             Spacing = 6,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 14),
+            Margin = new Thickness(0, 0, 0, floatingFooter ? 0d : 14d),
             HorizontalAlignment = HorizontalAlignment.Right
         };
 
@@ -8148,8 +8216,16 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // único control del ala: los botones "Parámetros" y "Retirar cartucho" se
         // sacaron (el cartucho sale arrastrándolo y un clic sobre él inspecciona).
         SafeMoveGameBoostCardTo(rightWing, compactDock: RootGrid.ActualWidth > 0 && RootGrid.ActualWidth < 760);
-        var port = new Grid { Width = DockPortWidth, Height = 44, Children = { _dockSlotBorder } };
+        var port = new Grid
+        {
+            Width = floatingFooter ? DockPortWidth + 24 : DockPortWidth,
+            Height = 44,
+            Children = { _dockSlotBorder }
+        };
         _dockSlotBorder.VerticalAlignment = VerticalAlignment.Top;
+        // En flotante el contenido se centra debajo de la hendidura: el puerto se ancla
+        // arriba de esa área para que la boca (y el centro de inserción) quede en y=11.
+        port.VerticalAlignment = floatingFooter ? VerticalAlignment.Top : VerticalAlignment.Center;
         var dockRow = new Grid { ColumnSpacing = 12 };
         dockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         dockRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -8160,23 +8236,48 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         dockRow.Children.Add(port);
         dockRow.Children.Add(rightWing);
 
-        var dockShell = CartridgeDock.CreateShell(dockRow, DockFooterHeight, DockPortWidth);
-        // El chasis se pega al fondo: arriba queda el aire donde entra la torre del cartucho.
-        dockShell.VerticalAlignment = VerticalAlignment.Bottom;
-        var frontLip = CartridgeDock.CreatePortFrontLip(hasConnected, DockPortWidth);
-        frontLip.VerticalAlignment = VerticalAlignment.Bottom;
-        frontLip.Margin = new Thickness(0, 0, 0, DockFooterHeight - DockMouthY - 26);
-
-        // El chasis reserva también el alto de la torre que asoma por encima del pie. Sin
-        // eso el cartucho se dibujaba fuera de los límites de su contenedor: se veía, pero
-        // el puntero no lo alcanzaba y había que agarrarlo desde la franja de abajo.
+        // El ancho del host se fija antes de construir el vidrio: la silueta de la barra
+        // flotante se dibuja con ese ancho exacto (la hendidura queda centrada).
         CartridgeDockHost.Height = DockFooterHeight + DockProtrusion;
         UpdateCartridgeDockWidth();
-        // Orden de capas reales de la ranura:
-        // 1) dockShell (consola + pozo trasero del conector)
-        // 2) _dockCartridgeBay (el cartucho entra 20 px dentro del pozo)
-        // 3) frontLip (labio frontal y guías laterales del conector que abrazan al cartucho por delante)
-        var dockLayout = new Grid { Children = { dockShell, _dockCartridgeBay, frontLip } };
+        FrameworkElement dockShell;
+        if (floatingFooter)
+        {
+            double barWidth = CartridgeDockHost.Width is double w && !double.IsNaN(w) && w > 0
+                ? w
+                : Math.Min(FloatingFooterMaxWidth, Math.Max(320, RootGrid.ActualWidth - FloatingFooterInset * 2));
+            dockShell = CartridgeDock.CreateFloatingShell(dockRow, DockFooterHeight, barWidth, DockPortWidth, hasConnected);
+        }
+        else
+        {
+            dockShell = CartridgeDock.CreateShell(dockRow, DockFooterHeight, DockPortWidth);
+        }
+        // El pie se pega al fondo del layout: arriba queda el aire donde entra la torre
+        // del cartucho. En el estilo flotante ese fondo está separado del borde de la
+        // ventana por el margen del host.
+        dockShell.VerticalAlignment = VerticalAlignment.Bottom;
+        FrameworkElement? frontLip = null;
+        if (!floatingFooter)
+        {
+            frontLip = CartridgeDock.CreatePortFrontLip(hasConnected, DockPortWidth);
+            frontLip.VerticalAlignment = VerticalAlignment.Bottom;
+            frontLip.Margin = new Thickness(0, 0, 0, DockFooterHeight - DockMouthY - 26);
+        }
+
+        // Orden de capas:
+        // Consola: chasis, cartucho en el pozo y labio frontal por delante.
+        // Flotante: el cartucho va DETRÁS del vidrio (la barra tapa su parte baja y la
+        // boca fina lo corta); la barra es la que define el nuevo estilo.
+        // La zona de agarre va última en los dos casos.
+        Grid dockLayout;
+        if (floatingFooter)
+        {
+            dockLayout = new Grid { Children = { _dockCartridgeBay, dockShell } };
+        }
+        else
+        {
+            dockLayout = new Grid { Children = { dockShell, _dockCartridgeBay, frontLip! } };
+        }
         _dockCartridgeBay.HorizontalAlignment = HorizontalAlignment.Center;
         _dockCartridgeBay.VerticalAlignment = VerticalAlignment.Bottom;
         // La zona de agarre va ÚLTIMA: por encima del labio frontal, así el cartucho se
@@ -8189,6 +8290,7 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         CartridgeDockHost.Children.Clear();
         CartridgeDockHost.Children.Add(dockLayout);
         _dockSkinKey = CardSkin.Current.Key;
+        _dockFooterStyleKey = _footerStyle;
         // Estado vigente de la regla en el texto del footer (si hay una partida
         // con regla enganchada, manda ese mensaje sobre el texto base).
         UpdateDockStatusText();
@@ -10380,8 +10482,14 @@ public sealed partial class GestionarProcesosPage : Page, IBackgroundPausable
         // (chasis + torre) + 18, la última fila siempre queda entera por encima de la
         // consola; sin esto la card se cortaba contra el chasis y nunca aparecía.
         if (LibraryPanel != null)
+        {
+            // El pie flotante está 14 DIP más arriba: la biblioteca reserva ese aire
+            // extra para que la última fila no quede debajo de la barra.
+            double footerGap = _cards3D && !IsEmulatorFilter && LibraryFooter.IsFloating(_footerStyle)
+                ? FloatingFooterGap : 0;
             LibraryPanel.Margin = new Thickness(sidePad, _cards3D ? 18 : 8, ScrollBarReserve + sidePad,
-                _cards3D && !IsEmulatorFilter ? DockFooterHeight + DockProtrusion + 18 : 8);
+                _cards3D && !IsEmulatorFilter ? DockFooterHeight + DockProtrusion + 18 + footerGap : 8);
+        }
         if (LibraryContentGrid != null)
             LibraryContentGrid.Margin = new Thickness(0);
         double bannerMin = 100;

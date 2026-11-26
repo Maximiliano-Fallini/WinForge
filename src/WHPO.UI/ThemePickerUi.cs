@@ -20,9 +20,9 @@ namespace WHPO_UI;
 /// leyendo su nombre en una lista.
 ///
 /// Los temas se agrupan por TIPO DE FONDO, que es la diferencia que se ve de un vistazo:
+///   · Planos    → el fondo es un color liso (incluye sistema, claro y oscuro).
 ///   · Entorno   → el tema trae una imagen de fondo (Themes\Backgrounds).
 ///   · Degradado → el tema dibuja su fondo con un gradiente propio y no tiene imagen.
-///   · Planos    → el fondo es un color liso (incluye sistema, claro y oscuro).
 /// El grupo se calcula de la DEFINICIÓN del tema (ver <see cref="ThemeDefinition"/>), no de una
 /// lista escrita a mano: un tema nuevo aparece en su grupo solo, y un grupo sin temas no se
 /// dibuja (así "Degradado" nace el día que exista un tema de fondo degradado).
@@ -82,22 +82,23 @@ public static class ThemePickerUi
     };
 
     /// <summary>
-    /// Grupo del tema, en el orden en que se dibujan: 0 = Entorno (trae foto), 1 = Degradado (fondo
-    /// con gradiente propio y sin foto: Crepúsculo), 2 = Planos (color liso). El tipo lo resuelve la
+    /// Grupo del tema, en el orden en que se dibujan: 0 = Planos (color liso), 1 = Entorno (trae
+    /// foto), 2 = Degradado (fondo con gradiente propio y sin foto: Crepúsculo). Los planos van
+    /// arriba de todo; Entorno y Degradado conservan su orden anterior. El tipo lo resuelve la
     /// DEFINICIÓN del tema (ver ThemeCatalog.KindOf), así que un tema nuevo cae solo en su grupo.
     /// </summary>
     private static int GroupOf(AppTheme theme) => ThemeCatalog.KindOf(theme) switch
     {
-        ThemeCatalog.ThemeKind.Environment => 0,
-        ThemeCatalog.ThemeKind.Gradient => 1,
+        ThemeCatalog.ThemeKind.Flat => 0,
+        ThemeCatalog.ThemeKind.Environment => 1,
         _ => 2
     };
 
     private static string GroupName(int group) => group switch
     {
-        0 => I18n.T("Entorno"),
-        1 => I18n.T("Degradado"),
-        _ => I18n.T("Planos")
+        0 => I18n.T("Planos"),
+        1 => I18n.T("Entorno"),
+        _ => I18n.T("Degradado")
     };
 
     /// <summary>¿El tema pasa el filtro? Se filtra por base clara/oscura del tema.</summary>
@@ -183,8 +184,8 @@ public static class ThemePickerUi
         MarkSelected(current);
 
         PanelAppearance.Diag(
-            $"selector de temas: {Cards.Count} cards ({Cards.Count(c => c.Group == 0)} de entorno, " +
-            $"{Cards.Count(c => c.Group == 1)} de degradado, {Cards.Count(c => c.Group == 2)} planas); " +
+            $"selector de temas: {Cards.Count} cards ({Cards.Count(c => c.Group == 0)} planas, " +
+            $"{Cards.Count(c => c.Group == 1)} de entorno, {Cards.Count(c => c.Group == 2)} de degradado); " +
             $"tema vigente {current}; filtro {_filter}");
     }
 

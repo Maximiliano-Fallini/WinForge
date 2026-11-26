@@ -29,7 +29,7 @@ namespace WHPO_UI.Views.Pages;
 /// - Limpieza personalizada: categorías (Sistema, Multimedia, Utilidades,
 /// Descargas de Windows, Avanzado) con cada elemento marcable.
 /// </summary>
-public sealed partial class LimpiezaPage : Page
+public sealed partial class LimpiezaPage : Page, IBackgroundPausable
 {
     private readonly ICleanupService _cleanup;
     private readonly IDuplicateFinderService _dupFinder;
@@ -267,15 +267,6 @@ public sealed partial class LimpiezaPage : Page
             DupRecycleToggle.Unchecked += (_, _) => SaveDupRecycleSetting();
         }
 
-        // Detección en caliente de unidades (USB / disco externo): al enchufar algo
-        // se refresca la lista del buscador de duplicados. La página usa caché de
-        // navegación, así que la suscripción vive mientras la página exista.
-        if (_driveWatcher != null)
-        {
-            _driveWatcher.EnsureStarted();
-            _driveWatcher.DriveArrived += OnDriveArrived;
-        }
-
         // La página vive con caché de navegación: re-aplicar el idioma al cambiar.
         I18n.LanguageChanged += OnLanguageChanged;
     }
@@ -284,6 +275,12 @@ public sealed partial class LimpiezaPage : Page
     {
         ApplyTabsLanguage();
         RebuildCustomCategories();
+
+        // Detección en caliente de unidades (USB / disco externo): al enchufar algo
+        // se refresca la lista del buscador de duplicados. Solo mientras la página se
+        // está viendo: la query WMI WITHIN 2 no debe quedar sondeando para siempre
+        // (ver OnUnloaded y PauseBackgroundTimers).
+        ResumeDriveWatcher();
     }
 
     // ===================== Navbar interno =====================
@@ -1127,7 +1124,43 @@ public sealed partial class LimpiezaPage : Page
         }
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => StopChequeoAppsTimer();
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        StopChequeoAppsTimer();
+        PauseDriveWatcher();
+    }
+
+    /// <summary>
+    /// Pausa de bandeja (IBackgroundPausable): con la ventana oculta no hay lista que
+    /// refrescar, así que el detector de unidades se apaga igual que al salir de la
+    /// página. Sin esto, la query WMI seguía sondeando con la app en la bandeja.
+    /// </summary>
+    public void PauseBackgroundTimers() => PauseDriveWatcher();
+
+    /// <summary>Reanudación desde bandeja: vuelve a levantar el detector de unidades.</summary>
+    public void ResumeBackgroundTimers() => ResumeDriveWatcher();
+
+    private void PauseDriveWatcher()
+    {
+        if (_driveWatcher == null) return;
+        _driveWatcher.DriveArrived -= OnDriveArrived;
+        _driveWatcher.Stop();
+    }
+
+    private void ResumeDriveWatcher()
+    {
+        if (_driveWatcher == null) return;
+        _driveWatcher.DriveArrived -= OnDriveArrived;
+        _driveWatcher.DriveArrived += OnDriveArrived;
+        _driveWatcher.EnsureStarted();
+
+        // Mientras la página estuvo fuera de foco (o la ventana en la bandeja) el detector
+        // estuvo apagado: puede haber aparecido una unidad que ningún evento vio. Si la
+        // lista ya estaba armada se reconstruye, conservando la selección vigente
+        // (PopulateDrivePicker la restaura y no toca los resultados del escaneo).
+        if (DupDrivePicker.Items.Count > 0)
+            PopulateDrivePicker(DupPathBox.Text);
+    }
 
     /// <summary>Actualiza el botón "Cerrar seleccionadas" según haya apps tildadas.</summary>
     private void ChequeoAppsCheckChanged(object sender, RoutedEventArgs e)

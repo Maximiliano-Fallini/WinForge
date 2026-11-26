@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 
 $root     = Split-Path $PSScriptRoot -Parent
 $wix      = Join-Path $root '.tools\wix\wix.exe'
-$version  = '0.7.5'
+$version  = '0.7.6'
 # Etiqueta de release (0.7.5-beta3): la fuente de verdad es InformationalVersion
 # de WHPO.UI.csproj. El MSI conserva Version numérica (0.7.5) porque Windows
 # Installer no acepta sufijos, pero el archivo y la UI muestran la beta.

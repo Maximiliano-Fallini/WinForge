@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using WHPO.Core.Services.Interfaces;
 using WinImage = Microsoft.UI.Xaml.Controls.Image;
@@ -22,7 +23,16 @@ namespace WHPO_UI.Views.Pages;
 public sealed partial class AdministracionInicioPage : Page
 {
     private readonly IStartupManagerService _startupMgr;
+    private readonly IStartupImpactService _impact;
     private readonly ILoggingService _logging;
+
+    /// <summary>Última medición por Id, para restaurarla al reactivar una entrada.</summary>
+    private IReadOnlyDictionary<string, StartupImpact> _impacts =
+        new Dictionary<string, StartupImpact>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Badge de impacto de cada fila visible, para refrescarlo sin recargar la lista.</summary>
+    private readonly Dictionary<string, (Border Badge, TextBlock Text)> _impactUi =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Evita dos cargas a la vez: Loaded se repite cada vez que se vuelve a la página.</summary>
     private bool _loading;
@@ -32,7 +42,20 @@ public sealed partial class AdministracionInicioPage : Page
         InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         _startupMgr = App.Services.GetRequiredService<IStartupManagerService>();
+        _impact = App.Services.GetRequiredService<IStartupImpactService>();
         _logging = App.Services.GetRequiredService<ILoggingService>();
+
+        // La columna Impacto sale del reporte WDI de Windows: el tooltip de la
+        // cabecera explica de dónde viene y qué significan los cortes.
+        ToolTipService.SetToolTip(ImpactHeader, new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = I18n.T("Impacto medido por Windows en el último inicio de sesión. Alto: más de 1 s de CPU o 3 MB de disco; medio: entre 300 ms y 1 s de CPU, o entre 300 KB y 3 MB de disco; bajo: menos que eso."),
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320
+            }
+        });
 
         // El dial de carga vive DENTRO de la card de la lista, donde un dial de
         // 300 (el del arranque) desbordaría la fila.
@@ -463,8 +486,10 @@ public sealed partial class AdministracionInicioPage : Page
         IReadOnlyList<StartupEntry> entries;
         try
         {
-            // GetEntries puede tardar (schtasks), corre en background.
+            // GetEntries puede tardar (schtasks) y el impacto lee el XML de WDI:
+            // las dos cosas corren en background.
             entries = await Task.Run(() => _startupMgr.GetEntries());
+            _impacts = await Task.Run(() => _impact.GetImpacts(entries));
         }
         finally
         {
@@ -487,22 +512,29 @@ public sealed partial class AdministracionInicioPage : Page
             return;
         }
 
+        _impactUi.Clear();
         foreach (var entry in entries)
         {
-            var row = BuildStartupRow(entry);
+            if (!_impacts.TryGetValue(entry.Id, out var impact))
+                impact = entry.IsEnabled ? StartupImpact.Unknown : StartupImpact.Disabled;
+
+            var row = BuildStartupRow(entry, impact);
             StartupEntriesHost.Children.Add(row);
         }
     }
 
-    private Grid BuildStartupRow(StartupEntry entry)
+    private Grid BuildStartupRow(StartupEntry entry, StartupImpact impact)
     {
         var row = new Grid
         {
             ColumnDefinitions =
             {
                 new ColumnDefinition { Width = GridLength.Auto },        // Col 0: ícono
-                new ColumnDefinition { Width = new GridLength(1.6, GridUnitType.Star) }, // Col 1: nombre + comando
-                new ColumnDefinition { Width = new GridLength(0.6, GridUnitType.Star) }  // Col 2: toggle
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },  // Col 1: nombre + comando
+                new ColumnDefinition { Width = new GridLength(84) },     // Col 2: impacto
+                // 150: el ToggleSwitch trae su etiqueta "Activado/Desactivado" al
+                // lado del interruptor y con 76 px se cortaba.
+                new ColumnDefinition { Width = new GridLength(150) }     // Col 3: toggle
             },
             ColumnSpacing = 8,
             Margin = new Thickness(0, 2, 0, 2),
@@ -531,10 +563,17 @@ public sealed partial class AdministracionInicioPage : Page
         Grid.SetColumn(nameStack, 1);
         row.Children.Add(nameStack);
 
-        // Col 2: toggle
-        var toggle = new ToggleSwitch { IsOn = entry.IsEnabled, MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Center };
+        // Col 2: impacto (mismo criterio que el Administrador de tareas)
+        var impactBadge = BuildImpactBadge(entry, impact);
+        Grid.SetColumn(impactBadge.Badge, 2);
+        row.Children.Add(impactBadge.Badge);
+        _impactUi[entry.Id] = (impactBadge.Badge, impactBadge.Text);
+
+        // Col 3: toggle. FontSize 12 = el de la fila: con el 14 heredado, la
+        // etiqueta "Desactivado" no entraba en la columna y se cortaba.
+        var toggle = new ToggleSwitch { IsOn = entry.IsEnabled, MinWidth = 0, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center };
         toggle.Toggled += (_, _) => OnStartupToggled(entry.Id, toggle.IsOn);
-        Grid.SetColumn(toggle, 2);
+        Grid.SetColumn(toggle, 3);
         row.Children.Add(toggle);
 
         return row;
@@ -544,10 +583,123 @@ public sealed partial class AdministracionInicioPage : Page
     {
         bool ok = _startupMgr.Toggle(id, enable);
         if (!ok)
+        {
             Feedback.Warning(StartupFeedbackText, I18n.T("No se pudo cambiar el estado. Probablemente necesitás permisos de administrador."));
-        else
-            Feedback.Success(StartupFeedbackText, enable ? "Entrada activada." : "Entrada desactivada.", persistent: false);
+            return;
+        }
+
+        // Desactivada no tiene impacto; al reactivarla vuelve la última medición
+        // de Windows (si la hay).
+        if (_impactUi.TryGetValue(id, out var ui))
+        {
+            var impact = !enable
+                ? StartupImpact.Disabled
+                : _impacts.TryGetValue(id, out var measured) ? measured : StartupImpact.Unknown;
+            ApplyImpact(ui.Badge, ui.Text, impact);
+        }
+
+        Feedback.Success(StartupFeedbackText, enable ? "Entrada activada." : "Entrada desactivada.", persistent: false);
     }
+
+    /// <summary>
+    /// Badge de la columna Impacto. El color sigue al nivel y el tooltip muestra
+    /// los números crudos de Windows (CPU y disco medidos durante el arranque).
+    /// </summary>
+    private static (Border Badge, TextBlock Text) BuildImpactBadge(StartupEntry entry, StartupImpact impact)
+    {
+        var text = new TextBlock
+        {
+            FontSize = 11,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var badge = new Border
+        {
+            Width = 74,
+            Height = 22,
+            CornerRadius = new CornerRadius(4),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = text
+        };
+        ApplyImpact(badge, text, impact);
+        return (badge, text);
+    }
+
+    private static void ApplyImpact(Border badge, TextBlock text, StartupImpact impact)
+    {
+        var (label, color) = ImpactStyle(impact.Level);
+        text.Text = I18n.T(label);
+        text.Foreground = new SolidColorBrush(color);
+
+        // Fondo tenue del mismo color: se lee como etiqueta sin gritar.
+        badge.Background = new SolidColorBrush(color) { Opacity = 0.14 };
+        badge.BorderBrush = new SolidColorBrush(color) { Opacity = 0.35 };
+        ToolTipService.SetToolTip(badge, BuildImpactToolTip(impact));
+    }
+
+    private static (string Label, Windows.UI.Color Color) ImpactStyle(StartupImpactLevel level)
+    {
+        var muted = ThemeBrushes.Get("SecondaryTextBrush").Color;
+        return level switch
+        {
+            StartupImpactLevel.High => ("Alto", Feedback.ErrorBrush.Color),
+            StartupImpactLevel.Medium => ("Medio", Feedback.WarningBrush.Color),
+            StartupImpactLevel.Low => ("Bajo", Feedback.SuccessBrush.Color),
+            StartupImpactLevel.None => ("Ninguno", muted),
+            _ => ("Sin medir", muted)
+        };
+    }
+
+    /// <summary>
+    /// Por qué la entrada tiene ese estado: el motivo del nivel, los números
+    /// reales cuando hubo medición y de dónde salen.
+    /// </summary>
+    private static ToolTip BuildImpactToolTip(StartupImpact impact)
+    {
+        var reason = impact.Level switch
+        {
+            StartupImpactLevel.None =>
+                I18n.T("Ninguno: la entrada está desactivada, así que no se ejecuta al iniciar sesión y no tiene impacto."),
+            StartupImpactLevel.NotMeasured =>
+                I18n.T("Sin medir: la entrada está habilitada, pero Windows no registró su arranque en el último inicio de sesión. Suele pasar si la activaste después de ese inicio o si el diagnóstico de arranque está desactivado."),
+            StartupImpactLevel.High =>
+                I18n.T("Alto: usó más de 1 s de CPU o más de 3 MB de disco al iniciar sesión."),
+            StartupImpactLevel.Medium =>
+                I18n.T("Medio: usó entre 300 ms y 1 s de CPU, o entre 300 KB y 3 MB de disco al iniciar sesión."),
+            _ =>
+                I18n.T("Bajo: usó menos de 300 ms de CPU y menos de 300 KB de disco al iniciar sesión.")
+        };
+
+        if (impact.HasMeasurement)
+        {
+            var cpu = impact.CpuTime.TotalMilliseconds < 1000
+                ? $"{impact.CpuTime.TotalMilliseconds:0} ms"
+                : $"{impact.CpuTime.TotalSeconds:0.0} s";
+
+            reason += "\n" + I18n.T("CPU al iniciar: {0} · Disco: {1}", cpu, FormatDisk(impact.DiskBytes));
+            reason += "\n" + I18n.T("Medido por Windows en el último inicio de sesión.");
+        }
+
+        return new ToolTip
+        {
+            Content = new TextBlock
+            {
+                Text = reason,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 340
+            }
+        };
+    }
+
+    private static string FormatDisk(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0} KB",
+        _ => $"{bytes / (1024.0 * 1024.0):0.0} MB"
+    };
 
     private void StartupRefreshButton_Click(object sender, RoutedEventArgs e) => _ = LoadStartupEntriesAsync();
 }

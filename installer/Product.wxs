@@ -5,8 +5,8 @@
        (el UpgradeCode queda igual para que el MSI nuevo reemplace al anterior) -->
   <Package Name="WinForge"
            Manufacturer="WinForge"
-           Version="0.7.5"
-           ProductCode="{6D731EBE-4B0F-4F0F-9B2A-CEBF6499CB55}"
+           Version="0.7.6"
+           ProductCode="{F51C0A71-E656-401D-BB53-869A57F56416}"
            UpgradeCode="{67AA0858-5D06-4CA6-9B86-8892395BF0C4}"
            Language="3082"
            Scope="perMachine"

@@ -69,6 +69,10 @@ public sealed partial class ConfiguracionPage : Page
     private readonly Dictionary<string, (Border Ring, FontIcon Check, FontIcon? ThemeGlyph)> _cardSkinSwatches = new();
     private bool _buildingCardSkin;
 
+    // Pie de la biblioteca 3D: consola anclada o barra flotante (estilo Carthage).
+    private readonly List<(string Id, RadioButton Tile)> _footerStyleTiles = new();
+    private bool _buildingFooterStyle;
+
     // Sección de desarrollo: visible solo en builds de desarrollo (ver
     // UpdateDevelopmentToolsVisibility).
     public ConfiguracionPage()
@@ -212,6 +216,7 @@ public sealed partial class ConfiguracionPage : Page
             PaintLibraryStylePreviews();
             BuildCardSkinPicker();
             BuildConsoleModelPicker();
+            BuildFooterStylePicker();
 
             // Pestaña Apariencia: los controles reflejan el ajuste VIGENTE (el que tienen
             // puesto las superficies ahora mismo), no el guardado en disco: ese se escribe
@@ -657,6 +662,9 @@ public sealed partial class ConfiguracionPage : Page
         // El modelo de consola tampoco existe en 2D: no hay equipo que mostrar.
         if (ConsoleModelCard != null)
             ConsoleModelCard.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
+        // El pie solo tiene sentido con el dock 3D: en 2D no hay consola ni ranura.
+        if (FooterStyleCard != null)
+            FooterStyleCard.Visibility = threeD ? Visibility.Visible : Visibility.Collapsed;
         if (_isLoading) return;
         _settingsService.Set("biblioteca.cards3D", threeD);
         _settingsService.Save();
@@ -1043,8 +1051,148 @@ public sealed partial class ConfiguracionPage : Page
     private void PaintCardSkinStage(ImageSource? sample)
     {
         if (CardSkinStageHost == null) return;
+        bool floating = WHPO_UI.Controls.LibraryFooter.IsFloating(_settingsService.Get(
+            WHPO_UI.Controls.LibraryFooter.SettingKey, WHPO_UI.Controls.LibraryFooter.DefaultId));
         CardSkinStageHost.Content = WHPO_UI.Controls.CartridgeDock.CreateAppearancePreview(
-            sample, previewHeight: 320);
+            sample, previewHeight: 320, floatingFooter: floating);
+    }
+
+    /// <summary>
+    /// Selector del pie de la biblioteca 3D. Las dos opciones son el MISMO dock (misma
+    /// ranura y mismo arrastre): la consola anclada al borde inferior o una barra de
+    /// vidrio despegada del fondo, como el pie de Carthage. Solo aparece con 3D activo.
+    /// </summary>
+    private void BuildFooterStylePicker()
+    {
+        if (FooterStyleHost == null) return;
+        _buildingFooterStyle = true;
+        try
+        {
+            FooterStyleHost.Children.Clear();
+            _footerStyleTiles.Clear();
+            if (FooterStyleCard != null)
+                FooterStyleCard.Visibility = _settingsService.Get("biblioteca.cards3D", true)
+                    ? Visibility.Visible : Visibility.Collapsed;
+
+            string current = _settingsService.Get(
+                WHPO_UI.Controls.LibraryFooter.SettingKey, WHPO_UI.Controls.LibraryFooter.DefaultId);
+            var options = new[]
+            {
+                (Id: WHPO_UI.Controls.LibraryFooter.ConsoleId, Label: "Anclado",
+                    Hint: "La consola se apoya en el borde inferior."),
+                (Id: WHPO_UI.Controls.LibraryFooter.FloatingId, Label: "Flotante",
+                    Hint: "Barra despegada del fondo, estilo Carthage.")
+            };
+            foreach (var option in options)
+            {
+                var tile = new RadioButton
+                {
+                    GroupName = "FooterStyle",
+                    Tag = option.Id,
+                    IsChecked = string.Equals(option.Id, current, StringComparison.OrdinalIgnoreCase)
+                };
+                if (Resources.TryGetValue("LibraryStyleTile", out var styleValue) && styleValue is Style tileStyle)
+                    tile.Style = tileStyle;
+                tile.Content = BuildFooterStyleTile(option.Id, option.Label, option.Hint);
+                tile.Checked += (s, e) => SelectFooterStyle(option.Id);
+                _footerStyleTiles.Add((option.Id, tile));
+                FooterStyleHost.Children.Add(tile);
+            }
+        }
+        finally
+        {
+            _buildingFooterStyle = false;
+        }
+    }
+
+    /// <summary>
+    /// Miniatura del estilo de pie: una barra que toca el borde inferior (anclada) o
+    /// una barra redondeada con aire alrededor (flotante). Es un esquema, no el render
+    /// del dock: la previa grande de arriba sí usa el dock real.
+    /// </summary>
+    private FrameworkElement BuildFooterStyleTile(string id, string label, string hint)
+    {
+        bool floating = WHPO_UI.Controls.LibraryFooter.IsFloating(id);
+        var preview = new Grid { Width = 168, Height = 120 };
+        preview.Children.Add(new Border
+        {
+            CornerRadius = new CornerRadius(10),
+            Background = ThemeBrushes.Get("CardHoverBrush"),
+            BorderBrush = ThemeBrushes.Get("SensorGridLineBrush"),
+            BorderThickness = new Thickness(1)
+        });
+
+        Brush barBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x30, 0x30, 0x36));
+        Brush borderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x60, 0xFF, 0xFF, 0xFF));
+        var bar = new Border
+        {
+            Height = 30,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            CornerRadius = floating ? new CornerRadius(15) : new CornerRadius(6, 6, 0, 0),
+            Background = floating
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x0A, 0x0D, 0x13))
+                : barBrush,
+            BorderBrush = borderBrush,
+            BorderThickness = floating ? new Thickness(1) : new Thickness(1, 1, 0, 0),
+            Margin = floating ? new Thickness(14, 0, 14, 12) : new Thickness(0)
+        };
+        preview.Children.Add(bar);
+
+        // Ranura y luz: los dos elementos que identifican al pie en cualquier estilo.
+        var slot = new Border
+        {
+            Width = 46,
+            Height = 11,
+            CornerRadius = new CornerRadius(3),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x02, 0x03, 0x05)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = floating ? new Thickness(0, 0, 0, 21) : new Thickness(0, 0, 0, 9)
+        };
+        preview.Children.Add(slot);
+        var led = new Border
+        {
+            Width = 5,
+            Height = 5,
+            CornerRadius = new CornerRadius(2.5),
+            Background = ThemeBrushes.Get("AccentBrush"),
+            VerticalAlignment = VerticalAlignment.Bottom,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = floating ? new Thickness(27, 0, 0, 22) : new Thickness(12, 0, 0, 10)
+        };
+        preview.Children.Add(led);
+
+        var labels = new StackPanel { Spacing = 1, Margin = new Thickness(2, 0, 0, 0) };
+        labels.Children.Add(new TextBlock
+        {
+            Text = label,
+            FontSize = 14,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+        });
+        labels.Children.Add(new TextBlock
+        {
+            Text = hint,
+            FontSize = 12,
+            Foreground = ThemeBrushes.Get("SecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 168
+        });
+        return new StackPanel { Spacing = 10, Children = { preview, labels } };
+    }
+
+    private void SelectFooterStyle(string id)
+    {
+        if (_buildingFooterStyle) return;
+        _settingsService.Set(WHPO_UI.Controls.LibraryFooter.SettingKey,
+            WHPO_UI.Controls.LibraryFooter.IsFloating(id)
+                ? WHPO_UI.Controls.LibraryFooter.FloatingId
+                : WHPO_UI.Controls.LibraryFooter.ConsoleId);
+        _settingsService.Save();
+        // La vista previa grande del pie sigue al estilo elegido.
+        PaintCardSkinStage(_sampleCartridge);
     }
 
     /// <summary>Cara de muestra del cartucho (PNG ya decodificado), compartida entre visitas.
@@ -1833,6 +1981,7 @@ public sealed partial class ConfiguracionPage : Page
         ThemePickerUi.Relabel(_themeService.CurrentTheme);
         // Las etiquetas de las muestras de carcasa se arman en código: se rearman traducidas.
         BuildCardSkinPicker();
+        BuildFooterStylePicker();
         UpdateDeveloperLogsSize();
         RefreshDriversTab();
 
